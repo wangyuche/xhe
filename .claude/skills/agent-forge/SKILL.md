@@ -17,11 +17,36 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 任務不屬於任何一份時,先告訴使用者,不要硬套;需要時再提議新增 playbook。
 
+**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是最新版,共用倉庫更新後下個任務就會用到新規則。
+
+## 檔案位置
+
+- **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 和 `VERSION` 都在這裡。這個目錄在共用倉庫裡是**唯讀**的。
+- **產出**一律寫在**目前專案的根目錄**底下:`.claude/agents/`、`.claude/agent-specs/`、`.claude/skills/`。不要寫進 skill 目錄。
+- `VERSION` 記錄目前發佈的 commit SHA。回報時可附上,方便追查用的是哪一版。
+
+## 派出審查角色
+
+審查者和測試者是 `roles/` 裡的角色檔,不是有名字的 agent。派法:
+
+- 用唯讀的 subagent 類型(`subagent_type: "Explore"`),用工具限制保證它們不改檔案。
+- 提示詞第一句:「先用 Read 完整讀完 `<skill 目錄>/roles/<角色>.md`,照它的規則做。」接著附上它需要的檔案路徑。
+- 不要把角色檔內容貼進提示詞,傳路徑就好。
+
+## 修改 agent-forge 本身
+
+共用倉庫是唯讀的,而且只發佈審查過的版本。要改 agent-forge 本身(playbook、角色、範本):
+
+1. 在其他專案裡,只**提出**改動清單,不要嘗試修改 skill 目錄。
+2. 實際修改在 xhe repo 開分支、commit、開 PR,由使用者審查合併。
+3. 合併進 `main` 後,由使用者在 host 上執行 `scripts/publish-skill.sh` 發佈。
+4. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
+
 ## 原則
 
 1. **先可信,再產出。** 沒有證據不算完成。缺口(缺證據、無法判定)不算通過。
 2. **流程固定。** 照 playbook 的順序走,不跳關。
-3. **做的人不審自己。** 規格由 `spec-reviewer` 審,成品由 `agent-tester` 測,多 agent 時由獨立 verifier 驗收。
+3. **做的人不審自己。** 規格由 `roles/spec-reviewer.md` 審,成品由 `roles/agent-tester.md` 測,多 agent 時由獨立 verifier 驗收。
 4. **先分類再問。** 查得到的事自己查,只問真正的產品或偏好選擇。
 5. **用繁體中文**與使用者溝通,產出的 agent 預設也用繁體中文,除非使用者另有指定。
 
