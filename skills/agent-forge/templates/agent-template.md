@@ -56,7 +56,7 @@ agent-forge 在 Spec 與 Build 階段使用。分兩部分:規格區(階段 2 �
 - 完成時要回報的證據:<PASS / ISSUES / BLOCKED 要附什麼>
 - 可否與其他寫入 agent 平行:是(需獨立可寫輸出)/ 否
 - 建議的模型與推理強度:...(verifier 要用和作者不同的模型家族)
-- 需要的技術 skill:<例如 stack-react;用 `paths` 限定檔案範圍,agent 本體不寫死技術>
+- 需要的 skill:<技術規則 skill,例如 stack-react,用 `paths` 限定範圍;或固定計算腳本 skill,例如指標計算。依 `create-agent.md`「什麼時候要做 skill」判斷,填「無」時寫一句理由>
 - 專案混用多種技術時:一個通用角色加多個技術 skill,不要一技術一個 agent
 ```
 
