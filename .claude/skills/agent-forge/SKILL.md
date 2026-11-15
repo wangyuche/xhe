@@ -14,6 +14,9 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 | 造一個新的專業 agent | `playbooks/create-agent.md` |
 | 多個 agent 同時做事、派工、驗收、合併 | `playbooks/multi-agent.md` |
 | 回頭看 agent 的成果、被糾正、`reflect` | `playbooks/improve.md` |
+| 設計方向不確定,要多個候選比較 | `playbooks/arena.md` |
+
+只讀這次要用的 playbook,要用就完整讀,不要只讀片段(依據 pstack poteto-mode)。
 
 任務不屬於任何一份時,先告訴使用者,不要硬套;需要時再提議新增 playbook。
 
