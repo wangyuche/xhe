@@ -44,8 +44,8 @@ paths: ["**/*.tsx"]
 
 ## 開始執行時(依據 pstack multi-phase-plan、orchestrate)
 
-- 使用者說「開始」時,協調者重新讀一次這份 playbook,並記下 skill 目錄裡 `VERSION` 的 commit。
-- 專案進行中如果 `VERSION` 變了,在下一次回報時告訴使用者,由使用者決定是否重跑受影響的單位。
+- 使用者說「開始」時,協調者重新讀一次這份 playbook,並記下 skill 目錄的版本指紋(算法見 `SKILL.md`「檔案位置」)。
+- 專案進行中如果版本指紋變了,在下一次回報時告訴使用者,由使用者決定是否重跑受影響的單位。
 - 協調者的 context 只留摘要;大量內容(長檔案、原始輸出)交給 subagent 處理。
 
 ## 收攏與審查
