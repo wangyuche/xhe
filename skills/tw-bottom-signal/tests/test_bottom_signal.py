@@ -18,9 +18,12 @@ def check(name, cond):
     print(("PASS " if cond else "FAIL ") + name)
     fails += 0 if cond else 1
 
-# 1. 11/16 收盤:30、60 分 K 都沒有任何訊號(大跌 6% 收最低)
+# 0. 30 分 K 的 13:30 集合競價獨立 K 棒要併進 13:00(否則每天 10 根、KD 偏掉)
 o = run(F30, "30分K")
-check("11/16 30分K 0/4", "HITS 0/4" in o and "K 3.0 / D 6.6" in o)
+check("13:30 併入 13:00", "11/16 13:00 收 41,040.08" in o and "13:30" not in o.splitlines()[0])
+
+# 1. 11/16 收盤:30、60 分 K 都沒有任何訊號(大跌 6% 收最低)
+check("11/16 30分K 0/4", "HITS 0/4" in o and "K 4.6 / D 9.0" in o and "MA20 42,958" in o)
 o = run(F60, "60分K")
 check("11/16 60分K 0/4", "HITS 0/4" in o and "K 8.0 / D 20.3" in o)
 
@@ -39,5 +42,19 @@ check("dmin 0 交叉 11/06 10:00", "11/06 10:00 K25.0 上穿 D18.2" in o and "HI
 # 4. 無未來函數:截到 11/06 10:30 時,11/06 09:00 的低點還沒有右邊 3 根,背離不能成立
 o = run(F60, "60分K", "--asof", "2026-11-06 10:00", "--lookback", "20")
 check("背離需等右邊 3 根確認", "1. D值底部背離: 沒有" in o)
+
+# 5. 30 分 K 背離抓到 11/04 → 11/06 那組低點
+o = run(F30, "30分K", "--asof", "2026-11-06 13:30", "--lookback", "20")
+check("30分K 背離 11/04→11/06", "前低 11/04 12:00 41,856" in o and "後低 11/06 09:00 37,837" in o)
+
+# 6. 抓不到資料時要明確報錯,不是 Python traceback
+import tempfile
+bad = os.path.join(tempfile.gettempdir() if os.access(tempfile.gettempdir(), os.W_OK) else HERE, "bad_fugle.json")
+try:
+    open(bad, "w").write('{"statusCode":401,"message":"Unauthorized"}')
+    r = subprocess.run([sys.executable, "-I", SCRIPT, bad, "30分K"], capture_output=True, text=True)
+    check("資料錯誤訊息", r.returncode != 0 and "資料錯誤" in r.stderr and "Traceback" not in r.stderr)
+finally:
+    if os.path.exists(bad): os.remove(bad)
 
 sys.exit(1 if fails else 0)

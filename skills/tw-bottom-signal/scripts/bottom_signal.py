@@ -20,8 +20,22 @@ asof = opt("--asof"); dmin = float(opt("--dmin", "20")); lookback = int(opt("--l
 src, label = args[0], (args[1] if len(args) > 1 else "")
 W = 3
 
-bars = sorted(json.load(open(src))["data"], key=lambda b: b["date"])
+raw = json.load(open(src))
+if not isinstance(raw, dict) or not raw.get("data"):
+    sys.exit(f"資料錯誤: {src} 沒有 K 棒(Fugle 回應: {str(raw)[:200]})")
+bars = sorted(raw["data"], key=lambda b: b["date"])
 def tstr(b): return b["date"][:16].replace("T", " ")
+# Fugle 30 分 K 會把 13:30 收盤集合競價拆成獨立一根(開高低收同價),一般看盤軟體併在 13:00 那根。
+# 不合併的話每天多一根平線,KD 與 MA20 都會偏掉。
+merged = []
+for b in bars:
+    p = merged[-1] if merged else None
+    if b["date"][11:16] == "13:30" and p and p["date"][:10] == b["date"][:10]:
+        p.update(high=max(p["high"], b["high"]), low=min(p["low"], b["low"]), close=b["close"],
+                 volume=p.get("volume", 0) + b.get("volume", 0))
+    else:
+        merged.append(dict(b))
+bars = merged
 if asof:
     bars = [b for b in bars if tstr(b) <= asof]
 n = len(bars)
@@ -71,7 +85,14 @@ for i in range(1, n):
 last = n - 1
 recent = {s: [e for e in ev[s] if e.get("confirm", e["i"]) > last - lookback] for s in ev}
 name = {1: "D值底部背離", 2: "D≥20 黃金交叉", 3: "突破下降壓力線", 4: "突破 20MA"}
-print(f"【{label}】{t(last)} 收 {C[last]:,.2f}  K {K[last]:.1f} / D {D[last]:.1f}  (看最近 {lookback} 根)")
+# 盤中最後一根還沒走完,訊號可能消失
+import datetime as _dt
+tf = int(raw.get("timeframe", "30") or 30)
+end = _dt.datetime.strptime(tstr(bars[last]), "%Y-%m-%d %H:%M") + _dt.timedelta(minutes=tf)
+now = _dt.datetime.utcnow() + _dt.timedelta(hours=8)
+live = not asof and now < end and tstr(bars[last])[11:] < "13:30"
+print(f"【{label}】{t(last)} 收 {C[last]:,.2f}  K {K[last]:.1f} / D {D[last]:.1f}  (看最近 {lookback} 根)"
+      + ("  ⚠️ 最後一根還沒走完,訊號可能變動" if live else ""))
 for s in (1, 2, 3, 4):
     if recent[s]:
         e = recent[s][-1]; i = e["i"]
