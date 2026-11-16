@@ -1,0 +1,10 @@
+{
+  "kit": "mac-widget-kit",
+  "name": "",
+  "displayName": "",
+  "width": 320,
+  "height": 160,
+  "placement": "desktop",
+  "position": "top-right",
+  "refreshSeconds": 5
+}
