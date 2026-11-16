@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+// 用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...
+// 只用 Node 22 內建 fetch / WebSocket,透過 CDP 控制本機 Google Chrome headless,截整頁。
+// stdout 一行 JSON;HTTP 不是 200 或 consoleErrors > 0 時結束碼 2(仍產生截圖)。
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { readCookieJar, cookieHeader } from './cookiejar.mjs';
+
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
+function usage(msg) {
+  if (msg) console.error(`錯誤:${msg}`);
+  console.error("用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...");
+  process.exit(1);
+}
+
+const args = process.argv.slice(2);
+if (args.length < 4) usage();
+const [url, wStr, hStr, outArg] = args;
+const width = Number(wStr), height = Number(hStr);
+if (!Number.isInteger(width) || !Number.isInteger(height)) usage('寬高必須是整數');
+const out = resolve(outArg);
+let mobile = false; const cookies = []; const headers = {};
+for (let i = 4; i < args.length; i++) {
+  const a = args[i];
+  if (a === '--mobile') mobile = true;
+  else if (a === '--cookie') {
+    const v = args[++i] ?? usage('--cookie 缺值');
+    const eq = v.indexOf('=');
+    if (eq < 1) usage(`--cookie 需要 name=value:${v}`);
+    cookies.push({ name: v.slice(0, eq), value: v.slice(eq + 1) });
+  } else if (a === '--cookie-jar') {
+    const p = args[++i] ?? usage('--cookie-jar 缺值');
+    for (const c of readCookieJar(p)) cookies.push({ name: c.name, value: c.value });
+  } else if (a === '--header') {
+    const v = args[++i] ?? usage('--header 缺值');
+    const c = v.indexOf(':');
+    if (c < 1) usage(`--header 需要 'K: V':${v}`);
+    headers[v.slice(0, c).trim()] = v.slice(c + 1).trim();
+  } else usage(`未知參數:${a}`);
+}
+if (!existsSync(CHROME)) { console.error(`錯誤:找不到 Google Chrome:${CHROME}`); process.exit(1); }
+
+const result = { http: 0, width, height, scrollWidth: null, innerWidth: null, pageHeight: null, consoleErrors: 0, errors: [], out };
+const reqHeaders = { ...headers };
+if (cookies.length) reqHeaders.Cookie = cookieHeader(cookies);
+
+// 1. 先確認 HTTP 狀態
+try {
+  const r = await fetch(url, { headers: reqHeaders, redirect: 'follow' });
+  result.http = r.status;
+} catch (e) {
+  result.errors.push(`fetch: ${e.message}`);
+}
+
+const profile = mkdtempSync(join(tmpdir(), 'web-dev-kit-chrome-'));
+let chrome; let ws;
+const cleanup = () => {
+  try { ws?.close(); } catch {}
+  try { chrome?.kill('SIGKILL'); } catch {}
+  try { rmSync(profile, { recursive: true, force: true }); } catch {}
+};
+const hardTimeout = setTimeout(() => {
+  result.errors.push('timeout: 60 秒內未完成');
+  cleanup(); console.log(JSON.stringify(result)); process.exit(2);
+}, 60000);
+
+try {
+  chrome = spawn(CHROME, [
+    '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    '--no-first-run', '--no-default-browser-check', '--disable-extensions',
+    '--hide-scrollbars', '--mute-audio', 'about:blank',
+  ], { stdio: 'ignore' });
+
+  // 2. 從 DevToolsActivePort 取得 CDP 埠
+  const portFile = join(profile, 'DevToolsActivePort');
+  let port;
+  for (let i = 0; i < 100 && !port; i++) {
+    if (existsSync(portFile)) port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+    if (!port) await new Promise(r => setTimeout(r, 100));
+  }
+  if (!port) throw new Error('Chrome 沒有開出 DevTools 埠');
+
+  const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
+  ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP WebSocket 連線失敗')); });
+
+  let id = 0; const pending = new Map(); const listeners = [];
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { res, rej } = pending.get(msg.id); pending.delete(msg.id);
+      msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
+    } else if (msg.method) listeners.forEach(l => l(msg));
+  };
+  const send = (method, params = {}) => new Promise((res, rej) => {
+    const i = ++id; pending.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params }));
+  });
+
+  // 3. 收集錯誤與網路狀態
+  let inflight = 0; let lastNet = Date.now(); let loaded = false;
+  listeners.push((m) => {
+    switch (m.method) {
+      case 'Runtime.consoleAPICalled':
+        if (m.params.type === 'error') result.errors.push(`console: ${m.params.args.map(a => a.value ?? a.description ?? '').join(' ')}`);
+        break;
+      case 'Runtime.exceptionThrown':
+        result.errors.push(`exception: ${m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text}`);
+        break;
+      case 'Log.entryAdded':
+        // 瀏覽器自動請求的 /favicon.ico 404 不是頁面的錯誤
+        if (m.params.entry.level === 'error' && !/\/favicon\.ico(\?|$)/.test(m.params.entry.url ?? '')) result.errors.push(`log: ${m.params.entry.text} ${m.params.entry.url ?? ''}`.trim());
+        break;
+      case 'Network.requestWillBeSent': inflight++; lastNet = Date.now(); break;
+      case 'Network.loadingFinished': case 'Network.loadingFailed':
+        inflight = Math.max(0, inflight - 1); lastNet = Date.now(); break;
+      case 'Page.loadEventFired': loaded = true; break;
+    }
+  });
+  await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable'); await send('Log.enable');
+
+  const u = new URL(url);
+  for (const c of cookies) await send('Network.setCookie', { name: c.name, value: c.value, domain: u.hostname, path: '/' });
+  if (Object.keys(headers).length) await send('Network.setExtraHTTPHeaders', { headers });
+
+  await send('Emulation.setDeviceMetricsOverride', mobile
+    ? { width, height, deviceScaleFactor: 3, mobile: true }
+    : { width, height, deviceScaleFactor: 1, mobile: false });
+  if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+
+  // 4. 導覽,等 load + 網路閒置 500 ms(上限 15 秒)
+  await send('Page.navigate', { url });
+  const start = Date.now();
+  while (Date.now() - start < 15000) {
+    if (loaded && inflight === 0 && Date.now() - lastNet >= 500) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (!loaded) result.errors.push('load: 15 秒內沒有觸發 load 事件');
+
+  // 5. 先量,再截整頁
+  const m = await send('Runtime.evaluate', {
+    // innerWidth 用版面寬度 clientWidth:手機模擬時內容過寬,瀏覽器會縮小畫面讓 window.innerWidth 變大
+    expression: 'JSON.stringify({sw: document.documentElement.scrollWidth, iw: document.documentElement.clientWidth, ph: document.documentElement.scrollHeight})',
+    returnByValue: true,
+  });
+  const meas = JSON.parse(m.result.value);
+  result.scrollWidth = meas.sw; result.innerWidth = meas.iw; result.pageHeight = meas.ph;
+
+  const metrics = await send('Page.getLayoutMetrics');
+  const cs = metrics.cssContentSize || metrics.contentSize;
+  const shot = await send('Page.captureScreenshot', {
+    format: 'png', captureBeyondViewport: true,
+    clip: { x: 0, y: 0, width: Math.max(width, Math.ceil(cs.width)), height: Math.ceil(cs.height), scale: 1 },
+  });
+  writeFileSync(out, Buffer.from(shot.data, 'base64'));
+} catch (e) {
+  result.errors.push(`shot: ${e.message}`);
+} finally {
+  clearTimeout(hardTimeout);
+  cleanup();
+}
+
+result.consoleErrors = result.errors.filter(e => /^(console|exception|log):/.test(e)).length;
+console.log(JSON.stringify(result));
+const failed = result.http !== 200 || result.consoleErrors > 0 || result.errors.some(e => /^(shot|fetch|timeout):/.test(e));
+process.exit(failed ? 2 : 0);
