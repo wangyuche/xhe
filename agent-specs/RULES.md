@@ -1,0 +1,23 @@
+# 規則表
+
+每條規則成對記錄「規則」與「由什麼強制」。強制方式由強到弱:結構 > 檢查 > 測試 > 僅文字。
+「僅文字」的規則若錯誤再發生,視為重複,下次要升級成更高層的強制方式。
+規則對應的錯誤已經不可能發生時,移除該規則。
+
+## tw-stock-analyst
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 交易時間內先用 `fugle.sh` 抓即時價再下結論;跌破支撐 / 突破壓力寫在結論第一行 | 測試(tests 情境 5)+ 成功標準 1 + 文字(附失敗範例) | 2026-11-16 主 agent 大盤判斷「平盤開出」實際跌 2.9%;同日舊版子 agent 用 Yahoo + mis.twse、跌破 MA20 只寫在最後 |
+| 不用 `mis.twse.com.tw`(不在沙盒允許清單,會跳提示) | 僅文字 | 2026-11-16 舊版子 agent 測試 |
+| 大盤背景必附台指期夜盤實際數字(期交所),不能只看新聞標題 | 測試(tests 情境 1)+ 成功標準 1 + 文字(附失敗範例) | 2026-11-15 主 agent 憑標題估跳空跌 200–400 點;2026-11-16 舊版子 agent 報告無夜盤 |
+| 子 agent 不寫任何檔案、不用 `curl -o` | 文字 + 工具限制(只有 Bash/WebSearch/WebFetch/Read,無 Write/Edit) | 建立時就有;也因此不需要「指令中不要寫 `/dev/null`」的規則(主 agent 11/15 兩次因 `-o /dev/null` 跳提示,子 agent 不可能發生) |
+
+## 待辦(暫緩)
+
+只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。
+
+| 項目 | 發生紀錄 | 再發生時的做法 |
+|---|---|---|
+| 籌碼面段落(三大法人、融資券、借券賣出餘額;要求時加集保大戶) | 2026-11-15 分析 3055 後,使用者另外要求補借券、集保大戶,由主 agent 手動補 | 新增「籌碼面」段落與成功標準;資料來源已驗證可用:FinMind `TaiwanStockInstitutionalInvestorsBuySell`、`TaiwanStockMarginPurchaseShortSale`、`TaiwanDailyShortSaleBalances`(`SBLShortSalesCurrentDayBalance`);集保 `opendata.tdcc.com.tw/getOD.ashx?id=1-5` |
+| PDF 附件要連圖表頁一起讀(Read `pages`) | 2026-11-15 台積電法說會簡報,當時沒裝 poppler,圖表頁讀不到(環境問題,已由使用者安裝 poppler 解決) | 子 agent 漏讀圖表頁時,加進工作流程第 6 步 |
