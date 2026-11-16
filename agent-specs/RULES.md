@@ -31,4 +31,6 @@
 |---|---|---|
 | mac-widget-builder 交叉比對不能用 `python3` | 2026-11-16 主 agent 要求 python3 腳本比對,子 agent 改用 zsh + grep 達成,結果正確 | 再因為不能解析 JSON 而比對失敗時,加入 `python3 -I`(唯讀)或改用 `plutil -extract` |
 | 主 agent 直接改 widget 時沒照 kit 規則(多加 .swift 檔、選單列 13 字) | 2026-11-16 主 agent 加 `Quota.swift`、`✻ 18% · 34.1M`,自行發現後合併並改成 11 字 | 再發生時,在 kit `SKILL.md` 開頭加「主 agent 修改也要跑 `tests` 的骨架 diff 與 menubar-length 檢查」 |
+| 子 agent 執行第 4b 步 `open -n -W --stdout` 得到 `-10810` | 2026-11-16 加 Sessions 時(同一天稍早的重測可以跑);主 agent 在自己的 shell 重跑 4b 通過 | 再發生時,在 4b 加「`-10810` 是執行環境限制:回報指令、狀態不因此判 ISSUES,由主 agent 代跑」 |
+| 測試時反覆跑 `--once` / snapshot,把有限流的外部 API 打到 429 | 2026-11-16 加 Sessions 時,額度 API 被打到 429(Retry-After 216 秒);主 agent 補上 429 退避與沿用舊值 | 再發生時,在工作流程加「外部 API 有限流時,驗證期間 `--once` / snapshot 合計不超過 N 次」,並要求 Provider 處理 429 |
 | PDF 附件要連圖表頁一起讀(Read `pages`) | 2026-11-15 台積電法說會簡報,當時沒裝 poppler,圖表頁讀不到(環境問題,已由使用者安裝 poppler 解決) | 子 agent 漏讀圖表頁時,加進工作流程第 6 步 |
