@@ -63,10 +63,30 @@ enum AppEnv {
         return nil
     }
 
+    /// .app 打包時複製進 Contents/Resources 的 widget.json。
+    /// 專案在外接磁碟(/Volumes/...)時,從 Finder/open 啟動的 app 沒有權限讀專案資料夾,
+    /// 但可以讀自己 bundle 內的檔案,所以優先讀這份。
+    private static var bundledConfig: URL? {
+        Bundle.main.url(forResource: "widget", withExtension: "json")
+    }
+
+    /// 執行期狀態(例如桌面浮窗位置)存放處:~/Library/Application Support/<bundle id>/。
+    /// 不寫在專案資料夾,避免外接磁碟權限問題。
+    static var supportDir: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let id = Bundle.main.bundleIdentifier ?? "com.widget.\(config.name)"
+        let dir = base.appendingPathComponent(id, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     private static func loadConfig() -> (config: WidgetConfig, error: String?) {
-        guard let dir = projectDir else { return (.fallback, "找不到 widget.json") }
+        guard let url = bundledConfig ?? projectDir?.appendingPathComponent("widget.json") else {
+            return (.fallback, "找不到 widget.json")
+        }
         do {
-            let data = try Data(contentsOf: dir.appendingPathComponent("widget.json"))
+            let data = try Data(contentsOf: url)
             return (try JSONDecoder().decode(WidgetConfig.self, from: data), nil)
         } catch {
             return (.fallback, "widget.json 格式錯誤:\(error.localizedDescription)")

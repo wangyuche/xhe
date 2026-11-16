@@ -77,6 +77,10 @@ struct RootView: View {
 /// 讓無邊框視窗可以用滑鼠拖曳。
 final class DraggableHostingView<Content: View>: NSHostingView<Content> {
     override var mouseDownCanMoveWindow: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    // SwiftUI 內容會吃掉 mouseDown,isMovableByWindowBackground 因此無效;
+    // 左鍵按下直接交給視窗拖曳(右鍵選單不受影響)。
+    override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
 }
 
 private struct SavedPosition: Codable {
@@ -152,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window = w
     }
 
-    private var stateURL: URL? { AppEnv.projectDir?.appendingPathComponent("state.json") }
+    private var stateURL: URL? { AppEnv.supportDir?.appendingPathComponent("state.json") }
 
     private func initialOrigin(size: NSSize) -> NSPoint {
         if let url = stateURL,

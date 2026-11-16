@@ -32,6 +32,9 @@ cat > "$APP_PATH/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+# widget.json 放進 bundle:外接磁碟上的專案資料夾,GUI 啟動時可能沒有讀取權限
+mkdir -p "$APP_PATH/Contents/Resources"
+cp "$WIDGET_DIR/widget.json" "$APP_PATH/Contents/Resources/widget.json"
 codesign --force -s - "$APP_PATH" >/dev/null 2>&1 || die "codesign 失敗"
 [ "$warnings" -gt 0 ] && grep ': warning:' "$log" >&2
 echo "編譯成功:$APP_PATH"

@@ -48,7 +48,8 @@ bash <kit>/tests/run.sh                            # 骨架自我測試
 ```
 
 - `placement`:`desktop`(桌面浮窗)/ `menubar`(選單列文字,點擊彈出完整畫面)/ `both`。
-- `position`:`top-right` / `top-left` / `bottom-right` / `bottom-left` / `"x,y"`(距螢幕可視範圍左上角)。拖曳後的位置存在 `state.json`。
+- `position`:`top-right` / `top-left` / `bottom-right` / `bottom-left` / `"x,y"`(距螢幕可視範圍左上角)。拖曳後的位置存在 `~/Library/Application Support/com.widget.<name>/state.json`。
+- `build.sh` 會把 `widget.json` 複製進 `.app/Contents/Resources/`,app 優先讀這份(專案在外接磁碟時,GUI 啟動的 app 沒權限讀專案資料夾),所以**改 widget.json 後要重新 build**。
 - `refreshSeconds`:骨架最低 1 秒;網路 API 請自行設 ≥ 15。
 - `displayName`:`placement` 含 `menubar` 時,錯誤狀態會顯示 `⚠︎ <displayName>`,長度請 ≤ 12。
 

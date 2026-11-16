@@ -11,7 +11,7 @@ bash <skill>/scripts/build.sh <本目錄>
 open <本目錄>/build/<Name>.app
 ```
 
-- 桌面浮窗:拖曳移動(位置存在 `state.json`),右鍵可「重新整理」「結束」。
+- 桌面浮窗:拖曳移動(位置存在 `~/Library/Application Support/com.widget.<name>/state.json`),右鍵可「重新整理」「結束」。
 - 選單列:點一下開啟完整畫面,右鍵可「重新整理」「結束」。
 
 ## 開機自動啟動

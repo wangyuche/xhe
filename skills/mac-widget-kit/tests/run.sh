@@ -75,10 +75,14 @@ WIDGET_FORCE_ERROR=1 bash "$S/snapshot.sh" "$D" >/dev/null 2>&1; rc=$?
 # 錯誤模擬環境變數
 if WIDGET_FORCE_ERROR=1 "$BIN" --once >/dev/null 2>&1; then ng "WIDGET_FORCE_ERROR=1 時 --once 要失敗"; else ok "WIDGET_FORCE_ERROR=1 時 --once 失敗"; fi
 
-# 找不到 widget.json:改名後 --once 要失敗並說明原因
-mv "$D/widget.json" "$D/widget.json.bak"
+# widget.json 有打包進 bundle(外接磁碟上 GUI 啟動讀不到專案資料夾)
+RES="$(dirname "$BIN")/../Resources/widget.json"
+cmp -s "$RES" "$D/widget.json" && ok "widget.json 已打包進 bundle" || ng "widget.json 未打包進 bundle" "$RES"
+
+# 找不到 widget.json:專案與 bundle 內都改名後 --once 要失敗並說明原因
+mv "$D/widget.json" "$D/widget.json.bak"; mv "$RES" "$RES.bak"
 msg="$("$BIN" --once 2>&1)"; rc=$?
-mv "$D/widget.json.bak" "$D/widget.json"
+mv "$D/widget.json.bak" "$D/widget.json"; mv "$RES.bak" "$RES"
 [ $rc -ne 0 ] && grep -q '找不到 widget.json' <<<"$msg" && ok "找不到 widget.json 時 --once 失敗" || ng "找不到 widget.json" "rc=$rc $msg"
 
 echo "----"
