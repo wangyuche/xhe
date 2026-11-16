@@ -4,7 +4,7 @@
 Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容(任何內容)交給它,它用 SwiftUI + AppKit 寫成一個貼在桌面層的無邊框小視窗、上方選單列項目,或兩者都有的 app,只用 Command Line Tools(`swiftc`)編譯,不需要 Xcode,並實際編譯、取資料、產生預覽圖來驗證。
 
 ## 技術選擇(已與使用者確認,2026-11-16)
-- 採「SwiftUI 桌面浮窗」:`NSWindow` 無邊框、透明背景、不出現在 Dock(`LSUIElement`)、所有桌面空間都顯示、可拖曳,位置存在專案目錄的 `state.json`(不用 UserDefaults)。視窗層級用「桌面圖示層 + 1」(`kCGDesktopIconWindowLevel + 1`):在 Finder 桌面圖示之上、一般視窗之下,才點得到、拖得動。
+- 採「SwiftUI 桌面浮窗」:`NSWindow` 無邊框、透明背景、不出現在 Dock(`LSUIElement`)、所有桌面空間都顯示、可拖曳,位置存在 `~/Library/Application Support/com.widget.<name>/state.json`(不用 UserDefaults;不放專案目錄,因為專案在外接磁碟時 GUI 啟動的 app 沒權限寫)。視窗層級用「桌面圖示層 + 1」(`kCGDesktopIconWindowLevel + 1`):在 Finder 桌面圖示之上、一般視窗之下,才點得到、拖得動。
 - 選單列(使用者 2026-11-16 追加):`NSStatusItem` 顯示一段短文字(例如「CPU 12%」),點擊彈出 `NSPopover`,內容是同一個 widget 畫面。每個 widget 在 `widget.json` 的 `placement` 選 `desktop` / `menubar` / `both`。
 - 桌面浮窗與選單列都提供右鍵 / 選單「重新整理」「結束」。
 - 不用 WidgetKit(需要 Xcode,本機只有 Command Line Tools,且更新頻率受限)。不用 Übersicht 等第三方 app。
@@ -28,7 +28,7 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 - 不安裝 Xcode、Homebrew 套件或任何第三方 app。
 - 不安裝開機自動啟動:派工提示含「使用者已確認安裝開機啟動」時才執行 `install-agent.sh`,否則只在回報中附安裝指令。
 - 不編造資料:取不到資料時 widget 顯示「無資料」與原因,不能顯示假數字或範例數字;`--once` 失敗就如實回報。
-- 金鑰不寫死在原始碼。widget 執行時一律從 `~/.config/<name>/credentials.json` 讀(用 `open` 或 LaunchAgent 啟動的 app 不會繼承 shell 環境變數);環境變數只作為 `--once` 測試時的覆寫。agent 只讀不寫 `~/.config/<name>/`,檔案要由使用者自己建立,格式寫在 README。
+- 金鑰不寫死在原始碼。widget 執行時一律從 `~/.config/<name>/credentials.json` 讀(用 `open` 或 LaunchAgent 啟動的 app 不會繼承 shell 環境變數);環境變數只作為 `--once` 測試時的覆寫。例外:使用者同意讀取某個鑰匙圈項目(例如 Claude Code 的 OAuth 憑證)時,經 `/usr/bin/security` 讀,只在記憶體、不寫檔、不輸出(2026-11-16 加入)。agent 只讀不寫 `~/.config/<name>/`,檔案要由使用者自己建立,格式寫在 README。
 
 ## 觸發時機
 使用者想在 Mac 桌面上放一個常駐的小資訊面板,例如「做一個顯示 CPU 和記憶體的桌面 widget」「我想在桌面看到 2330 即時股價」「做一個倒數計時到某日期的 widget」「在選單列顯示 CPU 使用率」「幫我把這個 widget 改成深色、每 30 秒更新」。
@@ -38,7 +38,7 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 ## 輸入
 - 必要:想顯示什麼。
 - 選填:顯示位置(`desktop` / `menubar` / `both`)、資料來源、更新頻率、尺寸、位置(左上 / 右上 / 左下 / 右下 / 座標)、外觀、widget 名稱、存放目錄。
-- 同意旗標(寫在派工提示):「使用者已同意啟動」「使用者已確認安裝開機啟動」。沒寫就視為不同意。
+- 同意旗標(寫在派工提示):「使用者已同意啟動」「使用者已確認安裝開機啟動」「使用者已同意讀取鑰匙圈項目「<服務名稱>」」。沒寫就視為不同意。
 - 修改既有 widget 時:widget 專案路徑。
 
 預設值(沒指定時直接採用,並在回報「設定」行寫出):
@@ -85,8 +85,8 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 3. `snapshot.sh` 產生 `build/snapshot.png`,`sips -g pixelWidth -g pixelHeight` 的尺寸等於設定尺寸 × 2。`--snapshot` 自己取一次真實資料(不能用範例資料),並把該次資料印到 stdout,回報附上。agent 已 Read 並在回報描述畫面。`placement` 含 `menubar` 時,stdout 另有一行 `menubar: <文字>`,冒號後的文字非空、`String.count` ≤ 12,回報附上;錯誤預覽時這行為 `menubar: ⚠︎ <displayName>`(`displayName` ≤ 12,所以錯誤文字 ≤ 14)。`placement` 為 `desktop` 時不得有這行。`snapshot.sh` 另印 `menubar-length: <字數>` 供檢查;一般預覽取資料失敗時結束碼為 3(圖上是錯誤畫面,不算通過)。
 4. `snapshot.sh --error` 產生 `build/snapshot-error.png`(骨架以 `WIDGET_FORCE_ERROR=1` 讓 Provider 拋錯),agent 已 Read 並確認畫面有「無資料」與原因。
 5. 只有 4 個可改檔案與 `build/` 有變動:`diff -r <skill>/template <dir>` 排除這 4 個檔、`build/`、`state.json` 後無差異;skill 目錄未被修改。
-6. agent 以 Write / Edit / skill 腳本寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `<dir>/state.json` 和 `<dir>/build/`。例外:`swiftc` 的編譯快取(`$TMPDIR`、`~/Library/Caches`),以及使用者確認後的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
-7. `grep -iE 'token|apikey|api_key|secret|password' <dir>/*.swift` 的結果只出現在讀取 `credentials.json` 或環境變數的程式。
+6. agent 以 Write / Edit / skill 腳本寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `<dir>/build/` 和 `~/Library/Application Support/com.widget.<name>/state.json`。例外:`swiftc` 的編譯快取(`$TMPDIR`、`~/Library/Caches`),以及使用者確認後的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
+7. `grep -iE 'token|apikey|api_key|secret|password' <dir>/*.swift` 的結果只出現在讀取 `credentials.json`、環境變數或(有旗標時)鑰匙圈的程式,以及非秘密的欄位名稱(例如 `input_tokens`)。
 8. 回報格式符合「輸出」,狀態與證據一致。
 9. `<app>/Contents/MacOS/<Name> --self-check` 結束碼為 0:實際建立視窗和 / 或選單列項目,等第一次取資料完成後印出 `placement`、`window: level=<數字>`(desktop / both)、`statusItem: <文字>`(menubar / both)再結束;不需要螢幕錄影權限。`--self-check` 不算「啟動」,不需要同意旗標:視窗 `alphaValue = 0` 不會被看見、不寫 `state.json`,選單列項目只存在一瞬間。第一次取資料失敗時仍印出 `statusItem: ⚠︎ <displayName>`,結束碼為 0(這條只檢查 UI 結構,資料正確性由第 2 條負責)。輸出要和 `placement` 一致,視窗層級等於 `kCGDesktopIconWindowLevel + 1`。
 
