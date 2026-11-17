@@ -11,6 +11,7 @@
 | `stack-react` | React 元件與 Vitest 測試規則 |
 | `stack-nextjs` | Next.js 16 前端規則與骨架(轉發、契約型別、Prism mock、Playwright) |
 | `stack-go` | Go 後端規則與骨架(路由表、OpenAPI 3.0.3 契約測試、goose migration) |
+| `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成、規格驗證(short-video-maker 使用) |
 
 ## Agents
 
@@ -24,6 +25,7 @@
 | `frontend-owner` | 網站前端(React / Next.js):依驗收情境實作與測試、截圖驗證 |
 | `backend-owner` | 網站後端(Go):實作、維護 OpenAPI 契約、httptest 與 curl 驗證;有「僅契約」模式 |
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
+| `short-video-maker` | 短影音:GitHub repo 或影片 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓),旁白與字幕,實際驗證規格與響度 |
 
 安裝(全域連結,在倉庫根目錄執行):
 
@@ -48,6 +50,20 @@ for k in web-dev-kit stack-react stack-nextjs stack-go; do ln -s "$(pwd)/skills/
 需要 Node.js ≥ 24.18、Go ≥ 1.26(`brew install node go`)、Google Chrome;PostgreSQL 選用 Docker。流程:acceptance-designer 起草情境 → 使用者回答待決問題 → (平行時先 backend-owner「模式:僅契約」)→ frontend-owner / backend-owner 各在獨立 worktree 實作 → 主 agent commit 到 `agent/<agent>/<task>` 分支 → 單位 verifier → 合併到整合分支 → integration-verifier PASS → 主 agent 開 MR / PR 並以驗證過的 SHA 合併(GitLab:`glab mr merge <MR> --sha <SHA>`,SHA 不符會被拒絕;沒有遠端時本地合併);刪分支、force-push、部署仍先問使用者。GitLab:建一個專用機器人使用者(例如 `claude-bot`,Regular、非 admin),以 Developer 加入網站專案或 group,用它的 Personal Access Token(scopes 只有 `api` + `write_repository`)執行 `glab auth login`;一個 glab 登入即可跨專案。各專案 `main` 設為 No one 可 push、Developers + Maintainers 可 merge。自我測試:`bash skills/web-dev-kit/tests/run.sh`、`bash skills/stack-go/tests/run.sh`、`bash skills/stack-nextjs/tests/run.sh`。
 
 `mac-widget-builder` 預設把 widget 寫到 `~/Widgets/<名稱>/`(倉庫外),需要在 host 核准寫入;各 widget 的資料來源網域也要核准。骨架自我測試:`bash skills/mac-widget-kit/tests/run.sh`。
+
+短影音(`short-video-maker` 用 `short-video-kit`,錄網頁時另用 `web-dev-kit`):
+
+```bash
+ln -s "$(pwd)/agents/short-video-maker.md" ~/.claude/agents/short-video-maker.md
+ln -s "$(pwd)/skills/short-video-kit" ~/.claude/skills/short-video-kit
+brew install ffmpeg                       # 必要
+brew install whisper-cpp                  # 影片模式(轉文字)才需要,另需模型檔:
+mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+brew install yt-dlp                       # 選用:影片網址輸入
+```
+
+成品預設寫到 `~/Movies/Shorts/<日期>-<名稱>/`(倉庫外),需要在 host 核准寫入。自我測試:`bash skills/short-video-kit/tests/run.sh`(SKIP 不算通過)。
 
 ## 安裝 skill(全域連結)
 

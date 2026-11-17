@@ -29,6 +29,15 @@
 | 桌面浮窗左鍵按下直接 `performDrag` | 結構(kit `DraggableHostingView.mouseDown`) | 2026-11-16 使用者回報拖不動(SwiftUI 吃掉 mouseDown,`isMovableByWindowBackground` 無效) |
 | 讀其他 app 的鑰匙圈憑證要有旗標「使用者已同意讀取鑰匙圈項目「<服務>」」;經 `/usr/bin/security`,不輸出、不寫檔 | 旗標 + 測試(tests 情境 6、6b)+ 成功標準 7 | 2026-11-16 使用者同意讀 Claude Code OAuth 憑證,子 agent 無對應旗標而 BLOCKED,主 agent 自行完成。只發生 1 次,**使用者 2026-11-16 指示直接改進** |
 
+## short-video-maker
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 未 commit 檔案指紋要在 repo 根目錄算:`(cd <repo> && git ls-files -m -o --exclude-standard -z \| xargs -0 shasum \| shasum)` | 文字(agent 第 0 步)+ 說明空雜湊 `da39a3ee…` 的意義 | 2026-11-17 測試時在 repo 外執行,得到空輸入雜湊,比對永遠一致 |
+| 本機 repo clone 用 `file://` | 文字 | 2026-11-17 `--depth is ignored in local clones` |
+| repo-cards 封面不疊標題卡 | 結構(render.mjs `cover` 可不放圖片)+ 文字 | 2026-11-17 封面兩層標題 |
+| 字幕先試單行、兩行優先在標點斷、連字號不斷 | 結構(render.mjs)+ 測試 | 2026-11-17 「web-dev-/kit」「按新/增」 |
+
 ## 待辦(暫緩)
 
 只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。
