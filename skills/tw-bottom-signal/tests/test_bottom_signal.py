@@ -60,6 +60,21 @@ o = run(F30, F60, "--asof", "2026-11-09 13:30", "--svg", svg)
 check("STAGE 5 畫圖", "SVG" in o and os.path.exists(svg) and "60分K STAGE 4/5" in open(svg).read())
 if os.path.exists(svg): os.remove(svg)
 
+# 6b. 11/18:背離低點那根(10:00)同時黃金交叉也算 → STAGE 3;並列出水平壓力線、前波高點(Gg 2026-11-18)
+F30b = os.path.join(HERE, "fixtures", "ix0001_30m_to_20261118.json")
+F60b = os.path.join(HERE, "fixtures", "ix0001_60m_to_20261118.json")
+o = run(F30b, F60b, "--asof", "2026-11-18 11:30")
+p30 = o.split("⑥")[0]
+check("11/18 背離 11/17→11/18", "前低 11/17 09:00 39,786(D10.4)→ 後低 11/18 10:00 39,261(D25.8)" in p30)
+check("11/18 低點那根交叉算 ③", "③ 黃金交叉 D<50: 有 ✅ 11/18 10:00 K27.8 上穿 D25.8" in p30 and "STAGE 3/5" in p30)
+check("11/18 水平壓力線 40,938", "水平壓力線(最近反彈高點): 11/18 09:00 40,938" in p30)
+check("11/18 前波高點 44,525", "前波高點(10 日內最高): 11/12 10:00 44,525" in p30)
+svg2 = os.path.join(TMP, "bs_test2.svg")
+o = run(F30b, F60b, "--asof", "2026-11-18 11:30", "--svg", svg2)
+s = open(svg2).read() if os.path.exists(svg2) else ""
+check("11/18 圖有兩條水平線", "前波高點 44,525" in s and "水平壓力 40,938" in s)
+if os.path.exists(svg2): os.remove(svg2)
+
 # 7. 抓不到資料時要明確報錯
 bad = os.path.join(TMP, "bad_fugle.json")
 try:
