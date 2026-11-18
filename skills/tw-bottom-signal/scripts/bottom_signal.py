@@ -93,11 +93,11 @@ class Series:
                 if a < w0: break
                 if D[a] < 20 and L[b] < L[a] and D[b] > D[a] and D[b] < 30:
                     st[2] = {"a": a, "i": b, "confirm": b + W}; break
-        # ③ 黃金交叉
+        # ③ 黃金交叉(背離低點那根本身的交叉也算,Gg 2026-11-18)
         st[3] = None
         if st[2]:
             b = st[2]["i"]
-            for i in range(b+1, last+1):
+            for i in range(b, last+1):
                 if K[i-1] <= D[i-1] and K[i] > D[i] and D[i] < 50:
                     st[3] = {"i": i}; break
         # ④ 20MA(當下這根)
@@ -119,6 +119,16 @@ class Series:
                     else:
                         self.line_info = {"a": a2, "b": b2, "line": ln(last)}
                     break
+            # 參考價位(Gg 2026-11-18,只畫線、不算步驟):
+            #  水平壓力線 = 背離低點之前最近一個確認波段高點
+            #  前波高點   = 背離低點之前 10 個交易日內的最高價
+            if hs:
+                self.flat_res = {"i": hs[-1], "price": H[hs[-1]]}
+            dts = sorted({bb["date"][:10] for bb in self.bars[:b]})[-10:]
+            if dts:
+                p0 = next(i for i, bb in enumerate(self.bars) if bb["date"][:10] >= dts[0])
+                pk = max(range(p0, b), key=lambda i: H[i])
+                self.prior_high = {"i": pk, "price": H[pk]}
         stage = 0
         for s in (1, 2, 3):
             if st[s]: stage = s
@@ -155,6 +165,9 @@ def report(S, r, label):
         elif getattr(S, "line_info", None):
             e = S.line_info; out.append(f"⑤ 突破下降壓力線: 沒有 ❌ 當下收 {C[last]:,.0f},線 {e['line']:,.0f}(差 {C[last]-e['line']:+,.0f})")
         else: out.append("⑤ 突破下降壓力線: 沒有 ❌(背離前找不到兩個下降的波段高點)")
+        for key, nm in (("flat_res", "水平壓力線(最近反彈高點)"), ("prior_high", "前波高點(10 日內最高)")):
+            v = getattr(S, key, None)
+            if v: out.append(f"　參考 {nm}: {t(v['i'])} {v['price']:,.0f}(當下收差 {C[last]-v['price']:+,.0f})")
     out.append(f"STAGE {r['stage']}/5")
     return "\n".join(out)
 
@@ -172,12 +185,13 @@ if len(args) > 1:
     else:
         print(f"⑥ 60 分 K 確認: ⏸ 30 分 K 還沒走到黃金交叉,先不看(參考:60 分 K 目前 STAGE {r60['stage']}/5)")
 
-# 圖:30 分 K 走到 ② 背離以上才畫
+# 圖:30 分 K 走到 ② 背離以上才畫(走到 ③ 黃金交叉時另加前波高點、水平壓力線)
 if svg and r30["stage"] >= 2:
     S, st = S30, r30["steps"]
     n, last = S.n, S.last
     O, H, L, C, K, D, MA, t = S.O, S.H, S.L, S.C, S.K, S.D, S.MA, S.t
-    i0 = max(0, min(S.w0, st[2]["a"]) - 5); N = n - i0 + 2
+    ph = getattr(S, "prior_high", None); fr = getattr(S, "flat_res", None)
+    i0 = max(0, min(S.w0, st[2]["a"], ph["i"] if ph else n) - 5); N = n - i0 + 2
     Wd, Ht = 1200, 1200; Lm, Rm, T = 110, 40, 150
     P1b, P2t, P2b = 680, 885, 1120          # 價格 T..P1b;圖例 P1b..P2t;KD P2t..P2b
     lo = min(L[i0:]); hi = max(H[i0:]); pad = (hi-lo)*0.06; lo -= pad; hi += pad
@@ -219,6 +233,13 @@ if svg and r30["stage"] >= 2:
         o.append(f'<rect x="{X(i)-cw/2:.1f}" y="{yt:.1f}" width="{cw:.1f}" height="{max(yb-yt, 1.5):.1f}" fill="{col}"/>')
     for arr, colr in ((K, "#2b6cb0"), (D, "#e08a1e")):
         o.append('<path d="' + " ".join(f'{"M" if j == 0 else "L"}{X(i):.1f},{YK(arr[i]):.1f}' for j, i in enumerate(range(i0, n))) + f'" fill="none" stroke="{colr}" stroke-width="2.2"/>')
+    # 水平參考線:前波高點、水平壓力線(從該高點畫到最右邊,標籤在線上方靠右)
+    for v, colr, nm in ((ph, "#9b2c2c", "前波高點"), (fr, "#0e7490", "水平壓力")):
+        if v and v["i"] >= i0:
+            y = Y(v["price"])
+            o.append(f'<line x1="{X(v["i"]):.1f}" x2="{Wd-Rm}" y1="{y:.1f}" y2="{y:.1f}" stroke="{colr}" stroke-width="2.5" stroke-dasharray="12 6"/>')
+            o.append(f'<circle cx="{X(v["i"]):.1f}" cy="{y:.1f}" r="7" fill="none" stroke="{colr}" stroke-width="2.5"/>')
+            o.append(f'<text x="{Wd-Rm-6}" y="{y-8:.1f}" {f} font-size="21" font-weight="600" fill="{colr}" text-anchor="end">{nm} {v["price"]:,.0f}</text>')
     def badge(x, y, num, colr):
         o.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="17" fill="{colr}"/>')
         o.append(f'<text x="{x:.1f}" y="{y+8:.1f}" {f} font-size="22" font-weight="700" fill="#fff" text-anchor="middle">{num}</text>')
