@@ -32,6 +32,8 @@ ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=1920x1080:r=30:d=1
   -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest land.mp4
 ffmpeg -hide_banner -loglevel error -y -display_rotation 90 -i land.mp4 -c copy rot.mp4
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=1280x720:r=25:d=3 -c:v libx264 -an bad.mp4
+# 桌面 App 錄影的比例(2026-11-18 craft-anything 第二版的素材 1000×1400)
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=1000x1400:r=30:d=4 -c:v libx264 -pix_fmt yuv420p -an app.mp4
 
 # 1. check.sh
 out="$(bash "$S/check.sh")"; [ $? -eq 0 ] && echo "$out" | grep -q all-ok && ok "check.sh 基本工具齊全" || bad "check.sh" "$out"
@@ -124,8 +126,28 @@ tts.forEach((x,i)=>{const s=i===0?0.3:t+0.25,e=s+x.duration;if(Math.abs(srt[i].a
 process.exit(ok?0:1)' "$tts" && ok "SRT 時間 = tts 長度公式(0.3 起、間隔 0.25)" || bad "SRT 公式" "$(cat job/1/subtitles.srt)"
 echo '{"cards":[{"type":"cover","file":"cover.png","image":"first-frame.png","title":"封面"}]}' > job/work/1/c.json
 node "$S/render.mjs" job/work/1/c.json job/1 --asset-root job/work/1 >/dev/null
-v="$(bash "$S/verify.sh" job/1/final.mp4 job/1/checks --boxes job/work/1/subtitles/boxes.json --cover job/1/cover.png)"; rc=$?
-[ $rc -eq 0 ] && [ "$(ls job/1/checks | wc -l | tr -d ' ')" = 5 ] && ok "verify.sh 旁白成品通過、5 張擷圖" || bad "verify.sh 旁白成品" "$v"
+v="$(bash "$S/verify.sh" job/1/final.mp4 job/1/checks --boxes job/work/1/subtitles/boxes.json --cover job/1/cover.png --scenes job/work/1/scenes.json)"; rc=$?
+[ $rc -eq 0 ] && [ "$(ls job/1/checks | wc -l | tr -d ' ')" = 9 ] && [ "$(jget "$v" sceneChecks | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).length)')" = 4 ] \
+  && ok "verify.sh 旁白成品通過、5 張 + 每個鏡頭中點與結尾各 1 張" || bad "verify.sh 旁白成品" "$v"
+bash "$S/verify.sh" job/1/final.mp4 chk3 --boxes job/work/1/subtitles/boxes.json --cover job/1/cover.png >/dev/null 2>&1; [ $? -ne 0 ] && ok "verify.sh 沒給 --scenes → 失敗" || bad "verify.sh 缺 --scenes"
+echo '[{"start":0,"end":1}]' > short-scenes.json
+v="$(bash "$S/verify.sh" job/1/final.mp4 chk4 --boxes job/work/1/subtitles/boxes.json --cover job/1/cover.png --scenes short-scenes.json)"; rc=$?
+[ $rc -eq 1 ] && echo "$v" | grep -q '鏡頭表 gap' && ok "verify.sh 鏡頭表沒涵蓋整支 → 失敗" || bad "verify.sh 鏡頭表不符" "$v"
+[ "$(jget "$c" scenes.1.layout)" = top ] && [ "$(jget "$c" scenes.1.uiBottom)" -le 1280 ] && ok "橫式錄影鏡頭置頂、下緣 ≤ 1280(不被 fit 裁切)" || bad "橫式鏡頭置頂" "$c"
+
+# 7b. 置頂鏡頭:第二版的設定(1000×1400 錄影、整支 fit crop、沒有 region)要被擋;設 region 後 UI 在字幕區上方
+node -e '
+const fs=require("fs");const n=JSON.parse(process.argv[1]).map((x,i)=>({...x,file:"../work/1/"+require("path").basename(x.file)}));
+const mk=(sc,extra={})=>JSON.stringify({mode:"narration",work:"../work/1",narration:n,fit:"crop",...extra,scenes:sc});
+fs.writeFileSync("job/1/v2.json",mk([{video:"../../app.mp4",sentences:[0]},{video:"../../app.mp4",in:1,sentences:[1]}]));
+fs.writeFileSync("job/1/v3.json",mk([{video:"../../app.mp4",region:[250,40,745,830],sentences:[0]},{video:"../../app.mp4",in:1,region:[335,40,665,700],sentences:[1]}],{out:"v3"}));
+fs.writeFileSync("job/1/bad-region.json",mk([{video:"../../app.mp4",region:[500,0,600,700],sentences:[0,1]}]));' "$tts"
+e="$(node "$S/compose.mjs" job/1/v2.json --dry-run 2>&1)"; [ $? -eq 6 ] && echo "$e" | grep -q 'region' && ok "第二版設定(高錄影、沒有 region)→ 結束碼 6,提示設 region" || bad "第二版設定沒被擋" "$e"
+node "$S/compose.mjs" job/1/bad-region.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "region 超出來源 → 結束碼 2" || bad "region 超出來源"
+c3="$(node "$S/compose.mjs" job/1/v3.json)"; rc=$?
+px() { ffmpeg -hide_banner -loglevel error -i "$1" -vf "crop=1:1:$2:$3,format=rgb24" -f rawvideo - | od -An -tu1 | tr -s ' ' | sed 's/^ //'; }
+[ $rc -eq 0 ] && [ "$(jget "$c3" scenes.0.uiBottom)" -le 1280 ] && [ "$(jget "$c3" scenes.1.uiBottom)" -le 1280 ] && node -e 'const p=process.argv[1].trim().split(" ").map(Number);process.exit([11,18,32].every((v,i)=>Math.abs(p[i]-v)<=4)?0:1)' "$(px job/work/1/first-frame.png 540 1500)" \
+  && ok "設 region 後置頂:UI 下緣 ≤ 1280、字幕區是底色" || bad "置頂鏡頭" "$c3 px=$(px job/work/1/first-frame.png 540 1500)"
 
 # 8. compose.mjs 原聲精簡(cut 用 silence.sh 輸出)+ 拆句比例
 mkdir -p job/2
@@ -148,9 +170,9 @@ ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i l.txt -c copy long.m
 echo '{"mode":"original","work":"w3","source":"long.mp4"}' > long-tl.json
 node "$S/compose.mjs" long-tl.json --dry-run >/dev/null 2>&1; [ $? -eq 5 ] && ok "compose.mjs 超過 60 秒 → 結束碼 5" || bad "compose.mjs 超過 60 秒"
 echo '[]' > nb.json
-v="$(bash "$S/verify.sh" bad.mp4 badchk --boxes nb.json --cover job/1/cover.png)"; rc=$?
+v="$(bash "$S/verify.sh" bad.mp4 badchk --boxes nb.json --cover job/1/cover.png --scenes job/work/1/scenes.json)"; rc=$?
 [ $rc -eq 1 ] && echo "$v" | grep -q '解析度 1280x720' && ok "verify.sh 錯誤規格 → 失敗" || bad "verify.sh 錯誤規格" "$v"
-bash "$S/verify.sh" job/1/final.mp4 chk2 --boxes nope.json --cover job/1/cover.png >/dev/null; [ $? -eq 1 ] && ok "verify.sh 找不到 boxes.json → 失敗" || bad "verify.sh 缺 boxes"
+bash "$S/verify.sh" job/1/final.mp4 chk2 --boxes nope.json --cover job/1/cover.png --scenes job/work/1/scenes.json >/dev/null; [ $? -eq 1 ] && ok "verify.sh 找不到 boxes.json → 失敗" || bad "verify.sh 缺 boxes"
 
 # 10. transcribe.sh(需要 whisper-cli 與模型)
 if bash "$S/check.sh" --video >/dev/null 2>&1; then

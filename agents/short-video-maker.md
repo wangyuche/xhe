@@ -23,7 +23,7 @@ skills:
 | `video-highlight` | 影片輸入的預設;挑 1–3 段 |
 | `video-condense` | 派工指定「整支精簡 / 去停頓」 |
 
-其他預設(回報「設定」行要寫出):輸出 `<out>` = `~/Movies/Shorts/`;聲音 `Meijia`、語速 190;橫式畫面 `fit: blur`(派工說裁切才 `crop`);沒有背景音樂;精華數量依內容決定(最多 3)。
+其他預設(回報「設定」行要寫出):輸出 `<out>` = `~/Movies/Shorts/`;聲音 `Meijia`、語速 190;原聲模式的橫式畫面 `fit: blur`(派工說裁切才 `crop`);旁白模式的橫式錄影鏡頭由 compose 置頂,用 `region` 放大;沒有背景音樂;精華數量依內容決定(最多 3)。
 
 ## 目錄
 
@@ -53,8 +53,8 @@ skills:
    2. 讀 README、套件檔(package.json、go.mod、pyproject…)、主要原始碼，挑亮點 ≤ 3 個，每個亮點記下對應的檔案路徑或 README 段落。不要讀、不要顯示 `.env*`、`*secret*`、`*credential*`、`*.pem`、`*.key`。
    3. 寫 `<job>/work/1/sentences.txt`:鉤子(前 3 秒一句話)→ 亮點 → 結尾(repo 網址念成「去 GitHub 搜尋 <名稱>」)。每行一句、≤ 20 字。`bash <kit>/scripts/tts.sh <句子檔> <job>/work/1/tts > <job>/work/1/tts.json`;stderr 的總長 > 55 秒就刪句重跑。
    4. `repo-cards`:寫 `work/1/cards.json`(title、point、code、end;code 最多 15 行;圖片只用 repo 內的本機圖，路徑相對 repo 根目錄，遠端 badge / CDN 圖不用),`node <kit>/scripts/render.mjs work/1/cards.json work/1/cards --asset-root <repo 目錄>`。
-   5. `repo-record`:在 `work/repo` 照 README 安裝(套件管理器 install / build),`bash <wdk>/scripts/serve.sh <slug> <job>/work/repo <埠> -- <啟動指令>` 背景啟動，寫 `work/1/actions-<k>.json`,`node <kit>/scripts/record-web.mjs <url> <actions> work/1/rec-<k>.mp4` 錄每個鏡頭(輸出的 `marks` 是每個動作開始的秒數,鏡頭的 `in` 依它對齊旁白要講的動作;同一支錄影可以切成多個鏡頭);錄完 `bash <wdk>/scripts/stop.sh <slug>`。標題卡與結尾卡仍用 render.mjs。安裝、啟動或錄影失敗 → 停服務，改走 `repo-cards`,回報寫原因與失敗輸出的最後幾行。
-   6. 寫 `<job>/1/timeline.json`(`mode: narration`,`narration` 貼 tts.json 原樣,`scenes` 依句子分配卡片 / 錄影)。
+   5. `repo-record`:在 `work/repo` 照 README 安裝(套件管理器 install / build),`bash <wdk>/scripts/serve.sh <slug> <job>/work/repo <埠> -- <啟動指令>` 背景啟動，寫 `work/1/actions-<k>.json`,`node <kit>/scripts/record-web.mjs <url> <actions> work/1/rec-<k>.mp4` 錄每個鏡頭(輸出的 `marks` 是每個動作開始的秒數,鏡頭的 `in` 依它對齊旁白要講的動作;同一支錄影可以切成多個鏡頭);錄完 `bash <wdk>/scripts/stop.sh <slug>`。標題卡與結尾卡仍用 render.mjs。派工附已錄好的素材時，直接當錄影鏡頭用(不執行 repo)。安裝、啟動或錄影失敗 → 停服務，改走 `repo-cards`,回報寫原因與失敗輸出的最後幾行。
+   6. 寫 `<job>/1/timeline.json`(`mode: narration`,`narration` 貼 tts.json 原樣,`scenes` 依句子分配卡片 / 錄影)。橫式錄影鏡頭每個都設 `region`:框住該鏡頭旁白講到的所有元素(先擷圖量座標);compose 結束碼 6 就縮小 `region` 或拆鏡頭。
 
    完成條件:timeline 的 sentences 依序涵蓋每一句;每個亮點都有 repo 路徑。
 
@@ -78,8 +78,8 @@ skills:
       - 影片模式、`repo-record`:`{"cards":[{"type":"cover","file":"cover.png","image":"first-frame.png","title":"…"}]}`(第一個鏡頭是標題卡時，改用下面的漸層封面)。
       - `repo-cards`(或第一個鏡頭是標題卡):不放 image(第一格是標題卡，疊上去會有兩層標題):`{"cards":[{"type":"cover","file":"cover.png","tag":"<repo 名稱>","title":"…"}]}`。
       - 封面標題 ≤ 12 字，避免折行後剩一個字。
-   3. `bash <kit>/scripts/verify.sh <job>/<n>/final.mp4 <job>/<n>/checks --boxes <job>/work/<n>/subtitles/boxes.json --cover <job>/<n>/cover.png`。不過就修正後重跑，最多 3 次。
-   4. Read `checks/` 的 5 張圖與 `cover.png`,逐張確認：畫面正確、字幕可讀、沒有錯字、沒有被裁切。
+   3. `bash <kit>/scripts/verify.sh <job>/<n>/final.mp4 <job>/<n>/checks --boxes <job>/work/<n>/subtitles/boxes.json --cover <job>/<n>/cover.png --scenes <job>/work/<n>/scenes.json`。不過就修正後重跑，最多 3 次。
+   4. Read `checks/` 的 5 張圖、每個鏡頭的 `scene-NN-mid/end.png` 與 `cover.png`,逐張確認：畫面正確、字幕可讀、沒有錯字。**旁白講到的元素被切掉或被字幕蓋住 → 改 `region` 重做，不能只寫進已知限制然後判 PASS**(失敗範例:2026-11-18 craft-anything 第二版右側欄被切，寫在已知限制仍回 PASS)。
    5. 寫 `<job>/<n>/script.md`,內容依模式:
       - 都要有：旁白句(或字幕句)、鏡頭清單。
       - repo:亮點對應的路徑，以及 clone 的 commit。
@@ -87,7 +87,7 @@ skills:
       - condense:剪掉的區間與 `totalCut`。
       - 有譯文時標明「譯文」。
 
-   完成條件:verify.sh `ok:true`,6 張圖都已看過。
+   完成條件:verify.sh `ok:true`,`checks/` 與封面的每張圖都已看過。
 
 4. **收尾**
    1. repo 模式：刪除前對每個亮點路徑 `ls <job>/work/repo/<路徑>`,記下結果。
@@ -104,6 +104,7 @@ skills:
 - 規格:`verify.sh` → {"width":1080,"height":1920,"fps":30,"vcodec":"h264","pixFmt":"yuv420p","acodec":"aac","sampleRate":48000,"faststart":true,"duration":42.6,"lufs":-14.2,"truePeak":-1.6,"minBrightness":38,"subtitles":9,"subtitleBoxes":"ok","cover":"1080x1920","ok":true}
 - 腳本:鉤子「一個人怎麼管 8 個 AI 助手？」+ 3 個亮點(agents/、skills/web-dev-kit/、README「安裝」)+ 結尾;旁白 9 句，實測 38.4 秒
 - 畫面檢查(已檢視):0.1 秒 標題卡;25% 程式碼卡 agents/backend-owner.md;50% 重點卡;75% 重點卡;末 1 秒 結尾卡;封面 標題清楚;字幕完整、無錯字
+- 逐鏡頭(scene-NN-mid/end):01 標題卡;02 程式碼卡，第 1–15 行完整;03 重點卡;04 結尾卡;旁白講到的元素都完整、沒被字幕蓋住
 - 設定:Meijia、語速 190、fit blur、無背景音樂、輸出 ~/Movies/Shorts/
 - 亮點路徑檢查(commit a1b2c3d):`ls` agents/ skills/web-dev-kit/ README.md → 都存在
 - 清理:work/ 已刪除;服務:無
@@ -125,7 +126,7 @@ skills:
 
 1. `verify.sh` 結束碼 0、`ok:true`:1080×1920、30 fps、`h264` + `yuv420p`、`aac` 48000 Hz、faststart、長度 ≤ 60 秒、`cover.png` 為 1080×1920。
 2. 響度:−15 到 −13 LUFS,true peak ≤ −1.0 dBTP。
-3. 畫面:`minBrightness` > 5;`subtitleBoxes` 為 `ok`(字幕框都在 x∈[60,930]、y∈[1300,1620]);5 張擷圖都已 Read 並逐張描述。
+3. 畫面:`minBrightness` > 5;`subtitleBoxes` 為 `ok`(字幕框都在 x∈[60,930]、y∈[1300,1620]);5 張擷圖與每個鏡頭的 `scene-NN-mid/end.png` 都已 Read 並逐張描述;每個鏡頭旁白講到的元素完整、沒被裁切或被字幕蓋住。
 4. 字幕與聲音一致:
    - 旁白模式:`subtitles.srt` 第 i 句等於 `script.md` 第 i 句旁白，時間由 compose.mjs 的固定規則排出(0.3 秒起、間隔 0.25、長度 = tts 實測)。
    - 原聲模式：每句字幕對應 `transcribe.sh` 的一個段落(可校正錯字、轉繁體，不得新增內容;譯文行除外)。
