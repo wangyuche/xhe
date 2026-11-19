@@ -37,6 +37,8 @@
 | 本機 repo clone 用 `file://` | 文字 | 2026-11-17 `--depth is ignored in local clones` |
 | repo-cards 封面不疊標題卡 | 結構(render.mjs `cover` 可不放圖片)+ 文字 | 2026-11-17 封面兩層標題 |
 | 字幕先試單行、兩行優先在標點斷、連字號不斷 | 結構(render.mjs)+ 測試 | 2026-11-17 「web-dev-/kit」「按新/增」 |
+| 旁白模式的橫式錄影鏡頭置頂、不裁左右;用 `region` 逐鏡頭放大，放大後會壓到字幕區就結束碼 6 | 結構(compose.mjs 置頂 + `region`)+ 測試(kit tests 7b:第二版設定 → 結束碼 6;UI 下緣 ≤ 1280、字幕區是底色) | 2026-11-18 craft-anything 第二版整支 `fit: crop`,右側欄與函式名稱被切。原規則「逐張確認…沒有被裁切」只是文字，錯誤仍發生，依 improve.md 視為重複，升級 |
+| 每個鏡頭的中點與結尾都要擷圖並看過;講到的元素被切或被字幕蓋住要重做，不能寫進已知限制就判 PASS | 檢查(verify.sh `--scenes` 必填、鏡頭表要涵蓋整支)+ 測試(kit tests 7)+ 文字(附失敗範例) | 同上;第二版 25/50/75% 擷圖漏看鏡頭，agent 看到裁切仍回 PASS |
 
 ## 待辦(暫緩)
 
@@ -49,3 +51,6 @@
 | 子 agent 執行第 4b 步 `open -n -W --stdout` 得到 `-10810` | 2026-11-16 加 Sessions 時(同一天稍早的重測可以跑);主 agent 在自己的 shell 重跑 4b 通過 | 再發生時,在 4b 加「`-10810` 是執行環境限制:回報指令、狀態不因此判 ISSUES,由主 agent 代跑」 |
 | 測試時反覆跑 `--once` / snapshot,把有限流的外部 API 打到 429 | 2026-11-16 加 Sessions 時,額度 API 被打到 429(Retry-After 216 秒);主 agent 補上 429 退避與沿用舊值 | 再發生時,在工作流程加「外部 API 有限流時,驗證期間 `--once` / snapshot 合計不超過 N 次」,並要求 Provider 處理 429 |
 | PDF 附件要連圖表頁一起讀(Read `pages`) | 2026-11-15 台積電法說會簡報,當時沒裝 poppler,圖表頁讀不到(環境問題,已由使用者安裝 poppler 解決) | 子 agent 漏讀圖表頁時,加進工作流程第 6 步 |
+| short-video-maker 字幕蓋住內容(非置頂鏡頭) | 2026-11-18 craft-anything 第二版字幕蓋住 Add a brain 卡片。置頂鏡頭已由結構避免;直式鏡頭(網頁錄影、原聲模式)仍可能發生 | 再發生時,verify.sh 對直式鏡頭比對字幕框區域在有 / 無字幕時的畫面差異,或 record-web 預留字幕區 |
+| short-video-maker 沙盒錄影(Docker + Xvfb,桌面 App / 不信任的 repo) | 2026-11-18 主 agent 手動完成:先建只含系統工具的映像檔(`--cap-drop ALL` 下 apt 會失敗),再以 uid 1000、`--cap-drop ALL`、`no-new-privileges`、不掛載、只開 127.0.0.1 埠執行;用官方預編版本不編譯;egui App 收不到 `xdotool type`、檔案對話框打不開 → 改用點擊與啟動參數帶路徑;錄完刪容器與映像檔 | 再有使用者要求時,把流程做成 kit 腳本(`sandbox-record.sh`)與新模式,加測試 |
+| short-video-maker 旁白事實簡化失真 | 2026-11-18 craft-anything 第一版把 MIT / Apache-2.0 雙授權念成「MIT 授權」,沒提 early alpha(agent 自己列在已知限制) | 再發生時,在 repo 模式第 2 步加「授權、版本狀態照 README / LICENSE 原文,不簡化」並在 script.md 附來源 |

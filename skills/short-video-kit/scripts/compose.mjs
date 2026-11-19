@@ -8,13 +8,18 @@
 // 共同欄位:mode("narration" | "original")、work(必填)、out、fit("blur" 預設 | "crop")、
 //          theme(傳給 render.mjs)、music({"path":…,"volume":0.25})
 // narration:narration = tts.sh 的輸出陣列 [{text,file,duration}]
-//            scenes = [{"image":"cards/001.png","sentences":[0,1]} | {"video":"rec.mp4","in":0,"sentences":[2]}]
+//            scenes = [{"image":"cards/001.png","sentences":[0,1]} | {"video":"rec.mp4","in":0,"region":[x,y,w,h],"sentences":[2]}]
+//            影片鏡頭:region(選填,來源像素)先裁出要放大的區域。區域比 9:16 寬時一律「置頂」:
+//            放大到寬 1080、放在字幕區上方(下緣 ≤ 1280),不受 fit 影響,所以不會被左右裁掉;
+//            放大後高 > 1240 → 結束碼 6(縮小 region 的高,或拆成兩個鏡頭)。不比 9:16 寬的照 fit 處理。
 //            字幕時間(固定規則):第 1 句 start=0.3;第 i 句 start=第 i−1 句 end+0.25;end=start+duration。
 //            片長 = 最後一句 end + 0.6。鏡頭從它第一句的 start 開始(第一個鏡頭從 0),到下一個鏡頭開始為止。
 // original:source = 來源影片;keep = [[s,e],…](精華)或 cut = [[s,e],…](精簡;每個剪掉區間前後各留 0.1 秒)
 //            segments = [{start,end,text} | {start,end,texts:[…]}](來源時間;texts 依字數比例切分 start–end)
 //            每段可加 text2 / texts2(譯文行);headline = 片頭 3 秒的標題疊字(選填)
-// stdout 一行 JSON 摘要;結束碼:0 成功、1 錯誤、2 timeline 格式錯、4 字幕放不下(要拆句)、5 片長超過 60 秒。
+// 另外寫 <work>/scenes.json(每個鏡頭的成品起訖,給 verify.sh --scenes 逐鏡頭擷圖)。
+// stdout 一行 JSON 摘要;結束碼:0 成功、1 錯誤、2 timeline 格式錯、4 字幕放不下(要拆句)、5 片長超過 60 秒、
+//   6 置頂鏡頭放大後會壓到字幕區(要設 region 或拆鏡頭)。
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -54,7 +59,18 @@ function fitChain(inLabel, outLabel, tag) {
   return `${inLabel}split[${tag}a][${tag}b];[${tag}a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=40,eq=brightness=-0.08[${tag}bg];` +
     `[${tag}b]scale=1080:1920:force_original_aspect_ratio=decrease[${tag}fg];[${tag}bg][${tag}fg]overlay=(W-w)/2:(H-h)/2,setsar=1${outLabel}`;
 }
-const imageChain = (inLabel, outLabel) => `${inLabel}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1${outLabel}`;
+// 置頂:裁出 region、放大到寬 1080、放在字幕區(y ≥ 1300)上方,底色用 theme.bg
+const TOP_MAX_H = 1240, TOP_BOTTOM = 1280;
+const topBg = /^#[0-9a-fA-F]{6}$/.test(tl.theme?.bg ?? '') ? tl.theme.bg : '#0b1220';
+const probeSize = (f) => run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', f], 'ffprobe').stdout.trim().split('x').map(Number);
+function topLayout(j, [x, y, w, h]) {
+  const H = Math.round(h * 1080 / w / 2) * 2;
+  if (H > TOP_MAX_H) fail(`scenes[${j}] 置頂放大後高 ${H} px > ${TOP_MAX_H},會壓到字幕區:把 region 的高縮到 ≤ ${Math.floor(w * TOP_MAX_H / 1080)},或拆成兩個鏡頭`, 6);
+  const top = Math.max(40, Math.floor((TOP_BOTTOM - H) / 4) * 2);
+  return { H, top, chain: (inLabel, outLabel, tag) => `${inLabel}crop=${w}:${h}:${x}:${y},scale=1080:${H}:flags=lanczos,setsar=1[${tag}fg];` +
+    `color=c=${topBg}:s=1080x1920:r=${FPS}[${tag}bg];[${tag}bg][${tag}fg]overlay=0:${top}:shortest=1,setsar=1${outLabel}` };
+}
+const imageChain =(inLabel, outLabel) => `${inLabel}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1${outLabel}`;
 
 const subs = []; // {start,end,text,text2}
 let total = 0;
@@ -94,11 +110,22 @@ if (tl.mode === 'narration') {
     } else if (s.video) {
       const f = P(s.video); if (!existsSync(f)) fail(`找不到影片:${s.video}`, 2);
       const inT = Number(s.in ?? 0);
+      const [sw, sh] = probeSize(f);
+      const region = s.region ?? [0, 0, sw, sh];
+      if (!Array.isArray(region) || region.length !== 4 || region.some(v => !Number.isInteger(v) || v < 0) || !(region[2] > 0 && region[3] > 0)
+        || region[0] + region[2] > sw || region[1] + region[3] > sh) fail(`scenes[${j}] region 必須是來源 ${sw}x${sh} 內的整數 [x,y,w,h]:${JSON.stringify(s.region)}`, 2);
+      const wide = region[2] / region[3] > 9 / 16 + 0.01;
+      let chain, info;
+      if (wide) { const t = topLayout(j, region); chain = t.chain; info = { layout: 'top', region, uiBottom: t.top + t.H }; }
+      else if (s.region) { const [x, y, w, h] = region; chain = (i, o, tag) => `${i}crop=${w}:${h}:${x}:${y}[${tag}c];` + fitChain(`[${tag}c]`, o, tag); info = { layout: fit, region }; }
+      else { chain = fitChain; info = { layout: fit }; }
       inputs.push(['-ss', String(inT), '-i', f]);
-      vfilters.push(fitChain(`[${idx}:v]`, `[s${j}f]`, `s${j}`) + `;[s${j}f]fps=${FPS},tpad=stop_mode=clone:stop_duration=${D},trim=duration=${D},setpts=PTS-STARTPTS,format=yuv420p[v${j}]`);
-      if (j === 0) firstFrameArgs = ['-ss', String(inT), '-i', f, '-filter_complex', fitChain('[0:v]', '[o]', 'ff'), '-map', '[o]'];
+      vfilters.push(chain(`[${idx}:v]`, `[s${j}f]`, `s${j}`) + `;[s${j}f]fps=${FPS},tpad=stop_mode=clone:stop_duration=${D},trim=duration=${D},setpts=PTS-STARTPTS,format=yuv420p[v${j}]`);
+      if (j === 0) firstFrameArgs = ['-ss', String(inT), '-i', f, '-filter_complex', chain('[0:v]', '[o]', 'ff'), '-map', '[o]'];
+      summary.scenes.push({ start: r3(st), end: r3(en), video: s.video, ...info });
+      return;
     } else fail(`scenes[${j}] 需要 image 或 video`, 2);
-    summary.scenes.push({ start: r3(st), end: r3(en) });
+    summary.scenes.push({ start: r3(st), end: r3(en), image: s.image });
   });
   vfilters.push(`${scenes.map((_, j) => `[v${j}]`).join('')}concat=n=${scenes.length}:v=1:a=0[base]`);
 } else if (tl.mode === 'original') {
@@ -132,6 +159,7 @@ if (tl.mode === 'narration') {
   total = r3(keep.reduce((n, [s, e]) => n + (e - s), 0));
   // 來源時間 → 成品時間
   const offs = []; let acc = 0; for (const [s, e] of keep) { offs.push(acc); acc += e - s; }
+  summary.scenes = keep.map(([s, e], k) => ({ start: r3(offs[k]), end: r3(offs[k] + e - s), source: [s, e], layout: fit }));
   const mapPiece = (s, e, text, text2) => {
     keep.forEach(([ks, ke], k) => {
       const a = Math.max(s, ks), b = Math.min(e, ke);
@@ -174,6 +202,7 @@ if (dry) { console.log(JSON.stringify({ ...summary, srt: subs })); process.exit(
 
 mkdirSync(outDir, { recursive: true });
 const subDir = join(work, 'subtitles'); mkdirSync(subDir, { recursive: true });
+writeFileSync(join(work, 'scenes.json'), JSON.stringify(summary.scenes, null, 1));
 
 // 1. 字幕與標題 PNG(render.mjs 檢查安全區)
 const cards = subs.map((x, i) => ({ type: 'subtitle', file: `sub-${String(i + 1).padStart(3, '0')}.png`, text: x.text, ...(x.text2 ? { text2: x.text2 } : {}) }));
@@ -250,4 +279,4 @@ const ff = join(work, 'first-frame.png');
 run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...firstFrameArgs, '-frames:v', '1', ff], '擷取第一個鏡頭');
 
 writeFileSync(join(outDir, 'subtitles.srt'), srt);
-console.log(JSON.stringify({ ...summary, final: finalOut, srt: join(outDir, 'subtitles.srt'), boxes: join(subDir, 'boxes.json'), firstFrame: ff, actualDuration: r3(probeDur(finalOut)) }));
+console.log(JSON.stringify({ ...summary, final: finalOut, srt: join(outDir, 'subtitles.srt'), boxes: join(subDir, 'boxes.json'), scenesFile: join(work, 'scenes.json'), firstFrame: ff, actualDuration: r3(probeDur(finalOut)) }));

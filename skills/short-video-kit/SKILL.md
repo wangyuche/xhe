@@ -52,7 +52,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 
 ## timeline.json(compose.mjs)
 
-路徑都相對於 timeline.json 所在目錄。共同欄位:`mode`、`work`(必填,中間檔目錄)、`out`(預設 timeline 所在目錄)、`fit`(`blur` 模糊背景置中,預設 / `crop` 中央裁切)、`theme`、`music`(`{"path":…,"volume":0.25}`,說話時自動壓低,結尾淡出)。
+路徑都相對於 timeline.json 所在目錄。共同欄位:`mode`、`work`(必填,中間檔目錄)、`out`(預設 timeline 所在目錄)、`fit`(`blur` 模糊背景置中,預設 / `crop` 中央裁切;原聲模式與直式鏡頭用,橫式錄影鏡頭見下方「置頂」)、`theme`、`music`(`{"path":…,"volume":0.25}`,說話時自動壓低,結尾淡出)。
 
 **旁白模式**(repo 影片):
 
@@ -60,8 +60,11 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 {"mode":"narration","work":"../work/1",
  "narration": <tts.sh 的輸出原樣貼上>,
  "scenes":[{"image":"../work/1/cards/001.png","sentences":[0]},
-           {"video":"../work/1/rec-1.mp4","in":0,"sentences":[1,2]}]}
+           {"video":"../work/1/rec-1.mp4","in":0,"sentences":[1,2]},
+           {"video":"../work/1/app.mp4","in":3,"region":[250,40,745,830],"sentences":[3]}]}
 ```
+
+- **置頂**:影片鏡頭(或它的 `region`)比 9:16 寬時,一律放大到寬 1080、放在字幕區上方(下緣 ≤ 1280),不受 `fit` 影響,不會被左右裁掉。放大後高 > 1240 → 結束碼 6:用 `region`(來源像素 `[x,y,w,h]`)框出旁白在講的區域,或拆成兩個鏡頭。每個鏡頭各自設 `region`,講到哪裡就框哪裡(例如講右側欄時,`region` 要包含右側欄)。
 
 - 字幕時間是固定規則:第 1 句 0.3 秒開始,之後每句 start = 前一句 end + 0.25,end = start + 實測長度;片長 = 最後一句 end + 0.6。
 - 鏡頭從它第一句的 start 開始(第一個鏡頭從 0),到下一個鏡頭開始為止。影片太短就停在最後一格。
@@ -82,10 +85,10 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 - `texts` 依字數比例切分 start–end。
 - 沒有音軌時混入靜音,這種成品響度檢查不會過,要提供背景音樂。
 
-**輸出**:`<out>/final.mp4`、`<out>/subtitles.srt`、`<work>/subtitles/*.png` + `boxes.json`、`<work>/first-frame.png`(封面用,沒有字幕)、`<work>/mix.wav`。stdout 摘要含 `duration`、`keep`、`cuts`、`totalCut`、`sourceDuration`、`actualDuration`。
+**輸出**:`<out>/final.mp4`、`<out>/subtitles.srt`、`<work>/subtitles/*.png` + `boxes.json`、`<work>/first-frame.png`(封面用,沒有字幕)、`<work>/mix.wav`、`<work>/scenes.json`(每個鏡頭的成品起訖,給 `verify.sh --scenes`)。stdout 摘要含 `duration`、`scenes`(置頂鏡頭有 `uiBottom`)、`keep`、`cuts`、`totalCut`、`sourceDuration`、`actualDuration`。
 
 **字幕版面**:最多 2 行,字級 64 px 起往下縮到 44 px;字幕框必須在 x∈[60,930]、y∈[1300,1620]。放不下時 compose 結束碼 4,把該句改成 `texts` 拆句(原聲),或把旁白拆成兩句重跑 tts。
 
 ## verify.sh 檢查項目
 
-1080×1920、30 fps、h264 + yuv420p、aac 48000 Hz、faststart、長度 ≤ 60 秒;響度 −15 ~ −13 LUFS、true peak ≤ −1.0;5 張擷圖(0.1 秒、25%、50%、75%、末 1 秒)最暗的平均亮度 > 5;boxes.json 全在安全區(找不到算失敗);cover 1080×1920。印一行 JSON,失敗時有 `failures`,結束碼 1。
+1080×1920、30 fps、h264 + yuv420p、aac 48000 Hz、faststart、長度 ≤ 60 秒;響度 −15 ~ −13 LUFS、true peak ≤ −1.0;5 張擷圖(0.1 秒、25%、50%、75%、末 1 秒)最暗的平均亮度 > 5;boxes.json 全在安全區(找不到算失敗);cover 1080×1920;`--scenes`(必填)的鏡頭從 0 首尾相接到片長,並在每個鏡頭中點與結尾前 0.2 秒各擷一張(`checks/scene-NN-mid.png`、`scene-NN-end.png`,列在 `sceneChecks`)。印一行 JSON,失敗時有 `failures`,結束碼 1。

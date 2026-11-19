@@ -43,7 +43,7 @@
   4. `video-condense`:`silence.sh` 找 > 0.5 秒停頓，加上文字稿中單獨成段的贅字(「嗯」「呃」「那個」)一起剪掉，每個剪點前後各留 0.1 秒。
      - 剪完 > 60 秒 → BLOCKED,附實際長度，提議改用 `video-highlight` 或指定要保留的段落。
      - 沒有音軌 → BLOCKED(無法判斷停頓)。
-  5. 橫式來源預設「模糊背景置中」(整個畫面都看得到),派工指定時改「中央裁切」。
+  5. 橫式來源預設「模糊背景置中」(整個畫面都看得到),派工指定時改「中央裁切」。旁白模式的橫式錄影鏡頭一律「置頂」:逐鏡頭用 `region` 放大旁白講到的區域、放在字幕區上方，不裁左右(2026-11-18 加入)。
 - **共同的合成與驗證**(每支成品各做一次):
   1. 寫 `timeline.json`(格式見 skill),`compose.mjs` 產生 `final.mp4` 與 `subtitles.srt`。字幕時間由 `compose.mjs` 依固定規則排，agent 不手排:
      - 旁白模式：第 1 句從 0.3 秒開始，第 i 句 start = 第 i−1 句 end + 0.25 秒,end = start + `tts.sh` 實測長度;鏡頭長度跟著所屬句子。
@@ -123,7 +123,7 @@
 每條都必須能被實際檢查。
 1. `verify.sh` 結束碼 0、`ok:true`:1080×1920、30 fps、`h264` + `yuv420p`、`aac` 48000 Hz、faststart、長度 ≤ 60 秒、`cover.png` 為 1080×1920。
 2. 響度:`verify.sh` 量到 −15 到 −13 LUFS,true peak ≤ −1.0 dBTP。
-3. 畫面:`verify.sh` 的 `minBrightness` > 5(5 張擷圖都不是全黑);`subtitleBoxes` 為 `ok`(`render.mjs` 記錄的每張字幕邊界框都在 x ∈ [60, 930]、y ∈ [1300, 1620]);agent 已 Read 5 張擷圖並逐張描述。
+3. 畫面:`verify.sh` 的 `minBrightness` > 5(5 張擷圖都不是全黑);`subtitleBoxes` 為 `ok`(`render.mjs` 記錄的每張字幕邊界框都在 x ∈ [60, 930]、y ∈ [1300, 1620]);agent 已 Read 5 張擷圖與每個鏡頭的中點 / 結尾擷圖(`verify.sh --scenes`)並逐張描述，旁白講到的元素完整、沒被裁切或被字幕蓋住。
 4. 字幕與聲音一致:
    - 旁白模式:`subtitles.srt` 第 i 句文字等於 `script.md` 第 i 句旁白;時間等於「做什麼 › 共同的合成與驗證」第 1 步的公式(誤差 ≤ 0.05 秒)。
    - 原聲模式：每句字幕都能對應到 `transcribe.sh` 的一個段落(校正錯字、轉繁體可以，不得新增內容;譯文行除外)。
