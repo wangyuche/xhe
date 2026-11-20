@@ -1,0 +1,60 @@
+---
+name: audio-transcribe
+description: 錄音／影片轉中文逐字稿（whisper.cpp + Apple GPU）。固定三步：ffmpeg 轉 16kHz wav → whisper-cli 轉錄（防重複參數）→ 清掉幻覺與重複。使用者給法說會、會議、Podcast 錄音或影片並說「轉文字」「整理重點」「這段錄音在講什麼」時使用；tw-stock-analyst 要用法說會錄音時，主 agent 先用這個轉成文字再交給它。
+---
+
+# audio-transcribe
+
+2026-11-18 第一次處理旭隼法說會錄音（61 分鐘）時踩到的坑都寫在這裡。**照三步做，不要省略參數。**
+
+## 前置
+
+- whisper.cpp：`brew install whisper-cpp`（指令 `/opt/homebrew/bin/whisper-cli`）
+- 模型：`/Volumes/ariesdisk/Data/git/stock/whisper-models/ggml-large-v3-turbo.bin`（1.6GB，中文好、速度快）
+- ffmpeg
+
+## 步驟
+
+### 1. 轉成 16kHz 單聲道 wav
+
+```bash
+bash ~/.claude/skills/audio-transcribe/scripts/prep.sh <輸入音檔或影片> <輸出.wav>
+```
+
+印出長度（分鐘）。m4a、mp3、mp4、mov 都可以。
+
+### 2. 轉錄（要單獨一行執行）
+
+```bash
+/opt/homebrew/bin/whisper-cli -np -mc 0 -m /Volumes/ariesdisk/Data/git/stock/whisper-models/ggml-large-v3-turbo.bin -l zh --prompt 以下是繁體中文的<公司名>法說會內容。 -otxt -of <輸出路徑不含副檔名> -f <步驟1的.wav>
+```
+
+- **`-mc 0` 一定要加**：沒加時上下文會一直帶到下一段，Q&A、雜音或冷場的地方容易卡在同一句。實例：同一句重複 743 次、161 次，整段問答消失。
+- **`--prompt`**：寫語言（繁體中文）和主題（公司名、法說會），能改善專有名詞和繁簡。
+- **`-otxt -of`**：直接寫成檔案，不要接管線。
+- **沙盒**：`whisper-cli` 在沙盒 `excludedCommands` 裡，**只有單獨一行執行才會被排除**，才能用 GPU（Metal）。包在腳本裡、接 `|`、前面加 `cd` 都會變回沙盒內執行，Metal 會失敗（`failed to allocate Metal buffer`）。真的不能用 GPU 時，加 `-ng` 改用 CPU（慢很多）。
+- 速度參考：M 系列 GPU，61 分鐘錄音幾分鐘內完成。長檔建議用背景執行。
+
+### 3. 清理
+
+```bash
+python3 -I ~/.claude/skills/audio-transcribe/scripts/clean.py <步驟2的.txt> <清理後.txt>
+```
+
+刪掉只有填充字的行（對、嗯、謝謝…）、連續重複的行、whisper 常見幻覺句（「請不吝點贊 訂閱…」），單字重複（法法法法…）壓成 3 個。印出統計；`LOOP` 表示某句重複很多次，`WARN` 表示可能有段落沒辨識出來。
+
+清完刪掉步驟 1 的 wav（只是中間產物，61 分鐘約 117MB）。
+
+## 整理成摘要時
+
+- **數字很容易聽錯**：「EPS 7.7 億元」、「營益率 11 元」這類單位錯亂很常見。摘要開頭寫「財報數字以公司公告為準」，聽不清楚的標「?」。能拿到公司公告或簡報時，用公告數字核對。
+- **用兩個數字互相驗算**：例如淨利 ÷ 營收應該等於淨利率；對不上就標出來，不要硬寫。
+- 不要用 `sort | uniq -c` 統計中文行重複：macOS 在中文語系下會把不同的行排在一起，數字不準。用 `clean.py` 的統計。
+
+## 測試
+
+```bash
+python3 -I tests/test_audio_transcribe.py
+```
+
+測 `prep.sh` 轉檔與 `clean.py` 清理（合成資料，不含任何真實錄音內容）。whisper 本身需要模型與真實語音，不在測試內。
