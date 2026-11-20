@@ -2,7 +2,7 @@
 """tw-bottom-signal 回歸測試(只用標準函式庫)。
 執行: python3 -I tests/test_bottom_signal.py
 fixture: Fugle 加權指數 30/60 分 K,2026-10-01 ~ 2026-11-16(歷史 K,不含盤中)。
-規則依 Gg 2026-11-17 確認:①D<20 ②背離(前低 D<20、後低 D<30)③GC D<50 ④⑤GC 後看當下這根 ⑥60 分 K 確認。"""
+規則依 Gg 2026-11-17 確認:①D<20 ②背離(前低 D<20、後低 D<30)③GC D<50 ④⑤⑥GC 後看當下這根(⑥水平壓力區間,2026-11-19) ⑦60 分 K 確認。"""
 import json, os, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,27 +26,27 @@ o = run(F30, F60)
 check("13:30 併入 13:00", o.startswith("【30分K】11/16 13:00 收 41,040.08") and "K 4.6 / D 9.0" in o)
 
 # 1. 11/16 收盤:只到 ① 鈍化,② 沒有,後面不判斷;60 分 K 不做確認
-check("11/16 STAGE 1/5", "① 低檔鈍化 D<20: 有" in o and "② 底部背離: 沒有" in o
-      and "③ 黃金交叉 D<50: ⏸" in o and "STAGE 1/5" in o and "⑥ 60 分 K 確認: ⏸" in o)
+check("11/16 STAGE 1/6", "① 低檔鈍化 D<20: 有" in o and "② 底部背離: 沒有" in o
+      and "③ 黃金交叉 D<50: ⏸" in o and "STAGE 1/6" in o and "⑦ 60 分 K 確認: ⏸" in o)
 
-# 2. 11/06 收盤:背離 11/04→11/06、GC 11/06 10:00 D18.3;20MA 與壓力線當下未站上 → 3/5,60 分 K 也 3/5
+# 2. 11/06 收盤:背離 11/04→11/06、GC 11/06 10:00 D18.3;20MA 與壓力線當下未站上 → 3/6,60 分 K 也 3/6
 o = run(F30, F60, "--asof", "2026-11-06 13:30")
 check("11/06 背離", "前低 11/04 12:00 41,856(D9.5)→ 後低 11/06 09:00 37,837(D15.3)" in o)
 check("11/06 GC D<50", "③ 黃金交叉 D<50: 有 ✅ 11/06 10:00 K24.5 上穿 D18.3" in o)
-check("11/06 30分 STAGE 3/5", o.split("⑥")[0].strip().endswith("STAGE 3/5"))
-check("11/06 60分確認 3/5", "⑥ 60 分 K 確認(30 分 K 已到黃金交叉)" in o and o.strip().endswith("STAGE 3/5"))
+check("11/06 30分 STAGE 3/6", o.split("⑦")[0].strip().endswith("STAGE 3/6"))
+check("11/06 60分確認 3/6", "⑦ 60 分 K 確認(30 分 K 已到黃金交叉)" in o and o.strip().endswith("STAGE 3/6"))
 
-# 3. 11/09 收盤:30 分 K 5/5(當下站上 MA20 與壓力線),60 分 K 4/5
+# 3. 11/09 收盤:30 分 K 5/6(當下站上 MA20 與壓力線,未過水平壓力區間),60 分 K 4/6
 o = run(F30, F60, "--asof", "2026-11-09 13:30")
-p30, p60 = o.split("⑥")
+p30, p60 = o.split("⑦")
 check("11/09 20MA 當下站上", "④ 突破 20MA: 有 ✅ 當下收 41,662 > MA20 40,821" in p30)
 check("11/09 壓力線當下站上", "⑤ 突破下降壓力線: 有 ✅ 當下收 41,662 > 線 41,089" in p30)
-check("11/09 30分 5/5、60分 4/5", "STAGE 5/5" in p30 and p60.strip().endswith("STAGE 4/5"))
+check("11/09 30分 5/6、60分 4/6", "STAGE 5/6" in p30 and p60.strip().endswith("STAGE 4/6"))
 
 # 4. 跌回就不算:11/13 09:00 曾站上 MA20、收盤跌回 → 在這之前的流程本來就沒到 ③,改測 ④ 的「當下」語意:
 #    11/09 13:00 之後 11/10 13:00 背離前低已出 4 天範圍 → 回到 1/5(整組型態要在回看範圍內)
 o = run(F30, F60, "--asof", "2026-11-10 13:30")
-check("超出 4 天回看範圍就不算", "STAGE 1/5" in o.split("⑥")[0])
+check("超出 4 天回看範圍就不算", "STAGE 1/6" in o.split("⑦")[0])
 
 # 5. 不偷看未來:截到 11/06 10:00,11/06 09:00 低點還沒有右邊 3 根,背離不能成立
 o = run(F30, F60, "--asof", "2026-11-06 10:00")
@@ -57,23 +57,37 @@ svg = os.path.join(TMP, "bs_test.svg")
 o = run(F30, F60, "--svg", svg)
 check("STAGE 1 不畫圖", "SVG" not in o and not os.path.exists(svg))
 o = run(F30, F60, "--asof", "2026-11-09 13:30", "--svg", svg)
-check("STAGE 5 畫圖", "SVG" in o and os.path.exists(svg) and "60分K STAGE 4/5" in open(svg).read())
+check("STAGE 5 畫圖", "SVG" in o and os.path.exists(svg) and "60分K STAGE 4/6" in open(svg).read())
 if os.path.exists(svg): os.remove(svg)
 
-# 6b. 11/18:背離低點那根(10:00)同時黃金交叉也算 → STAGE 3;並列出水平壓力線、前波高點(Gg 2026-11-18)
+# 6b. 11/18:背離低點那根(10:00)同時黃金交叉也算 → STAGE 3;⑥ 水平壓力區間 = 11/17、11/18 兩個反彈高點
 F30b = os.path.join(HERE, "fixtures", "ix0001_30m_to_20261118.json")
 F60b = os.path.join(HERE, "fixtures", "ix0001_60m_to_20261118.json")
 o = run(F30b, F60b, "--asof", "2026-11-18 11:30")
-p30 = o.split("⑥")[0]
+p30 = o.split("⑦")[0]
 check("11/18 背離 11/17→11/18", "前低 11/17 09:00 39,786(D10.4)→ 後低 11/18 10:00 39,261(D25.8)" in p30)
-check("11/18 低點那根交叉算 ③", "③ 黃金交叉 D<50: 有 ✅ 11/18 10:00 K27.8 上穿 D25.8" in p30 and "STAGE 3/5" in p30)
-check("11/18 水平壓力線 40,938", "水平壓力線(最近反彈高點): 11/18 09:00 40,938" in p30)
+check("11/18 低點那根交叉算 ③", "③ 黃金交叉 D<50: 有 ✅ 11/18 10:00 K27.8 上穿 D25.8" in p30 and "STAGE 3/6" in p30)
+check("11/18 水平壓力區間 ⑥", "⑥ 突破水平壓力區間: 沒有 ❌ 當下收 40,141.43,區間 40,938.2～40,945.04" in p30)
 check("11/18 前波高點 44,525", "前波高點(10 日內最高): 11/12 10:00 44,525" in p30)
 svg2 = os.path.join(TMP, "bs_test2.svg")
 o = run(F30b, F60b, "--asof", "2026-11-18 11:30", "--svg", svg2)
 s = open(svg2).read() if os.path.exists(svg2) else ""
-check("11/18 圖有兩條水平線", "前波高點 44,525" in s and "水平壓力 40,938" in s)
+check("11/18 圖有前波高點＋水平壓力區間", "前波高點 44,525" in s and "水平壓力區間 40,938.2～40,945.04" in s)
 if os.path.exists(svg2): os.remove(svg2)
+
+# 6c. --zone-days 改區間範圍:只看 1 天 → 只剩 11/18 09:00 一個高點,區間退化成單一價位
+o = run(F30b, "--asof", "2026-11-18 11:30", "--zone-days", "1")
+check("zone-days 1 天", "區間 40,938.2(在區間下方" in o)
+
+# 6d. 失效:11/19 09:30 跌破 11/18 背離低點 39,261 → ② 失效、退回 1/6、不畫圖;跌破前(11/19 09:00)仍是 3/6
+F30c = os.path.join(HERE, "fixtures", "ix0001_30m_to_20261119.json")
+o = run(F30c, "--asof", "2026-11-19 09:30")
+check("跌破背離低點 → 失效", "② 底部背離: 失效 ❌ 11/19 09:30 跌破背離低點 39,260.99" in o and "STAGE 1/6" in o)
+svg3 = os.path.join(TMP, "bs_test3.svg")
+o = run(F30c, "--asof", "2026-11-19 09:30", "--svg", svg3)
+check("失效後不畫圖", "SVG" not in o and not os.path.exists(svg3))
+o = run(F30c, "--asof", "2026-11-19 09:00")
+check("跌破前仍有效", "② 底部背離: 有 ✅" in o and "STAGE 3/6" in o)
 
 # 7. 抓不到資料時要明確報錯
 bad = os.path.join(TMP, "bad_fugle.json")

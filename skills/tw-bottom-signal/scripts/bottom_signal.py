@@ -11,7 +11,9 @@
  ④ 突破 20MA : 黃金交叉之後,看「當下這根」收盤是否在 MA20 上方(跌回就不算)
  ⑤ 突破下降壓力線: 黃金交叉之後,看當下這根收盤是否在壓力線上方;
                 壓力線 = 背離低點 b 之前,最近兩個「後高 < 前高」的確認波段高點連線
- ⑥ 60 分 K 確認: 30 分 K 走到 ③ 之後,用同一套流程看 60 分 K 走到第幾步
+ ⑥ 突破水平壓力區間: 黃金交叉之後,看當下這根收盤是否站上區間上緣(Gg 2026-11-19);
+                區間 = 背離低點 b 之前 --zone-days 個交易日(預設 2)內確認波段高點的最低～最高
+ ⑦ 60 分 K 確認: 30 分 K 走到 ③ 之後,用同一套流程看 60 分 K 走到第幾步
 
 KD(9,3,3): RSV 9 根;K = 2/3 前K + 1/3 RSV;D = 2/3 前D + 1/3 K;初值 50。
 波段點: 前後各 3 根中的最低/最高,右邊 3 根走完才算確認(不偷看未來)。
@@ -24,9 +26,13 @@ def opt(name, default=None):
         i = args.index(name); v = args[i+1]; del args[i:i+2]; return v
     return default
 asof = opt("--asof"); days = int(opt("--days", "4")); svg = opt("--svg"); title = opt("--title", "加權指數")
+zone_days = int(opt("--zone-days", "2"))
+NSTEP = 6
 W = 3
 
 def tstr(b): return b["date"][:16].replace("T", " ")
+def px(v): s = f"{v:,.2f}"; return s[:-3] if s.endswith(".00") else s.rstrip("0")
+def zstr(z): return px(z["hi"]) if z["lo"] == z["hi"] else f"{px(z['lo'])}～{px(z['hi'])}"
 
 def load(path):
     raw = json.load(open(path))
@@ -93,6 +99,13 @@ class Series:
                 if a < w0: break
                 if D[a] < 20 and L[b] < L[a] and D[b] > D[a] and D[b] < 30:
                     st[2] = {"a": a, "i": b, "confirm": b + W}; break
+            # 失效:背離低點之後任何一根跌破背離低點 → 這組訊號作廢(新低點確認前就要判定,不等右邊 3 根)
+            if st[2]:
+                b = st[2]["i"]
+                brk = next((i for i in range(b+1, last+1) if L[i] < L[b]), None)
+                if brk is not None:
+                    self.div_broken = {"a": st[2]["a"], "b": b, "i": brk, "low": min(L[b+1:last+1])}
+                    st[2] = None
         # ③ 黃金交叉(背離低點那根本身的交叉也算,Gg 2026-11-18)
         st[3] = None
         if st[2]:
@@ -101,7 +114,7 @@ class Series:
                 if K[i-1] <= D[i-1] and K[i] > D[i] and D[i] < 50:
                     st[3] = {"i": i}; break
         # ④ 20MA(當下這根)
-        st[4] = st[5] = None
+        st[4] = st[5] = st[6] = None
         if st[3]:
             if MA[last] and C[last] > MA[last]:
                 first = next(i for i in range(st[3]["i"], last+1) if MA[i] and C[i] > MA[i])
@@ -119,11 +132,17 @@ class Series:
                     else:
                         self.line_info = {"a": a2, "b": b2, "line": ln(last)}
                     break
-            # 參考價位(Gg 2026-11-18,只畫線、不算步驟):
-            #  水平壓力線 = 背離低點之前最近一個確認波段高點
-            #  前波高點   = 背離低點之前 10 個交易日內的最高價
-            if hs:
-                self.flat_res = {"i": hs[-1], "price": H[hs[-1]]}
+            # ⑥ 水平壓力區間:背離低點之前 zone_days 個交易日內的確認波段高點,取最低～最高
+            zd = sorted({bb["date"][:10] for bb in self.bars[:b+1]})[-zone_days:]
+            zh = [h for h in hs if self.bars[h]["date"][:10] >= zd[0]] if zd else []
+            if not zh and hs: zh = [hs[-1]]          # 期間內沒有高點時,退回最近一個
+            if zh:
+                zlo, zhi = min(H[h] for h in zh), max(H[h] for h in zh)
+                self.zone = {"lo": zlo, "hi": zhi, "idx": zh}
+                if C[last] > zhi:
+                    first = next(i for i in range(st[3]["i"], last+1) if C[i] > zhi)
+                    st[6] = {"i": first, "lo": zlo, "hi": zhi}
+            # 參考價位(只畫線、不算步驟):前波高點 = 背離低點之前 10 個交易日內的最高價
             dts = sorted({bb["date"][:10] for bb in self.bars[:b]})[-10:]
             if dts:
                 p0 = next(i for i, bb in enumerate(self.bars) if bb["date"][:10] >= dts[0])
@@ -133,7 +152,7 @@ class Series:
         for s in (1, 2, 3):
             if st[s]: stage = s
             else: break
-        if stage == 3: stage = 3 + (1 if st[4] else 0) + (1 if st[5] else 0)
+        if stage == 3: stage = 3 + sum(1 for s in (4, 5, 6) if st[s])
         return {"stage": stage, "steps": st}
 
 def report(S, r, label):
@@ -151,12 +170,16 @@ def report(S, r, label):
     elif st[2]:
         a, b = st[2]["a"], st[2]["i"]
         out.append(f"② 底部背離: 有 ✅ 前低 {t(a)} {L[a]:,.0f}(D{D[a]:.1f})→ 後低 {t(b)} {L[b]:,.0f}(D{D[b]:.1f}),{t(st[2]['confirm'])} 確認")
+    elif getattr(S, "div_broken", None):
+        e = S.div_broken
+        out.append(f"② 底部背離: 失效 ❌ {t(e['i'])} 跌破背離低點 {px(L[e['b']])}(原背離 {t(e['a'])} {px(L[e['a']])} → {t(e['b'])} {px(L[e['b']])};之後最低 {px(e['low'])}),要等新低點確認後重新判斷")
     else: out.append("② 底部背離: 沒有 ❌(需前低 D<20、後低價更低且 D 較高、D<30)")
     if not st[2]: out.append("③ 黃金交叉 D<50: " + skip)
     elif st[3]: out.append(f"③ 黃金交叉 D<50: 有 ✅ {t(st[3]['i'])} K{K[st[3]['i']]:.1f} 上穿 D{D[st[3]['i']]:.1f}")
     else: out.append(f"③ 黃金交叉 D<50: 沒有 ❌(目前 K{K[last]:.1f} {'>' if K[last] > D[last] else '<'} D{D[last]:.1f})")
     if not st[3]:
         out.append("④ 突破 20MA: " + skip); out.append("⑤ 突破下降壓力線: " + skip)
+        out.append("⑥ 突破水平壓力區間: " + skip)
     else:
         out.append(f"④ 突破 20MA: 有 ✅ 當下收 {C[last]:,.0f} > MA20 {MA[last]:,.0f}(黃金交叉後 {t(st[4]['i'])} 首次站上)" if st[4]
                    else f"④ 突破 20MA: 沒有 ❌ 當下收 {C[last]:,.0f},MA20 {MA[last]:,.0f}(差 {C[last]-MA[last]:+,.0f})")
@@ -165,10 +188,17 @@ def report(S, r, label):
         elif getattr(S, "line_info", None):
             e = S.line_info; out.append(f"⑤ 突破下降壓力線: 沒有 ❌ 當下收 {C[last]:,.0f},線 {e['line']:,.0f}(差 {C[last]-e['line']:+,.0f})")
         else: out.append("⑤ 突破下降壓力線: 沒有 ❌(背離前找不到兩個下降的波段高點)")
-        for key, nm in (("flat_res", "水平壓力線(最近反彈高點)"), ("prior_high", "前波高點(10 日內最高)")):
-            v = getattr(S, key, None)
-            if v: out.append(f"　參考 {nm}: {t(v['i'])} {v['price']:,.0f}(當下收差 {C[last]-v['price']:+,.0f})")
-    out.append(f"STAGE {r['stage']}/5")
+        z = getattr(S, "zone", None)
+        if st[6]:
+            out.append(f"⑥ 突破水平壓力區間: 有 ✅ 當下收 {px(C[last])} > 區間上緣 {px(z['hi'])}(區間 {zstr(z)},{t(st[6]['i'])} 首次站上)")
+        elif z:
+            pos = "在區間內" if C[last] >= z["lo"] else "在區間下方"
+            gap = C[last]-z['hi']; gs = ("+" if gap >= 0 else "-") + px(abs(gap))
+            out.append(f"⑥ 突破水平壓力區間: 沒有 ❌ 當下收 {px(C[last])},區間 {zstr(z)}({pos},離上緣 {gs})")
+        else: out.append("⑥ 突破水平壓力區間: 沒有 ❌(背離前找不到波段高點)")
+        v = getattr(S, "prior_high", None)
+        if v: out.append(f"　參考 前波高點(10 日內最高): {t(v['i'])} {v['price']:,.0f}(當下收差 {C[last]-v['price']:+,.0f})")
+    out.append(f"STAGE {r['stage']}/{NSTEP}")
     return "\n".join(out)
 
 b30, tf30 = load(args[0])
@@ -180,30 +210,30 @@ if len(args) > 1:
     S60 = Series(b60, tf60); r60 = S60.run()
     print()
     if r30["stage"] >= 3:
-        print("⑥ 60 分 K 確認(30 分 K 已到黃金交叉):")
+        print("⑦ 60 分 K 確認(30 分 K 已到黃金交叉):")
         print(report(S60, r60, f"{tf60}分K"))
     else:
-        print(f"⑥ 60 分 K 確認: ⏸ 30 分 K 還沒走到黃金交叉,先不看(參考:60 分 K 目前 STAGE {r60['stage']}/5)")
+        print(f"⑦ 60 分 K 確認: ⏸ 30 分 K 還沒走到黃金交叉,先不看(參考:60 分 K 目前 STAGE {r60['stage']}/{NSTEP})")
 
 # 圖:30 分 K 走到 ② 背離以上才畫(走到 ③ 黃金交叉時另加前波高點、水平壓力線)
 if svg and r30["stage"] >= 2:
     S, st = S30, r30["steps"]
     n, last = S.n, S.last
     O, H, L, C, K, D, MA, t = S.O, S.H, S.L, S.C, S.K, S.D, S.MA, S.t
-    ph = getattr(S, "prior_high", None); fr = getattr(S, "flat_res", None)
+    ph = getattr(S, "prior_high", None); zn = getattr(S, "zone", None) if st[3] else None
     i0 = max(0, min(S.w0, st[2]["a"], ph["i"] if ph else n) - 5); N = n - i0 + 2
     Wd, Ht = 1200, 1200; Lm, Rm, T = 110, 40, 150
-    P1b, P2t, P2b = 680, 885, 1120          # 價格 T..P1b;圖例 P1b..P2t;KD P2t..P2b
+    P1b, P2t, P2b = 680, 915, 1120          # 價格 T..P1b;圖例 P1b..P2t(最多 5 行);KD P2t..P2b
     lo = min(L[i0:]); hi = max(H[i0:]); pad = (hi-lo)*0.06; lo -= pad; hi += pad
     X = lambda i: Lm + (Wd-Lm-Rm)*(i-i0+0.5)/N
     Y = lambda v: T + (P1b-T)*(1-(v-lo)/(hi-lo))
     YK = lambda v: P2t + (P2b-P2t)*(1-v/100)
     f = 'font-family="PingFang TC, Heiti TC, sans-serif"'
-    conf = f"　60分K STAGE {r60['stage']}/5" if r60 and r30["stage"] >= 3 else ""
+    conf = f"　60分K STAGE {r60['stage']}/{NSTEP}" if r60 and r30["stage"] >= 3 else ""
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 {Wd} {Ht}">',
          f'<rect width="{Wd}" height="{Ht}" fill="#fcfcfb"/>',
          f'<text x="{Lm}" y="60" {f} font-size="38" font-weight="600" fill="#0b0b0b">{title}　{S.tf}分K 底部訊號</text>',
-         f'<text x="{Lm}" y="104" {f} font-size="24" fill="#52514e">{t(i0)} – {t(last)}　STAGE {r30["stage"]}/5{conf}　KD(9,3,3)　Fugle</text>']
+         f'<text x="{Lm}" y="104" {f} font-size="24" fill="#52514e">{t(i0)} – {t(last)}　STAGE {r30["stage"]}/{NSTEP}{conf}　KD(9,3,3)　Fugle</text>']
     step = next(s for s in [10, 20, 50, 100, 200, 250, 500, 1000, 2000] if (hi-lo)/s <= 8)
     v = (int(lo/step)+1)*step
     while v < hi:
@@ -233,8 +263,18 @@ if svg and r30["stage"] >= 2:
         o.append(f'<rect x="{X(i)-cw/2:.1f}" y="{yt:.1f}" width="{cw:.1f}" height="{max(yb-yt, 1.5):.1f}" fill="{col}"/>')
     for arr, colr in ((K, "#2b6cb0"), (D, "#e08a1e")):
         o.append('<path d="' + " ".join(f'{"M" if j == 0 else "L"}{X(i):.1f},{YK(arr[i]):.1f}' for j, i in enumerate(range(i0, n))) + f'" fill="none" stroke="{colr}" stroke-width="2.2"/>')
-    # 水平參考線:前波高點、水平壓力線(從該高點畫到最右邊,標籤在線上方靠右)
-    for v, colr, nm in ((ph, "#9b2c2c", "前波高點"), (fr, "#0e7490", "水平壓力")):
+    # 水平壓力區間:青色色帶(上下緣虛線),標籤在上緣靠右
+    if zn:
+        z0 = max(i0, min(zn["idx"]))
+        yt_, yb_ = Y(zn["hi"]), Y(zn["lo"])
+        o.append(f'<rect x="{X(z0):.1f}" y="{yt_:.1f}" width="{Wd-Rm-X(z0):.1f}" height="{max(yb_-yt_, 3):.1f}" fill="#0e7490" opacity="0.14"/>')
+        for zy in (yt_, yb_):
+            o.append(f'<line x1="{X(z0):.1f}" x2="{Wd-Rm}" y1="{zy:.1f}" y2="{zy:.1f}" stroke="#0e7490" stroke-width="2" stroke-dasharray="10 6"/>')
+        for j in zn["idx"]:
+            if j >= i0: o.append(f'<circle cx="{X(j):.1f}" cy="{Y(H[j]):.1f}" r="6" fill="none" stroke="#0e7490" stroke-width="2.5"/>')
+        o.append(f'<text x="{Wd-Rm-6}" y="{yt_-8:.1f}" {f} font-size="21" font-weight="600" fill="#0e7490" text-anchor="end">水平壓力區間 {zstr(zn)}</text>')
+    # 前波高點(從該高點畫到最右邊,標籤在線上方靠右)
+    for v, colr, nm in ((ph, "#9b2c2c", "前波高點"),):
         if v and v["i"] >= i0:
             y = Y(v["price"])
             o.append(f'<line x1="{X(v["i"]):.1f}" x2="{Wd-Rm}" y1="{y:.1f}" y2="{y:.1f}" stroke="{colr}" stroke-width="2.5" stroke-dasharray="12 6"/>')
@@ -271,6 +311,11 @@ if svg and r30["stage"] >= 2:
             o.append(f'<path d="M{X(i):.1f},{Y(H[i])-14:.1f} l-9,-18 h18 z" fill="{PUR}"/>')
             badge(X(i), Y(H[i]) - 48, 5, PUR)
             legend.append((5, PUR, f"突破壓力線 {t(i)}　當下收 {C[last]:,.0f} > 線 {st[5]['line']:,.0f}"))
+    if st[6]:
+        TEAL = "#0e7490"; i = st[6]["i"]
+        o.append(f'<path d="M{X(i):.1f},{Y(H[i])-14:.1f} l-9,-18 h18 z" fill="{TEAL}"/>')
+        badge(X(i) + 34, Y(H[i]) - 48, 6, TEAL)
+        legend.append((6, TEAL, f"突破水平壓力區間 {t(i)}　當下收 {px(C[last])} > {px(st[6]['hi'])}"))
     ly = P1b + 62
     o.append(f'<rect x="{Lm+8}" y="{ly-26}" width="660" height="{30*len(legend)+16}" fill="#fcfcfb" opacity="0.92" stroke="#e2e1dc"/>')
     for k2, (num, colr, txt) in enumerate(sorted(legend)):
