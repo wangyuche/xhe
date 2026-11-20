@@ -8,7 +8,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 FUGLE="$HOME/.claude/tg/fugle.sh"
 FROM=$(python3 -I -c 'import datetime as d; print((d.date.today()-d.timedelta(days=45)).isoformat())')
 TO=$(python3 -I -c 'import datetime as d; print(d.date.today().isoformat())')
-NAME="$SYM"; [ "$SYM" = "IX0001" ] && NAME="加權指數"
+# 圖標題:指數用中文名;個股用「代號 公司名」(名稱取自 Fugle 報價,抓不到就只放代號)
+if [ "$SYM" = "IX0001" ]; then NAME="加權指數"; else
+  CNAME=$(bash "$FUGLE" "intraday/quote/$SYM" | jq -r '.name // empty' 2>/dev/null)
+  NAME="$SYM${CNAME:+ $CNAME}"
+fi
 for TF in 30 60; do
   H="$OUT/bottom_${SYM}_${TF}m_hist.json"; I="$OUT/bottom_${SYM}_${TF}m_intraday.json"; J="$OUT/bottom_${SYM}_${TF}m.json"
   # 歷史 K 不含今天盤中,另外抓 intraday 接在後面
