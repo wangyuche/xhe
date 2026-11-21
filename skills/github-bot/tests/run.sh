@@ -47,6 +47,9 @@ check "ssh.github.com:443" [ "$(bash "$BOT" _parse ssh://git@ssh.github.com:443/
 check "結尾斜線" [ "$(bash "$BOT" _parse https://github.com/a/b/)" = a/b ]
 printf 'APP_ID = "123456" \nKEY_FILE="%s"\n' "$TMP/key.pem" > "$TMP/config-quoted"
 check "設定值去引號與空白" bash -c "GITHUB_BOT_CONFIG='$TMP/config-quoted' bash '$BOT' _jwt >/dev/null"
+check "API 網址限制" bash -c "GITHUB_BOT_API_URL=http://attacker.example bash '$BOT' --repo o/r token 2>&1 | grep -q '只能是'"
+printf 'APP_ID=123456  # my app\nKEY_FILE=%s\n' "$TMP/key.pem" > "$TMP/config-comment"
+check "設定行尾註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-comment' bash '$BOT' _jwt >/dev/null"
 check "--repo 缺值不 crash" bash -c "bash '$BOT' --repo 2>&1 | grep -q '後面要接值'"
 check "--repo 格式錯誤拒絕" bash -c "! bash '$BOT' --repo 'bad repo' token 2>/dev/null"
 
@@ -69,6 +72,9 @@ check "pr 缺 title 失敗" bash -c "! bash '$BOT' --repo o/r pr --head feat/x 2
 check "push main 拒絕"   bash -c "! bash '$BOT' --repo o/r push main 2>/dev/null"
 check "push master 拒絕" bash -c "! bash '$BOT' --repo o/r push master 2>/dev/null"
 check "push 預設分支拒絕" bash -c "bash '$BOT' --repo o/r push develop 2>&1 | grep -q '不推預設分支'"
+for b in HEAD refs/heads/main 'a..b' x.lock; do
+  check "push 分支名 $b 拒絕" bash -c "bash '$BOT' --repo o/r push '$b' 2>&1 | grep -q 不合法"
+done
 check "push 選項式分支名拒絕" bash -c "! bash '$BOT' --repo o/r push --force 2>/dev/null"
 
 printf 'GH_USER=xhe-bot\n' > "$TMP/config-gh0"; printf 'ghp_testpat\n' > "$TMP/pat0"
@@ -118,6 +124,11 @@ for kv in http.proxy=http://evil:8080 http.sslVerify=false http.https://github.c
   check "拒絕 ${kv%%=*}" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
   git -C "$TMP/prepo" config --unset "${kv%%=*}"
 done
+git -C "$TMP/prepo" config extensions.worktreeConfig true
+git -C "$TMP/prepo" config --worktree http.https://github.com/.proxy http://evil:1
+check "worktree 設定的 http.* 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
+git -C "$TMP/prepo" config --worktree --unset http.https://github.com/.proxy
+check "SSL_CERT_FILE / CURL_CA_BUNDLE 被移除" [ -z "$(cd "$TMP/prepo" && SSL_CERT_FILE=/x CURL_CA_BUNDLE=/x bash "$BOT" _pushgit t u -c alias.e='!printenv SSL_CERT_FILE CURL_CA_BUNDLE' e)" ]
 check "GIT_SSL_NO_VERIFY 被移除" [ -z "$(cd "$TMP/prepo" && GIT_SSL_NO_VERIFY=1 bash "$BOT" _pushgit t u -c alias.e='!printenv GIT_SSL_NO_VERIFY' e)" ]
 check "強制 sslVerify" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config http.sslVerify)" = true ]
 
@@ -144,6 +155,8 @@ check "pat identity email" grep -qx 'email=777+xhe-bot@users.noreply.github.com'
 check "pat pr 回傳網址" [ "$(env "$PAT_ENV" bash "$BOT" --repo o/r pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
 check "pat push 預設分支拒絕" bash -c "env '$PAT_ENV' bash '$BOT' --repo o/r push develop 2>&1 | grep -q '不推預設分支'"
 check "env TOKEN_FILE 展開 ~" bash -c "HOME='$TMP' GITHUB_BOT_TOKEN_FILE='~/pat0' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
+printf '# 2027 到期\nghp_testpat\n# note\n' > "$TMP/pat-multi"
+check "token 檔多行只取第一個 token" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-multi' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
 check "pat 讀不到檔案失敗" bash -c "! GITHUB_BOT_TOKEN_FILE=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
 git init -q "$TMP/repo2" && (
   cd "$TMP/repo2" && echo hi > a && git add a &&

@@ -72,7 +72,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 ```
 
 - push 拒絕 `main`、`master`、repo 預設分支,也不支援 force;要改歷史先問使用者。
-- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0600 暫存檔只給 credential helper 讀,不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、proxy、trace 類環境變數;repo 本身(含 include)有任何 `url.*`、`http.*`、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
+- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0600 暫存檔只給 credential helper 讀,不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、`SSL_CERT_*`、`CURL_CA_BUNDLE`、proxy、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有任何 `url.*`、`http.*`、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
 - 合併前置條件見下方「自己 review 後合併」;bot 的權限(App 的 Contents: write、機器人帳號的 Write)本來就能合併,把關靠這個流程與 `--sha`。
 - 錯誤 `App 沒有安裝在 ...`:到 App 設定頁的 Install App 把該 repo 加進去。
 - 換 App / 換電腦:只要重做第 4 步。私鑰外洩時到 App 設定頁刪掉該 key 並重新產生。

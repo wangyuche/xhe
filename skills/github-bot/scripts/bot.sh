@@ -17,6 +17,9 @@
 set -euo pipefail
 
 API=${GITHUB_BOT_API_URL:-https://api.github.com}
+# GITHUB_BOT_API_URL 只給測試用:只接受 api.github.com 或本機,避免 token 被送到別的主機
+[[ $API == https://api.github.com || $API =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]] \
+  || { echo "bot.sh: GITHUB_BOT_API_URL 只能是 https://api.github.com 或本機測試位址" >&2; exit 1; }
 CONF=${GITHUB_BOT_CONFIG:-$HOME/.config/github-bot/config}
 REPO=""
 
@@ -36,6 +39,7 @@ load_conf() {
   local c_app="" c_key="" c_tok="" c_gh="" k v
   if [[ -f $CONF ]]; then
     while IFS='=' read -r k v; do
+      v=${v%%[[:space:]]#*}               # 去掉行尾註解「 # ...」
       k=$(trim_val "$k"); v=$(trim_val "$v")
       case $k in
         APP_ID)     c_app=$v ;;
@@ -127,7 +131,7 @@ pat() {
     t=$(gh auth token --hostname github.com --user "$GH_USER" 2>/dev/null) \
       || die "gh 沒有登入 $GH_USER(執行 gh auth login 加入該帳號)"
   else
-    t=$(tr -d ' \t\r\n' < "$TOKEN_FILE")
+    t=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$TOKEN_FILE" | head -n1 | tr -d ' \t\r' || true)
   fi
   [[ -n $t ]] || die "取不到機器人帳號的 token"
   printf '%s' "$t"
@@ -204,11 +208,12 @@ push_git() {
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY
     -u GIT_HTTP_PROXY_AUTHMETHOD -u GIT_PROXY_SSL_CERT -u GIT_PROXY_SSL_KEY -u GIT_PROXY_SSL_CAINFO
     -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_CURL_VERBOSE -u GIT_TRACE_PACKET -u GIT_ASKPASS -u SSH_ASKPASS
-    -u http_proxy -u https_proxy -u HTTPS_PROXY -u all_proxy -u ALL_PROXY
+    -u http_proxy -u https_proxy -u HTTPS_PROXY -u all_proxy -u ALL_PROXY -u no_proxy -u NO_PROXY
+    -u CURL_CA_BUNDLE -u SSL_CERT_FILE -u SSL_CERT_DIR -u GIT_SSL_CERT_PASSWORD_PROTECTED
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0)
-  # repo 自己(含 include / includeIf)不得有任何 url.* / http.* / credential.* 設定:
+  # repo 的任何設定檔(local、worktree、include / includeIf)都不得有 url.* / http.* / credential.*:
   # 這些能改寫推送網址、走 proxy、關 TLS 驗證、附加別的認證或 helper
-  bad=$("${clean[@]}" git config --local --includes --name-only --get-regexp '^(url|http|credential)\..*$' 2>/dev/null || true)
+  bad=$("${clean[@]}" git config --show-scope --includes --name-only --get-regexp '^(url|http|credential)\..*$' 2>/dev/null || true)
   [[ -z $bad ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
   "${clean[@]}" \
   git -c credential.helper= \
@@ -221,7 +226,8 @@ push_git() {
 
 cmd_push() {
   local branch=${1:-}; [[ -n $branch && $# -eq 1 ]] || die "用法:bot.sh push <分支>"
-  [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != -* ]] || die "分支名稱不合法:$branch"
+  [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != -* && $branch != HEAD && $branch != refs/* ]] \
+    && git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "分支名稱不合法:$branch"
   case $branch in main|master) die "不推 $branch;請推功能分支再開 PR" ;; esac
   load_conf; resolve_repo
   local t user=x-access-token def
@@ -276,7 +282,7 @@ cmd_merge() {
   [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
   for i in 1 2 3 4 5 6 7 8 9 10; do        # 剛開 PR 或剛推時 GitHub 還在算,mergeable_state 為 unknown
     st=$(jq -r '.mergeable_state // "unknown"' <<<"$pr")
-    [[ $st != unknown ]] && break
+    [[ $st != unknown || $i -eq 10 ]] && break
     sleep 2
     pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
   done
