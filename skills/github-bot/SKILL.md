@@ -34,7 +34,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
 
 1. 用主帳號到 repo → Settings → Collaborators → 邀請機器人帳號(Write 權限),再登入機器人帳號接受邀請。
 2. 機器人帳號產生 **classic** PAT(Settings → Developer settings → Tokens (classic)),設到期日。scope:放進 gh(下面第 3 步建議做法)勾 `repo` + `read:org` + `gist` + `workflow`(`gh auth login --help` 列 `repo`、`read:org`、`gist`,互動式貼 token 時則要求 `repo`、`read:org`、`workflow`);用 token 檔則 `public_repo` 即可(private repo 要 `repo`,改 workflow 檔再加 `workflow`)。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
-3. **建議:token 放 gh(macOS 鑰匙圈,磁碟上沒有明文)**。gh 可同時登入多個帳號,不必切換,bot 用 `gh auth token --user` 取機器人的 token,gh 平常仍停在主帳號:
+3. **建議:token 放 gh(macOS 鑰匙圈,平常磁碟上沒有明文;只有 push 期間短暫寫進 0700 暫存目錄,結束或被中斷即刪除)**。gh 可同時登入多個帳號,不必切換,bot 用 `gh auth token --user` 取機器人的 token,gh 平常仍停在主帳號:
 
    ```bash
    gh auth login                     # 主帳號(已登入可略過)
@@ -72,7 +72,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 ```
 
 - push 拒絕 `main`、`master`、repo 預設分支,也不支援 force;要改歷史先問使用者。
-- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0600 暫存檔只給 credential helper 讀,不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、`SSL_CERT_*`、`CURL_CA_BUNDLE`、proxy、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有任何 `url.*`、`http.*`、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
+- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0700 暫存目錄裡的 0600 檔只給 credential helper 讀(結束、Ctrl-C、TERM、HUP 都會刪除),不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、HOME 換成空目錄(不讀 `~/.netrc` 的個人憑證)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、`SSL_CERT_*`、`CURL_CA_BUNDLE`、proxy、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有任何 `url.*`、`http.*`、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
 - 合併前置條件見下方「自己 review 後合併」;bot 的權限(App 的 Contents: write、機器人帳號的 Write)本來就能合併,把關靠這個流程與 `--sha`。
 - 錯誤 `App 沒有安裝在 ...`:到 App 設定頁的 Install App 把該 repo 加進去。
 - 換 App / 換電腦:只要重做第 4 步。私鑰外洩時到 App 設定頁刪掉該 key 並重新產生。

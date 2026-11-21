@@ -84,6 +84,9 @@ check "push 選項式分支名拒絕" bash -c "! bash '$BOT' --repo o/r push --f
 
 printf 'GH_USER=xhe-bot\n' > "$TMP/config-gh0"; printf 'ghp_testpat\n' > "$TMP/pat0"
 A40=$(printf 'a%.0s' $(seq 40)); B40=$(printf 'b%.0s' $(seq 40)); C40=$(printf 'c%.0s' $(seq 40))
+# merge 會輪詢等 CI;測試把 sleep 換成空操作
+mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
+REAL_PATH=$PATH; export PATH="$TMP/fastbin:$PATH"
 check "merge 回傳 merge commit" [ "$(bash "$BOT" --repo o/r merge 7 --sha "$A40")" = "$B40" ]
 check "merge SHA 不符拒絕" bash -c "bash '$BOT' --repo o/r merge 7 --sha $C40 2>&1 | grep -q '重新 review'"
 check "merge 缺 --sha 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 2>/dev/null"
@@ -95,7 +98,6 @@ check "merge closed 立即拒絕" bash -c "s=\$(date +%s); bash '$BOT' --repo o/
 D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40))
 check "merge CI 進行中拒絕" bash -c "bash '$BOT' --repo o/r merge 11 --sha $D40 2>&1 | grep -q 'CI 未完成'"
 # CI 未登記時會等 60 秒;測試把 sleep 換成空操作
-mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
 check "merge 有 workflow 但 CI 未登記拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '仍沒有 check run'"
 check "merge --allow-no-ci 放行" [ "$(PATH="$TMP/fastbin:$PATH" bash "$BOT" --repo o/r merge 12 --sha "$E40" --allow-no-ci)" = "$C40" ]
 F40=$(printf 'f%.0s' $(seq 40))
@@ -106,8 +108,12 @@ check "沒有任何 CI 時預設拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash 
 check "外部 status 先到不算 Actions CI" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 16 --sha $S16 2>&1 | grep -q '仍沒有 check run'"
 check "token 失敗只報真正原因" bash -c "! bash '$BOT' --repo o/missing token 2>&1 | grep -q '缺 .token'"
 check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
+S17=$(printf '4%.0s' $(seq 40))
+check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'suite:github-actions=queued'"
+check "merge 用法列出 --allow-no-ci" bash -c "bash '$BOT' merge abc 2>&1 | grep -q -- --allow-no-ci"
 check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
 check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"
+export PATH=$REAL_PATH
 
 # --- push 用的 git 參數 ---
 git init -q "$TMP/prepo"
@@ -122,6 +128,13 @@ mkdir -p "$TMP/tt"
 check "token 暫存檔結束後刪除" [ -z "$(ls -A "$TMP/tt")" ]
 (cd "$TMP/prepo" && TMPDIR="$TMP/tt" bash "$BOT" _pushgit t u nosuchcmd >/dev/null 2>&1)
 check "失敗時也刪除 token 暫存檔" [ -z "$(ls -A "$TMP/tt")" ]
+printf 'machine github.com login me password ghp_personal\n' > "$TMP/.netrc"
+check "推送時 HOME 不是使用者的(不讀 ~/.netrc)" bash -c "cd '$TMP/prepo' && h=\$(HOME='$TMP' bash '$BOT' _pushgit t u -c alias.h='!printf %s \"\$HOME\"' h) && [ \"\$h\" != '$TMP' ] && [ ! -e \"\$h/.netrc\" ]"
+mkdir -p "$TMP/sigterm"
+( bash "$BOT" _scratch hang > "$TMP/sigterm/dir" & p=$!; /bin/sleep 0.5; kill -TERM $p; wait $p 2>/dev/null ) || true
+check "被 SIGTERM 中斷也刪除暫存目錄" bash -c "d=\$(cat '$TMP/sigterm/dir'); [ -n \"\$d\" ] && [ ! -e \"\$d\" ]"
+printf 'not a key\n' > "$TMP/badkey.pem"
+check "私鑰壞掉時明確報錯" bash -c "GITHUB_BOT_APP_ID=1 GITHUB_BOT_KEY_FILE='$TMP/badkey.pem' bash '$BOT' _jwt 2>&1 | grep -q '私鑰簽章失敗'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 git -C "$TMP/prepo" config url."git@github.com:".insteadOf https://github.com/
 git -C "$TMP/prepo" config --unset url."git@github.com:".insteadOf

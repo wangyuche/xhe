@@ -57,6 +57,20 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/contents/.github/workflows?ref={e40}":
             return self.send(200, [{"name": "ci.yml"}])
+        s17 = "4" * 40
+        if p == "/repos/o/r/pulls/17":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s17}})
+        if p == f"/repos/o/r/commits/{s17}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 1, "check_runs": [{"name": "lint", "status": "completed", "conclusion": "skipped"}]})
+        if p == f"/repos/o/r/commits/{s17}/check-suites?per_page=100":
+            return self.send(200, {"total_count": 2, "check_suites": [
+                {"app": {"slug": "github-actions"}, "status": "completed", "conclusion": "skipped", "latest_check_runs_count": 1},
+                {"app": {"slug": "github-actions"}, "status": "queued", "conclusion": None, "latest_check_runs_count": 0}]})
+        if p == f"/repos/o/r/commits/{s17}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
+        if "/check-suites?per_page=100" in p and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"total_count": 0, "check_suites": [
+                {"app": {"slug": "some-app"}, "status": "queued", "conclusion": None, "latest_check_runs_count": 0}]})
         f40 = "f" * 40
         if p == f"/repos/o/r/commits/{f40}/check-runs?per_page=100":
             return self.send(200, {"total_count": 0, "check_runs": []})
@@ -81,6 +95,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "success", "total_count": 1})
         if p == f"/repos/o/r/contents/.github/workflows?ref={s16}":
             return self.send(200, [{"name": "ci.yml"}])
+        if p.startswith("/repos/o/r/contents/.github/workflows?ref=") and p.endswith(s17):
+            return self.send(200, [{"name": "ci.yml"}, {"name": "test.yml"}])
         if p.startswith("/repos/o/r/contents/.github/workflows?ref=") and not p.endswith((e40, f40, s16)):
             return self.send(404, {"message": "Not Found"})
         if p == "/repos/o/r/pulls/13":

@@ -24,6 +24,14 @@ CONF=${GITHUB_BOT_CONFIG:-$HOME/.config/github-bot/config}
 REPO=""
 
 die() { echo "bot.sh: $*" >&2; exit 1; }
+
+# 所有暫存(token 檔、推送用的空 HOME)都在 SCRATCH 底下,結束或被中斷時整個刪掉
+SCRATCH=$(umask 077; mktemp -d)
+cleanup() { rm -rf "$SCRATCH"; }
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 129' HUP
 need_val() { [[ $2 -ge 2 ]] || die "$1 後面要接值"; }   # need_val <旗標> <剩餘參數數>
 
 # 去掉前後空白與成對引號:  "~/x"  →  ~/x
@@ -84,7 +92,9 @@ jwt() {
   now=$(date +%s)
   h=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
   p=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' $((now - 60)) $((now + 540)) "$APP_ID" | b64url)
-  s=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$KEY_FILE" -binary | b64url)
+  s=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$KEY_FILE" -binary 2>/dev/null | b64url) \
+    || die "私鑰簽章失敗(KEY_FILE 壞掉、有密碼或不是 RSA 私鑰)"
+  [[ -n $s ]] || die "私鑰簽章失敗(KEY_FILE 壞掉、有密碼或不是 RSA 私鑰)"
   printf '%s.%s.%s' "$h" "$p" "$s"
 }
 
@@ -100,7 +110,7 @@ api() {
       printf 'header = "Authorization: Bearer %s"\n' "$bearer"
       printf 'header = "Accept: application/vnd.github+json"\n'
       printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
-    } | curl -q -sS -K - -X "$method" -w '\n%{http_code}' \
+    } | curl -q -sS --connect-timeout 10 --max-time 60 -K - -X "$method" -w '\n%{http_code}' \
           ${data[@]+"${data[@]}"} "$API$path"
   ) || die "連不到 $API$path"
   code=${resp##*$'\n'}; resp=${resp%$'\n'*}
@@ -186,12 +196,18 @@ identity() {
   # 有 repo(--repo 或 GitHub origin)就用 installation token 查,避免匿名 60 次 / 小時限制;
   # 新 repo 還沒有 origin 時退回匿名查詢
   if [[ -n $REPO ]] || parse_repo "$(git remote get-url origin 2>/dev/null)" >/dev/null; then
-    t=$(token 2>/dev/null) || t=""                # App 沒裝在這個 repo(例如 fork)就退回匿名查詢
+    local err
+    # App 沒裝在這個 repo(例如 fork,installation 查詢 404)才退回匿名查詢;其他錯誤照實回報
+    if ! t=$(token 2>"$SCRATCH/token.err"); then
+      err=$(cat "$SCRATCH/token.err")
+      grep -q '/installation → HTTP 404' <<<"$err" || { printf '%s\n' "$err" >&2; exit 1; }
+      t=""
+    fi
   fi
   if [[ -n $t ]]; then
     u=$(api GET "/users/${slug}%5Bbot%5D" "$t")
   else
-    u=$(curl -q -sS -f -H 'Accept: application/vnd.github+json' "$API/users/${slug}%5Bbot%5D") \
+    u=$(curl -q -sS -f --connect-timeout 10 --max-time 60 -H 'Accept: application/vnd.github+json' "$API/users/${slug}%5Bbot%5D") \
       || die "查不到 ${slug}[bot] 的 user id(匿名查詢失敗,可能是次數限制;加 --repo owner/repo 改用認證查詢)"
   fi
   uid=$(jfield .id "$u")
@@ -208,12 +224,11 @@ cmd_commit() {
     git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" -c commit.gpgsign=false commit "$@"
 }
 
-# 把 token 寫進 0600 暫存檔(TOKEN_TMP,全域變數,讓 EXIT trap 在函式外也看得到),結束時刪除
+# token 暫存檔放在 SCRATCH(0700 暫存目錄)。被中斷(INT / TERM / HUP)也會刪除。
 TOKEN_TMP=""
 token_file() {
-  TOKEN_TMP=$(umask 077; mktemp)
-  trap '[[ -z $TOKEN_TMP ]] || rm -f "$TOKEN_TMP"' EXIT
-  printf '%s' "$1" > "$TOKEN_TMP"
+  TOKEN_TMP="$SCRATCH/token"
+  (umask 077; printf '%s' "$1" > "$TOKEN_TMP")
 }
 
 # 推送專用的 git 參數:不讀全域 / 系統設定(避免 insteadOf 改走 SSH 或個人憑證)、
@@ -224,7 +239,9 @@ push_git() {
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄)
   local -a safe=()
   while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
-    < <(git config --global --get-all safe.directory 2>/dev/null || true)
+    < <({ git config --system --get-all safe.directory; git config --global --get-all safe.directory; } 2>/dev/null || true)
+  # HOME 換成空目錄:git 的 libcurl 會讀 ~/.netrc,裡面若有 github.com 會用個人憑證推送
+  mkdir -p "$SCRATCH/home"
   # 推送用乾淨環境:不讀全域 / 系統設定,移除會注入設定、改 TLS / proxy / 除錯輸出的環境變數
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY
@@ -232,7 +249,8 @@ push_git() {
     -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_CURL_VERBOSE -u GIT_TRACE_PACKET -u GIT_ASKPASS -u SSH_ASKPASS
     -u http_proxy -u https_proxy -u HTTPS_PROXY -u all_proxy -u ALL_PROXY -u no_proxy -u NO_PROXY
     -u CURL_CA_BUNDLE -u SSL_CERT_FILE -u SSL_CERT_DIR -u GIT_SSL_CERT_PASSWORD_PROTECTED
-    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0)
+    -u XDG_CONFIG_HOME -u NETRC
+    HOME="$SCRATCH/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0)
   # repo 的任何設定檔(local、worktree、include / includeIf)都不得有 url.* / http.* / credential.*:
   # 這些能改寫推送網址、走 proxy、關 TLS 驗證、附加別的認證或 helper
   # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(git 太舊、include 壞掉、dubious ownership)一律拒絕
@@ -294,42 +312,60 @@ cmd_pr() {
 # CI 檢查。剛推完時 CI 還沒登記(mergeable_state 會先顯示 clean),所以先等 CI 出現再判斷:
 #   - repo 有 .github/workflows:等到至少一個 check run(其他服務的 status 先到也不算)
 #   - 沒有 workflow:等到任何 check run 或 commit status(CircleCI 等外部 CI)
-#   最多等 60 秒,仍沒有就拒絕;確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
-# 有任何 check run 或 commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
+#   出現後再觀察 15 秒(3 次輪詢數量不變)才判斷,避免晚幾秒才登記的 workflow 被漏掉。
+#   最多等約 2 分鐘;沒有 CI 就拒絕,確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
+# 有任何 check suite / check run / commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
+ci_snapshot() {   # 設定 runs st suites nr ns
+  runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
+    || die "讀不到 check runs(App 要加 Checks: Read 權限)"
+  suites=$(api GET "/repos/$REPO/commits/$sha/check-suites?per_page=100" "$t") \
+    || die "讀不到 check suites(App 要加 Checks: Read 權限)"
+  st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
+    || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
+  nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st")
+  [[ $nr -le $(jq -r '.check_runs | length' <<<"$runs") ]] || die "check runs 超過 100 個,無法全部確認,不合併"
+}
+
 check_ci() {
-  local sha=$1 t=$2 allow_no_ci=$3 runs st nr ns wf rc has_wf=0 ready=0 bad i
+  local sha=$1 t=$2 allow_no_ci=$3 runs st suites nr ns wf rc has_wf=0 ready=0 stable=0 last=-1 bad i
   wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
   case $rc in
     0) [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
     4) ;;
     *) die "查不到 repo 是否有 workflow,不合併" ;;
   esac
-  for i in $(seq 13); do
-    runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
-      || die "讀不到 check runs(App 要加 Checks: Read 權限)"
-    st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
-      || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
-    nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st")
-    [[ $nr -le $(jq -r '.check_runs | length' <<<"$runs") ]] || die "check runs 超過 100 個,無法全部確認,不合併"
+  for i in $(seq 24); do
+    ci_snapshot
     if [[ $has_wf -eq 1 ]]; then [[ $nr -gt 0 ]] && ready=1; else [[ $((nr + ns)) -gt 0 ]] && ready=1; fi
-    [[ $ready -eq 1 || $allow_no_ci -eq 1 || $i -eq 13 ]] && break
+    [[ $ready -eq 0 && $allow_no_ci -eq 1 ]] && break
+    if [[ $ready -eq 1 ]]; then
+      if [[ $((nr + ns)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns)); fi
+      [[ $stable -ge 3 ]] && break
+    fi
+    [[ $ready -eq 0 && $i -ge 13 ]] && break       # 60 秒內都沒出現就放棄等待
     sleep 5
   done
-  if [[ $ready -eq 0 && $allow_no_ci -ne 1 ]]; then
+  if [[ $ready -eq 0 ]]; then
+    [[ $allow_no_ci -eq 1 ]] && return 0
     if [[ $has_wf -eq 1 ]]; then
       die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 check run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
     fi
     die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
-  bad=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | "\(.name)=\(.conclusion // .status)"' <<<"$runs")
-  [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")"
+  [[ $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
+  # GitHub Actions 的 suite,或已有 check run 的 suite,必須全部完成且成功
+  bad=$(jq -r '.check_suites[] | select(.app.slug == "github-actions" or (.latest_check_runs_count // 0) > 0)
+          | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not))
+          | "suite:\(.app.slug)=\(.conclusion // .status)"' <<<"$suites")
+  bad+=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | " \(.name)=\(.conclusion // .status)"' <<<"$runs")
+  [[ -z ${bad// /} ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")"
   [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
     || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
 }
 
 cmd_merge() {
   local num=${1:-} sha="" method=merge allow_no_ci=0
-  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase]"
+  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase] [--allow-no-ci]"
   shift
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -382,5 +418,6 @@ case ${1:-} in
   _parse)   parse_repo "$2" ;;                         # 測試用
   _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
             token_file "$2"; u=$3; shift 3; push_git "$TOKEN_TMP" "$u" "$@" ;;
+  _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & wait $!; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
   *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
