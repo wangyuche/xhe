@@ -6,8 +6,10 @@
 #   bot.sh push <分支>                      把 HEAD 推到遠端 <分支>(拒絕預設分支、main、master,不 force)
 #   bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]
 # 共用選項(放在子指令前):--repo owner/repo(預設取 origin)
-# 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG)內寫 APP_ID=、KEY_FILE=;
-#       也可用環境變數 GITHUB_BOT_APP_ID、GITHUB_BOT_KEY_FILE 覆蓋。
+# 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),二選一:
+#   App 模式:APP_ID=、KEY_FILE=(環境變數 GITHUB_BOT_APP_ID、GITHUB_BOT_KEY_FILE 可覆蓋)
+#   機器人帳號模式:GH_USER=<帳號>(token 從 gh 的鑰匙圈取:gh auth token --user;最優先)
+#                  或 TOKEN_FILE=<檔>(環境變數 GITHUB_BOT_GH_USER、GITHUB_BOT_TOKEN_FILE 可覆蓋)
 set -euo pipefail
 
 API=${GITHUB_API_URL:-https://api.github.com}
@@ -19,16 +21,32 @@ die() { echo "bot.sh: $*" >&2; exit 1; }
 load_conf() {
   APP_ID=${GITHUB_BOT_APP_ID:-}
   KEY_FILE=${GITHUB_BOT_KEY_FILE:-}
+  TOKEN_FILE=${GITHUB_BOT_TOKEN_FILE:-}
+  GH_USER=${GITHUB_BOT_GH_USER:-}
   if [[ -f $CONF ]]; then
     local k v
     while IFS='=' read -r k v; do
       v=${v%$'\r'}
       case $k in
-        APP_ID)   [[ -n $APP_ID ]]   || APP_ID=$v ;;
-        KEY_FILE) [[ -n $KEY_FILE ]] || KEY_FILE=${v/#\~/$HOME} ;;
+        APP_ID)     [[ -n $APP_ID ]]     || APP_ID=$v ;;
+        KEY_FILE)   [[ -n $KEY_FILE ]]   || KEY_FILE=${v/#\~/$HOME} ;;
+        TOKEN_FILE) [[ -n $TOKEN_FILE ]] || TOKEN_FILE=${v/#\~/$HOME} ;;
+        GH_USER)    [[ -n $GH_USER ]]    || GH_USER=$v ;;
       esac
-    done < <(grep -E '^(APP_ID|KEY_FILE)=' "$CONF" || true)
+    done < <(grep -E '^(APP_ID|KEY_FILE|TOKEN_FILE|GH_USER)=' "$CONF" || true)
   fi
+  if [[ -n $GH_USER ]]; then
+    [[ $GH_USER =~ ^[A-Za-z0-9-]+$ ]] || die "GH_USER 格式錯誤:$GH_USER"
+    command -v gh >/dev/null || die "找不到 gh"
+    MODE=pat
+    return
+  fi
+  if [[ -n $TOKEN_FILE ]]; then
+    MODE=pat
+    [[ -r $TOKEN_FILE ]] || die "讀不到 TOKEN_FILE='$TOKEN_FILE'"
+    return
+  fi
+  MODE=app
   [[ $APP_ID =~ ^[0-9]+$ ]] || die "缺 APP_ID(寫在 $CONF 或設 GITHUB_BOT_APP_ID)"
   [[ -r $KEY_FILE ]] || die "讀不到私鑰 KEY_FILE='$KEY_FILE'"
 }
@@ -79,8 +97,22 @@ resolve_repo() {
   REPO=$(parse_repo "$url") || die "origin 不是 GitHub 網址:$url"
 }
 
+pat() {
+  local t
+  if [[ -n $GH_USER ]]; then
+    t=$(gh auth token --hostname github.com --user "$GH_USER" 2>/dev/null) \
+      || die "gh 沒有登入 $GH_USER(執行 gh auth login 加入該帳號)"
+  else
+    t=$(tr -d ' \t\r\n' < "$TOKEN_FILE")
+  fi
+  [[ -n $t ]] || die "取不到機器人帳號的 token"
+  printf '%s' "$t"
+}
+
 token() {
-  load_conf; resolve_repo
+  load_conf
+  [[ $MODE == pat ]] && { pat; return; }
+  resolve_repo
   local j inst
   j=$(jwt)
   inst=$(api GET "/repos/$REPO/installation" "$j" | jq -r .id) \
@@ -91,6 +123,15 @@ token() {
 
 identity() {
   load_conf
+  if [[ $MODE == pat ]]; then
+    local u login uid
+    u=$(api GET /user "$(pat)")
+    login=$(jq -r .login <<<"$u"); uid=$(jq -r .id <<<"$u")
+    [[ $uid =~ ^[0-9]+$ && -n $login ]] || die "PAT 查不到帳號資料"
+    BOT_NAME=$login
+    BOT_EMAIL="${uid}+${login}@users.noreply.github.com"
+    return
+  fi
   local slug uid
   slug=$(api GET /app "$(jwt)" | jq -r .slug)
   uid=$(curl -sS -H 'Accept: application/vnd.github+json' "$API/users/${slug}%5Bbot%5D" | jq -r .id)
@@ -108,14 +149,17 @@ cmd_push() {
   local branch=${1:-}; [[ -n $branch && $# -eq 1 ]] || die "用法:bot.sh push <分支>"
   [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != -* ]] || die "分支名稱不合法:$branch"
   case $branch in main|master) die "不推 $branch;請推功能分支再開 PR" ;; esac
-  resolve_repo
+  load_conf; resolve_repo
   BOT_TOKEN=$(token); export BOT_TOKEN
+  BOT_USER=x-access-token
+  [[ $MODE == pat ]] && { identity; BOT_USER=$BOT_NAME; }
+  export BOT_USER
   local def
   def=$(api GET "/repos/$REPO" "$BOT_TOKEN" | jq -r .default_branch)
   [[ $branch != "$def" ]] || die "不推預設分支 $def;請推功能分支再開 PR"
   # credential.helper= 先清掉 osxkeychain 等既有 helper,token 只經環境變數傳遞
   git -c credential.helper= \
-      -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$BOT_TOKEN"; }; f' \
+      -c 'credential.helper=!f() { echo "username=$BOT_USER"; echo "password=$BOT_TOKEN"; }; f' \
       push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
 }
 

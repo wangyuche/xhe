@@ -67,5 +67,37 @@ git init -q "$TMP/repo" && (
 ) >/dev/null 2>&1
 check "commit 作者是 bot" [ "$(git -C "$TMP/repo" log -1 --format='%an <%ae>|%cn')" = 'xhe-bot[bot] <12345+xhe-bot[bot]@users.noreply.github.com>|xhe-bot[bot]' ]
 
+# --- PAT 模式(機器人帳號)---
+printf 'ghp_testpat\n' > "$TMP/pat"; chmod 600 "$TMP/pat"
+printf 'TOKEN_FILE=%s\n' "$TMP/pat" > "$TMP/config-pat"
+PAT_ENV="GITHUB_BOT_CONFIG=$TMP/config-pat"
+check "pat token" [ "$(env "$PAT_ENV" bash "$BOT" --repo o/r token)" = ghp_testpat ]
+ID=$(env "$PAT_ENV" bash "$BOT" identity)
+check "pat identity name"  grep -qx 'name=xhe-bot' <<<"$ID"
+check "pat identity email" grep -qx 'email=777+xhe-bot@users.noreply.github.com' <<<"$ID"
+check "pat pr 回傳網址" [ "$(env "$PAT_ENV" bash "$BOT" --repo o/r pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
+check "pat push 預設分支拒絕" bash -c "env '$PAT_ENV' bash '$BOT' --repo o/r push develop 2>&1 | grep -q '不推預設分支'"
+check "pat 讀不到檔案失敗" bash -c "! GITHUB_BOT_TOKEN_FILE=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
+git init -q "$TMP/repo2" && (
+  cd "$TMP/repo2" && echo hi > a && git add a &&
+  env "$PAT_ENV" bash "$BOT" commit -q -m test
+) >/dev/null 2>&1
+check "pat commit 作者是機器人帳號" [ "$(git -C "$TMP/repo2" log -1 --format='%an <%ae>')" = 'xhe-bot <777+xhe-bot@users.noreply.github.com>' ]
+
+# --- gh 模式(token 從 gh auth token --user 取)---
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'GH'
+#!/usr/bin/env bash
+[[ "$*" == "auth token --hostname github.com --user xhe-bot" ]] && { echo ghp_testpat; exit 0; }
+echo "no account" >&2; exit 1
+GH
+chmod +x "$TMP/bin/gh"
+printf 'GH_USER=xhe-bot\n' > "$TMP/config-gh"
+GH_RUN="env PATH=$TMP/bin:$PATH GITHUB_BOT_CONFIG=$TMP/config-gh"
+check "gh token" [ "$($GH_RUN bash "$BOT" --repo o/r token)" = ghp_testpat ]
+check "gh identity" grep -qx 'name=xhe-bot' <<<"$($GH_RUN bash "$BOT" identity)"
+check "gh 帳號未登入失敗" bash -c "! env PATH='$TMP/bin:$PATH' GITHUB_BOT_GH_USER=nobody GITHUB_BOT_CONFIG=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
+check "gh 優先於 TOKEN_FILE" [ "$(env PATH="$TMP/bin:$PATH" GITHUB_BOT_CONFIG="$TMP/config-pat" GITHUB_BOT_GH_USER=xhe-bot bash "$BOT" --repo o/r token)" = ghp_testpat ]
+
 echo "---- $pass passed, $fail failed"
 [[ $fail -eq 0 ]]

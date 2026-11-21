@@ -3,6 +3,7 @@ import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TOKEN = "ghs_testtoken"
+PAT = "ghp_testpat"
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -33,7 +34,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"slug": "xhe-bot"})
         if p == "/users/xhe-bot%5Bbot%5D":
             return self.send(200, {"id": 12345})
-        if p == "/repos/o/r" and self.auth() == TOKEN:
+        if p == "/user" and self.auth() == PAT:
+            return self.send(200, {"login": "xhe-bot", "id": 777})
+        if p == "/repos/o/r" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"default_branch": "develop"})
         self.send(401, {"message": "bad request " + p})
 
@@ -43,7 +46,7 @@ class H(BaseHTTPRequestHandler):
             if body != {"repositories": ["r"]}:
                 return self.send(422, {"message": "bad scope"})
             return self.send(201, {"token": TOKEN})
-        if self.path == "/repos/o/r/pulls" and self.auth() == TOKEN:
+        if self.path == "/repos/o/r/pulls" and self.auth() in (TOKEN, PAT):
             return self.send(201, {"html_url": "https://github.com/o/r/pull/7", "echo": body})
         self.send(401, {"message": "bad request " + self.path})
 
