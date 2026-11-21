@@ -66,7 +66,7 @@ const topBg = tl.theme?.bg; // 置頂鏡頭的底色;沒有預設,用到置頂�
 // 原聲模式的 headline 用完整 theme;在 dry-run 前就檢查(render.mjs 也會擋,但那時已開始產生中間檔)
 let headlineContrast = null;
 if (tl.mode === 'original' && tl.headline) {
-  const t = checkTheme(tl.theme, ['headline']);
+  const t = checkTheme(tl.theme, [{ type: 'headline' }]);
   if (t.error) fail(`有 headline 時:${t.error}`, 2);
   headlineContrast = t.contrast;
 }
