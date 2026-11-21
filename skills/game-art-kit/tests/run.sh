@@ -33,8 +33,8 @@ export HOME="$W/home"; mkdir -p "$HOME"   # 不讀使用者的 ~/.config
 
 # 1. 位址解析
 o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '找不到 ComfyUI 位址' && ok "沒有位址 → 結束碼 2 並附設定方式" || bad "沒有位址" "$o"
-mkdir -p "$HOME/.config/game-art-kit"; echo "COMFYUI_URL=http://127.0.0.1:$PORT" > "$HOME/.config/game-art-kit/config"
-o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)" && ok "從 ~/.config/game-art-kit/config 讀位址" || bad "讀設定檔" "$o"
+mkdir -p "$HOME/.config/game-art-kit"; printf 'export COMFYUI_URL="http://127.0.0.1:%s"  # 區網主機\n' "$PORT" > "$HOME/.config/game-art-kit/config"
+o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)" && ok "從 ~/.config/game-art-kit/config 讀位址(export、引號、註解)" || bad "讀設定檔" "$o"
 o="$(C check --url http://127.0.0.1:1 2>&1)"; [ $? -eq 5 ] && ok "--url 覆寫優先、連不上 → 結束碼 5" || bad "--url 覆寫" "$o"
 for bu in 192.168.1.20:8188 comfy:8188 ftp://x:1; do
   o="$(C check --url "$bu" 2>&1)"; rc=$?; [ $rc -eq 2 ] && echo "$o" | grep -q '格式錯誤' && ok "位址 $bu 格式錯誤 → 結束碼 2" || bad "位址格式 $bu" "rc=$rc $o"
@@ -61,7 +61,9 @@ r="$(C run "$K/workflows/flux-t2i.json" --out "$W/o" --name f1 "${FS[@]}" --set 
 r="$(C run "$K/workflows/flux-kontext.json" --out "$W/o" --name k1 "${FS[@]}" --set 'ref1=r.png [temp]')" && ok "flux-kontext 送出成功" || bad "flux-kontext" "$r"
 r="$(C run "$K/workflows/zimage-t2i.json" --out "$W/o" --name z1 --set unet=u --set clip=c --set vae=v --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple --set width=64 --set height=64)" && ok "zimage-t2i 送出成功" || bad "zimage-t2i" "$r"
 r="$(C run "$K/workflows/qwen-t2i-canny.json" --out "$W/o" --name c1 "${QS[@]}" --set width=64 --set height=64 --set controlnet=x --set 'control_image=s.png [temp]' --set control_strength=0.8 --set control_end=0.8)" && ok "qwen-t2i-canny 送出成功" || bad "qwen-t2i-canny" "$r"
-grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每張完成後刪除 history" || bad "沒刪 history" "$(tail -3 "$W/req.log")"
+grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每張完成後刪除 history"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/sig" --name sg "${QS[@]/prompt=p/prompt=SLOW}" --set width=64 --set height=64 --timeout 60 2>&1 & p=$!; sleep 1.5; kill -TERM $p; wait $p; echo "rc=$?")"
+echo "$r" | grep -q 'rc=143' && tail -3 "$W/req.log" | grep -q '"path":"/history","query":{},"body":{"delete"' && [ ! -e "$W/sig/sg.png" ] && ok "收到 SIGTERM → 取消並刪 history 後結束(143)" || bad "SIGTERM 收尾" "$r $(tail -3 "$W/req.log")" || bad "沒刪 history" "$(tail -3 "$W/req.log")"
 
 # 4. 參數檢查與錯誤
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'width' && ok "缺參數 → 結束碼 2 並列出" || bad "缺參數" "$o"
@@ -93,6 +95,9 @@ o="$(C scrub-check "$W/o")"; [ $? -eq 1 ] && echo "$o" | grep -q 'leak.json:1' &
 rm "$W/o/leak.json"; mkdir -p "$W/s"; echo 'uses comfy.mjs run' > "$W/s/a.md"
 o="$(env -u COMFYUI_URL HOME="$W/nohome" node "$K/scripts/comfy.mjs" scrub-check "$W/s")" && ok "scrub-check:沒有設定位址也照常檢查(不會結束碼 2)" || bad "scrub-check 沒位址" "$o"
 o="$(C scrub-check "$W/s" --url http://comfy)" && ok "scrub-check:主機名稱 comfy 不誤中 comfy.mjs" || bad "scrub-check 主機名稱誤判" "$o"
+echo 'rendered on gpu-box.tailnet.ts.net' > "$W/s/c.md"; o="$(C scrub-check "$W/s" --url http://gpu-box.tailnet.ts.net:8000)"; [ $? -eq 1 ] && echo "$o" | grep -q 'c.md' && ok "scrub-check:含點的主機名稱沒有埠號也抓得到" || bad "scrub-check 主機名稱無埠" "$o"
+rm "$W/s/c.md"; echo 'peer 100.101.102.103 ok' > "$W/s/d.md"; o="$(C scrub-check "$W/s" --url http://comfy)"; [ $? -eq 1 ] && echo "$o" | grep -q 'd.md' && ok "scrub-check:Tailscale 100.64/10 位址" || bad "scrub-check 100.x" "$o"
+rm "$W/s/d.md"
 echo 'see http://comfy/view' > "$W/s/b.md"; o="$(C scrub-check "$W/s" --url http://comfy)"; [ $? -eq 1 ] && ok "scrub-check:--url 覆寫的主機也會檢查" || bad "scrub-check --url" "$o"
 
 # 7. sheet.mjs
@@ -110,6 +115,10 @@ if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Ch
   [ "$h" = "$((48 + 150 + 64))" ] && ok "sheet.mjs:WebP 依實際比例(1024×512 → 高 150)" || bad "sheet WebP 比例" "$o h=$h"
   echo '{"items":[{"image":"q1.png"},{"image":"nope.jpg"}]}' > "$W/o/j.json"; cp "$W/o/q1.png" "$W/o/nope.jpg"
   o="$(node "$K/scripts/sheet.mjs" "$W/o/j.json" "$W/o/j.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '讀不出' && ok "sheet.mjs:讀不出尺寸 → 結束碼 2(不猜比例)" || bad "sheet 尺寸讀不出" "$o"
+  node -e 'const fs=require("fs");const app1=Buffer.alloc(2+2+6+8+2+12+4);let o=0;app1.writeUInt16BE(0xffe1,o);o+=2;app1.writeUInt16BE(app1.length-2,o);o+=2;app1.write("Exif\0\0",o,"latin1");o+=6;const t=o;app1.write("MM",o);o+=2;app1.writeUInt16BE(42,o);o+=2;app1.writeUInt32BE(8,o);o+=4;app1.writeUInt16BE(1,o);o+=2;app1.writeUInt16BE(0x0112,o);app1.writeUInt16BE(3,o+2);app1.writeUInt32BE(1,o+4);app1.writeUInt16BE(6,o+8);const sof=Buffer.from([0xff,0xc0,0,11,8,0,100,0,200,1,1,0x11,0]);fs.writeFileSync(process.argv[1],Buffer.concat([Buffer.from([0xff,0xd8]),app1,sof,Buffer.from([0xff,0xd9])]))' "$W/o/rot.jpg"
+  echo '{"cols":1,"cellWidth":300,"items":[{"image":"rot.jpg"}]}' > "$W/o/r.json"
+  o="$(HOME="$REAL_HOME" node "$K/scripts/sheet.mjs" "$W/o/r.json" "$W/o/r.png" 2>&1)"; h="$(C pngsize "$W/o/r.png" 2>/dev/null | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).height)' 2>/dev/null)"
+  [ "$h" = "$((48 + 600 + 64))" ] && ok "sheet.mjs:JPEG 依 EXIF 方向(200×100、Orientation 6 → 直式 100×200,圖高 600)" || bad "sheet EXIF" "$o h=$h"
   echo '{"cols":2.5,"items":[{"image":"a.png"}]}' > "$W/o/c.json"; o="$(node "$K/scripts/sheet.mjs" "$W/o/c.json" "$W/o/c.png" 2>&1)"; [ $? -eq 2 ] && ok "sheet.mjs:cols 不是正整數 → 結束碼 2" || bad "sheet cols" "$o"
   o="$(node "$K/scripts/sheet.mjs" "$W/o/nope.json" "$W/o/x.png" 2>&1)"; [ $? -eq 2 ] && ok "sheet.mjs:spec 不存在 → 結束碼 2" || bad "sheet.mjs 錯誤處理" "$o"
 else skip "sheet.mjs(沒有 Google Chrome)"; fi

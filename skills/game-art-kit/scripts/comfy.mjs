@@ -10,7 +10,8 @@
 // 共同參數:--url <位址> 臨時覆寫。位址優先序:--url > 環境變數 COMFYUI_URL > ~/.config/game-art-kit/config 的 COMFYUI_URL=。
 // 位址只印到 stderr / 終端機,不寫進任何產出檔案。
 // 結束碼:0 成功;1 一般錯誤 / scrub 找到位址;2 用法或參數錯誤;3 ComfyUI 回報錯誤;4 逾時;5 連不上。
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, mkdtempSync, rmSync, renameSync, copyFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve, dirname } from 'node:path';
@@ -38,8 +39,9 @@ function resolveUrl(required = true) {
   if (!u) {
     const f = join(homedir(), '.config', 'game-art-kit', 'config');
     if (existsSync(f)) {
-      const m = readFileSync(f, 'utf8').match(/^\s*COMFYUI_URL\s*=\s*(\S+)\s*$/m);
-      if (m) u = m[1];
+      // 允許 export、引號、行尾 # 註解
+      const m = readFileSync(f, 'utf8').match(/^\s*(?:export\s+)?COMFYUI_URL\s*=\s*(["']?)([^"'\s#]+)\1\s*(?:#.*)?$/m);
+      if (m) u = m[2];
     }
   }
   if (!u && !required) return null;
@@ -92,7 +94,8 @@ function family(name) {
   if (/sd.?1\.?5|v1-5/.test(n)) return 'sd15';
   return '未知';
 }
-const pick = (list, re) => list.find(x => re.test(x.toLowerCase())) ?? null;
+// /models 可能回子資料夾路徑(例如 flux/ae.safetensors):用檔名比對,回傳完整路徑
+const pick = (list, re) => list.find(x => re.test(x.toLowerCase().split('/').pop())) ?? null;
 
 async function check() {
   const stats = await json('/system_stats');
@@ -211,6 +214,8 @@ function fill(skel, sets) {
   return { meta: _meta ?? {}, graph: filled, vals };
 }
 
+// 暫存可能在不同磁碟(rename 會 EXDEV),失敗就改用複製
+const renameOrCopy = (a, b) => { try { renameSync(a, b); } catch { copyFileSync(a, b); } };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function run() {
@@ -250,6 +255,9 @@ async function run() {
       await post('/history', { delete: [id] });
     } catch { console.error(`警告:清理 ComfyUI 上的工作 ${id} 失敗(連線問題),history 可能殘留`); }
   };
+  // 被外部中止(Ctrl-C、Bash 工具逾時送 SIGTERM)時也收尾,不在伺服器留下工作
+  const onSignal = async (sig) => { console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`); await cleanup(); process.exit(sig === 'SIGINT' ? 130 : 143); };
+  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal); process.once('SIGHUP', onSignal);
   try {
     let hist = null;
     while (true) {
@@ -264,26 +272,36 @@ async function run() {
     }
     finished = true;
     if (hist.status?.status_str === 'error') {
-      const msgs = (hist.status.messages ?? []).filter(m => m[0] === 'execution_error').map(m => m[1]);
+      const all = hist.status.messages ?? [];
+      const errs = all.filter(m => ['execution_error', 'execution_interrupted'].includes(m[0]));
+      const msgs = (errs.length ? errs : all).map(m => ({ type: m[0], ...m[1] }));
       console.error(JSON.stringify(msgs, null, 1).slice(0, 3000));
       die('ComfyUI 執行失敗(見上方)', 3);
     }
     const imgs = [];
     for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
     if (!imgs.length) die('workflow 沒有輸出圖片(要有 PreviewImage)', 3);
-    mkdirSync(out, { recursive: true });
+    // 先全部下載到暫存,都成功才搬進 --out(避免留下半套檔案)
+    const stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
     const files = [];
-    for (let i = 0; i < imgs.length; i++) {
-      const im = imgs[i];
-      const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
-      const r = await api(`/view?${q}`, { timeoutMs: 120000 });
-      if (!r.ok) die(`下載圖片失敗 HTTP ${r.status}`, 3);
-      const f = join(out, imgs.length === 1 ? `${name}.png` : `${name}-${i + 1}.png`);
-      writeFileSync(f, Buffer.from(await r.arrayBuffer()));
-      files.push({ file: f, ...pngSize(f) });
+    try {
+      for (let i = 0; i < imgs.length; i++) {
+        const im = imgs[i];
+        const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
+        const r = await api(`/view?${q}`, { timeoutMs: 120000 });
+        if (!r.ok) die(`下載圖片失敗 HTTP ${r.status}`, 3);
+        let buf;
+        try { buf = Buffer.from(await r.arrayBuffer()); } catch (e) { die(`下載圖片途中斷線(${e.cause?.code || e.name})`, 5); }
+        const fname = imgs.length === 1 ? `${name}.png` : `${name}-${i + 1}.png`;
+        writeFileSync(join(stage, fname), buf);
+        files.push({ fname, ...pngSize(join(stage, fname)) });
+      }
+      mkdirSync(join(out, 'workflows'), { recursive: true });
+      for (const f of files) { renameOrCopy(join(stage, f.fname), join(out, f.fname)); f.file = join(out, f.fname); delete f.fname; }
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
     }
     // 成功才存實際送出的 workflow(不含位址),避免留下沒有對應圖片的檔案
-    mkdirSync(join(out, 'workflows'), { recursive: true });
     writeFileSync(join(out, 'workflows', `${name}.json`), JSON.stringify({ _meta: { ...meta, skeleton: basename(skelPath), params: vals }, ...graph }, null, 1));
     console.log(JSON.stringify({ name, status: 'ok', seconds: Math.round((Date.now() - t0) / 100) / 10, files, params: vals }));
   } finally {
@@ -301,10 +319,14 @@ function scrub() {
   if (u) {
     const { host, hostname, port } = new URL(u);
     const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // 有埠號或是 IP → 比對 host;只有主機名稱(例如 comfy)→ 只比對 //主機名稱,避免誤中一般文字
-    hostRe = port || /^[\d.]+$|:/.test(hostname) ? new RegExp(esc(host)) : new RegExp(`//${esc(hostname)}(?![\\w.-])`);
+    // IP 或含點的主機名稱(comfy.local、x.ts.net)→ 不論有沒有埠號都比對主機名稱;
+    // 單字主機名稱(例如 comfy)→ 只比對 //comfy 或 comfy:<埠>,避免誤中一般文字(comfy.mjs)
+    const b = '(?<![\\w.-])', a = '(?![\\w-])';
+    hostRe = /[.:]/.test(hostname)
+      ? new RegExp(`${b}${esc(hostname)}${a}`)
+      : new RegExp(`//${esc(hostname)}(?![\\w.-])|${b}${esc(hostname)}${port ? `:${port}` : ':\\d+'}\\b`);
   }
-  const pats = [/\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /\b192\.168\.\d{1,3}\.\d{1,3}\b/, /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, /:8188\b/];
+  const pats = [/\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/, /\b169\.254\.\d{1,3}\.\d{1,3}\b/, /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /\b192\.168\.\d{1,3}\.\d{1,3}\b/, /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, /:8188\b/];
   const hits = [];
   const walk = (p) => {
     for (const e of readdirSync(p, { withFileTypes: true })) {

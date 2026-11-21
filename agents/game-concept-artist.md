@@ -63,7 +63,7 @@ skills:
    - 只有一個角色時提示詞加 `only one person`。
    - 簡報附構圖草圖:用 `qwen-t2i-canny`(只限沒有角色一致需求的格,或先出構圖再用 (b) 組帶入角色)。
    - UI 示意:圖上文字不要求可讀,需要標註時用 `sheet.mjs` 的 caption / note。
-3. `comfy.mjs run ... --out <輸出目錄> --name <格號或檔名>`;結束碼 4(逾時)記 status 逾時;3 讀錯誤後修正 workflow 參數再試。
+3. `comfy.mjs run ... --out <輸出目錄> --name <格號或檔名>`(Bash 工具的逾時要設得比 `--timeout` 長 60 秒以上,例如 `--timeout 300` 配 Bash 逾時 420000 毫秒;被 Bash 中止時 kit 雖會收尾,但這張會沒有結果);結束碼 4(逾時)記 status 逾時;3 讀錯誤後修正 workflow 參數再試。
 4. Read 每張圖,檢查:符合需求、符合 STYLE.md(色彩、線條、構圖、禁止)、角色依 `character.md` 外觀特徵逐項一致(至少兩項具體寫出)、人數正確。不符合 → 換 seed 或調整提示詞重出,每張最多 2 次;仍不符合記 status `不符合`。**角色的外觀特徵或識別物有任何一項和 `character.md` 不同(多了或少了配件、顏色不對)都算不符合,要重出**;只有和角色無關的差異(背景色、光線)才可以記 ok 並列在已知限制。
 5. 分鏡最後用 `sheet.mjs` 拼 `sheet.png`(每格 label = 格號、caption = 畫面、note = 鏡頭),Read 檢查。
 6. 寫 `manifest.json`。累計生成數(含重出、試作)達 40 張就停止,已完成的保留,回 ISSUES。

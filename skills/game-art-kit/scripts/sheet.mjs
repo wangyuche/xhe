@@ -26,16 +26,32 @@ const cols = Math.min(colsIn, items.length);
 const base = dirname(resolve(specPath));
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 
+// EXIF IFD0 的 Orientation(0x0112);t = TIFF 標頭位置
+function exifOrientation(buf, t) {
+  try {
+    const le = buf.toString('ascii', t, t + 2) === 'II';
+    const u16 = (o) => le ? buf.readUInt16LE(o) : buf.readUInt16BE(o);
+    const u32 = (o) => le ? buf.readUInt32LE(o) : buf.readUInt32BE(o);
+    const ifd = t + u32(t + 4), n = u16(ifd);
+    for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; if (u16(e) === 0x0112) return u16(e + 8); }
+  } catch { /* 讀不到就當 1 */ }
+  return null;
+}
 // 讀不出尺寸就報錯,不猜比例(猜錯會把圖壓扁)
 function imgSize(file, buf) {
   const ext = extname(file).toLowerCase();
   if (ext === '.png' && buf.toString('ascii', 1, 4) === 'PNG') return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
   if (/\.jpe?g$/.test(ext) && buf[0] === 0xff && buf[1] === 0xd8) {
+    let orient = 1;
     for (let i = 2; i + 9 < buf.length;) {
       if (buf[i] !== 0xff) { i++; continue; }
       const m = buf[i + 1];
       if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
-      if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+      if (m === 0xe1 && buf.toString('ascii', i + 4, i + 8) === 'Exif') orient = exifOrientation(buf, i + 10) ?? orient;
+      if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) {
+        const w = buf.readUInt16BE(i + 7), h = buf.readUInt16BE(i + 5);
+        return orient >= 5 && orient <= 8 ? { w: h, h: w } : { w, h }; // Chrome 依 EXIF 旋轉顯示
+      }
       i += 2 + buf.readUInt16BE(i + 2);
     }
   }
