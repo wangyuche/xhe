@@ -1,6 +1,6 @@
 ---
 name: github-bot
-description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push 功能分支、開 PR,自己 code review 沒問題就合併回主線。預設用 App 私鑰簽 JWT 換短效 installation token(1 小時、只限該 repo);也支援另開機器人帳號用 classic PAT。主 agent 要把變更推上 GitHub 並開 PR,或使用者說「用 bot commit / push」「bot 開 PR」「bot 合併」時使用。不直接推 main / master / 預設分支(一律走 PR),不 force-push,只合併 review 過的 SHA。
+description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push 功能分支、開 PR,自己 code review 沒問題就合併回主線(只自動合併沒有 CI 的 repo,有 CI 交給使用者)。預設用 App 私鑰簽 JWT 換短效 installation token(1 小時、只限該 repo);也支援另開機器人帳號用 classic PAT。主 agent 要把變更推上 GitHub 並開 PR,或使用者說「用 bot commit / push」「bot 開 PR」「bot 合併」時使用。不直接推 main / master / 預設分支(一律走 PR),不 force-push,只合併 review 過的 SHA。
 ---
 
 # github-bot
@@ -13,7 +13,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
    - GitHub App name:例如 `xhe-bot`(commit 作者會顯示 `xhe-bot[bot]`)
    - Homepage URL:repo 網址即可
    - Webhook:取消勾選 **Active**
-   - Repository permissions:**Contents: Read and write**、**Pull requests: Read and write**、**Checks: Read**、**Commit statuses: Read**、**Actions: Read**(merge 前要讀 CI 結果)(Metadata: Read 會自動帶入),其餘不要(要讓 bot 改 `.github/workflows/` 才另加 **Workflows: Read and write**,否則推送或合併含 workflow 檔的變更會被 GitHub 拒絕)
+   - Repository permissions:**Contents: Read and write**、**Pull requests: Read and write**、**Checks: Read**、**Commit statuses: Read**、**Actions: Read**(merge 前要確認 repo 沒有 CI)(Metadata: Read 會自動帶入),其餘不要(要讓 bot 改 `.github/workflows/` 才另加 **Workflows: Read and write**,否則推送或合併含 workflow 檔的變更會被 GitHub 拒絕)
    - Where can this GitHub App be installed:**Only on this account**
 2. 建好後記下頁面上的 **App ID**,往下按 **Generate a private key**,下載 `.pem`。
 3. 左側 **Install App** → 選帳號 → **Only select repositories** → 勾要讓 bot 操作的 repo。
@@ -85,7 +85,10 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,更新 `HEAD_SHA=$(git rev-parse HEAD)` 後回到第 2 步重新 review(PR 不用重開;`bot.sh pr` 對已有 open PR 的分支也只會印出既有網址)。
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
-4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;會先等 CI **登記**(最多 60 秒;有 workflow 的 repo 要等到 GitHub Actions 的 workflow run),登記後再觀察 15 秒數量不變才判斷,整體最多約 2 分鐘,期間不要中斷。**不會等 CI 跑完**:還在跑就拒絕(訊息「CI 未完成」),等 CI 結束再執行一次 merge。GitHub Actions 以 workflow runs 為準:這個 commit 上每個 run(看目前這次 attempt)都必須完成且成功;排隊中、等待核准、被取消、失敗一律拒絕。唯一例外是同 workflow + 同事件、較舊且被**取消**的 run(被新 run 取代)。失敗的 run 不會被其他 run 蓋掉——要重跑它本身,重跑成功後舊 attempt 的結果就不算。Actions 的 check run(含 workflow 自建的測試報告)只看目前 attempt;其他 App 的 check run 每個名稱看最新一次;其他 App 有 run 的 suite 與 commit status 也必須成功。合併前會用最新狀態再判斷一次。錯誤會列出 `workflow:<名稱>#<id>` 或 `suite:<app>#<id>`,**確定那一項永遠不會跑**才加 `--ignore-suite <id>`(連同該 suite 底下的 check run 一起略過;此時 GitHub 顯示的 unstable 會被接受),並在回報裡寫明略過了哪個。`--allow-no-ci` 只是不要求 CI 出現(沒有 workflow 時仍先等 15 秒給外部 CI 登記),已有的 CI 結果失敗照樣拒絕。有 `.github/workflows` 的 repo 要等到 Actions workflow run,沒有的要等到任何 check run、commit status 或 workflow run;仍沒有就拒絕。**確定 repo 沒有 CI**(或 workflow 不在 PR 分支觸發)才加 `--allow-no-ci`,例如 xhe 目前沒有 CI;repo 有 workflow 時加了 `--allow-no-ci` 仍會先等滿 60 秒),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
+4. `bash $BOT merge <號碼> --sha $HEAD_SHA`,預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
+   - **bot 只自動合併沒有任何 CI 的 repo / commit**:`.github/workflows` 有任何檔案,或這個 commit 有任何 check suite(含空的)、check run、commit status、GitHub Actions workflow run,就拒絕並列出偵測到的項目——這時**不合併,回報使用者**,由使用者看過 CI 後自己合併。
+   - 會等 15 秒(4 次查詢)確認沒有晚登記的外部 CI,合併前再確認一次;查詢失敗一律拒絕。
+   - PR 非 open、head 不是該 SHA、有衝突、GitHub 回報 unstable / blocked / behind 也拒絕。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。
 
 `main` 的分支規則若要求 approval,作者不能核准自己的 PR,合併會被擋;要讓 bot 自己合併,規則只開「Require a pull request」、approvals 設 0。

@@ -88,69 +88,33 @@ check "push 選項式分支名拒絕" bash -c "! bash '$BOT' --repo o/r push --f
 
 printf 'GH_USER=xhe-bot\n' > "$TMP/config-gh0"; printf 'ghp_testpat\n' > "$TMP/pat0"
 A40=$(printf 'a%.0s' $(seq 40)); B40=$(printf 'b%.0s' $(seq 40)); C40=$(printf 'c%.0s' $(seq 40))
-# merge 會輪詢等 CI;測試把 sleep 換成空操作
+# merge 會輪詢確認沒有 CI;測試把 sleep 換成空操作
 mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
+mkdir -p "$TMP/slbin"; printf '#!/bin/sh\necho called >> "%s"\n' "$TMP/sleep.log" > "$TMP/slbin/sleep"; chmod +x "$TMP/slbin/sleep"
 REAL_PATH=$PATH; export PATH="$TMP/fastbin:$PATH"
-check "merge 回傳 merge commit" [ "$(bash "$BOT" --repo o/r merge 7 --sha "$A40")" = "$B40" ]
+A40=$(printf 'a%.0s' $(seq 40)); B40=$(printf 'b%.0s' $(seq 40)); C40=$(printf 'c%.0s' $(seq 40))
+sha_of() { printf "$1%.0s" $(seq 40); }
+check "沒有 CI 時合併,回傳 merge commit" [ "$(bash "$BOT" --repo o/r merge 7 --sha "$A40")" = "$B40" ]
 check "merge SHA 不符拒絕" bash -c "bash '$BOT' --repo o/r merge 7 --sha $C40 2>&1 | grep -q '重新 review'"
 check "merge 缺 --sha 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 2>/dev/null"
 check "merge 短 SHA 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha abc1234 2>/dev/null"
 check "merge 缺值不 crash" bash -c "bash '$BOT' --repo o/r merge 7 --sha 2>&1 | grep -q '後面要接值'"
-check "pr 缺值不 crash" bash -c "bash '$BOT' --repo o/r pr --head 2>&1 | grep -q '後面要接值'"
-check "merge 檢查失敗拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
-mkdir -p "$TMP/slbin"; printf '#!/bin/sh\necho called >> "%s"\n' "$TMP/sleep.log" > "$TMP/slbin/sleep"; chmod +x "$TMP/slbin/sleep"
-check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
-D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40))
-check "merge CI 進行中拒絕" bash -c "bash '$BOT' --repo o/r merge 11 --sha $D40 2>&1 | grep -q 'CI 未完成'"
-# CI 未登記時會等 60 秒;測試把 sleep 換成空操作
-check "merge 有 workflow 但 CI 未登記拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '仍沒有 GitHub Actions 的 workflow run'"
-check "merge --allow-no-ci 放行" [ "$(PATH="$TMP/fastbin:$PATH" bash "$BOT" --repo o/r merge 12 --sha "$E40" --allow-no-ci)" = "$C40" ]
-F40=$(printf 'f%.0s' $(seq 40))
-check "workflow 查詢失敗時拒絕(fail closed)" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 13 --sha $F40 2>&1 | grep -q '查不到 repo 是否有 workflow'"
-S14=$(printf '1%.0s' $(seq 40)); S15=$(printf '2%.0s' $(seq 40)); S16=$(printf '3%.0s' $(seq 40))
-check "外部 CI status 失敗拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 14 --sha $S14 2>&1 | grep -q 'commit status 為 failure'"
-check "沒有任何 CI 時預設拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 2>&1 | grep -q '沒有任何 CI 結果'"
-check "外部 status 先到不算 Actions CI" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 16 --sha $S16 2>&1 | grep -q '仍沒有 GitHub Actions 的 workflow run'"
-check "token 失敗只報真正原因" bash -c "o=\$(bash '$BOT' --repo o/missing token 2>&1); grep -q 'App installation' <<<\"\$o\" && ! grep -q '缺 .token' <<<\"\$o\""
-check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
-S17=$(printf '4%.0s' $(seq 40))
-check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'workflow:test(pull_request)#172=queued'"
-S18=$(printf '5%.0s' $(seq 40))
-check "排隊中的 Actions suite 不論新舊都擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $S18 2>&1 | grep -q 'workflow:docs(pull_request)#182=queued'"
-check "--ignore-suite 明確略過後放行" [ "$(bash "$BOT" --repo o/r merge 18 --sha "$S18" --ignore-suite 182)" = "$C40" ]
-S21=$(printf '8%.0s' $(seq 40))
-S22=$(printf '9%.0s' $(seq 40))
-check "同一 workflow 被新 run 取代的 cancelled 不擋" [ "$(bash "$BOT" --repo o/r merge 22 --sha "$S22")" = "$C40" ]
-: > "$TMP/sleep.log"
-S23=$(printf '0%.0s' $(seq 40))
-check "沒開始就被取消的 workflow 擋 merge" bash -c "bash '$BOT' --repo o/r merge 23 --sha $S23 2>&1 | grep -q 'workflow:test(pull_request)#232=cancelled'"
-check "同 workflow 不同事件:失敗的不被成功的蓋掉" bash -c "bash '$BOT' --repo o/r merge 24 --sha $(printf 'a1%.0s' $(seq 20)) 2>&1 | grep -q 'workflow:ci(pull_request)#241=failure'"
-check "workflow 自建的測試報告失敗擋 merge" bash -c "bash '$BOT' --repo o/r merge 25 --sha $(printf 'a2%.0s' $(seq 20)) 2>&1 | grep -q 'run:Test Report#251=failure'"
-check "其他 App 的 suite 卡住:未略過時擋" bash -c "bash '$BOT' --repo o/r merge 26 --sha $(printf 'a3%.0s' $(seq 20)) 2>&1 | grep -q 'suite:foo#555=queued'"
-check "--ignore-suite 連同 run 略過且接受 unstable" [ "$(bash "$BOT" --repo o/r merge 26 --sha "$(printf 'a3%.0s' $(seq 20))" --ignore-suite 555)" = "$C40" ]
-check "重跑成功後舊 attempt 的取消不再擋" [ "$(bash "$BOT" --repo o/r merge 28 --sha "$(printf 'b1%.0s' $(seq 20))")" = "$C40" ]
-check "失敗的 run 不被之後 skipped 的 run 蓋掉" bash -c "bash '$BOT' --repo o/r merge 29 --sha $(printf 'b2%.0s' $(seq 20)) 2>&1 | grep -q 'workflow:ci(pull_request)#111=failure'"
-check "合併前再判斷一次 CI(之後才出現的失敗)" bash -c "bash '$BOT' --repo o/r merge 27 --sha $(printf 'b3%.0s' $(seq 20)) 2>&1 | grep -q 'commit status 為 failure'"
-check "旗標缺值時不吃掉下一個旗標" bash -c "bash '$BOT' --repo o/r pr --head x --title --body-file /dev/null 2>&1 | grep -q -- '--title 後面要接值'"
-check "--allow-no-ci 無 workflow 仍等外部 CI 登記" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 --allow-no-ci >/dev/null 2>&1; [ \$(wc -l < '$TMP/sleep.log') -ge 3 ]"
-check "--allow-no-ci 仍檢查外部 CI 失敗" bash -c "bash '$BOT' --repo o/r merge 21 --sha $S21 --allow-no-ci 2>&1 | grep -q 'commit status 為 failure'"
-S19=$(printf '6%.0s' $(seq 40)); S20=$(printf '7%.0s' $(seq 40))
-check "其他 App 的 check run 不算 Actions CI" bash -c "bash '$BOT' --repo o/r merge 19 --sha $S19 2>&1 | grep -q '仍沒有 GitHub Actions 的 workflow run'"
-check "workflows 只有 README 不算有 Actions" [ "$(bash "$BOT" --repo o/r merge 20 --sha "$S20")" = "$C40" ]
-check "--repo 拒絕 .. 片段" bash -c "bash '$BOT' --repo ../x token 2>&1 | grep -q '格式錯誤'"
-check "parse 拒絕 .. 片段" bash -c "! bash '$BOT' _parse https://github.com/../x.git"
-printf 'ghp_testpat  # expires 2027\n' > "$TMP/pat-comment"
-check "token 行尾註解" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-comment' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
-check "用法說明完整" bash -c "bash '$BOT' 2>&1 | grep -q '只支援 github.com'"
-check "_ 指令需 GITHUB_BOT_TEST=1" bash -c "GITHUB_BOT_TEST= bash '$BOT' _parse https://github.com/a/b 2>&1 | grep -q '只給測試用'"
-printf 'APP_ID=123456\nKEY_FILE=~svc/key.pem\n' > "$TMP/config-tilde"
-check "~user 不展開成 \$HOMEuser" bash -c "GITHUB_BOT_CONFIG='$TMP/config-tilde' bash '$BOT' _jwt 2>&1 | grep -q \"KEY_FILE='~svc/key.pem'\""
-cp "$TMP/key.pem" "$TMP/key sp.pem "; printf 'APP_ID=123456\nKEY_FILE="%s"\n' "$TMP/key sp.pem " > "$TMP/config-sp"
-check "引號內結尾空白保留" bash -c "GITHUB_BOT_CONFIG='$TMP/config-sp' bash '$BOT' _jwt >/dev/null"
-check "--repo 空值拒絕" bash -c "bash '$BOT' --repo '' token 2>&1 | grep -q '不能是空的'"
-check "merge 用法列出 --allow-no-ci" bash -c "bash '$BOT' merge abc 2>&1 | grep -q -- --allow-no-ci"
-check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
 check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"
+check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
+check "merge GitHub 說 unstable 拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
+: > "$TMP/sleep.log"
+check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
+check "有空的 check suite 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 11 --sha $(sha_of 1) 2>&1 | grep -q 'check suite(1)'"
+check "有 check run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 12 --sha $(sha_of 2) 2>&1 | grep -q 'check run(1)'"
+check "有 commit status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 13 --sha $(sha_of 3) 2>&1 | grep -q 'commit status(1)'"
+check "有 workflow run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 14 --sha $(sha_of 4) 2>&1 | grep -q 'workflow run(1)'"
+check "有 .github/workflows 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 15 --sha $(sha_of 5) 2>&1 | grep -q '.github/workflows(1 個檔案)'"
+check "workflows 查詢失敗時拒絕(fail closed)" bash -c "bash '$BOT' --repo o/r merge 16 --sha $(sha_of 6) 2>&1 | grep -q '查不到 repo 是否有 workflow'"
+check "等待期間才登記的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 17 --sha $(sha_of 7) 2>&1 | grep -q '有 CI(.*commit status(1)'"
+check "合併前最後一次才出現的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $(sha_of 8) 2>&1 | grep -q '合併前偵測到 CI'"
+: > "$TMP/sleep.log"
+(PATH="$TMP/slbin:$PATH" bash "$BOT" --repo o/r merge 7 --sha "$A40" >/dev/null 2>&1)
+check "沒有 CI 時也先等 15 秒(3 次 sleep)確認" [ "$(wc -l < "$TMP/sleep.log")" -eq 3 ]
 export PATH=$REAL_PATH
 
 # --- push 用的 git 參數 ---

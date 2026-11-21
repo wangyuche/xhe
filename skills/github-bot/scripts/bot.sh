@@ -5,8 +5,8 @@
 #   bot.sh commit <git commit 參數...>      以 bot 身分 git commit
 #   bot.sh push <分支>                      把 HEAD 推到遠端 <分支>(拒絕預設分支、main、master,不 force)
 #   bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]
-#   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase] [--allow-no-ci]
-#                [--ignore-suite <id>]...     略過確定永遠不會跑的 check suite
+#   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase]
+#                                           只合併沒有任何 CI 的 repo / commit;有 CI 就拒絕
 #                                           SHA 不符(review 後又有新 commit)GitHub 會拒絕
 # 共用選項(放在子指令前):--repo owner/repo(預設取 origin)
 # 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),三擇一,優先序 GH_USER > TOKEN_FILE > App:
@@ -353,116 +353,47 @@ cmd_pr() {
 #   出現後再觀察 15 秒(3 次輪詢數量不變)才判斷,避免晚幾秒才登記的 workflow 被漏掉。
 #   最多等約 2 分鐘;沒有 CI 就拒絕,確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
 # 有任何 check suite / check run / commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
-ci_snapshot() {   # 設定 runs st suites wruns nr ns nw
-  runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?filter=all&per_page=100" "$t") \
-    || die "讀不到 check runs(若上面是 HTTP 403 / 404:App 要加 Checks: Read 權限)"
-  suites=$(api GET "/repos/$REPO/commits/$sha/check-suites?per_page=100" "$t") \
-    || die "讀不到 check suites(若上面是 HTTP 403 / 404:App 要加 Checks: Read 權限)"
-  st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
-    || die "讀不到 commit status(若上面是 HTTP 403 / 404:App 要加 Commit statuses: Read 權限)"
-  wruns=$(api GET "/repos/$REPO/actions/runs?head_sha=$sha&per_page=100" "$t") \
-    || die "讀不到 GitHub Actions workflow runs(若上面是 HTTP 403 / 404:App 要加 Actions: Read 權限)"
-  nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st"); nw=$(jq -r '.total_count' <<<"$wruns")
-  [[ $nr -le $(jq -r '.check_runs | length' <<<"$runs") ]] || die "check runs 超過 100 個,無法全部確認,不合併"
-  [[ $(jq -r '.total_count' <<<"$suites") -le $(jq -r '.check_suites | length' <<<"$suites") ]] \
-    || die "check suites 超過 100 個,無法全部確認,不合併"
-  [[ $nw -le $(jq -r '.workflow_runs | length' <<<"$wruns") ]] || die "workflow runs 超過 100 個,無法全部確認,不合併"
-}
-
-# CI 判斷(judge_ci,用 ci_snapshot 的結果):
-#   - GitHub Actions workflow runs:每個 run 看它目前這次 attempt(重跑會更新同一個 run),必須 completed
-#     且 success / neutral / skipped。唯一的例外:同 workflow + 同事件、較舊且 conclusion 為 cancelled 的
-#     run(被 concurrency 等取代)不看。失敗的 run 不會被別的 run 蓋掉,要重跑它本身。
-#   - GitHub Actions 的 check run(含 workflow 自建的測試報告):只看「目前 attempt」的 suite
-#     (= 某個 workflow run 現在的 check_suite_id),排除上述被取代的 cancelled run 與 --ignore-suite。
-#   - 其他 App 的 check run:每個 (App, 名稱) 取最新一次;其他 App 有 run 的 suite、commit status:
-#     必須完成且成功。
-#   - 確定永遠不會跑的項目,用 --ignore-suite <check suite id> 明確略過(錯誤訊息會列出 id);
-#     有略過時 GitHub 的 mergeable_state 會是 unstable,merge 會接受,但合併前會再判斷一次 CI。
-#   - 已知限制:其他 App 建了 suite 但還沒有任何 run 時不列入(GitHub 常留下永遠不跑的空 suite)。
-# 等待:先等 CI 登記(有 workflow 的 repo 要等到 Actions 的 workflow run;沒有就等任何 CI),
-# 登記後觀察 15 秒數量不變才判斷;60 秒都沒有就拒絕,除非 --allow-no-ci。不會等 CI 跑完。
-judge_ci() {   # 用 runs st suites wruns ns ignore_suites
-  local ok='IN("success","neutral","skipped")' cur bad
-  bad=$(jq -r --arg ign " $ignore_suites " "
-          .workflow_runs as \$all
-          | [ \$all | group_by([.workflow_id, .event])[] | sort_by(.created_at, (.run_attempt // 1))
-              | (.[:-1][] | select(.conclusion == \"cancelled\") | .check_suite_id) ] as \$superseded
-          | \$all[] | . as \$w
-          | select((\$superseded | index(\$w.check_suite_id)) | not)
-          | select((\$ign | contains(\" \(\$w.check_suite_id) \")) | not)
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"workflow:\(.name)(\(.event))#\(.check_suite_id)=\(.conclusion // .status)\"" <<<"$wruns")
-  # 目前有效的 Actions suite:各 workflow run 現在的 check_suite_id,扣掉被取代的 cancelled 與略過的
-  cur=$(jq -c --arg ign " $ignore_suites " "
-          .workflow_runs as \$all
-          | [ \$all | group_by([.workflow_id, .event])[] | sort_by(.created_at, (.run_attempt // 1))
-              | (.[:-1][] | select(.conclusion == \"cancelled\") | .check_suite_id) ] as \$superseded
-          | [ \$all[] | .check_suite_id | select((\$superseded | index(.)) | not)
-              | select((\$ign | contains(\" \(.) \")) | not) ]" <<<"$wruns")
-  bad+=$'\n'$(jq -r --argjson cur "$cur" "
-          [.check_runs[] | select((.app.slug // \"\") == \"github-actions\")
-                         | select(.check_suite.id as \$id | \$cur | index(\$id))][]
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"run:\(.name)#\(.check_suite.id)=\(.conclusion // .status)\"" <<<"$runs")
-  bad+=$'\n'$(jq -r --arg ign " $ignore_suites " "
-          [.check_runs[] | select((.app.slug // \"\") != \"github-actions\")
-                         | . as \$r | select((\$ign | contains(\" \((\$r.check_suite.id // 0)) \")) | not)]
-          | group_by([(.app.slug // \"\"), .name]) | map(sort_by(.id // 0) | last) | .[]
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"run:\(.name)#\(.check_suite.id // 0)=\(.conclusion // .status)\"" <<<"$runs")
-  bad+=$'\n'$(jq -r --arg ign " $ignore_suites " ".check_suites[]
-          | select(.app.slug != \"github-actions\" and (.latest_check_runs_count // 0) > 0)
-          | . as \$su | select((\$ign | contains(\" \(\$su.id) \")) | not)
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"suite:\(.app.slug)#\(.id)=\(.conclusion // .status)\"" <<<"$suites")
-  bad=$(grep -v '^[[:space:]]*$' <<<"$bad" || true)
-  [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(被取消或失敗就重跑;確定某項永遠不會跑才用 --ignore-suite <id> 略過)"
-  [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
-    || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
-}
-
-check_ci() {
-  local sha=$1 t=$2 allow_no_ci=$3 ignore_suites=${4:-} runs st suites wruns nr ns nw wf rc
-  local has_wf=0 ready=0 stable=0 last=-1 bad i
+# bot 只自動合併「沒有任何 CI」的 repo / commit。偵測到任何 CI 跡象就拒絕,交給使用者處理:
+#   .github/workflows 有任何檔案、這個 commit 有任何 check suite(含空的)、check run、
+#   commit status 或 GitHub Actions workflow run。
+# 外部 CI 可能晚幾秒才登記,所以等 15 秒(4 次輪詢)都沒有才算沒有 CI;合併前再確認一次。
+ci_signals() {   # 印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 die
+  local sha=$1 t=$2 wf rc n out=""
   wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
   case $rc in
-    0) [[ $(jq -r 'if type=="array" then map(select(.name | test("\\.ya?ml$"))) | length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
+    0) n=$(jq -r 'if type=="array" then length else 1 end' <<<"$wf")
+       [[ $n -eq 0 ]] || out+=" .github/workflows($n 個檔案)" ;;
     4) ;;
     *) die "查不到 repo 是否有 workflow,不合併" ;;
   esac
-  for i in $(seq 24); do
-    ci_snapshot
-    if [[ $has_wf -eq 1 ]]; then [[ $nw -gt 0 ]] && ready=1; else [[ $((nr + ns + nw)) -gt 0 ]] && ready=1; fi
-    # --allow-no-ci:沒有 workflow 時仍等 15 秒給外部 CI 登記;有 workflow 時等滿 60 秒
-    [[ $ready -eq 0 && $allow_no_ci -eq 1 && $has_wf -eq 0 && $i -ge 4 ]] && break
-    if [[ $ready -eq 1 ]]; then
-      if [[ $((nr + ns + nw)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns + nw)); fi
-      [[ $stable -ge 3 ]] && break
-    fi
-    [[ $ready -eq 0 && $i -ge 13 ]] && break       # 60 秒內都沒出現就放棄等待
-    sleep 5
+  local path label
+  for path in "commits/$sha/check-suites?per_page=1:check suite" "commits/$sha/check-runs?filter=all&per_page=1:check run" \
+              "commits/$sha/status:commit status" "actions/runs?head_sha=$sha&per_page=1:workflow run"; do
+    label=${path##*:}; path=${path%:*}
+    n=$(jfield .total_count "$(api GET "/repos/$REPO/$path" "$t")") \
+      || die "讀不到 $label(若上面是 HTTP 403 / 404:App 要加 Checks / Commit statuses / Actions: Read 權限)"
+    [[ $n -eq 0 ]] || out+=" $label($n)"
   done
-  if [[ $ready -eq 0 && $allow_no_ci -ne 1 ]]; then
-    if [[ $has_wf -eq 1 ]]; then
-      die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 GitHub Actions 的 workflow run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
-    fi
-    die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
-  fi
-  [[ $ready -eq 0 || $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
-  judge_ci                                 # 對「目前已有的」CI 一律檢查(--allow-no-ci 也一樣)
+  printf '%s' "$out"
+}
+
+require_no_ci() {
+  local sha=$1 t=$2 sig i
+  for i in 1 2 3 4; do
+    sig=$(ci_signals "$sha" "$t") || exit 1
+    [[ -z $sig ]] || die "這個 repo / commit 有 CI($sig),bot 不自動合併;請使用者確認 CI 後自行合併"
+    [[ $i -eq 4 ]] || sleep 5
+  done
 }
 
 cmd_merge() {
-  local num=${1:-} sha="" method=merge allow_no_ci=0 ignore_suites=""
-  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase] [--allow-no-ci] [--ignore-suite <id>]..."
+  local num=${1:-} sha="" method=merge
+  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase] "
   shift
   while [[ $# -gt 0 ]]; do
     case $1 in
       --sha) need_val "$1" $# "${2-}"; sha=$2; shift 2 ;;
       --method) need_val "$1" $# "${2-}"; method=$2; shift 2 ;;
-      --allow-no-ci) allow_no_ci=1; shift ;;
-      --ignore-suite) need_val "$1" $# "${2-}"; [[ $2 =~ ^[0-9]+$ ]] || die "--ignore-suite 要數字 id"; ignore_suites+=" $2"; shift 2 ;;
       *) die "merge 不認得參數 $1" ;;
     esac
   done
@@ -475,8 +406,7 @@ cmd_merge() {
   [[ $(jq -r .state <<<"$pr") == open ]] || die "PR #$num 不是 open"
   [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
   [[ $(jq -r '.mergeable_state // ""' <<<"$pr") != dirty ]] || die "PR #$num 有衝突,無法合併"
-  # 先看 CI:CI 進行中時 mergeable_state 會是 unstable / blocked,由 check_ci 給出準確的原因
-  check_ci "$sha" "$t" "$allow_no_ci" "$ignore_suites"
+  require_no_ci "$sha" "$t"
   for i in 1 2 3 4 5 6 7 8 9 10; do        # GitHub 還在算時 mergeable_state 為 unknown
     pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
     [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
@@ -487,15 +417,14 @@ cmd_merge() {
   case $st in
     clean|has_hooks) ;;
     dirty)    die "PR #$num 有衝突,無法合併" ;;
-    unstable) [[ -n $ignore_suites ]] \
-                || die "PR #$num 有失敗或未完成的檢查,不合併" ;;   # --ignore-suite 略過的項目會讓 GitHub 顯示 unstable;CI 已由 check_ci 判斷
+    unstable) die "PR #$num 有失敗或未完成的檢查,不合併" ;;
     blocked)  die "PR #$num 被分支規則擋住(需要 approval 或必要檢查),不合併" ;;
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
-  # 合併前用最新狀態再判斷一次 CI(check_ci 之後才出現的失敗也要擋)
-  local runs st suites wruns nr ns nw
-  ci_snapshot; judge_ci
+  # 合併前再確認一次沒有 CI(等待期間之後才登記的也要擋)
+  local sig; sig=$(ci_signals "$sha" "$t") || exit 1     # 查詢失敗就停,不能當成「沒有 CI」
+  [[ -z $sig ]] || die "合併前偵測到 CI($sig),bot 不自動合併;請使用者確認 CI 後自行合併"
   local r
   r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
     "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')")
