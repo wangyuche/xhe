@@ -169,6 +169,8 @@ cat > job/2/timeline.json <<EOF
 EOF
 node -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync("job/2/timeline.json","utf8"));fs.writeFileSync("job/2/hl.json",JSON.stringify({...t,headline:"標題"}))'
 e="$(node "$S/compose.mjs" job/2/hl.json --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'headline' && ok "原聲 headline 沒有 theme → dry-run 就結束碼 2" || bad "原聲 headline 沒有 theme" "$e"
+node -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync("job/2/hl.json","utf8"));fs.writeFileSync("job/2/hl2.json",JSON.stringify({...t,theme:{bg:"#111111",bg2:"#222222",fg:"#ffffff",accent:"#ff8800",muted:"#999999",font:"x"}}))'
+e="$(node "$S/compose.mjs" job/2/hl2.json --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'font' && ok "原聲 headline theme 多了欄位 → dry-run 就結束碼 2" || bad "theme 多餘欄位沒在 dry-run 擋" "$e"
 c="$(node "$S/compose.mjs" job/2/timeline.json)"; rc=$?
 node -e 'const c=JSON.parse(process.argv[1]);process.exit(Math.abs(c.sourceDuration-c.totalCut-c.actualDuration)<=0.5&&Math.abs(c.totalCut-1.8)<0.05?0:1)' "$c" 2>/dev/null \
   && ok "compose.mjs 精簡:來源 − 剪掉 = 成品長度(剪點各留 0.1 秒)" || bad "compose.mjs 精簡長度" "$c"

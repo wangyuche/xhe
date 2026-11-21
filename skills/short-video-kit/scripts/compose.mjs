@@ -66,6 +66,8 @@ const topBg = tl.theme?.bg; // 置頂鏡頭的底色;沒有預設,用到置頂�
 if (tl.mode === 'original' && tl.headline) {
   const miss = ['bg', 'bg2', 'fg', 'accent', 'muted'].filter(k => !/^#[0-9a-fA-F]{6}$/.test(String(tl.theme?.[k] ?? '')));
   if (miss.length) fail(`有 headline 時 theme 五個欄位都要是 #RRGGBB,缺或格式錯:${miss.join('、')};沒有預設配色,依這支影片的來源選`, 2);
+  const extra = Object.keys(tl.theme).filter(k => !['bg', 'bg2', 'fg', 'accent', 'muted'].includes(k));
+  if (extra.length) fail(`theme 只能有 bg、bg2、fg、accent、muted,多了:${extra.join('、')}`, 2);
 }
 const probeSize = (f) => run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', f], 'ffprobe').stdout.trim().split('x').map(Number);
 function topLayout(j, [x, y, w, h]) {

@@ -49,7 +49,10 @@ skills:
 
 ### 第 1 步:專案準備(完成條件:可寫路徑是可 build 的 Next.js 專案)
 - 可寫路徑不存在或是空目錄 → `bash <nextjs>/scripts/new-frontend.sh <專案根目錄> --frontend <可寫路徑> --api <契約目錄>`(含 Vitest、Playwright、openapi-typescript、openapi-fetch、Prism、rewrites 與 scripts)。
-- 可寫路徑內只有 `DESIGN.md` 與圖片檔(png / jpg / webp / svg 等參考圖)→ 把可寫路徑內**所有檔案**連同子目錄結構**複製**到 `<tmp>/<name>/keep/`(`cp -pR`),逐檔比對內容相同後才從可寫路徑刪除(`new-frontend.sh` 要求目錄是空的),執行 `new-frontend.sh`;**不論成功或失敗**都馬上全部複製回原位並逐檔比對,之後才繼續或回報 ISSUES / BLOCKED。回報前確認 `<可寫路徑>/DESIGN.md` 存在。
+- 可寫路徑沒有 `package.json`、有 `DESIGN.md`、其餘只有圖片檔(png / jpg / webp / svg 等參考圖,可在子目錄)→
+  1. `cp -pR <可寫路徑>/. <tmp>/<name>/keep/`,`diff -r` 確認完全相同後,刪掉整個可寫路徑(`new-frontend.sh` 接受不存在的目錄;只刪檔案會留下空子目錄而失敗)。
+  2. 執行 `new-frontend.sh`。
+  3. **不論成功或失敗**都馬上把 keep/ 的每個檔案放回原路徑;原路徑已被骨架建立的檔案占用時(例如 `public/next.svg`)不覆蓋,改放到 `<可寫路徑>/design-refs/<原路徑>` 並在回報列出,DESIGN.md 裡指到它的路徑一併更新。逐檔比對內容後才繼續或回報 ISSUES / BLOCKED;回報前確認 `<可寫路徑>/DESIGN.md` 存在。
 - 可寫路徑有其他檔案但沒有 `package.json`,或沒有 `next` 依賴 → BLOCKED。
 - 既有專案缺 Playwright 而簡報有 E2E 層級情境 → 依 stack-nextjs 的固定設定補上(`@playwright/test`、`playwright.config.ts`、`test:e2e`;`vitest.config` 排除 `e2e/**`)。
 
@@ -159,7 +162,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 - (僅設計規範模式)參考有網址、而 `node -v` 失敗或低於 22(`shot.mjs` 需要):附 `brew install node`,或請使用者改給截圖檔。
 - 專案根目錄不是 git repo;一般模式但簡報沒有驗收情境。
 - 僅設計規範模式但簡報沒有風格描述(關鍵字與參考都沒有),或描述互相矛盾(例如「極簡」又要「大量裝飾」):列出要問使用者的問題。
-- 一般模式、新專案(可寫路徑不存在或是空的)而沒有 DESIGN.md,簡報也沒寫「不需要設計規範」:請主 agent 先派「模式:僅設計規範」。
+- 一般模式、新專案(可寫路徑不存在、是空的,或沒有 `package.json`)而沒有 `<可寫路徑>/DESIGN.md`,簡報也沒寫「不需要設計規範」:請主 agent 先派「模式:僅設計規範」。
 - 目標有多種合理解讀,選錯會影響畫面或資料流程。
 - 需要第三方金鑰、帳號或付費服務。
 - 需要改可寫路徑以外的檔案(契約除外:契約走 ISSUES 的變更請求)。

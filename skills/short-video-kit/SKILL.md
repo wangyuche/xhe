@@ -35,7 +35,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
  ]}
 ```
 
-- **`theme` 沒有預設值**:有 title / point / code / end / headline 卡或沒有 image 的 cover 時,五個欄位都必填(缺了結束碼 2)。每支影片依來源自己選(repo 的 logo / 網站主色、影片畫面主色),不要沿用別支的色碼。只有字幕卡、有 image 的封面時可以省略(有圖封面的標題固定白字)。色碼一律 `#RRGGBB`;要給 theme 時用物件格式 `{"theme":…,"cards":[…]}`。
+- **`theme` 沒有預設值**:有 title / point / code / end / headline 卡或沒有 image 的 cover 時,五個欄位都必填(缺了結束碼 2)。每支影片依來源自己選(repo 的 logo / 網站主色、影片畫面主色),不要沿用別支的色碼。只有字幕卡、有 image 的封面時可以省略(有圖封面的標題固定白字)。色碼一律 `#RRGGBB`(舊版接受的 `#RGB`、`#RRGGBBAA` 現在會結束碼 2,舊檔要改寫);要給 theme 時用物件格式 `{"theme":…,"cards":[…]}`。
 - 全版卡(title / point / code / end)內容避開右側 170 px 與底部 340 px(平台按鈕區)。
 - 文字一律以純文字放入,不解析 HTML;不要自己寫 HTML。
 - `image` 只接受 `--asset-root` 內的相對路徑(symlink 解析後再檢查),沒給 `--asset-root` 就不接受圖片。所有網路請求都被擋掉,`blockedRequests` 會列出。
@@ -58,7 +58,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 **旁白模式**(repo 影片):
 
 ```json
-{"mode":"narration","work":"../work/1",
+{"mode":"narration","work":"../work/1","theme":{"bg":"<#RRGGBB>","bg2":"<#RRGGBB>","fg":"<#RRGGBB>","accent":"<#RRGGBB>","muted":"<#RRGGBB>"},
  "narration": <tts.sh 的輸出原樣貼上>,
  "scenes":[{"image":"../work/1/cards/001.png","sentences":[0]},
            {"video":"../work/1/rec-1.mp4","in":0,"sentences":[1,2]},
@@ -74,7 +74,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 **原聲模式**(影片精華 / 精簡):
 
 ```json
-{"mode":"original","work":"../work/1","source":"/path/talk.mp4",
+{"mode":"original","work":"../work/1","source":"/path/talk.mp4","theme":{"bg":"<#RRGGBB>","bg2":"<#RRGGBB>","fg":"<#RRGGBB>","accent":"<#RRGGBB>","muted":"<#RRGGBB>"},
  "keep":[[62.4,98.1]],                      // 精華:保留區間;或
  "cut":<silence.sh 輸出或 [[s,e],…]>,         // 精簡:剪掉區間(每個剪點前後各留 0.1 秒)
  "segments":[{"start":62.4,"end":66.0,"text":"校正後的原話"},
