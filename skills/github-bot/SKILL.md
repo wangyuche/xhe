@@ -54,7 +54,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
 
 4. 驗證:`bash ~/.claude/skills/github-bot/scripts/bot.sh identity` 印出機器人帳號名稱即成功。
 
-設了 `TOKEN_FILE` 就優先走 PAT 模式。PAT 是長效 token,外洩時到機器人帳號的設定頁 revoke 並重新產生。
+模式優先序:`GH_USER` > `TOKEN_FILE` > App;環境變數 `GITHUB_BOT_GH_USER` / `GITHUB_BOT_TOKEN_FILE` / `GITHUB_BOT_APP_ID` 有設就直接決定模式,蓋過設定檔。只支援 github.com。PAT 是長效 token,外洩時到機器人帳號的設定頁 revoke 並重新產生。
 
 建議 repo 的 `main` 設分支保護(Settings → Branches / Rulesets:Require a pull request),bot 只能走 PR。
 
@@ -72,7 +72,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 ```
 
 - push 拒絕 `main`、`master`、repo 預設分支,也不支援 force;要改歷史先問使用者。
-- token 只透過 stdin / 環境變數傳給 curl、git,不寫進 remote URL 或 `.git/config`。
+- token 經 stdin 給 curl;push 時放在 0600 暫存檔只給 credential helper 讀,不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、停用 hooks;repo 本身的 `.git/config` 有 `url.*` 設定會拒絕推送。
 - 合併前置條件見下方「自己 review 後合併」;bot 的權限(App 的 Contents: write、機器人帳號的 Write)本來就能合併,把關靠這個流程與 `--sha`。
 - 錯誤 `App 沒有安裝在 ...`:到 App 設定頁的 Install App 把該 repo 加進去。
 - 換 App / 換電腦:只要重做第 4 步。私鑰外洩時到 App 設定頁刪掉該 key 並重新產生。
@@ -85,7 +85,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,回到第 1 步用新 SHA 重新 review。
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
-4. `bash $BOT merge <號碼> --sha $HEAD_SHA`,預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
+4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、檢查失敗或未完成、被分支規則擋住都會拒絕),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。
 
 `main` 的分支規則若要求 approval,作者不能核准自己的 PR,合併會被擋;要讓 bot 自己合併,規則只開「Require a pull request」、approvals 設 0。

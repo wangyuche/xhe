@@ -8,45 +8,50 @@
 #   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase]
 #                                           SHA 不符(review 後又有新 commit)GitHub 會拒絕
 # 共用選項(放在子指令前):--repo owner/repo(預設取 origin)
-# 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),二選一:
-#   App 模式:APP_ID=、KEY_FILE=(環境變數 GITHUB_BOT_APP_ID、GITHUB_BOT_KEY_FILE 可覆蓋)
-#   機器人帳號模式:GH_USER=<帳號>(token 從 gh 的鑰匙圈取:gh auth token --user;最優先)
-#                  或 TOKEN_FILE=<檔>(環境變數 GITHUB_BOT_GH_USER、GITHUB_BOT_TOKEN_FILE 可覆蓋)
+# 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),三擇一,優先序 GH_USER > TOKEN_FILE > App:
+#   GH_USER=<機器人帳號>   token 從 gh 鑰匙圈取(gh auth token --user)
+#   TOKEN_FILE=<檔>         機器人帳號的 classic PAT 檔
+#   APP_ID=、KEY_FILE=      GitHub App
+# 環境變數 GITHUB_BOT_GH_USER / GITHUB_BOT_TOKEN_FILE / GITHUB_BOT_APP_ID(+GITHUB_BOT_KEY_FILE)
+# 有設的話直接決定模式,蓋過設定檔。只支援 github.com(GITHUB_BOT_API_URL 僅供測試)。
 set -euo pipefail
 
-API=${GITHUB_API_URL:-https://api.github.com}
+API=${GITHUB_BOT_API_URL:-https://api.github.com}
 CONF=${GITHUB_BOT_CONFIG:-$HOME/.config/github-bot/config}
 REPO=""
 
 die() { echo "bot.sh: $*" >&2; exit 1; }
+need_val() { [[ $2 -ge 2 ]] || die "$1 後面要接值"; }   # need_val <旗標> <剩餘參數數>
 
 load_conf() {
-  APP_ID=${GITHUB_BOT_APP_ID:-}
-  KEY_FILE=${GITHUB_BOT_KEY_FILE:-}
-  TOKEN_FILE=${GITHUB_BOT_TOKEN_FILE:-}
-  GH_USER=${GITHUB_BOT_GH_USER:-}
+  local c_app="" c_key="" c_tok="" c_gh="" k v
   if [[ -f $CONF ]]; then
-    local k v
     while IFS='=' read -r k v; do
       v=${v%$'\r'}
       case $k in
-        APP_ID)     [[ -n $APP_ID ]]     || APP_ID=$v ;;
-        KEY_FILE)   [[ -n $KEY_FILE ]]   || KEY_FILE=${v/#\~/$HOME} ;;
-        TOKEN_FILE) [[ -n $TOKEN_FILE ]] || TOKEN_FILE=${v/#\~/$HOME} ;;
-        GH_USER)    [[ -n $GH_USER ]]    || GH_USER=$v ;;
+        APP_ID)     c_app=$v ;;
+        KEY_FILE)   c_key=${v/#\~/$HOME} ;;
+        TOKEN_FILE) c_tok=${v/#\~/$HOME} ;;
+        GH_USER)    c_gh=$v ;;
       esac
     done < <(grep -E '^(APP_ID|KEY_FILE|TOKEN_FILE|GH_USER)=' "$CONF" || true)
+  fi
+  GH_USER="" TOKEN_FILE="" APP_ID="" KEY_FILE=""
+  if   [[ -n ${GITHUB_BOT_GH_USER:-} ]];    then GH_USER=$GITHUB_BOT_GH_USER
+  elif [[ -n ${GITHUB_BOT_TOKEN_FILE:-} ]]; then TOKEN_FILE=$GITHUB_BOT_TOKEN_FILE
+  elif [[ -n ${GITHUB_BOT_APP_ID:-} ]];     then APP_ID=$GITHUB_BOT_APP_ID; KEY_FILE=${GITHUB_BOT_KEY_FILE:-$c_key}
+  elif [[ -n $c_gh ]];  then GH_USER=$c_gh
+  elif [[ -n $c_tok ]]; then TOKEN_FILE=$c_tok
+  else APP_ID=$c_app; KEY_FILE=${GITHUB_BOT_KEY_FILE:-$c_key}
   fi
   if [[ -n $GH_USER ]]; then
     [[ $GH_USER =~ ^[A-Za-z0-9-]+$ ]] || die "GH_USER 格式錯誤:$GH_USER"
     command -v gh >/dev/null || die "找不到 gh"
-    MODE=pat
-    return
+    MODE=pat; return
   fi
   if [[ -n $TOKEN_FILE ]]; then
-    MODE=pat
     [[ -r $TOKEN_FILE ]] || die "讀不到 TOKEN_FILE='$TOKEN_FILE'"
-    return
+    MODE=pat; return
   fi
   MODE=app
   [[ $APP_ID =~ ^[0-9]+$ ]] || die "缺 APP_ID(寫在 $CONF 或設 GITHUB_BOT_APP_ID)"
@@ -89,8 +94,10 @@ api() {
 # 把 GitHub 遠端網址轉成 owner/repo
 parse_repo() {
   local url=$1
-  [[ $url =~ github\.com[:/]([^/]+)/([^/]+)$ ]] || return 1
-  printf '%s/%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]%.git}"
+  [[ $url =~ ^(https://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)github\.com[:/]([^/]+)/([^/]+)$ ]] || return 1
+  local r="${BASH_REMATCH[4]}/${BASH_REMATCH[5]%.git}"
+  [[ $r =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  printf '%s' "$r"
 }
 
 resolve_repo() {
@@ -136,7 +143,7 @@ identity() {
   fi
   local slug uid
   slug=$(api GET /app "$(jwt)" | jq -r .slug)
-  uid=$(curl -sS -H 'Accept: application/vnd.github+json' "$API/users/${slug}%5Bbot%5D" | jq -r .id)
+  uid=$(api GET "/users/${slug}%5Bbot%5D" "$(token)" | jq -r .id)
   [[ $uid =~ ^[0-9]+$ ]] || die "查不到 ${slug}[bot] 的 user id"
   BOT_NAME="${slug}[bot]"
   BOT_EMAIL="${uid}+${slug}[bot]@users.noreply.github.com"
@@ -147,32 +154,44 @@ cmd_commit() {
   git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" commit "$@"
 }
 
+# 推送專用的 git 參數:不讀全域 / 系統設定(避免 insteadOf 改走 SSH 或個人憑證)、
+# 停用 hooks、token 只放在 0600 暫存檔由 credential helper 讀,不放進子程序的環境變數。
+# 用法:push_git <token 檔> <使用者> <git 子指令...>
+push_git() {
+  local tf=$1 user=$2; shift 2
+  git config --local --get-regexp '^url\.' >/dev/null 2>&1 \
+    && die "repo 的 .git/config 有 url.*insteadOf 設定,可能改寫推送網址;請先移除"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  git -c credential.helper= \
+      -c "credential.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
+      -c core.hooksPath=/dev/null \
+      -c user.name=bot -c user.email=bot@invalid \
+      "$@"
+}
+
 cmd_push() {
   local branch=${1:-}; [[ -n $branch && $# -eq 1 ]] || die "用法:bot.sh push <分支>"
   [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != -* ]] || die "分支名稱不合法:$branch"
   case $branch in main|master) die "不推 $branch;請推功能分支再開 PR" ;; esac
   load_conf; resolve_repo
-  BOT_TOKEN=$(token); export BOT_TOKEN
-  BOT_USER=x-access-token
-  [[ $MODE == pat ]] && { identity; BOT_USER=$BOT_NAME; }
-  export BOT_USER
-  local def
-  def=$(api GET "/repos/$REPO" "$BOT_TOKEN" | jq -r .default_branch)
+  local t user=x-access-token def tf
+  t=$(token)
+  [[ $MODE == pat ]] && { identity; user=$BOT_NAME; }
+  def=$(api GET "/repos/$REPO" "$t" | jq -r .default_branch)
   [[ $branch != "$def" ]] || die "不推預設分支 $def;請推功能分支再開 PR"
-  # credential.helper= 先清掉 osxkeychain 等既有 helper,token 只經環境變數傳遞
-  git -c credential.helper= \
-      -c 'credential.helper=!f() { echo "username=$BOT_USER"; echo "password=$BOT_TOKEN"; }; f' \
-      push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
+  tf=$(mktemp); chmod 600 "$tf"; printf '%s' "$t" > "$tf"; unset t
+  trap 'rm -f "$tf"' EXIT
+  push_git "$tf" "$user" push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
 }
 
 cmd_pr() {
   local head="" base="" title="" body=""
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --head) head=$2; shift 2 ;;
-      --base) base=$2; shift 2 ;;
-      --title) title=$2; shift 2 ;;
-      --body-file) [[ -r $2 ]] || die "讀不到 $2"; body=$(cat "$2"); shift 2 ;;
+      --head) need_val "$1" $#; head=$2; shift 2 ;;
+      --base) need_val "$1" $#; base=$2; shift 2 ;;
+      --title) need_val "$1" $#; title=$2; shift 2 ;;
+      --body-file) need_val "$1" $#; [[ -r $2 ]] || die "讀不到 $2"; body=$(cat "$2"); shift 2 ;;
       *) die "pr 不認得參數 $1" ;;
     esac
   done
@@ -191,30 +210,38 @@ cmd_merge() {
   shift
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --sha) sha=$2; shift 2 ;;
-      --method) method=$2; shift 2 ;;
+      --sha) need_val "$1" $#; sha=$2; shift 2 ;;
+      --method) need_val "$1" $#; method=$2; shift 2 ;;
       *) die "merge 不認得參數 $1" ;;
     esac
   done
   [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要完整 40 碼 SHA(review 過的 PR head)"
   case $method in merge|squash|rebase) ;; *) die "--method 只能是 merge / squash / rebase" ;; esac
   resolve_repo
-  local t pr i m
+  local t pr i st
   t=$(token)
-  for i in 1 2 3 4 5 6 7 8 9 10; do        # mergeable 剛開 PR 時可能是 null,等 GitHub 算完
-    pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
-    m=$(jq -r .mergeable <<<"$pr")
-    [[ $m != null ]] && break
-    sleep 2
-  done
+  pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
   [[ $(jq -r .state <<<"$pr") == open ]] || die "PR #$num 不是 open"
   [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
-  [[ $m == true ]] || die "PR #$num 無法合併(衝突或檢查未過,mergeable=$m)"
+  for i in 1 2 3 4 5 6 7 8 9 10; do        # 剛開 PR 或剛推時 GitHub 還在算,mergeable_state 為 unknown
+    st=$(jq -r '.mergeable_state // "unknown"' <<<"$pr")
+    [[ $st != unknown ]] && break
+    sleep 2
+    pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
+  done
+  case $st in
+    clean|has_hooks) ;;
+    dirty)    die "PR #$num 有衝突,無法合併" ;;
+    unstable) die "PR #$num 有失敗或未完成的檢查,不合併" ;;
+    blocked)  die "PR #$num 被分支規則擋住(需要 approval 或必要檢查),不合併" ;;
+    behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
+    *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
+  esac
   api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
     "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')" | jq -r .sha
 }
 
-[[ ${1:-} == --repo ]] && { REPO=${2:?--repo 要 owner/repo}; shift 2; }
+[[ ${1:-} == --repo ]] && { need_val --repo $#; REPO=$2; shift 2; }
 [[ -z $REPO || $REPO =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo 格式錯誤:$REPO"
 
 case ${1:-} in
@@ -226,5 +253,8 @@ case ${1:-} in
   merge)    shift; cmd_merge "$@" ;;
   _jwt)     load_conf; jwt ;;                         # 測試用
   _parse)   parse_repo "$2" ;;                         # 測試用
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
+            tf=$(mktemp); printf '%s' "$2" > "$tf"; trap 'rm -f "$tf"' EXIT
+            u=$3; shift 3; push_git "$tf" "$u" "$@" ;;
+  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -32,14 +32,18 @@ class H(BaseHTTPRequestHandler):
             return self.send(404, {"message": "Not Found"})
         if p == "/app" and self.is_jwt():
             return self.send(200, {"slug": "xhe-bot"})
-        if p == "/users/xhe-bot%5Bbot%5D":
+        if p == "/users/xhe-bot%5Bbot%5D" and self.auth() == TOKEN:
             return self.send(200, {"id": 12345})
         if p == "/user" and self.auth() == PAT:
             return self.send(200, {"login": "xhe-bot", "id": 777})
         if p == "/repos/o/r/pulls/7" and self.auth() in (TOKEN, PAT):
-            return self.send(200, {"state": "open", "mergeable": True, "head": {"sha": "a" * 40}})
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": "a" * 40}})
         if p == "/repos/o/r/pulls/8" and self.auth() in (TOKEN, PAT):
-            return self.send(200, {"state": "open", "mergeable": False, "head": {"sha": "a" * 40}})
+            return self.send(200, {"state": "open", "mergeable": False, "mergeable_state": "dirty", "head": {"sha": "a" * 40}})
+        if p == "/repos/o/r/pulls/9" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "unstable", "head": {"sha": "a" * 40}})
+        if p == "/repos/o/r/pulls/10" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"state": "closed", "mergeable": None, "mergeable_state": "unknown", "head": {"sha": "a" * 40}})
         if p == "/repos/o/r" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"default_branch": "develop"})
         self.send(401, {"message": "bad request " + p})
