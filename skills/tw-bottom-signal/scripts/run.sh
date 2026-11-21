@@ -36,17 +36,21 @@ fi
 NOW=$(TZ=Asia/Taipei date +%u%H%M)
 IN_SESSION="${TW_IN_SESSION:-$([ "${NOW:0:1}" -le 5 ] && [ "${NOW:1}" -ge 0900 ] && echo 1 || echo 0)}"
 rm -f "$OUT/bottom_${SYM}_30m.svg" "$OUT/bottom_${SYM}_"{30,60}m{,_hist,_intraday}.json
+# 失敗時連這次已寫出的檔案一起刪,避免留下半套結果
+fail() { echo "$1" >&2; rm -f "$OUT/bottom_${SYM}_"{30,60}m{,_hist,_intraday}.json; exit 1; }
 for TF in 30 60; do
   H="$OUT/bottom_${SYM}_${TF}m_hist.json"; I="$OUT/bottom_${SYM}_${TF}m_intraday.json"; J="$OUT/bottom_${SYM}_${TF}m.json"
   # 歷史 K 不含今天盤中,另外抓 intraday 接在後面
   fetch "historical/candles/$SYM?timeframe=$TF&from=$FROM&to=$TO" "$H" \
-    || { echo "資料錯誤: ${TF} 分 K 歷史資料抓不到(原因見上一行),不使用舊資料" >&2; exit 1; }
+    || fail "資料錯誤: ${TF} 分 K 歷史資料抓不到(原因見上一行),不使用舊資料"
   if ! ERR=$(fetch "intraday/candles/$SYM?timeframe=$TF" "$I" 2>&1); then
     rm -f "$I"
     # 週末、開盤前本來就沒有盤中 K,只用歷史是正常的,不警告
     [ "$IN_SESSION" = 1 ] && echo "$ERR"$'\n'"警告: ${TF} 分 K 盤中資料抓不到,只用歷史 K,結果缺今天盤中" >&2
+  elif [ "$IN_SESSION" = 1 ] && python3 -I -c 'import json,sys; sys.exit(0 if not json.load(open(sys.argv[1]))["data"] else 1)' "$I"; then
+    echo "警告: ${TF} 分 K 盤中資料是空的(Fugle 尚未更新或今天休市),結果缺今天盤中" >&2
   fi
-  python3 -I "$DIR/combine.py" "$H" "$I" "$J" || exit 1
+  python3 -I "$DIR/combine.py" "$H" "$I" "$J" || fail "資料錯誤: ${TF} 分 K 合併失敗"
 done
 python3 -I "$DIR/bottom_signal.py" "$OUT/bottom_${SYM}_30m.json" "$OUT/bottom_${SYM}_60m.json" \
   --title "$NAME" --svg "$OUT/bottom_${SYM}_30m.svg"

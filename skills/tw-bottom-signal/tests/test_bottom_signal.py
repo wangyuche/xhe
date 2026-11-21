@@ -125,6 +125,7 @@ case "$1" in
 esac
 # histfail:像斷線一樣不寫檔(curl -o 連不上時不會覆蓋舊檔),舊版 run.sh 會沿用上次的資料
 if [ "$FAKE_MODE" = histfail ] && [[ "$1" == historical/* ]]; then echo '{"http":000}'; exit 0; fi
+if [ "$FAKE_MODE" = hist60fail ] && [[ "$1" == historical/*timeframe=60* ]]; then echo '{"http":000}'; exit 0; fi
 if [ "$FAKE_MODE" = intrafail ] && [[ "$1" == intraday/* ]]; then echo '{"http":000}'; exit 0; fi
 # intratrunc:像 curl -m 逾時一樣,印 200、寫一半、結束碼 28
 if [ "$FAKE_MODE" = intratrunc ] && [[ "$1" == intraday/* ]]; then printf '{"data":[{"date"' > "$2"; echo '{"http":200}'; exit 28; fi
@@ -150,6 +151,11 @@ try:
     for mode in ("intratrunc", "intraerr"):
         r = runsh(mode, "1")
         check(f"run.sh 盤中 {mode} → 警告", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    r = runsh("ok", "1")
+    check("run.sh 交易日盤中 K 是空的 → 警告", r.returncode == 0 and "盤中資料是空的" in r.stderr and "STAGE 1/6" in r.stdout)
+    r = runsh("hist60fail")
+    check("run.sh 只有 60 分歷史失敗 → 不留 30 分檔", r.returncode != 0
+          and not any(n.startswith("bottom_") and n.endswith(".json") for n in os.listdir(work)))
     r = runsh("intrafail", "0")
     check("run.sh 非交易時間盤中抓不到 → 不警告", r.returncode == 0 and "警告" not in r.stderr and "STAGE 1/6" in r.stdout)
     env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))

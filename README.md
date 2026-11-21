@@ -59,7 +59,7 @@ mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin
 # mkdir -p ~/.config/audio-transcribe && echo 'WHISPER_MODEL=<模型路徑>' > ~/.config/audio-transcribe/config
 ```
 
-**`~/.claude/tg/fugle.sh`(本機檔案,不在 repo):** [富果 MarketData API](https://developer.fugle.tw/) 的包裝腳本,金鑰只由它讀取。用法 `fugle.sh <endpoint> [輸出檔]`:呼叫 `https://api.fugle.tw/marketdata/v1.0/stock/<endpoint>`;沒給輸出檔時把回應印到 stdout,有給時寫進檔案並印 `{"http":<狀態碼>}`。參考寫法(金鑰放 `~/.claude/tg/fugle_key`,`chmod 600`):
+**`~/.claude/tg/fugle.sh`(本機檔案,不在 repo):** [富果 MarketData API](https://developer.fugle.tw/) 的包裝腳本,金鑰只由它讀取。用法 `fugle.sh <endpoint> [輸出檔]`:呼叫 `https://api.fugle.tw/marketdata/v1.0/stock/<endpoint>`;沒給輸出檔時把回應印到 stdout,有給時寫進檔案並印 `{"http":<狀態碼>}`。參考寫法(金鑰放 `~/.claude/tg/fugle_key`,`chmod 600`;富果金鑰是英數字,這個寫法不處理 `"`、`\` 跳脫):
 
 ```bash
 #!/bin/bash
