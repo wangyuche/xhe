@@ -7,7 +7,8 @@
 
 stdin:FinMind TaiwanStockPER 回應 {"data":[{"date","PER","PBR","dividend_yield"}]}。
 參數:近 4 季 EPS 合計、最新每股淨值、近一年現金股利(最近一個完整盈餘年度的合計)、目前股價。
-沒有的數字就不要給,對應方法會標為不適用。沒給 --bvps 但有 --price 時,
+沒有的數字就不要給,對應方法會標為不適用。
+FinMind 回錯誤(例如 402 額度用完)時輸出 error、結束碼 1(資料缺口,不是不適用)。沒給 --bvps 但有 --price 時,
 每股淨值 = 目前股價 ÷ 最新一筆 PBR(--price 須為該筆資料同日收盤價)。
 
 判定(多數決):股價高於過半適用方法的上限 → 偏貴;低於過半適用方法的下限 → 偏便宜;
@@ -81,6 +82,17 @@ def main():
     if not isinstance(obj, dict):
         print(json.dumps({"error": "TaiwanStockPER 回應格式不符"}, ensure_ascii=False))
         sys.exit(1)
+    status = obj.get("status")
+    # 沒有 status 也沒有 data(空輸入、代理回的 {"msg":"rate limited"}、{"detail":…})也算錯誤
+    no_data_msg = status is None and "data" not in obj
+    if "error" in obj or status not in (None, 200) or no_data_msg:
+        # FinMind 錯誤(402 = 額度用完、400 參數錯、401/403 token 問題):是資料缺口,不是「不適用」
+        msg = obj.get("msg") or obj.get("error") or obj.get("detail") or ("空回應" if not obj else str(obj)[:200])
+        err = {"error": ("FinMind 額度用完(402),估值資料缺口;設定 FINMIND_TOKEN 或稍後重試"
+                         if status == 402 else f"FinMind 回應錯誤(status {status}):{msg}"),
+               "status": status, "api_message": msg}
+        print(json.dumps(err, ensure_ascii=False))
+        sys.exit(1)
     data = obj.get("data") or []
     bvps, bvps_note = a.bvps, None
     if bvps is None and a.price is not None and data:
@@ -109,8 +121,6 @@ def main():
         ]
         if bvps_note:
             out["methods"][1]["note"] = bvps_note
-    if "error" in obj or obj.get("status") not in (None, 200):
-        out["api_message"] = obj.get("msg") or obj.get("error")
     ok = [m for m in out["methods"] if m.get("applicable")]
     if ok:
         lo = min(m["fair_low"] for m in ok)

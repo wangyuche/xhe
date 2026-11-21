@@ -44,13 +44,13 @@ skills:
    - 計算百分位前排除 ≤ 0 或空值,假設欄寫明有效筆數;有效筆數 < 250 時該方法標為不適用。虧損公司不用本益比法、未配息公司不用殖利率法,寫明原因。上櫃股若 `TaiwanStockPER` 無資料,三種方法都標不適用並說明。
    - 和目前股價比較,判斷偏貴、合理或偏便宜。判定用**多數決**(腳本的 `verdict`):股價高於過半適用方法的上限為偏貴,低於過半適用方法的下限為偏便宜,其餘為合理。報告寫出 `verdict_rule`,例如「3 種方法中有 2 種高於上限 → 偏貴」。
    - **計算一律用 `tw-stock-calc` 的 `valuation.py`**,不要自己寫百分位程式:`curl -s '<TaiwanStockPER 網址>' | python3 ~/.claude/skills/tw-stock-calc/scripts/valuation.py --eps4q … --bvps … --dividend … --price …`。沒有的數字不給參數,腳本會回報不適用原因;報告的有效筆數、百分位、合理價、判定直接取自腳本輸出。
-   - `TaiwanStockPER` 抓不到或腳本輸出 `error`(例如被擋時回傳 HTML、額度用完):重抓一次;仍失敗就把三種方法都標「無資料」並寫明原因(附腳本的錯誤訊息),不要改成自己寫程式計算。
+   - `TaiwanStockPER` 抓不到或腳本輸出 `error`(結束碼 1,例如被擋時回傳 HTML、FinMind 錯誤狀態):重抓一次(`status` 402 額度用完時不要重抓);仍失敗就把三種方法都標「無資料」並寫明原因(附腳本的 `error`),不要改成自己寫程式計算。這是資料缺口,**不能寫成「不適用」**:「不適用」只用於腳本正常輸出 `applicable: false` 的情況(虧損、未配息、筆數不足、上櫃無資料)。
 5. **時事**(完成條件:至少 3 則,或寫明實際找到幾則)
    - 用 WebSearch 找分析日前 30 天內與該公司、所屬產業、台股大盤相關的國際與台灣新聞(聯準會利率、美股科技股、匯率、地緣政治、法說會、三大法人買賣超等)。
    - **每則都必須用 WebFetch 讀原文確認發布日期**,不能只看搜尋摘要(實測過摘要像 11/13、原文其實是 8/13)。讀不到原文、或原文看不出日期的新聞不列入。
    - 來源:下方「資料來源」的新聞網域是優先來源;清單外的網站(例如 technews、工商時報、經濟日報)也可以用,但一樣要讀過原文並附原始連結。
    - 每則附日期、原始連結、偏多或偏空與理由。不足 3 則不得湊數。
-   - **大盤背景(必做)**:加權指數最近收盤,加上台指期夜盤實際數字(開高低收、漲跌),不能只用新聞標題。夜盤抓法:`curl -s -d "queryType=2&marketCode=1&commodity_id=TX&queryDate=YYYY%2FMM%2FDD&MarketCode=1&commodity_idt=TX" https://www.taifex.com.tw/cht/3/futDailyMarketReport`,`queryDate` 填**夜盤所屬的下一個交易日**(週五晚上的夜盤填下週一),從 HTML 取近月合約那列。寫出夜盤收盤相對現貨收盤的升貼水。盤中執行時另附 `fugle.sh intraday/quote/IX0001` 的即時加權指數。**失敗範例(2026-11-15)**:只憑「夜盤摔 133 點」標題推估跳空跌 200–400 點,實際夜盤收盤反而比現貨高。
+   - **大盤背景(必做)**:加權指數最近收盤,加上台指期夜盤實際數字(開高低收、漲跌),不能只用新聞標題。夜盤抓法:`curl -s -d "queryType=2&marketCode=1&commodity_id=TX&queryDate=YYYY%2FMM%2FDD&MarketCode=1&commodity_idt=TX" https://www.taifex.com.tw/cht/3/futDailyMarketReport`,`queryDate` 填**夜盤所屬的下一個交易日**(週五晚上的夜盤填下週一),從 HTML 取近月合約那列。寫出夜盤收盤相對現貨收盤的升貼水。盤中執行時另附 `fugle.sh intraday/quote/IX0001` 的即時加權指數(腳本不存在或失敗時改用 Yahoo Finance `^TWII`,並註明)。**失敗範例(2026-11-15)**:只憑「夜盤摔 133 點」標題推估跳空跌 200–400 點,實際夜盤收盤反而比現貨高。
 5b. **籌碼面**(完成條件:下列預設項目每項都有數字或「無資料」加原因)
    - 預設:近 10 個交易日三大法人買賣超(FinMind `TaiwanStockInstitutionalInvestorsBuySell`,單位為股,換算成張;`name` 欄分外資、投信、自營商)、融資融券餘額變化(`TaiwanStockMarginPurchaseShortSale`)、借券賣出餘額變化(`TaiwanDailyShortSaleBalances` 的 `SBLShortSalesCurrentDayBalance`,單位為股)。
    - 使用者要求時再加:集保股權分散(`https://opendata.tdcc.com.tw/getOD.ashx?id=1-5`,全市場 CSV,用 python3 篩出該代號),寫出 400 張、1000 張以上大戶持股比例,與上週比較。
@@ -94,6 +94,7 @@ skills:
   - 新聞:`news.cnyes.com`、`www.moneydj.com`、`money.udn.com`、`www.cna.com.tw`、`www.reuters.com`、`www.bloomberg.com`
 - Bash 只能執行 `curl`、`python3`(只用標準函式庫)和 `bash ~/.claude/tg/fugle.sh`。可以用 shell 的 `for` 迴圈、`{ …; }` 群組、`echo` 和管線 `|` 把多次 curl 的輸出串起來交給 python3(例如抓 7 個月日線);除此之外不執行其他指令。用管線處理資料,例如 `curl -s <url> | python3 -c '<計算程式>'`。
 - FinMind token 從環境變數 `FINMIND_TOKEN` 讀取(例如在 python 裡用 `os.environ.get`),沒設定時用免 token 額度。絕不能把 token 印在輸出或報告裡。
+- FinMind 回應的 `status` 不是 200 就是失敗,即使 HTTP 是 200:**402 = 額度用完**(之後的 FinMind 請求也會失敗,不要重抓),改用有備援的來源(股價:證交所 / 櫃買中心 / Yahoo);沒有備援的項目標「無資料(FinMind 額度用完,402)」,報告開頭註明並建議設定 `FINMIND_TOKEN`。不要把 402 的空資料當成「該公司沒有這項資料」或「不適用」。
 
 ## 輸出格式
 
