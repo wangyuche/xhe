@@ -40,7 +40,7 @@ skills:
 6. 逐條檢查「遇到以下情況要停下來」,同時成立的全部列出。
 
 ### 風格試作(完成條件:2–4 張 + manifest,回 BLOCKED)
-1. 參考是圖片 → Read 看圖;是網址 → `node <web-dev-kit>/scripts/shot.mjs <網址> 1280 800 <tmp>/ref-<n>.png --allow-redirect`(只截簡報給的網址;參考網站常轉址,例如 http→https、語系頁,所以加 `--allow-redirect`),stdout JSON 的 `redirected` 為 true 時,manifest 與回報的參考來源記 `finalUrl`;轉到的網域和原網址不同、或像登入頁 / 錯誤頁時,不當參考,回報說明。Read 看圖。既有作品的參考只抽一般特徵(上色方式、線條粗細、飽和度、光影),**不當參考圖餵進任何模型,提示詞不寫作品名或作者名**。
+1. 參考是圖片 → Read 看圖;是網址 → `node <web-dev-kit>/scripts/shot.mjs <網址> 1280 800 <tmp>/ref-<n>.png --allow-redirect`(只截簡報給的網址;參考網站常轉址,例如 http→https、語系頁,所以加 `--allow-redirect`),stdout JSON 的 `redirected` 為 true 時,manifest 與回報的參考來源記 `finalUrl`。結束碼 2 但 `http` 是 200、只因 `consoleErrors` > 0(第三方網站常見)時截圖仍可用。轉到的主網域不同(`www.` 等子網域不算)、http 不是 200、或畫面是登入頁 / 錯誤頁時,不當參考,回報說明。Read 看圖。既有作品的參考只抽一般特徵(上色方式、線條粗細、飽和度、光影),**不當參考圖餵進任何模型,提示詞不寫作品名或作者名**。
 2. 2–4 張各用不同設定組合(不同骨架 / 模型家族 / 提示詞方向),同一個代表性畫面(例如主角站在代表場景前),寫進 `art/out/<日期>-style-trials/`,每張的設定寫進 manifest。
 3. Read 每張,回 BLOCKED:逐張附設定摘要、看到的特點,問「請選第幾張,可附修改意見」。
 
@@ -119,7 +119,7 @@ skills:
 
 ## 遇到以下情況要停下來(回 BLOCKED)
 - 找不到 ComfyUI 位址(kit 結束碼 2 並附設定方式),或連不上(結束碼 5)。
-- 需要角色一致,但 `check` 的 `consistency_methods` 是空的:對照 check.json 的 `defaults`(null 的模型)與 `/object_info` 找出缺少項目再列出:Qwen-Image-Edit 需要 edit 模型、Qwen2.5-VL text encoder、qwen_image_vae 與節點 `TextEncodeQwenImageEditPlus`、`CFGNorm`、`ModelSamplingAuraFlow`、`ImageScaleToTotalPixels`、`EmptySD3LatentImage`;Flux Kontext 需要 kontext 模型、clip_l、t5xxl、ae 與節點 `ReferenceLatent`、`FluxKontextImageScale`、`FluxGuidance`、`VAEEncode`;`unsupported_consistency` 有 IP-Adapter 時寫明「主機有 IP-Adapter,但 kit 沒有對應骨架,不能用」。不改用沒有一致性的文生圖硬出。
+- 需要角色一致,但 `check` 的 `consistency_methods` 是空的:對照 check.json 的 `defaults`(null 的模型)與 `/object_info` 找出缺少項目再列出:Qwen-Image-Edit 需要 edit 模型、Qwen2.5-VL text encoder、qwen_image_vae 與節點 `TextEncodeQwenImageEditPlus`、`CFGNorm`、`ModelSamplingAuraFlow`、`ImageScaleToTotalPixels`、`EmptySD3LatentImage`;Flux Kontext 需要 kontext 模型、clip_l、t5xxl、ae 與節點 `ReferenceLatent`、`FluxKontextImageScale`、`FluxGuidance`、`ConditioningZeroOut`、`VAEEncode`;`unsupported_consistency` 有 IP-Adapter 時寫明「主機有 IP-Adapter,但 kit 沒有對應骨架,不能用」。不改用沒有一致性的文生圖硬出。
 - 一般 / 角色定裝模式、`art/STYLE.md` 不存在,簡報也沒寫「不需要風格規範」:請先走風格試作。
 - 需求涉及的角色沒有 `ref.png`,簡報也沒要求角色定裝。
 - 角色定裝時 `ref.png` 已存在,簡報沒寫「重新定裝 <id>」;風格定稿時 STYLE.md 已存在,簡報沒寫「修訂風格」。

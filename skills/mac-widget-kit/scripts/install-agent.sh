@@ -27,5 +27,7 @@ cat > "$plist" <<PLIST
 </dict>
 </plist>
 PLIST
-launchctl bootstrap "gui/$(id -u)" "$plist"
-echo "已安裝並啟動:$plist"
+# bootout 後立刻 bootstrap 偶爾回 5(Input/output error):重試幾次
+for i in 1 2 3 4 5; do launchctl bootstrap "gui/$(id -u)" "$plist" 2>"${TMPDIR:-/tmp}/mwk-bootstrap.$$" && { rm -f "${TMPDIR:-/tmp}/mwk-bootstrap.$$"; echo "已安裝並啟動:$plist"; exit 0; }; sleep 1; done
+err="$(cat "${TMPDIR:-/tmp}/mwk-bootstrap.$$" 2>/dev/null)"; rm -f "${TMPDIR:-/tmp}/mwk-bootstrap.$$" "$plist"
+die "launchctl bootstrap 失敗($err),已移除 $plist;widget 沒有在執行,可用 open \"$APP_PATH\" 手動啟動後再重跑"

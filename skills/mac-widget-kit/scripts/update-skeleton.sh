@@ -11,4 +11,14 @@ for f in "$SKILL_DIR/template"/*; do
   case "$b" in Widget.swift|Provider.swift|widget.json|README.md) continue ;; esac
   if ! cmp -s "$f" "$WIDGET_DIR/$b"; then cp "$f" "$WIDGET_DIR/$b"; updated+=("$b"); fi
 done
+# template 已經沒有的骨架檔(kit 改名或移除)也要刪,否則骨架 diff 不會過、可能重複定義
+removed=()
+for f in "$WIDGET_DIR"/*.swift; do
+  [ -e "$f" ] || continue
+  b="$(basename "$f")"
+  case "$b" in Widget.swift|Provider.swift) continue ;; esac
+  [ -e "$SKILL_DIR/template/$b" ] || { rm "$f"; removed+=("$b"); }
+done
+[ ${#removed[@]} -gt 0 ] && echo "已移除 template 沒有的骨架檔:${removed[*]}"
+if [ ${#updated[@]} -eq 0 ] && [ ${#removed[@]} -eq 0 ]; then echo "骨架已是最新"; exit 0; fi
 if [ ${#updated[@]} -eq 0 ]; then echo "骨架已是最新"; else echo "已更新骨架:${updated[*]}(要重新 build)"; fi

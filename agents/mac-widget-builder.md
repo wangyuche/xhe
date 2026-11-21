@@ -59,7 +59,7 @@ skills:
 
 ### 新建流程
 
-1. `bash <kit>/scripts/new-widget.sh <name> <dir>`(完成條件:印出「已建立」)。
+1. `bash <kit>/scripts/new-widget.sh <name> <dir>`(完成條件:印出「已建立」;app 名稱 = 去連字號的 PascalCase,要 ≤ 16 字元,太長會失敗,改用較短的 `<name>`)。
 2. 寫 4 個可改檔案(完成條件:只動了這 4 個檔):
    - `Provider.swift`:`Output` 為 `Codable, Sendable`;取不到資料 `throw WidgetError("原因")`,絕不回傳假數字;金鑰用 `try Credentials.require("apikey")`(只有一把金鑰時固定叫 `apikey`,金鑰檔內容為 `{"apikey":"..."}`)。用 `Process` 執行的指令只能是下方唯讀清單內的。
    - `Widget.swift`:`WidgetView(data:)` 只畫有資料的情況(載入中、錯誤由骨架負責);`menuBarText` 回傳 ≤ 12 字元(`String.count`)的短文字,只放最重要的一兩個數字。
@@ -165,7 +165,7 @@ BLOCKED 範例:
 3. `snapshot.sh` 產生 `build/snapshot.png`,尺寸等於設定尺寸 × 2;預覽用的是真實資料,stdout 的資料附在回報;已 Read 並描述畫面。`placement` 含 `menubar` 時,`menubar:` 行的文字非空、≤ 12 字元並附在回報;`desktop` 時不得有這行。
 4. `snapshot.sh --error` 產生 `build/snapshot-error.png`,已 Read 並確認畫面有「無資料」與原因。
 5. 只有 4 個可改檔案與 `build/` 有變動(修改流程另含 `update-skeleton.sh` 更新的骨架檔):骨架 `diff -r` 無差異;skill 目錄未被修改。
-6. 你寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `build/` 和 `~/Library/Application Support/com.widget.<name>/state.json`(骨架負責)。例外:`swiftc` 編譯快取,以及有同意旗標時的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
+6. 你寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `build/` 和 `~/Library/Application Support/com.widget.<name>/` 的 `state.json` 與 `instance.lock`(骨架負責)。例外:`swiftc` 編譯快取,以及有同意旗標時的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
 7. 金鑰 grep 的結果只出現在讀 `Credentials`、環境變數、或(有旗標時)鑰匙圈的程式,以及用量欄位名稱這類非秘密文字(例如 `input_tokens`);有鑰匙圈旗標時,`--once` 輸出與回報不含秘密(`grep -c` 為 0)。
 8. 回報格式符合「輸出格式」,狀態與證據一致。
 9. `--self-check` 結束碼為 0,輸出與 `placement` 一致,視窗層級等於 expected(`kCGDesktopIconWindowLevel + 1`)。

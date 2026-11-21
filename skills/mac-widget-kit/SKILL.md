@@ -23,7 +23,7 @@ description: Mac 桌面 widget 骨架與腳本(SwiftUI + AppKit,只需 Command L
 `<kit>` = 這個 skill 的目錄。
 
 ```bash
-bash <kit>/scripts/new-widget.sh <name> <dir>      # 建立;目錄已存在則失敗
+bash <kit>/scripts/new-widget.sh <name> <dir>      # 建立;目錄已存在、或 app 名稱(去連字號的 PascalCase)超過 16 字元則失敗
 bash <kit>/scripts/build.sh <dir>                  # 編譯 → <dir>/build/<Name>.app,印「警告:N」
 <dir>/build/<Name>.app/Contents/MacOS/<Name> --once        # 取一次資料,印一行 JSON
 bash <kit>/scripts/snapshot.sh <dir>               # → build/snapshot.png(+ stdout 資料、menubar: / menubar-length: 行;取資料失敗結束碼 3)

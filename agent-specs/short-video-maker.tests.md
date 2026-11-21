@@ -3,7 +3,7 @@
 每個情境都實際執行(不是扮演),輸出目錄用暫存目錄 `<T>`,測完刪除。
 
 ## 情境 1:一般,repo-cards(本機 git repo,沒有執行旗標)
-- 派工:「把 /Volumes/ariesdisk/Data/git/xhe 做成短影音。輸出目錄 <T>。」
+- 派工:「把 <xhe repo 的本機路徑> 做成短影音。輸出目錄 <T>。」
 - 預期:PASS。
   - 模式為 `repo-cards`,沒有執行任何安裝 / 建置 / 啟動指令。
   - `verify.sh` `ok:true`,5 張擷圖與封面都有描述。

@@ -19,6 +19,8 @@ PLIST="$D/build/TSample.app/Contents/Info.plist"
 
 # 邊界:目錄已存在時 new-widget.sh 要失敗
 if bash "$S/new-widget.sh" t-sample "$D" >/dev/null 2>&1; then ng "new-widget:目錄已存在要失敗"; else ok "new-widget:目錄已存在要失敗"; fi
+# 邊界:app 名稱超過 16 字元
+if bash "$S/new-widget.sh" "network-traffic-monitor" "$TMP/long" >/dev/null 2>&1; then ng "new-widget:app 名稱 > 16 字元要失敗"; else ok "new-widget:app 名稱 > 16 字元要失敗"; fi
 # 邊界:不合法名稱
 if bash "$S/new-widget.sh" "Bad_Name" "$TMP/bad" >/dev/null 2>&1; then ng "new-widget:不合法名稱要失敗"; else ok "new-widget:不合法名稱要失敗"; fi
 
@@ -103,10 +105,10 @@ rm -rf "$SUP"
 fi
 
 # update-skeleton.sh:舊版骨架被更新回 template,4 個可改檔案不動
-echo "// old" >> "$D/main.swift"; cp "$D/Provider.swift" "$TMP/prov.bak"
+echo "// old" >> "$D/main.swift"; cp "$D/Provider.swift" "$TMP/prov.bak"; echo "// gone" > "$D/Legacy.swift"
 u="$(bash "$S/update-skeleton.sh" "$D" 2>&1)"
 d="$(diff -r "$KIT/template" "$D" -x build -x state.json -x Widget.swift -x Provider.swift -x widget.json -x README.md 2>&1)"
-[ -z "$d" ] && grep -q 'main.swift' <<<"$u" && cmp -s "$D/Provider.swift" "$TMP/prov.bak" && [ "$(bash "$S/update-skeleton.sh" "$D")" = "骨架已是最新" ] \
+[ -z "$d" ] && grep -q 'main.swift' <<<"$u" && grep -q 'Legacy.swift' <<<"$u" && [ ! -e "$D/Legacy.swift" ] && cmp -s "$D/Provider.swift" "$TMP/prov.bak" && [ "$(bash "$S/update-skeleton.sh" "$D")" = "骨架已是最新" ] \
   && ok "update-skeleton.sh 更新舊骨架、不動可改檔案" || ng "update-skeleton.sh" "$u $d"
 
 echo "----"

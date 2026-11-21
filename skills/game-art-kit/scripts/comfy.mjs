@@ -127,7 +127,7 @@ async function check() {
       && has('CFGNorm') && has('ModelSamplingAuraFlow') && has('ImageScaleToTotalPixels') && has('EmptySD3LatentImage'),
     'qwen-edit-2ref': null, 'qwen-edit-3ref': null, // 同 qwen-edit-1ref,下面補
     'flux-t2i': !!(d.flux_unet && d.clip_l && d.t5 && d.flux_vae),
-    'flux-kontext': !!(has('ReferenceLatent') && has('FluxKontextImageScale') && has('FluxGuidance') && has('VAEEncode') && d.flux_kontext_unet && d.clip_l && d.t5 && d.flux_vae),
+    'flux-kontext': !!(has('ReferenceLatent') && has('ConditioningZeroOut') && has('FluxKontextImageScale') && has('FluxGuidance') && has('VAEEncode') && d.flux_kontext_unet && d.clip_l && d.t5 && d.flux_vae),
     'zimage-t2i': !!(d.zimage_unet && d.zimage_clip && d.flux_vae && has('ModelSamplingAuraFlow')),
     'qwen-t2i-canny': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae && d.qwen_controlnet_union && has('Canny') && has('SetUnionControlNetType')),
   };
