@@ -124,7 +124,7 @@ async function check() {
   const workflows = {
     'qwen-t2i': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae),
     'qwen-edit-1ref': !!(has('TextEncodeQwenImageEditPlus') && d.qwen_edit_unet && d.qwen_clip && d.qwen_vae)
-      && has('CFGNorm') && has('ImageScaleToTotalPixels') && has('EmptySD3LatentImage'),
+      && has('CFGNorm') && has('ModelSamplingAuraFlow') && has('ImageScaleToTotalPixels') && has('EmptySD3LatentImage'),
     'qwen-edit-2ref': null, 'qwen-edit-3ref': null, // 同 qwen-edit-1ref,下面補
     'flux-t2i': !!(d.flux_unet && d.clip_l && d.t5 && d.flux_vae),
     'flux-kontext': !!(has('ReferenceLatent') && has('FluxKontextImageScale') && has('FluxGuidance') && has('VAEEncode') && d.flux_kontext_unet && d.clip_l && d.t5 && d.flux_vae),

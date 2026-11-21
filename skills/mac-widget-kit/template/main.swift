@@ -21,6 +21,8 @@ for (flag, forceError) in [("--snapshot", false), ("--snapshot-error", true)] {
 
 // 單一實例:手動 open 與 LaunchAgent(RunAtLoad)可能各啟動一次。用 flock 鎖住 Application Support 裡的
 // instance.lock,程序結束(含當機)時系統自動放鎖。拿不到鎖 = 已有常駐實例 → 結束碼 0(LaunchAgent 不會重啟)。
+// 注意:如果被擋下的是 launchd 啟動的那個,這次登入期間就沒有 KeepAlive(手動那個當機不會被拉起);
+// install-agent.sh 會先停掉手動實例,避免這種情況。不用非 0 結束碼,否則 launchd 會每 10 秒重試,使用者按「結束」也會被拉起。
 // --self-check 不常駐,不搶鎖。
 let instanceLock: Int32 = {
     guard !CommandLine.arguments.contains("--self-check"), let dir = AppEnv.supportDir else { return -1 }

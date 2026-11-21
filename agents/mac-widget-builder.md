@@ -91,7 +91,7 @@ skills:
 1. Read 4 個可改檔案,再修改(完成條件:只動這 4 個檔)。
 2. 照新建流程第 3–9 步完整驗證(一樣套用全部成功標準)。
 3. 重啟或啟動:
-   - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。一律先 `pkill -x <Name>`,等舊程序真的結束(`for i in $(seq 1 50); do pgrep -x <Name> >/dev/null || break; sleep 0.1; done`;舊程序還拿著 `instance.lock` 時新的會直接結束;執行中的可能是手動 open 的,不一定歸 launchd 管),仍在執行就回報。結束後:有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart gui/$(id -u)/com.widget.<name>`(launchd 可能已經自己拉起新的,這時 kickstart 不會再開第二個);沒有就 `open`。最後同樣等到 `pgrep -x <Name>` 剛好一行。
+   - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。記下舊 PID(`old=$(pgrep -x <Name>)`),一律先 `pkill -x <Name>`(執行中的可能是手動 open 的,不一定歸 launchd 管,只 `kickstart -k` 殺不到),等舊 PID 消失(`for i in $(seq 1 50); do pgrep -x <Name> | grep -qx "$old" || break; sleep 0.1; done`;舊程序還拿著 `instance.lock` 時新的會直接結束),仍在就回報。有 LaunchAgent 時 launchd 會因 SIGTERM 立刻拉起新的,所以只等舊 PID 消失,不等「沒有程序」。之後:有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart gui/$(id -u)/com.widget.<name>`(已被 launchd 拉起時不會再開第二個);沒有就 `open`。最後等到 `pgrep -x <Name>` 剛好一行,且不是舊 PID。
    - 沒在執行(使用者可能剛按過「結束」):要有「使用者已同意啟動」才 `open`。
 4. 回報。
 

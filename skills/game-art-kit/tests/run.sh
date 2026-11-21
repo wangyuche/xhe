@@ -50,7 +50,7 @@ echo "$c" | grep -q '"family": "qwen-image-edit"' && ! echo "$c" | grep -q '"fam
 echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(Array.isArray(d.unsupported_consistency)&&d.unsupported_consistency.length===0?0:1)' \
   && ok "check:沒有 IP-Adapter 時 unsupported_consistency 為空陣列" || bad "check unsupported_consistency" "$c"
 # 只有 IP-Adapter 的主機:consistency_methods 為空(kit 沒有 IP-Adapter 骨架),IP-Adapter 只列在 unsupported_consistency
-P2=$((PORT + 20000))   # PORT 在 20000–39999,P2 在 40000–59999,不會和第一個重疊
+P2=$((PORT - 10000))   # PORT 在 20000–39999,P2 在 10000–29999:和第一個不同,也避開 macOS 臨時埠(49152 起)
 node "$K/tests/fake-comfy.mjs" "$P2" "$W/req2.log" ipadapter-only > "$W/fake2.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake2.out" 2>/dev/null && break; sleep 0.1; done
 grep -q listening "$W/fake2.out" || bad "第二個假 ComfyUI 沒有啟動(埠 $P2)" "$(cat "$W/fake2.out")"
