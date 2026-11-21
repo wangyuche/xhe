@@ -41,7 +41,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 只放節點結構;`{{key}}` 由 `--set` 填(整格是數字就轉數字)。缺參數或多給參數都會結束碼 2。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
 
-| 骨架 | 用途 | 實測參數(2026-11 在 GB10 上) |
+| 骨架 | 用途 | 實測參數(2026-11,秒數依硬體而異) |
 |---|---|---|
 | `qwen-t2i` | 文生圖(場景、定裝、UI) | Lightning LoRA:steps 4、cfg 1、euler/simple、shift 3.1(約 30 秒 / 1024²)。不用 LoRA:steps 20、cfg 2.5 |
 | `qwen-edit-1ref` / `2ref` / `3ref` | **角色一致**:以 1–3 張參考圖編輯 / 生成新畫面 | Edit Lightning LoRA:steps 4、cfg 1、shift 3.1。提示詞用 `the character in image 1`、`image 2`… 指稱 |
