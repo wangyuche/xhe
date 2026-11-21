@@ -92,6 +92,8 @@ echo '{"cards":[{"type":"title","file":"x.png","title":"沒有配色"}]}' > noth
 e="$(node "$S/render.mjs" nothm.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme 缺' && ok "render.mjs 沒有 theme → 結束碼 2(沒有預設配色)" || bad "render.mjs 沒有 theme 沒被擋" "$e"
 echo '{"cards":[{"type":"subtitle","file":"s.png","text":"只有字幕"}]}' > subonly.json
 node "$S/render.mjs" subonly.json r5 >/dev/null 2>&1 && ok "render.mjs 只有字幕卡時不需要 theme" || bad "render.mjs 字幕卡不該要求 theme"
+echo '{"theme":{"bg":"#000","extra":1},"cards":[{"type":"subtitle","file":"s.png","text":"舊格式 theme"}]}' > oldthm.json
+node "$S/render.mjs" oldthm.json r5 >/dev/null 2>&1 && ok "render.mjs 只有字幕卡時忽略 theme 格式(舊 timeline 相容)" || bad "render.mjs 字幕卡不該檢查 theme 格式"
 echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"cover","file":"cv.png","tag":"repo","title":"漸層封面"}]}' > cv.json
 node "$S/render.mjs" cv.json r4 >/dev/null 2>&1 && [ "$(ffprobe -v error -show_entries stream=width,height -of csv=s=x:p=0 r4/cv.png)" = 1080x1920 ] && ok "render.mjs 沒有圖片的漸層封面" || bad "render.mjs 漸層封面"
 

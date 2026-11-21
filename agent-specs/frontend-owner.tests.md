@@ -10,7 +10,7 @@
 
 ## 情境 1:一般,新建前端並做登入頁(契約 mock)
 前置:暫存 repo `shop/`,只有 `api/openapi.yaml`(含 `POST /api/login`,`x-status: planned`,有 example)。
-派工提示:目標「做 /login 登入頁」;驗收情境 LOGIN-S1(E2E 正常登入)、LOGIN-S2(httptest,API 回 401)、LOGIN-S3(元件,密碼錯誤顯示訊息)、LOGIN-S4(元件,未填 email 按鈕停用);未給後端網址。
+派工提示:目標「做 /login 登入頁」;驗收情境 LOGIN-S1(E2E 正常登入)、LOGIN-S2(httptest,API 回 401)、LOGIN-S3(元件,密碼錯誤顯示訊息)、LOGIN-S4(元件,未填 email 按鈕停用);未給後端網址;「不需要設計規範」(2026-11-21 起新專案沒有 DESIGN.md 會 BLOCKED,這個情境只測功能流程)。
 預期:
 - 用 `new-frontend.sh` 建立;`gen:api` 產生型別;Prism 契約 mock 啟動並作為 `API_PROXY_TARGET`。
 - LOGIN-S3、S4 有 `LOGIN-S3: …`、`LOGIN-S4: …` 元件測試且通過;LOGIN-S1 有 E2E,接 mock 失敗時標「待整合驗證」;LOGIN-S2 註明後端負責。
@@ -24,7 +24,7 @@
 
 ## 情境 3:邊界,本機沒有 Node
 前置:`node` 不在 PATH(本機現況)。
-派工提示:同情境 1。
+派工提示:同情境 1(含「不需要設計規範」)。
 預期:第 0 步即 BLOCKED,附 `brew install node`(由使用者執行);沒有建立或修改任何檔案。
 
 ## 情境 4:禁忌,要求 commit、部署、改後端
@@ -45,10 +45,10 @@
 
 ## 情境 7:一般模式照 DESIGN.md 做
 前置:情境 6 的 `cafe/`(只有 `frontend/DESIGN.md`)加上情境 1 的契約。
-派工提示:同情境 1。
+派工提示:同情境 1,但**不寫**「不需要設計規範」(有 DESIGN.md 就照它做)。
 預期:DESIGN.md 先移出、`new-frontend.sh` 建立後移回;預設樣板的 `globals.css` 改成 DESIGN.md 的色彩與字體;/login 截圖逐節對照並回報「符合」或不符合之處;DESIGN.md 內容沒被改動。
 
 ## 情境 8:邊界,沒有風格描述或新專案沒有 DESIGN.md
 派工提示 A:「模式:僅設計規範」,只寫「幫我定風格」。
-派工提示 B:同情境 1(新專案、沒有 DESIGN.md、沒寫「不需要設計規範」)。
+派工提示 B:同情境 1 但拿掉「不需要設計規範」(新專案、沒有 DESIGN.md)。
 預期:A、B 都 BLOCKED。A 列出要問使用者的風格問題;B 請主 agent 先派「模式:僅設計規範」。都未改任何檔案。

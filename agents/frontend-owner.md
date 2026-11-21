@@ -23,7 +23,7 @@ skills:
 
 ### 第 0 步(完成條件:全部通過並記下基準,或回 BLOCKED;不改任何專案檔案)
 1. 簡報有目標與驗收情境(僅設計規範模式:風格描述);專案根目錄是 git repo(`git rev-parse --show-toplevel`)。
-2. `node -v` ≥ 24.18;`<pm>` 存在(僅設計規範模式不檢查)。
+2. `node -v` ≥ 24.18;`<pm>` 存在。僅設計規範模式改為:只有參考含網址時檢查 `node -v` ≥ 22(`shot.mjs` 需要)。
 3. 逐條檢查「遇到以下情況要停下來」,任何一條成立就回 BLOCKED。
 4. `bash <kit>/scripts/scope.sh snapshot <name>`。
 5. (一般模式)`<可寫路徑>/DESIGN.md` 存在就完整讀過,簡報提到的參考圖用 Read 看過;之後的實作與截圖檢視都以它為準。不存在就照既有畫面的風格,回報寫「設計規範:無 DESIGN.md」。
@@ -43,13 +43,13 @@ skills:
    - `## 禁止`:這個專案不要的東西
    - `## 參考`:網址或圖片路徑,與要學它的哪一點
 5. 回報前重讀 DESIGN.md 全文:前後矛盾、和風格描述衝突的地方直接修正(這個模式就是在寫 DESIGN.md;「不自行改 DESIGN.md」只適用一般模式)。
-6. 驗證:`grep -cxE '## (風格|色彩|字體|間距與圓角|元件|版面與響應式|禁止|參考)' <可寫路徑>/DESIGN.md` = 8(8 個標題各一次,不能用 `grep -c '^## '`,會算到程式碼區塊);`scope.sh check <name> <可寫路徑>` 的 IN 只有 DESIGN.md;`secret-scan.sh <name>`。回報附 DESIGN.md 全文與「(推定)」項目清單。
+6. 驗證:標題行必須和規定完全相同(不加註記、行尾不留空白),8 個各出現一次:`for h in 風格 色彩 字體 間距與圓角 元件 版面與響應式 禁止 參考; do printf '%s=%s\n' "$h" "$(grep -cx "## $h" <可寫路徑>/DESIGN.md)"; done` 每行都是 `=1`(不能用 `grep -c '^## '`,會算到程式碼區塊);`scope.sh check <name> <可寫路徑>` 的 IN 只有 DESIGN.md;`secret-scan.sh <name>`。回報附 DESIGN.md 全文與「(推定)」項目清單。
 
 以下第 1–4 步只用於一般模式。
 
 ### 第 1 步:專案準備(完成條件:可寫路徑是可 build 的 Next.js 專案)
 - 可寫路徑不存在或是空目錄 → `bash <nextjs>/scripts/new-frontend.sh <專案根目錄> --frontend <可寫路徑> --api <契約目錄>`(含 Vitest、Playwright、openapi-typescript、openapi-fetch、Prism、rewrites 與 scripts)。
-- 可寫路徑只有 `DESIGN.md`(與簡報提到的參考圖)→ 先**複製**到 `<tmp>/<name>/keep/`(`cp -p`),比對內容相同後才從可寫路徑刪除,執行 `new-frontend.sh`;**不論成功或失敗**都馬上複製回原位並比對內容相同,之後才繼續或回報 ISSUES / BLOCKED。回報前確認 `<可寫路徑>/DESIGN.md` 存在。
+- 可寫路徑內只有 `DESIGN.md` 與圖片檔(png / jpg / webp / svg 等參考圖)→ 把可寫路徑內**所有檔案**連同子目錄結構**複製**到 `<tmp>/<name>/keep/`(`cp -pR`),逐檔比對內容相同後才從可寫路徑刪除(`new-frontend.sh` 要求目錄是空的),執行 `new-frontend.sh`;**不論成功或失敗**都馬上全部複製回原位並逐檔比對,之後才繼續或回報 ISSUES / BLOCKED。回報前確認 `<可寫路徑>/DESIGN.md` 存在。
 - 可寫路徑有其他檔案但沒有 `package.json`,或沒有 `next` 依賴 → BLOCKED。
 - 既有專案缺 Playwright 而簡報有 E2E 層級情境 → 依 stack-nextjs 的固定設定補上(`@playwright/test`、`playwright.config.ts`、`test:e2e`;`vitest.config` 排除 `e2e/**`)。
 
@@ -141,7 +141,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 9. 沒有出現禁止的指令(git 寫入、全域安裝、部署)。
 10. 回報使用上方格式,狀態為 PASS / ISSUES / BLOCKED 之一。
 11. 有 DESIGN.md 時,截圖已逐節對照並回報結果;不符合的地方已修正,或列在 ISSUES。
-12. (僅設計規範模式)DESIGN.md 的 8 個規定標題各出現一次(`grep -cxE` = 8),每節是具體值;內容來自簡報的風格描述,沒提到的項目標「(推定)」;只改了 DESIGN.md。
+12. (僅設計規範模式)DESIGN.md 的 8 個規定標題各出現一次(逐一 `grep -cx` 都是 1),每節是具體值;內容來自簡報的風格描述,沒提到的項目標「(推定)」;只改了 DESIGN.md。
 
 ## 限制
 - 只在可寫路徑內新增、修改、刪除檔案;不碰契約(`api/`)、後端、repo 根目錄。截圖、log、E2E 輸出只放 `<tmp>/<name>/`。
