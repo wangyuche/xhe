@@ -123,6 +123,16 @@ api() {
   printf '%s\n' "$resp"
 }
 
+# GitHub 伺服器的現在時間(epoch 秒),取自回應的 Date header;避免本機時鐘偏差影響判斷
+gh_now() {
+  local d
+  d=$(curl -q -sS --connect-timeout 10 --max-time 30 -o /dev/null -D - "$API/" 2>/dev/null \
+        | tr -d '\r' | awk 'tolower($1)=="date:" { $1=""; sub(/^ /,""); print; exit }')
+  [[ -n $d ]] || die "取不到 GitHub 伺服器時間"
+  jq -nr --arg d "$d" '$d | strptime("%a, %d %b %Y %H:%M:%S GMT") | mktime' 2>/dev/null \
+    || die "看不懂 GitHub 伺服器時間:$d"
+}
+
 # api_try:同 api,但 HTTP 404 回傳 4(給「可能不存在」的查詢用);其他錯誤回傳 2 並印出原因。
 # 呼叫端必須明確檢查回傳碼(在 $(...) 裡 exit 只會結束子 shell)
 api_try() {
@@ -135,12 +145,19 @@ api_try() {
 # jfield <欄位> <json>:欄位缺或為 null 就失敗(避免 "null" 字串混過檢查)
 jfield() { jq -er "$1 // empty" <<<"$2" || die "API 回應缺 $1"; }
 
+# owner/repo 格式;不接受 . 或 .. 片段(curl 會把它們折疊成別的 API 路徑)
+valid_repo() {
+  [[ $1 =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  local o=${1%%/*} n=${1#*/}
+  [[ $o != . && $o != .. && $n != . && $n != .. ]]
+}
+
 # 把 GitHub 遠端網址轉成 owner/repo
 parse_repo() {
   local url=${1%/}
   [[ $url =~ ^(https://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)(ssh\.)?github\.com(:[0-9]+)?[:/]([^/]+)/([^/]+)$ ]] || return 1
   local r="${BASH_REMATCH[6]}/${BASH_REMATCH[7]%.git}"
-  [[ $r =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  valid_repo "$r" || return 1
   printf '%s' "$r"
 }
 
@@ -156,7 +173,7 @@ pat() {
     t=$(gh auth token --hostname github.com --user "$GH_USER" 2>/dev/null) \
       || die "gh 沒有登入 $GH_USER(執行 gh auth login 加入該帳號)"
   else
-    t=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$TOKEN_FILE" | head -n1 | tr -d ' \t\r' || true)
+    t=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$TOKEN_FILE" | head -n1 | awk '{print $1}' | tr -d '\r' || true)
   fi
   [[ -n $t ]] || die "取不到機器人帳號的 token"
   printf '%s' "$t"
@@ -332,13 +349,17 @@ check_ci() {
   local sha=$1 t=$2 allow_no_ci=$3 runs st suites nr ns wf rc has_wf=0 ready=0 stable=0 last=-1 bad i
   wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
   case $rc in
-    0) [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
+    0) [[ $(jq -r 'if type=="array" then map(select(.name | test("\\.ya?ml$"))) | length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
     4) ;;
     *) die "查不到 repo 是否有 workflow,不合併" ;;
   esac
   for i in $(seq 24); do
     ci_snapshot
-    if [[ $has_wf -eq 1 ]]; then [[ $nr -gt 0 ]] && ready=1; else [[ $((nr + ns)) -gt 0 ]] && ready=1; fi
+    if [[ $has_wf -eq 1 ]]; then
+      [[ $(jq -r '[.check_runs[] | select(.app.slug == "github-actions")] | length' <<<"$runs") -gt 0 ]] && ready=1
+    else
+      [[ $((nr + ns)) -gt 0 ]] && ready=1
+    fi
     [[ $ready -eq 0 && $allow_no_ci -eq 1 && $has_wf -eq 0 ]] && break   # 有 workflow 時仍等滿 60 秒
     if [[ $ready -eq 1 ]]; then
       if [[ $((nr + ns)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns)); fi
@@ -350,7 +371,7 @@ check_ci() {
   if [[ $ready -eq 0 ]]; then
     [[ $allow_no_ci -eq 1 ]] && return 0
     if [[ $has_wf -eq 1 ]]; then
-      die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 check run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
+      die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 GitHub Actions 的 check run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
     fi
     die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
@@ -358,7 +379,8 @@ check_ci() {
   # 有 check run 的 suite 必須全部完成且成功。GitHub Actions 的 suite 還沒有 run 時:
   # 建立不到 2 分鐘視為「還在登記」→ 拒絕(稍後再合併);更久仍是 0 個 run 的(例如被 paths / branches
   # 過濾掉、GitHub 留下的空 suite)不算,否則會永遠擋住。
-  bad=$(jq -r --argjson now "$(date +%s)" '.check_suites[]
+  local now; now=$(gh_now) || exit 1
+  bad=$(jq -r --argjson now "$now" '.check_suites[]
           | select(((.latest_check_runs_count // 0) > 0)
                    or (.app.slug == "github-actions" and $now - ((.created_at // "1970-01-01T00:00:00Z") | fromdateiso8601) < 120))
           | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not))
@@ -389,11 +411,15 @@ cmd_merge() {
   pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
   [[ $(jq -r .state <<<"$pr") == open ]] || die "PR #$num 不是 open"
   [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
-  for i in 1 2 3 4 5 6 7 8 9 10; do        # 剛開 PR 或剛推時 GitHub 還在算,mergeable_state 為 unknown
+  [[ $(jq -r '.mergeable_state // ""' <<<"$pr") != dirty ]] || die "PR #$num 有衝突,無法合併"
+  # 先看 CI:CI 進行中時 mergeable_state 會是 unstable / blocked,由 check_ci 給出準確的原因
+  check_ci "$sha" "$t" "$allow_no_ci"
+  for i in 1 2 3 4 5 6 7 8 9 10; do        # GitHub 還在算時 mergeable_state 為 unknown
+    pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
+    [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
     st=$(jq -r '.mergeable_state // "unknown"' <<<"$pr")
     [[ $st != unknown || $i -eq 10 ]] && break
     sleep 2
-    pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
   done
   case $st in
     clean|has_hooks) ;;
@@ -403,7 +429,6 @@ cmd_merge() {
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
-  check_ci "$sha" "$t" "$allow_no_ci"
   local r
   r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
     "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')")
@@ -411,7 +436,7 @@ cmd_merge() {
 }
 
 [[ ${1:-} == --repo ]] && { need_val --repo $#; [[ -n $2 ]] || die "--repo 不能是空的"; REPO=${2%.git}; shift 2; }
-[[ -z $REPO || $REPO =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo 格式錯誤:$REPO"
+[[ -z $REPO ]] || valid_repo "$REPO" || die "--repo 格式錯誤:$REPO"
 
 case ${1:-} in
   identity) identity; printf 'name=%s\nemail=%s\n' "$BOT_NAME" "$BOT_EMAIL" ;;
