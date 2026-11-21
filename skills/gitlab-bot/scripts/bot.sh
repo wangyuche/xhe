@@ -124,10 +124,17 @@ ci_file_at() {
 clean_push() {
   local branch=$1 bad rc sd
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
-  # --type=path 先把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);空值 = 清除前面的項目(跟 git 一樣)
+  # 逐筆用 git 的 --type=path 把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);展不開的(例如不存在的 ~user)
+  # 跳過並警告(原值傳給 git 會讓 git 直接 fatal),不影響其他項目;空值 = 清除前面的項目(跟 git 一樣)
   local -a safe=()
-  while IFS= read -r sd; do if [[ -n $sd ]]; then safe+=(-c "safe.directory=$sd"); else safe=(); fi; done \
-    < <({ git config --system --includes --type=path --get-all safe.directory; git config --global --includes --type=path --get-all safe.directory; } 2>/dev/null || true)
+  while IFS= read -r -d '' sd; do
+    if [[ -z $sd ]]; then safe=(); continue; fi
+    # 每筆都交給 git 展開(~/、~user、%(prefix)/、:(optional));:(optional) 指向不存在的路徑時 git 回 1 且無輸出 → 靜默略過
+    local raw=$sd
+    sd=$(cd / && env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c "botsafe.dir=$raw" config --type=path botsafe.dir 2>/dev/null) || {
+      [[ $raw == ':(optional)'* ]] || echo "警告:safe.directory「${raw}」展不開,略過" >&2; continue; }
+    safe+=(-c "safe.directory=$sd")
+  done < <({ env -u GIT_CONFIG git config --system --includes --null --get-all safe.directory; env -u GIT_CONFIG git config --global --includes --null --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u GIT_SSL_CERT_PASSWORD_PROTECTED

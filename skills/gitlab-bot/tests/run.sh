@@ -138,6 +138,9 @@ check "push 仍推成功(feat/v)" [ "$(git -C "$TMP/remote.git" rev-parse feat/v
 check "push 傳給 git 的 safe.directory 已展開 ~(HOME 換掉後才不會失效)" bash -c "H='$TMP/fakehome'; mkdir -p \$H; printf '[safe]\\n\\tdirectory = ~/repo\\n' > \$H/gc; : > '$TMP/git.log'
   HOME=\$H GIT_CONFIG_GLOBAL=\$H/gc PATH='$TMP/gitwrap:$PATH' TMPDIR='$TMP/tt' bash '$BOT' push feat/sd >/dev/null 2>&1
   grep ' push ' '$TMP/git.log' | tail -1 | grep -qF -- \"-c safe.directory=\$H/repo \""
+check "push 的 safe.directory:展不開的 ~user 略過、空值清除前面項目" bash -c "H='$TMP/fakehome2'; mkdir -p \$H; printf '[safe]\\n\\tdirectory = /old\\n\\tdirectory =\\n\\tdirectory = /a\\n\\tdirectory = ~nosuchuser-xhe/x\\n\\tdirectory = /b\\n' > \$H/gc; : > '$TMP/git.log'
+  HOME=\$H GIT_CONFIG_GLOBAL=\$H/gc GIT_CONFIG_NOSYSTEM=1 PATH='$TMP/gitwrap:$PATH' TMPDIR='$TMP/tt' bash '$BOT' push feat/sd2 >/dev/null 2>&1
+  l=\$(grep ' push ' '$TMP/git.log' | tail -1); grep -qF -- '-c safe.directory=/a -c safe.directory=/b ' <<<\"\$l\" && ! grep -qF -e nosuchuser -e /old <<<\"\$l\""
 check "不受信任的 repo(dubious ownership)拒絕 push" bash -c "! GIT_TEST_ASSUME_DIFFERENT_OWNER=1 bash '$BOT' push feat/do >/dev/null 2>&1 && ! git -C '$TMP/remote.git' rev-parse --verify -q feat/do >/dev/null"
 unset GITLAB_BOT_PUSH_URL
 
