@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// 用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...
+// 用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--allow-redirect] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...
 // 只用 Node 22 內建 fetch / WebSocket,透過 CDP 控制本機 Google Chrome headless,截整頁。
-// stdout 一行 JSON;HTTP 不是 200 或 consoleErrors > 0 時結束碼 2(仍產生截圖)。
+// stdout 一行 JSON;HTTP 不是 200、consoleErrors > 0,或被轉址到別的網址(finalUrl ≠ url,例如沒登入被導到 /login;
+// 伺服器 3xx 與頁面 JS 轉址都算)時結束碼 2(仍產生截圖)。預期會轉址時加 --allow-redirect。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,7 @@ const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Conte
 
 function usage(msg) {
   if (msg) console.error(`錯誤:${msg}`);
-  console.error("用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...");
+  console.error("用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--allow-redirect] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...");
   process.exit(1);
 }
 
@@ -22,10 +23,11 @@ const [url, wStr, hStr, outArg] = args;
 const width = Number(wStr), height = Number(hStr);
 if (!Number.isInteger(width) || !Number.isInteger(height)) usage('寬高必須是整數');
 const out = resolve(outArg);
-let mobile = false; const cookies = []; const headers = {};
+let mobile = false; let allowRedirect = false; const cookies = []; const headers = {};
 for (let i = 4; i < args.length; i++) {
   const a = args[i];
   if (a === '--mobile') mobile = true;
+  else if (a === '--allow-redirect') allowRedirect = true;
   else if (a === '--cookie') {
     const v = args[++i] ?? usage('--cookie 缺值');
     const eq = v.indexOf('=');
@@ -43,14 +45,25 @@ for (let i = 4; i < args.length; i++) {
 }
 if (!existsSync(CHROME)) { console.error(`錯誤:找不到 Google Chrome:${CHROME}`); process.exit(1); }
 
-const result = { http: 0, width, height, scrollWidth: null, innerWidth: null, pageHeight: null, consoleErrors: 0, errors: [], out };
+const result = { http: 0, finalUrl: null, redirected: false, width, height, scrollWidth: null, innerWidth: null, pageHeight: null, consoleErrors: 0, errors: [], out };
 const reqHeaders = { ...headers };
 if (cookies.length) reqHeaders.Cookie = cookieHeader(cookies);
 
-// 1. 先確認 HTTP 狀態
+// 1. 先確認 HTTP 狀態(跟著轉址走,http 是最後一站的狀態;有轉址時 redirected = true)
+let fetchFinal = null;
+// 轉址判定:Chrome 最後停在的網址(含 JS 轉址)或 fetch 的最後一站,和請求網址不同(忽略 #hash)。逾時時也要做
+function checkRedirect() {
+  const norm = (x) => { try { const v = new URL(x); v.hash = ''; return v.href; } catch { return x; } };
+  result.finalUrl ??= fetchFinal;
+  for (const f of [fetchFinal, result.finalUrl]) {
+    if (f && norm(f) !== norm(url)) result.redirected = true;
+  }
+  if (result.redirected && !allowRedirect) result.errors.push(`redirect: ${url} → ${result.finalUrl}(預期轉址時加 --allow-redirect)`);
+}
 try {
   const r = await fetch(url, { headers: reqHeaders, redirect: 'follow' });
   result.http = r.status;
+  fetchFinal = r.url || url;
 } catch (e) {
   result.errors.push(`fetch: ${e.message}`);
 }
@@ -64,7 +77,7 @@ const cleanup = () => {
 };
 const hardTimeout = setTimeout(() => {
   result.errors.push('timeout: 60 秒內未完成');
-  cleanup(); console.log(JSON.stringify(result)); process.exit(2);
+  cleanup(); checkRedirect(); console.log(JSON.stringify(result)); process.exit(2);
 }, 60000);
 
 try {
@@ -142,11 +155,14 @@ try {
   // 5. 先量,再截整頁
   const m = await send('Runtime.evaluate', {
     // innerWidth 用版面寬度 clientWidth:手機模擬時內容過寬,瀏覽器會縮小畫面讓 window.innerWidth 變大
-    expression: 'JSON.stringify({sw: document.documentElement.scrollWidth, iw: document.documentElement.clientWidth, ph: document.documentElement.scrollHeight})',
+    expression: 'JSON.stringify({sw: document.documentElement.scrollWidth, iw: document.documentElement.clientWidth, ph: document.documentElement.scrollHeight, href: location.href})',
     returnByValue: true,
   });
   const meas = JSON.parse(m.result.value);
   result.scrollWidth = meas.sw; result.innerWidth = meas.iw; result.pageHeight = meas.ph;
+  // 載入失敗時 Chrome 停在 chrome-error://(不是轉址):記為導覽錯誤,finalUrl 改用 fetch 的結果
+  if (/^https?:/.test(meas.href)) result.finalUrl = meas.href;
+  else result.errors.push(`navigate: Chrome 沒有載入頁面(停在 ${meas.href})`);
 
   const metrics = await send('Page.getLayoutMetrics');
   const cs = metrics.cssContentSize || metrics.contentSize;
@@ -162,7 +178,9 @@ try {
   cleanup();
 }
 
+checkRedirect();
+
 result.consoleErrors = result.errors.filter(e => /^(console|exception|log):/.test(e)).length;
 console.log(JSON.stringify(result));
-const failed = result.http !== 200 || result.consoleErrors > 0 || result.errors.some(e => /^(shot|fetch|timeout):/.test(e));
+const failed = result.http !== 200 || result.consoleErrors > 0 || result.errors.some(e => /^(shot|fetch|timeout|redirect|navigate):/.test(e));
 process.exit(failed ? 2 : 0);

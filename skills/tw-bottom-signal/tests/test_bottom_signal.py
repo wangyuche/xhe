@@ -113,4 +113,55 @@ finally:
     for p in (out, intra):
         if os.path.exists(p): os.remove(p)
 
+# 9. run.sh:用假 fugle.sh(FUGLE_SH)測抓資料失敗時不沿用上次的舊檔
+import shutil
+work = tempfile.mkdtemp(prefix="bs_run_", dir=TMP)
+fake = os.path.join(work, "fake_fugle.sh")
+open(fake, "w").write("""#!/bin/bash
+# 假 fugle.sh:FAKE_MODE=ok | histfail | intrafail
+case "$1" in
+  historical/*timeframe=30*) SRC="%s" ;;
+  historical/*timeframe=60*) SRC="%s" ;;
+esac
+# histfail:像斷線一樣不寫檔(curl -o 連不上時不會覆蓋舊檔),舊版 run.sh 會沿用上次的資料
+if [ "$FAKE_MODE" = histfail ] && [[ "$1" == historical/* ]]; then echo '{"http":000}'; exit 0; fi
+if [ "$FAKE_MODE" = hist60fail ] && [[ "$1" == historical/*timeframe=60* ]]; then echo '{"http":000}'; exit 0; fi
+if [ "$FAKE_MODE" = intrafail ] && [[ "$1" == intraday/* ]]; then echo '{"http":000}'; exit 0; fi
+# intratrunc:像 curl -m 逾時一樣,印 200、寫一半、結束碼 28
+if [ "$FAKE_MODE" = intratrunc ] && [[ "$1" == intraday/* ]]; then printf '{"data":[{"date"' > "$2"; echo '{"http":200}'; exit 28; fi
+# intraerr:不印狀態碼、寫錯誤內容
+if [ "$FAKE_MODE" = intraerr ] && [[ "$1" == intraday/* ]]; then echo '{"statusCode":429,"message":"Rate limit exceeded"}' > "$2"; exit 0; fi
+if [[ "$1" == historical/* ]]; then cat "$SRC" > "$2"; else echo '{"data":[]}' > "$2"; fi
+[ "$FAKE_MODE" = quiet ] || echo '{"http": 200}'
+""" % (F30, F60))
+RUN = os.path.join(SCRIPTS, "run.sh")
+def runsh(mode, session="0"):
+    env = dict(os.environ, FUGLE_SH=fake, FAKE_MODE=mode, TW_IN_SESSION=session)
+    return subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
+try:
+    r = runsh("ok")
+    check("run.sh 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
+    r = runsh("quiet")
+    check("run.sh fugle.sh 不印狀態碼但有寫檔 → 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
+    r = runsh("histfail")
+    check("run.sh 歷史抓不到 → 報錯、不沿用舊檔", r.returncode != 0 and "資料錯誤" in r.stderr and "STAGE" not in r.stdout
+          and not any(os.path.exists(os.path.join(work, f"bottom_IX0001_{tf}m.json")) for tf in (30, 60)))
+    r = runsh("intrafail", "1")
+    check("run.sh 交易時間盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    for mode in ("intratrunc", "intraerr"):
+        r = runsh(mode, "1")
+        check(f"run.sh 盤中 {mode} → 警告", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    r = runsh("ok", "1")
+    check("run.sh 交易日盤中 K 是空的 → 警告", r.returncode == 0 and "盤中資料是空的" in r.stderr and "STAGE 1/6" in r.stdout)
+    r = runsh("hist60fail")
+    check("run.sh 只有 60 分歷史失敗 → 不留 30 分檔", r.returncode != 0
+          and not any(n.startswith("bottom_") and n.endswith(".json") for n in os.listdir(work)))
+    r = runsh("intrafail", "0")
+    check("run.sh 非交易時間盤中抓不到 → 不警告", r.returncode == 0 and "警告" not in r.stderr and "STAGE 1/6" in r.stdout)
+    env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))
+    r = subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
+    check("run.sh 沒有 fugle.sh → 報錯", r.returncode != 0 and "找不到" in r.stderr)
+finally:
+    shutil.rmtree(work, ignore_errors=True)
+
 sys.exit(1 if fails else 0)

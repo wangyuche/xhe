@@ -205,6 +205,25 @@ class TestValuation(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("error", json.loads(out))
 
+    def test_finmind_quota_errors(self):
+        # FinMind 額度用完回 402、沒有 data:要結束碼 1 並說明是資料缺口,不能變成三種方法「不適用」
+        quota = '{"msg":"Requests reach the upper limit. https://finmindtrade.com/","status":402}'
+        code, out, _ = run("valuation.py", quota, "--eps4q", "40", "--price", "800")
+        res = json.loads(out)
+        self.assertEqual(code, 1)
+        self.assertEqual(res["status"], 402)
+        self.assertIn("額度用完", res["error"])
+        self.assertNotIn("methods", res)
+        code, out, _ = run("valuation.py", '{"msg":"token is invalid","status":401}', "--eps4q", "40")
+        self.assertEqual(code, 1)
+        self.assertIn("status 401", json.loads(out)["error"])
+        code, out, _ = run("valuation.py", '{"msg":"rate limited"}', "--eps4q", "40")
+        self.assertEqual(code, 1)
+        # 正常但沒資料(status 200、data 空)仍是不適用,結束碼 0
+        code, out, _ = run("valuation.py", '{"msg":"success","status":200,"data":[]}', "--eps4q", "40")
+        self.assertEqual(code, 0)
+        self.assertFalse(json.loads(out)["methods"][0]["applicable"])
+
 
 class TestForecast(unittest.TestCase):
     def test_band(self):
