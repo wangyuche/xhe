@@ -10,7 +10,7 @@
 - 角色一致性:要很像。用該角色的 `ref.png` 當參考圖,接 `check` 查到的「參考圖一致性方法」,優先序:
   1. 參考圖編輯模型:Qwen-Image-Edit(`TextEncodeQwenImageEditPlus`,一張圖最多 3 張參考圖 → 最多 3 個角色各自一致)、Flux Kontext(`ReferenceLatent`)。
   2. IP-Adapter(含 CLIP Vision)。kit 目前沒有 IP-Adapter 骨架:`check` 把它列在 `unsupported_consistency`,agent 不用(2026-11-22 補)。
-  3. 角色 LoRA。
+  3. 角色 LoRA。kit 目前也沒有角色 LoRA 的一致性骨架,`check` 不會列出(2026-11-22 補)。
   kit 不寫死任何模型清單(各環境裝的不同),每次由 `check` 決定可用方法。
 - 風格:每個遊戲不同,寫在該遊戲 repo 的 `art/STYLE.md`;**不提供共用風格範本或預設提示詞**,只固定章節。
 - 參考圖用 ComfyUI 內建 `/upload/image` 上傳(使用者 2026-11-21 同意),放 temp 區(ComfyUI 重開即清,不留在 input/);輸出用 PreviewImage,下載後刪 history。

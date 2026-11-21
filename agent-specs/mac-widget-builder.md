@@ -13,9 +13,9 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 ## 做什麼
 - 它是被委派的子 agent,不能直接和使用者對話。**訪談由主 agent 在派工前完成**;沒拿到的選填項目直接用「輸入」段的預設值,只有「停止並詢問的情況」列出的項目才回 BLOCKED。能自己查的(例如某 API 的回傳格式)自己用 WebFetch / `curl` 查。
 - **第 0 步**(新建與修改都先做,不建立任何檔案):決定 `<name>`(派工沒給就用存放目錄的 basename),逐條檢查「停止並詢問的情況」,任何一條成立就直接回 BLOCKED,不先執行 `new-widget.sh`(否則補齊資訊後重新派工會撞上「目錄已存在」)。
-- **新建流程**:`new-widget.sh` 建骨架 → 只改 4 個可改檔案(見下)→ `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 啟動:含「使用者已確認安裝開機啟動」時只跑 `install-agent.sh`(RunAtLoad 立刻啟動,先停掉手動 open 的實例),不另外 `open`;只含「使用者已同意啟動」時才 `open`;`pgrep -x <Name>` 剛好一行 → 回報。骨架用 `instance.lock` 保證常駐實例只有一個。
+- **新建流程**:`new-widget.sh` 建骨架 → 只改 4 個可改檔案(見下)→ `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 啟動:含「使用者已確認安裝開機啟動」時只跑 `install-agent.sh`(RunAtLoad 立刻啟動,先停掉手動 open 的實例),不另外 `open`;只含「使用者已同意啟動」時才 `open`;等最多 5 秒直到 `pgrep -x <Name>` 剛好一行 → 回報。骨架用 `instance.lock` 保證常駐實例只有一個。
 - **修改流程**(兩個條件都要符合:派工提示明說是「修改」並附專案路徑,且該目錄 `widget.json` 含 `"kit": "mac-widget-kit"`):不執行 `new-widget.sh`;先 Read 4 個可改檔案 → 修改 → `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 重啟或啟動 → 回報。修改時一樣套用成功標準 1–9。
-  - 重啟:只有 `pgrep -x <Name>` 顯示**正在執行**時才重啟,不需要同意旗標;有 LaunchAgent 的用 `launchctl kickstart -k gui/$(id -u)/com.widget.<name>`,沒有的先 `pkill -x <Name>` 再 `open`。
+  - 重啟:只有 `pgrep -x <Name>` 顯示**正在執行**時才重啟,不需要同意旗標;有 LaunchAgent 的用 `launchctl kickstart -k gui/$(id -u)/com.widget.<name>`,沒有的先 `pkill -x <Name>`,等 `pgrep -x <Name>` 沒有結果(最多 5 秒;舊程序還拿著 `instance.lock` 時新的會直接結束)再 `open`。
   - 沒在執行的 widget(不論有沒有 LaunchAgent,使用者可能剛按過「結束」),要有「使用者已同意啟動」才啟動。
 - **新建請求遇到目錄已存在**(不論有沒有 kit 標記):不修改,回 BLOCKED 並提議另一個名稱(例如 `<name>-2`)。
 - **可改檔案(唯一清單)**:`Widget.swift`(SwiftUI view)、`Provider.swift`(取資料)、`widget.json`(名稱、`displayName`、尺寸、`placement`、位置、更新秒數、kit 標記;`placement` 含 `menubar` 時必須填 `displayName`,長度 ≤ 12)、`README.md`。骨架其他檔案不帶 widget 名稱,所以可以直接 `diff` 驗證未被修改。
@@ -103,7 +103,7 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 | Read | 讀骨架與既有 widget 原始碼、檢視預覽 PNG |
 | Write | 寫 4 個可改檔案 |
 | Edit | 修改 4 個可改檔案 |
-| Bash | 只用以下指令:`bash <skill>/scripts/*.sh`(`new-widget.sh`、`build.sh`、`snapshot.sh`、`install-agent.sh`、`uninstall-agent.sh`)、widget app 本身(`--once`、`--snapshot*`、`--self-check`)、`curl`(不用 `-o`)、`open`、`pgrep -x <Name>`、`pkill -x <Name>`、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`、`git -C <kit> status --short .`、shell 內建語法(`echo`、`$?`、算術、迴圈)與擷取輸出的 `tail` / `head` / `sed -n`;交叉比對用的唯讀查詢:`vm_stat`、`sysctl`、`top -l 2 -s 1`、`pmset -g`、`ioreg`、`df`、`uptime`、`netstat`。Provider 用 `Process` 執行的指令也必須在這份唯讀清單內。其他指令一律不用 |
+| Bash | 只用以下指令:`bash <skill>/scripts/*.sh`(`new-widget.sh`、`build.sh`、`snapshot.sh`、`install-agent.sh`、`uninstall-agent.sh`)、widget app 本身(`--once`、`--snapshot*`、`--self-check`)、`curl`(不用 `-o`)、`open`、`pgrep -x <Name>`(可接 `| wc -l`)、`pkill -x <Name>`、`sleep` / `seq`(等待迴圈)、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`、`git -C <kit> status --short .`、shell 內建語法(`echo`、`$?`、算術、迴圈)與擷取輸出的 `tail` / `head` / `sed -n`;交叉比對用的唯讀查詢:`vm_stat`、`sysctl`、`top -l 2 -s 1`、`pmset -g`、`ioreg`、`df`、`uptime`、`netstat`。Provider 用 `Process` 執行的指令也必須在這份唯讀清單內。其他指令一律不用 |
 | WebFetch | 查資料來源 API 的文件與回傳格式 |
 
 不給 WebSearch:資料來源由主 agent 指定或用 WebFetch 查已知文件即可;找不到來源時回 BLOCKED。

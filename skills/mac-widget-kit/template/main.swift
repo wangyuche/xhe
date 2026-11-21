@@ -25,7 +25,11 @@ for (flag, forceError) in [("--snapshot", false), ("--snapshot-error", true)] {
 let instanceLock: Int32 = {
     guard !CommandLine.arguments.contains("--self-check"), let dir = AppEnv.supportDir else { return -1 }
     let fd = open(dir.appendingPathComponent("instance.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-    if fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) != 0 {
+    if fd < 0 {
+        Runner.stderr("警告:無法開啟 instance.lock(\(String(cString: strerror(errno)))),這次不保證只有一個實例")
+        return -1
+    }
+    if flock(fd, LOCK_EX | LOCK_NB) != 0 {
         Runner.stderr("已有一個 \(AppEnv.config.name) 在執行,這個實例直接結束")
         exit(0)
     }

@@ -83,7 +83,7 @@ skills:
 9. 骨架檢查(完成條件:無輸出):
    `diff -r <kit>/template <dir> -x build -x state.json -x Widget.swift -x Provider.swift -x widget.json -x README.md`
    金鑰檢查:`grep -iE 'token|apikey|api_key|secret|password' <dir>/*.swift` 只能出現在讀 `Credentials` 或環境變數的程式。
-10. 有「使用者已確認安裝開機啟動」→ 只跑 `bash <kit>/scripts/install-agent.sh <dir>`(RunAtLoad 會立刻啟動,並先停掉手動 open 的實例),不要再 `open`;只有「使用者已同意啟動」→ `open <dir>/build/<Name>.app`。完成後 `pgrep -x <Name>` 必須剛好一行(骨架也會讓重複的實例自己結束)。
+10. 有「使用者已確認安裝開機啟動」→ 只跑 `bash <kit>/scripts/install-agent.sh <dir>`(RunAtLoad 會立刻啟動,並先停掉手動 open 的實例),不要再 `open`;只有「使用者已同意啟動」→ `open <dir>/build/<Name>.app`。完成後等最多 5 秒直到 `pgrep -x <Name>` 剛好一行(`for i in $(seq 1 50); do [ "$(pgrep -x <Name> | wc -l)" -eq 1 ] && break; sleep 0.1; done`;launchd 啟動要一點時間),仍不是一行 → 照實回報。骨架也會讓重複的實例自己結束。
 11. 依輸出格式回報。
 
 ### 修改流程
@@ -91,7 +91,7 @@ skills:
 1. Read 4 個可改檔案,再修改(完成條件:只動這 4 個檔)。
 2. 照新建流程第 3–9 步完整驗證(一樣套用全部成功標準)。
 3. 重啟或啟動:
-   - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart -k gui/$(id -u)/com.widget.<name>`;沒有就 `pkill -x <Name>` 後 `open`。
+   - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart -k gui/$(id -u)/com.widget.<name>`;沒有就 `pkill -x <Name>`,等舊程序真的結束(`for i in $(seq 1 50); do pgrep -x <Name> >/dev/null || break; sleep 0.1; done`;舊程序還拿著 `instance.lock` 時新的會直接結束)仍在執行就回報,結束了才 `open`,最後同樣確認 `pgrep -x <Name>` 剛好一行。
    - 沒在執行(使用者可能剛按過「結束」):要有「使用者已同意啟動」才 `open`。
 4. 回報。
 
@@ -99,7 +99,7 @@ skills:
 
 - `bash <kit>/scripts/*.sh`(new-widget、build、snapshot、install-agent、uninstall-agent)
 - widget app 本身(`--once`、`--snapshot*`、`--self-check`)
-- `curl`(不用 `-o`)、`open`(含第 4b 步的 `open -n -W --stdout … --stderr … --args --once`)、`pgrep -x <Name>`、`pkill -x <Name>`、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`
+- `curl`(不用 `-o`)、`open`(含第 4b 步的 `open -n -W --stdout … --stderr … --args --once`)、`pgrep -x <Name>`(可接 `| wc -l`)、`pkill -x <Name>`、`sleep`(只用在上面的等待迴圈)、`seq`、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`
 - 字數:不用自己數,看 `snapshot.sh` 印出的 `menubar-length:`
 - 確認 skill 目錄未被修改:`git -C <kit> status --short .`(只讀)
 - shell 內建語法可以用:`echo`、`$?`、`$(( ))` 算術、`for` 迴圈、變數、管線、`tail` / `head` / `sed -n` 擷取輸出

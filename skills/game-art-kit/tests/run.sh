@@ -10,7 +10,8 @@ ok()   { echo "PASS  $1"; PASS=$((PASS + 1)); }
 bad()  { echo "FAIL  $1"; [ -n "${2:-}" ] && echo "$2" | sed 's/^/      /' | tail -15; FAIL=$((FAIL + 1)); }
 skip() { echo "SKIP  $1"; SKIP=$((SKIP + 1)); }
 W="$(mktemp -d)"; PID=""; REAL_HOME="$HOME"
-cleanup() { [ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -rf "$W"; }
+PID2=""
+cleanup() { [ -n "$PID" ] && kill "$PID" 2>/dev/null; [ -n "$PID2" ] && kill "$PID2" 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
 if [ "${1:-}" = "--live" ]; then
@@ -52,10 +53,11 @@ echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));pr
 P2=$((PORT + 1)); [ $P2 -gt 65535 ] && P2=$((PORT - 1))
 node "$K/tests/fake-comfy.mjs" "$P2" "$W/req2.log" ipadapter-only > "$W/fake2.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake2.out" 2>/dev/null && break; sleep 0.1; done
-c2="$(C check --url "http://127.0.0.1:$P2" 2>&1)"
-kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null
+grep -q listening "$W/fake2.out" || bad "第二個假 ComfyUI 沒有啟動(埠 $P2)" "$(cat "$W/fake2.out")"
+c2="$(C check --url "http://127.0.0.1:$P2" 2>"$W/c2.err")"
+kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
 echo "$c2" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;const ok=d.consistency_methods.length===0&&d.unsupported_consistency.map(x=>x.method).join()==="ipadapter"&&w["flux-t2i"]===true&&w["qwen-edit-1ref"]===false&&w["flux-kontext"]===false;process.exit(ok?0:1)' \
-  && ok "check:只有 IP-Adapter 的主機 → consistency_methods 為空、ipadapter 列在 unsupported_consistency" || bad "check IP-Adapter-only" "$c2"
+  && ok "check:只有 IP-Adapter 的主機 → consistency_methods 為空、ipadapter 列在 unsupported_consistency" || bad "check IP-Adapter-only" "$c2 $(cat "$W/c2.err")"
 
 # 3. 骨架:每個都能填、送出、拿回正確尺寸
 QS=(--set unet=u --set clip=c --set vae=v --set lora=none --set lora_strength=1 --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple)
