@@ -25,7 +25,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 ## cards.json(render.mjs)
 
 ```json
-{"theme": {"bg":"#0b1220","bg2":"#1e293b","fg":"#f8fafc","accent":"#38bdf8","muted":"#94a3b8"},
+{"theme": {"bg":"<#RRGGBB>","bg2":"<#RRGGBB>","fg":"<#RRGGBB>","accent":"<#RRGGBB>","muted":"<#RRGGBB>"},
  "cards": [
   {"type":"title","file":"001.png","tag":"github.com/o/r","title":"鉤子一句話","subtitle":"副標"},
   {"type":"point","file":"002.png","number":"1","title":"亮點","body":"說明","image":"docs/shot.png"},
@@ -35,6 +35,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
  ]}
 ```
 
+- **`theme` 沒有預設值**:有 title / point / code / end / headline 卡或沒有 image 的 cover 時,五個欄位都必填(缺了結束碼 2)。每支影片依來源自己選(repo 的 logo / 網站主色、影片畫面主色),不要沿用別支的色碼。只有字幕卡、有 image 的封面時可以省略。
 - 全版卡(title / point / code / end)內容避開右側 170 px 與底部 340 px(平台按鈕區)。
 - 文字一律以純文字放入,不解析 HTML;不要自己寫 HTML。
 - `image` 只接受 `--asset-root` 內的相對路徑(symlink 解析後再檢查),沒給 `--asset-root` 就不接受圖片。所有網路請求都被擋掉,`blockedRequests` 會列出。
@@ -52,7 +53,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 
 ## timeline.json(compose.mjs)
 
-路徑都相對於 timeline.json 所在目錄。共同欄位:`mode`、`work`(必填,中間檔目錄)、`out`(預設 timeline 所在目錄)、`fit`(`blur` 模糊背景置中,預設 / `crop` 中央裁切;原聲模式與直式鏡頭用,橫式錄影鏡頭見下方「置頂」)、`theme`、`music`(`{"path":…,"volume":0.25}`,說話時自動壓低,結尾淡出)。
+路徑都相對於 timeline.json 所在目錄。共同欄位:`mode`、`work`(必填,中間檔目錄)、`out`(預設 timeline 所在目錄)、`fit`(`blur` 模糊背景置中,預設 / `crop` 中央裁切;原聲模式與直式鏡頭用,橫式錄影鏡頭見下方「置頂」)、`theme`(同 cards.json,沒有預設;原聲模式有 `headline`、或有置頂鏡頭時必填,置頂鏡頭缺 `theme.bg` 結束碼 2)、`music`(`{"path":…,"volume":0.25}`,說話時自動壓低,結尾淡出)。
 
 **旁白模式**(repo 影片):
 

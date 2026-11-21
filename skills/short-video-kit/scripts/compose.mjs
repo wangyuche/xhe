@@ -61,9 +61,10 @@ function fitChain(inLabel, outLabel, tag) {
 }
 // 置頂:裁出 region、放大到寬 1080、放在字幕區(y ≥ 1300)上方,底色用 theme.bg
 const TOP_MAX_H = 1240, TOP_BOTTOM = 1280;
-const topBg = /^#[0-9a-fA-F]{6}$/.test(tl.theme?.bg ?? '') ? tl.theme.bg : '#0b1220';
+const topBg = tl.theme?.bg; // 置頂鏡頭的底色;沒有預設,用到置頂時檢查
 const probeSize = (f) => run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', f], 'ffprobe').stdout.trim().split('x').map(Number);
 function topLayout(j, [x, y, w, h]) {
+  if (!/^#[0-9a-fA-F]{6}$/.test(String(topBg ?? ''))) fail(`scenes[${j}] 是置頂鏡頭,需要 theme.bg(#RRGGBB)當底色;沒有預設配色,依這支影片的來源選`, 2);
   const H = Math.round(h * 1080 / w / 2) * 2;
   if (H > TOP_MAX_H) fail(`scenes[${j}] 置頂放大後高 ${H} px > ${TOP_MAX_H},會壓到字幕區:把 region 的高縮到 ≤ ${Math.floor(w * TOP_MAX_H / 1080)},或拆成兩個鏡頭`, 6);
   const top = Math.max(40, Math.floor((TOP_BOTTOM - H) / 4) * 2);

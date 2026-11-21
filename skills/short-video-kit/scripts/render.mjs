@@ -36,8 +36,17 @@ let spec;
 try { spec = JSON.parse(readFileSync(specPath, 'utf8')); } catch (e) { usage(`讀不到卡片 JSON:${e.message}`); }
 const cards = Array.isArray(spec) ? spec : spec.cards;
 if (!Array.isArray(cards) || cards.length === 0) usage('卡片 JSON 要有 cards 陣列');
-const theme = { bg: '#0b1220', bg2: '#1e293b', fg: '#f8fafc', accent: '#38bdf8', muted: '#94a3b8', ...(spec.theme ?? {}) };
+// 沒有預設配色:每支影片依來源(repo 的 logo / 網站 / 文件配色,或影片畫面)自己選 theme。
+// 只有字幕卡、有 image 的封面不用 theme。
+const THEME_KEYS = ['bg', 'bg2', 'fg', 'accent', 'muted'];
+const needsTheme = cards.some(c => c && (['title', 'point', 'code', 'end', 'headline'].includes(c.type) || (c.type === 'cover' && !c.image)));
+const theme = spec.theme ?? {};
+if (needsTheme) {
+  const missing = THEME_KEYS.filter(k => theme[k] === undefined);
+  if (missing.length) usage(`theme 缺 ${missing.join('、')}:沒有預設配色,依這支影片的來源選(見 SKILL.md「配色」)`);
+}
 for (const [k, v] of Object.entries(theme)) {
+  if (!THEME_KEYS.includes(k)) usage(`theme.${k} 不是可用欄位(${THEME_KEYS.join(', ')})`);
   if (!/^#[0-9a-fA-F]{3,8}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);
 }
 

@@ -23,7 +23,7 @@
 | `tw-stock-analyst` | 台股個股分析:基本面、合理價、時事、技術面、1–2 週價位預測(只讀、不寫檔) |
 | `mac-widget-builder` | Mac 桌面 / 選單列 widget:SwiftUI + AppKit,只用 Command Line Tools 編譯,實際取資料與預覽驗證 |
 | `acceptance-designer` | 網站 feature 的驗收情境設計(只讀):編號情境、測試層級、待決產品問題 |
-| `frontend-owner` | 網站前端(React / Next.js):依驗收情境實作與測試、截圖驗證 |
+| `frontend-owner` | 網站前端(React / Next.js):依驗收情境實作與測試、截圖驗證;有「僅設計規範」模式,為每個專案寫專屬 DESIGN.md |
 | `backend-owner` | 網站後端(Go):實作、維護 OpenAPI 契約、httptest 與 curl 驗證;有「僅契約」模式 |
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
 | `short-video-maker` | 短影音:GitHub repo 或影片 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓),旁白與字幕,實際驗證規格與響度 |

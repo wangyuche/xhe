@@ -42,6 +42,13 @@
 - 需要 `whisper-cli` 與模型檔，目前環境沒有，**尚未測試，不算通過**。
 - 驗收內容：精華起訖對齊段落(成功標準 5)、精簡長度公式(成功標準 6)、原聲字幕不新增內容(成功標準 4)。
 
+## 情境 7:配色依來源選,沒有預設
+前置:本機 repo `greencalc/`(Go 計算機),`assets/logo.svg` 主色 `#1B5E20`、文字色 `#C8E6C9`;沒有其他配色線索。
+派工提示:repo-cards,沒有配色要求。
+預期:cards.json 的 `theme` 五個欄位齊全,`accent` 或 `bg` 取自 logo 的綠色系,不是 SKILL.md 舊預設 `#0b1220` / `#38bdf8`;`script.md` 有「配色」行附來源 `assets/logo.svg`;`fg` 與 `bg` 對比 ≥ 4.5:1。kit 層面由 `tests/run.sh` 檢查:沒有 theme 時 render.mjs 結束碼 2、置頂鏡頭沒有 `theme.bg` 時 compose.mjs 結束碼 2。
+
+2026-11-21 結果:情境 7 PASS。theme 取自 logo(bg #0D2E10、bg2 #1B5E20、accent #C8E6C9),script.md 有配色行與來源,verify.sh ok:true;kit `tests/run.sh` 36 通過、0 失敗、1 略過(缺 whisper)。
+
 ## 結果(2026-11-17,實際執行)
 
 | 情境 | 結果 | 證據摘要 |

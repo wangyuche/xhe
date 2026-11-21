@@ -48,6 +48,12 @@ skills:
 
    **第 0 步之後才發生的 BLOCKED**(clone 失敗、文字稿空白、condense 超過 60 秒、沒有音軌):先 `stop.sh <slug>`(有啟動時),再 `rm -rf <job>`(本次自己建立的),然後回報。
 
+**配色(每支都要選，沒有預設)**:render.mjs 與 compose.mjs 沒有預設配色，用到標題 / 亮點 / 程式碼 / 結尾卡、漸層封面、`headline` 或置頂鏡頭時必須給 `theme` 五個欄位(`bg`、`bg2`、`fg`、`accent`、`muted`),否則結束碼 2。
+- 派工有配色要求 → 照做。
+- repo → 從 repo 自己的視覺識別取色，依序找:logo / icon 圖(Read 看圖)、README 用的本機圖、網站或文件的主色(`grep -rE 'theme-color|--primary|--brand|primary:'` 在 css / html / tailwind 設定 / docs 設定)。都沒有 → 依專案性質與語言生態推定(例如 Rust 專案用鏽橘、資料視覺化用冷靜藍綠),標「推定」。
+- 影片 → 從 `first-frame.png` 或來源畫面的主色取 `accent`,`bg` 取畫面暗部色。
+- 不沿用 SKILL.md 範例或其他支影片的色碼。`fg` 與 `bg` 對比 ≥ 4.5:1。寫進 cards.json / timeline.json 的 `theme`,`script.md` 寫「配色:<五個色碼>;來源:<檔案路徑或推定理由>」。
+
 1. **repo 模式**
    1. `git clone --depth 1 <網址> <job>/work/repo`;本機 git repo 用 `git clone --depth 1 file://<絕對路徑> <job>/work/repo`(沒有 `file://` 時 git 會忽略 `--depth`)。本機非 git 目錄(只限 `repo-cards`)直接唯讀讀原目錄，以下的 `work/repo` 改指原目錄。clone 後記下 `git -C <job>/work/repo rev-parse --short HEAD`。
    2. 讀 README、套件檔(package.json、go.mod、pyproject…)、主要原始碼，挑亮點 ≤ 3 個，每個亮點記下對應的檔案路徑或 README 段落。不要讀、不要顯示 `.env*`、`*secret*`、`*credential*`、`*.pem`、`*.key`。
@@ -105,7 +111,7 @@ skills:
 - 腳本:鉤子「一個人怎麼管 8 個 AI 助手？」+ 3 個亮點(agents/、skills/web-dev-kit/、README「安裝」)+ 結尾;旁白 9 句，實測 38.4 秒
 - 畫面檢查(已檢視):0.1 秒 標題卡;25% 程式碼卡 agents/backend-owner.md;50% 重點卡;75% 重點卡;末 1 秒 結尾卡;封面 標題清楚;字幕完整、無錯字
 - 逐鏡頭(scene-NN-mid/end):01 標題卡;02 程式碼卡，第 1–15 行完整;03 重點卡;04 結尾卡;旁白講到的元素都完整、沒被字幕蓋住
-- 設定:Meijia、語速 190、fit blur、無背景音樂、輸出 ~/Movies/Shorts/
+- 設定:Meijia、語速 190、fit blur、無背景音樂、輸出 ~/Movies/Shorts/、配色 accent #DEA584(來源:repo 的 assets/logo.svg)
 - 亮點路徑檢查(commit a1b2c3d):`ls` agents/ skills/web-dev-kit/ README.md → 都存在
 - 清理:work/ 已刪除;服務:無
 - 來源指紋：無本機來源(GitHub clone)
@@ -132,6 +138,7 @@ skills:
    - 原聲模式：每句字幕對應 `transcribe.sh` 的一個段落(可校正錯字、轉繁體，不得新增內容;譯文行除外)。
 5. `video-highlight`:每段起訖等於文字稿段落的 start / end(沒有音軌時等於派工給的時間碼),差 ≤ 0.3 秒，長度 15–60 秒。整支輸出(來源 < 15 秒，或直式且 ≤ 60 秒)時起訖為 0 與來源長度，回報註明。`script.md` 列出來源時間碼。
 6. `video-condense`:順序與來源一致;`script.md` 列出剪掉的區間與總秒數，且「來源長度 − 剪掉總秒數」與成品長度相差 ≤ 0.5 秒。
+7a. 有用到 `theme` 的每支,`script.md` 有「配色」行(五個色碼 + 來源);色碼不是 SKILL.md 範例值。
 7. repo 模式:`script.md` 每個亮點附 repo 路徑或 README 段落，回報附「亮點路徑檢查」(刪除 `work/` 前的 `ls` 結果與 commit);沒有執行旗標時，沒有執行任何安裝、建置或啟動指令。
 8. 清理:`<job>/work/` 不存在;有啟動服務時附 `stop.sh` 的輸出;第 0 步之後 BLOCKED 時整個 `<job>` 不存在。
 9. 來源不變：開始與結束的來源指紋相同(回報附兩次)。
