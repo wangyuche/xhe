@@ -29,18 +29,18 @@ skills:
 某步失敗後,繼續跑不依賴它的步驟,最後把所有問題一起列出;依賴失敗步驟的寫「未執行:<原因>」。同一步失敗最多重跑 1 次(排除偶發),仍失敗就記為問題。
 
 1. **契約**:`bash <go>/scripts/contract-check.sh <name> <契約>` → `valid`;列出仍為 `x-status: planned` 的 operation(本次端點清單內的不能是 planned)。
-2. **後端**:`rm -f <tmp>/<name>/it.db*` → `GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server`(在後端目錄)→ 讀 `<後端目錄>/.env.example`,除了 `PORT` 以外每個變數照檔案中的值(秘密類是 `dev-` 假值)傳 `--env`,`DATABASE_URL` 覆蓋為 `file:<tmp>/<name>/it.db?_pragma=foreign_keys(1)`(PostgreSQL 時用驗證專用的容器:先 `bash <kit>/scripts/pg.sh rm <name>` 清掉上次中斷留下的,再用 `bash <kit>/scripts/pg.sh up <name>` 的輸出;不用開發用的 `<專案名>` 容器)→ `bash <kit>/scripts/serve.sh <name>-be <後端目錄> 8080 --health /healthz --env … -- <tmp>/<name>/server`。
+2. **後端**:`rm -f <tmp>/<name>/it.db*` → `GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server`(在後端目錄)→ 讀 `<後端目錄>/.env.example`,除了 `PORT` 以外每個變數照檔案中的值(秘密類是 `dev-` 假值)傳 `--env`,`DATABASE_URL` 覆蓋為 `file:<tmp>/<name>/it.db?_pragma=foreign_keys(1)`(PostgreSQL 時用驗證專用的容器 `it-<name>`:先 `bash <kit>/scripts/pg.sh rm it-<name>` 清掉上次中斷留下的,再用 `bash <kit>/scripts/pg.sh up it-<name>` 的輸出;`it-` 前綴避免和開發用的 `<專案名>` 容器同名而刪到開發資料)→ `bash <kit>/scripts/serve.sh <name>-be <後端目錄> 8080 --health /healthz --env … -- <tmp>/<name>/server`。
 3. **前端**:凍結安裝(`npm ci` / `pnpm install --frozen-lockfile` / `yarn install --immutable` / `bun install --frozen-lockfile`;失敗歸前端)→ `NEXT_TELEMETRY_DISABLED=1 <pm> run build`(新骨架執行時才讀 `BACKEND_URL`,build 不需要後端網址;**舊專案**沒有 `src/proxy.ts`、靠 `next.config` 的 `rewrites()` 轉發時,rewrites 在 build 時就固定,build 也要帶 `API_PROXY_TARGET=<後端 url>`)→ 套件管理器不是 npm 時(pnpm 預設不跑 post-hook)再跑一次 `npm run -s postbuild`,確認 `.next/standalone/.next/static` 存在 → `bash <kit>/scripts/serve.sh <name>-fe <前端目錄> 3000 --env BACKEND_URL=<後端 url> --env NEXT_TELEMETRY_DISABLED=1 -- <pm> run -s start`(standalone `server.js`,讀 serve.sh 給的 `PORT`;舊專案沒有 standalone `start` 時才用 `node_modules/.bin/next start -p {port}`,並以 `API_PROXY_TARGET` 指定後端)。
 4. **資料準備**:依 seed 請求用 curl 直連後端(只打本機);需要登入時 `-c <tmp>/<name>/cookies.txt` 存 session cookie;記下回傳的 id 組出動態路由網址。
 5. **轉發檢查**:端點清單每項至少一個成功、一個錯誤案例:
    `node <kit>/scripts/proxy-diff.mjs <前端url> <後端url> <方法> <路徑> [--data …] [--cookie-jar <tmp>/<name>/cookies.txt] [--ignore …]`
    標「經前端轉發:否」的端點(例如 `/healthz`)只驗直連,不列入比對;沒標時路徑不在前端轉發前綴(預設 `/api/`)下的也一樣。
    冪等端點(簡報標示;沒標時 GET / PUT / DELETE)用預設比對;非冪等(沒標時 POST)加 `--structure`。`{uniq}` 只用在需要唯一值的欄位(例如註冊的 email);登入這類要用既有帳號的請求不放 `{uniq}`。忽略的欄位寫在回報。
-   **會讓 session 失效的端點**(登出、改密碼、刪帳號、撤銷 session;簡報標示,沒標時路徑含 `logout` / `signout` / `password` / `session` 的 POST / PUT / PATCH / DELETE)不能用 `<tmp>/<name>/cookies.txt`(它是第 6 步截圖要用的登入狀態):每次 `proxy-diff.mjs` / `concurrency.mjs` 前,用 seed 的登入請求另存一個 `<tmp>/<name>/cookies-se-<n>.txt`(`<n>` 每次遞增)來用。`proxy-diff.mjs` 同時送前端與後端、共用同一個 session,較晚處理的一邊可能看到已失效的 session:兩邊狀態碼不同而且其中一邊是「未登入」的錯誤時,記為「session 已被另一個請求結束,不可比對」,另用兩個新登入的 jar 分別 curl 前端與後端各一次,成功狀態碼相同就不算轉發錯誤。
+   **會讓 session 失效的端點**(登出、改密碼、刪帳號、撤銷 session;依端點的意義判斷,簡報有標示時照標示,不確定的當成會失效;登入不算)不能用 `<tmp>/<name>/cookies.txt`(它是第 6 步截圖要用的登入狀態):每次 `proxy-diff.mjs` / `concurrency.mjs` 前,用 seed 的登入請求另存一個 `<tmp>/<name>/cookies-se-<n>.txt`(`<n>` 每次遞增)來用;刪帳號類端點先用 seed 方式另建一個拋棄式帳號再登入,不刪 seed 帳號。`proxy-diff.mjs` 同時送前端與後端、共用同一個 session,較晚處理的一邊可能看到已失效的 session:兩邊狀態碼不同而且其中一邊是「未登入」的錯誤時,記為「session 已被另一個請求結束,不可比對」,另用兩個新登入的 jar 分別 curl 前端與後端各一次,成功狀態碼相同就不算轉發錯誤。
 5b. **並發檢查**(使用者 2026-11-16 要求):端點清單中每個會寫入資料的端點(POST / PUT / PATCH / DELETE),經前端轉發同時送 10 個請求:
    `node <kit>/scripts/concurrency.mjs <前端url> <方法> <路徑> -n 10 --data <成功案例 body> [--cookie-jar <tmp>/<name>/cookies.txt] [--expect <成功狀態碼>]`
-   需要唯一值的欄位用 `{uniq}`(例如註冊 email);用既有帳號的請求(例如登入)不放 `{uniq}`。會讓 session 失效的端點用另存的 `cookies-se-<n>.txt`(見第 5 步),不用 `cookies.txt`。驗收情境有類型 `並發` 的,另照情境的 Given / When 實跑一次,以情境 Then 的條件(狀態碼分佈、不變量)判定;簡報另給的判定標準和情境 Then 衝突時,回報衝突並以情境為準。`ok` 必須是 true;有 5xx 時附回應樣本與後端 log 中對應的錯誤行,通常歸後端。
-6. **頁面檢查**:頁面清單每頁 `node <kit>/scripts/shot.mjs <url> 1280 800 <png>` 與 `… 390 844 <png> --mobile`(要登入的加 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`redirected` false(`finalUrl` 等於請求網址)、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,並用 Read 看圖。要登入的頁被導到登入頁(`redirected` true)時,先用 seed 的登入請求重新取得 `cookies.txt` 再截一次:重截後正常 → 記為「驗證步驟讓 session 失效」(環境,附哪一步),不算頁面問題;仍被導走 → 問題(通常歸前端或後端的 session 處理)。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。頁面清單為「無」時寫「無,未執行」。
+   需要唯一值的欄位用 `{uniq}`(例如註冊 email);用既有帳號的請求(例如登入)不放 `{uniq}`。會讓 session 失效的端點用另存的 `cookies-se-<n>.txt`(見第 5 步),不用 `cookies.txt`;10 個請求共用一個 session,只有第一個會成功,其餘是「未登入」錯誤,所以 `--expect` 要同時列成功與未登入的狀態碼(例如 `204,401`),判定看沒有 5xx 且至少一個成功。驗收情境有類型 `並發` 的,另照情境的 Given / When 實跑一次,以情境 Then 的條件(狀態碼分佈、不變量)判定;簡報另給的判定標準和情境 Then 衝突時,回報衝突並以情境為準。`ok` 必須是 true;有 5xx 時附回應樣本與後端 log 中對應的錯誤行,通常歸後端。
+6. **頁面檢查**:頁面清單每頁 `node <kit>/scripts/shot.mjs <url> 1280 800 <png>` 與 `… 390 844 <png> --mobile`(要登入的加 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`redirected` false(`finalUrl` 等於請求網址)、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,並用 Read 看圖。要登入的頁被導到登入頁(`redirected` true)是問題:會讓 session 失效的端點都沒用 `cookies.txt`,所以是別的步驟(或 session 本身)讓它失效。用 seed 的登入請求重新取得 cookie 再截一次:重截後正常 → 記為後端的 session 問題(附 `cookies.txt` 用過的步驟,例如某個寫入端點換掉了 session),頁面本身照重截結果判;仍被導走 → 依後端直連帶 cookie 的結果歸前端或後端。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。頁面清單為「無」時寫「無,未執行」。
 7. **E2E**:在前端目錄 `E2E_BASE_URL=<前端url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e`,全部通過。失敗時 Read `<tmp>/<name>/e2e/` 裡的失敗截圖判斷原因。前端沒有 Playwright 或 `e2e/` → 「未執行:前端沒有 E2E」,判 ISSUES(歸前端)。
 8. **驗收情境對照**:每個情境找到以「編號 + 冒號」開頭且通過的測試:
    - E2E:第 7 步 list reporter 的輸出。
@@ -48,7 +48,7 @@ skills:
    - 元件:前端目錄 `node_modules/.bin/vitest run --reporter=verbose`。
    找不到對應測試 = 缺口,判 ISSUES(依層級歸前端或後端)。這些輸出中和情境無關的測試失敗,也列入 ISSUES。
 9. **log**:兩個 server.log(路徑取 `serve.sh` 輸出的 `log=`,在 `<tmp>/<name>-be/`、`<tmp>/<name>-fe/`)用區分大小寫的 `grep -E 'panic|Error|level=ERROR|⨯'`;能對應到第 5 步刻意錯誤案例的逐條列出說明,不算失敗,其餘算失敗。
-10. **停止**:`bash <kit>/scripts/stop.sh <name>-fe`、`bash <kit>/scripts/stop.sh <name>-be`(PostgreSQL 時 `bash <kit>/scripts/pg.sh rm <name>`,刪掉驗證專用容器與資料)。任何步驟中止時也要先停。
+10. **停止**:`bash <kit>/scripts/stop.sh <name>-fe`、`bash <kit>/scripts/stop.sh <name>-be`(PostgreSQL 時 `bash <kit>/scripts/pg.sh rm it-<name>`,刪掉驗證專用容器與資料)。任何步驟中止時也要先停。
 11. **範圍**:`bash <kit>/scripts/scope.sh check <name>`(不給可寫路徑)→ `out=0`。`next build` 造成的 OUT(`next-env.d.ts`、`tsconfig.json`)或凍結安裝改到 lockfile,歸前端。
 12. **HEAD**:再跑一次 `git rev-parse HEAD`,必須仍等於第 0 步轉出的完整 SHA。
 

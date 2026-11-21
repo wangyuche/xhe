@@ -151,7 +151,9 @@ try {
   });
   const meas = JSON.parse(m.result.value);
   result.scrollWidth = meas.sw; result.innerWidth = meas.iw; result.pageHeight = meas.ph;
-  result.finalUrl = meas.href;
+  // 載入失敗時 Chrome 停在 chrome-error://(不是轉址):記為導覽錯誤,finalUrl 改用 fetch 的結果
+  if (/^https?:/.test(meas.href)) result.finalUrl = meas.href;
+  else result.errors.push(`navigate: Chrome 沒有載入頁面(停在 ${meas.href})`);
 
   const metrics = await send('Page.getLayoutMetrics');
   const cs = metrics.cssContentSize || metrics.contentSize;
@@ -177,5 +179,5 @@ if (result.redirected && !allowRedirect) result.errors.push(`redirect: ${url} �
 
 result.consoleErrors = result.errors.filter(e => /^(console|exception|log):/.test(e)).length;
 console.log(JSON.stringify(result));
-const failed = result.http !== 200 || result.consoleErrors > 0 || result.errors.some(e => /^(shot|fetch|timeout|redirect):/.test(e));
+const failed = result.http !== 200 || result.consoleErrors > 0 || result.errors.some(e => /^(shot|fetch|timeout|redirect|navigate):/.test(e));
 process.exit(failed ? 2 : 0);

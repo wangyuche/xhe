@@ -26,9 +26,10 @@ while IFS= read -r f; do
     # 排除:dev / test / example / changeme 開頭的值
     my $fake = qr/^(dev|test|example|changeme)/i;
     if ($line =~ /NEXT_PUBLIC_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)/) { $hit = 1 }
-    # 名稱可帶後綴(secretKey、tokenValue);指定方式 = 、 : 、 Go 的 := 與 var x string =
-    # 字串用雙引號、單引號或 Go 的反引號
-    while ($line =~ /(?i:secret|password|passwd|api[_-]?key|token|private[_-]?key)\w*\s*(?::=|[:=]|\s+[A-Za-z_][\w.*\[\]]*\s*=)\s*(["\x27\x60])([^"\x27\x60]{8,})\1/g) {
+    # 名稱後綴只允許 Key / Value / Str / String(secretKey、tokenValue;passwordLabel、tokenizer 不算)
+    # 名稱可被引號包住(JSON、物件鍵);指定方式 = 、 : 、Go 的 := 與 var x string = 、TS 的 x: string =
+    # 字串用雙引號、單引號或 Go 的反引號;值含空白的(UI 文字)不算
+    while ($line =~ /(?i:secret|password|passwd|api[_-]?key|token|private[_-]?key)(?i:[_-]?(?:key|value|str|string))?["\x27]?\s*(?::=|:\s*[A-Za-z_][\w.<>\[\]|]*\s*=|[:=]|\s+[A-Za-z_][\w.*\[\]]*\s*=)\s*(["\x27\x60])([^"\x27\x60\s]{8,})\1/g) {
       $hit = 1 unless $2 =~ $fake;
     }
     $hit = 1 if $line =~ /-----BEGIN [A-Z ]*PRIVATE KEY-----/;

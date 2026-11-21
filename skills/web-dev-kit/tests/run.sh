@@ -90,6 +90,17 @@ bash "$S/scope.sh" check t-sec frontend/ backend/ >/dev/null )
 out="$(cd "$R" && bash "$S/secret-scan.sh" t-sec)"; rc=$?
 if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=4" && echo "$out" | grep -q "conf.go:3:" && echo "$out" | grep -q "conf.go:4:" && echo "$out" | grep -q "conf.go:5:" && echo "$out" | grep -q "conf.go:6:" \
   && ! echo "$out" | grep -qE "realtoken|s3cr3t|rawkey|jwtsecret"; then ok "secret-scan:Go 的 :=、var 帶型別、反引號、名稱後綴"; else bad "secret-scan:Go" "$out"; fi
+# TS 帶型別、JSON 鍵命中;UI 文字(含空白)、非秘密的名稱後綴(Placeholder、Cookie)不算
+( cd "$R" && rm -f backend/conf.go && cat > frontend/form.ts <<'TS'
+const apiKey: string = "live_abcdef123456";
+const cfg = {"token": "live_abcdef654321"};
+const passwordPlaceholder = "Enter your password";
+const sessionTokenCookie = "app_session";
+const passwordLabel = "Passwordlabel1";
+TS
+bash "$S/scope.sh" check t-sec frontend/ backend/ >/dev/null )
+out="$(cd "$R" && bash "$S/secret-scan.sh" t-sec)"; rc=$?
+if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=2" && echo "$out" | grep -q "form.ts:1:" && echo "$out" | grep -q "form.ts:2:"; then ok "secret-scan:TS 型別與 JSON 鍵命中、UI 文字與非秘密後綴不算"; else bad "secret-scan:TS / 誤報" "$out"; fi
 
 # ---------- node 腳本 ----------
 if command -v node >/dev/null 2>&1; then
@@ -166,6 +177,10 @@ JS
     printf '<!doctype html><script>location.replace("/sub/")</script>' > "$PAGE/js.html"
     out="$(node "$S/shot.mjs" "http://localhost:$PS/js.html" 1280 800 "$WORK/j.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q "\"finalUrl\":\"http://localhost:$PS/sub/\"" && ok "shot:JS 轉址也判失敗" || bad "shot:JS 轉址" "rc=$rc $out"
+    # 連不上(伺服器掛了):Chrome 停在 chrome-error://,要報導覽錯誤,不是轉址
+    DEAD="$(free_port)"
+    out="$(node "$S/shot.mjs" "http://127.0.0.1:$DEAD/" 1280 800 "$WORK/x.png")"; rc=$?
+    [ $rc -eq 2 ] && echo "$out" | grep -q '"redirected":false' && echo "$out" | grep -q '"navigate: ' && ! echo "$out" | grep -q chrome-error://chromewebdata/\" && ok "shot:連不上時報導覽錯誤而不是轉址" || bad "shot:連不上" "rc=$rc $out"
     LEFT="$(ps -A -o command= | grep -c '[w]eb-dev-kit-chrome-')"
     [ "$LEFT" -eq 0 ] && ok "shot:結束後沒有殘留 Chrome" || bad "shot:殘留 Chrome" "$LEFT"
     bash "$S/stop.sh" t-serve >/dev/null
