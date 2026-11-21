@@ -1,6 +1,7 @@
 #!/bin/bash
 # 用法:install-agent.sh <dir>
 # 安裝開機自動啟動(LaunchAgent)。當機會重啟;使用者按「結束」(正常結束)不會被拉起。
+# 安裝時會立刻啟動(RunAtLoad):先停掉手動 open 的同名實例,避免兩個 widget 同時存在。之後不要再另外 open。
 source "$(dirname "$0")/_common.sh"
 load_widget "$@"
 [ -x "$APP_BIN" ] || die "找不到 $APP_BIN,請先執行 build.sh"
@@ -20,5 +21,11 @@ cat > "$plist" <<PLIST
 </plist>
 PLIST
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+if pgrep -x "$APP_NAME" >/dev/null; then
+  pkill -x "$APP_NAME" || true
+  for _ in $(seq 1 50); do pgrep -x "$APP_NAME" >/dev/null || break; sleep 0.1; done
+  pgrep -x "$APP_NAME" >/dev/null && die "停不掉執行中的 $APP_NAME,請手動結束後重跑"
+  echo "已停止手動啟動的 $APP_NAME(改由 LaunchAgent 啟動)"
+fi
 launchctl bootstrap "gui/$(id -u)" "$plist"
-echo "已安裝:$plist"
+echo "已安裝並啟動:$plist"

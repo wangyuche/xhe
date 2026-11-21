@@ -33,7 +33,7 @@ skills:
 
 ### 第 0 步(完成條件:全部通過,或回 BLOCKED;不改任何檔案)
 1. `mkdir -p <tmp>`(暫存目錄,不在專案內);簡報有模式所需欄位;`git rev-parse --show-toplevel` 成功;`git status --porcelain > <tmp>/git.base`。
-2. `node <kit>/scripts/comfy.mjs check > <tmp>/check.json`:成功,記下 `consistency_methods` 與 `workflows_available`。
+2. `node <kit>/scripts/comfy.mjs check > <tmp>/check.json`:成功,記下 `consistency_methods` 與 `workflows_available`。角色一致只能用 `consistency_methods` 列的方法與它的 `workflows`;`unsupported_consistency`(例如 IP-Adapter)是主機有、但 kit 沒有骨架的方法,不能用,也不要自己組 workflow。
 3. 風格試作且參考有網址:`node -v` ≥ 22,Google Chrome 存在。
 4. 一般 / 角色定裝 / 風格定稿:讀 `art/STYLE.md`;一般模式另依需求文字比對各 `character.md` 的名稱與別名,讀出涉及的角色,Read 它們的 `ref.png`。
 5. 預估生成張數(含每張最多 2 次重出的上限不算,只算首次);超過 40 張 → BLOCKED。
@@ -58,6 +58,7 @@ skills:
 ### 一般模式(完成條件:每張要求的圖 status 為 ok,或重出 2 次後記為不符合)
 1. 分鏡:先寫 `storyboard.md`。
 2. 每張:提示詞 = STYLE.md 正向基底 + 涉及角色的 `## 提示詞` 與識別物 + 這張的內容;負向用負向基底。
+   - **只有骨架的 `_meta.params` 有 `negative` 才給 `--set negative=…`**(Qwen、Z-Image 有;`flux-t2i`、`flux-kontext` 沒有,多給會結束碼 2)。用 Flux 骨架時不給 negative,把負向基底裡最重要的幾項改寫成正向描述併進提示詞(例如 `no text` → `clean image without any lettering`),manifest 的 `negative` 記 `null`。角色定裝與風格試作同樣適用。
    - 沒有角色:用 (a) 組。
    - 有角色:上傳各角色 ref.png,用 (b) 組,`ref1..3` 依序接角色,提示詞用 `the character in image N` 指稱。超過方法上限(Qwen-Image-Edit 3、Flux Kontext 1)的角色當背景、不保證一致,列在已知限制。
    - 只有一個角色時提示詞加 `only one person`。
@@ -118,7 +119,7 @@ skills:
 
 ## 遇到以下情況要停下來(回 BLOCKED)
 - 找不到 ComfyUI 位址(kit 結束碼 2 並附設定方式),或連不上(結束碼 5)。
-- 需要角色一致,但 `check` 沒有任何一致性方法:列出缺少項目與建議的模型。
+- 需要角色一致,但 `check` 的 `consistency_methods` 是空的:列出缺少項目與建議的模型(Qwen-Image-Edit-2511 + `TextEncodeQwenImageEditPlus`,或 Flux Kontext + `ReferenceLatent`);`unsupported_consistency` 有 IP-Adapter 時寫明「主機有 IP-Adapter,但 kit 沒有對應骨架,不能用」。不改用沒有一致性的文生圖硬出。
 - 一般 / 角色定裝模式、`art/STYLE.md` 不存在,簡報也沒寫「不需要風格規範」:請先走風格試作。
 - 需求涉及的角色沒有 `ref.png`,簡報也沒要求角色定裝。
 - 角色定裝時 `ref.png` 已存在,簡報沒寫「重新定裝 <id>」;風格定稿時 STYLE.md 已存在,簡報沒寫「修訂風格」。

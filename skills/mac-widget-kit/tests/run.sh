@@ -85,6 +85,20 @@ msg="$("$BIN" --once 2>&1)"; rc=$?
 mv "$D/widget.json.bak" "$D/widget.json"; mv "$RES.bak" "$RES"
 [ $rc -ne 0 ] && grep -q '找不到 widget.json' <<<"$msg" && ok "找不到 widget.json 時 --once 失敗" || ng "找不到 widget.json" "rc=$rc $msg"
 
+# 單一實例:instance.lock 被別的程序鎖住時,常駐模式要直接結束(結束碼 0),不開第二個視窗
+SUP="$HOME/Library/Application Support/com.widget.t-sample"
+mkdir -p "$SUP"
+perl -e 'use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or die; flock($f, LOCK_EX) or die; print "locked\n"; $| = 1; sleep 30' "$SUP/instance.lock" > "$TMP/lock.out" &
+LOCKPID=$!
+for _ in $(seq 1 50); do grep -q locked "$TMP/lock.out" 2>/dev/null && break; sleep 0.1; done
+"$BIN" > "$TMP/dup.out" 2>&1 &
+DUP=$!
+for _ in $(seq 1 50); do kill -0 $DUP 2>/dev/null || break; sleep 0.1; done
+if kill -0 $DUP 2>/dev/null; then kill $DUP; wait $DUP 2>/dev/null; ng "單一實例:已有實例時要直接結束" "5 秒內沒有結束"
+else wait $DUP; rc=$?; [ $rc -eq 0 ] && grep -q '已有一個 t-sample 在執行' "$TMP/dup.out" && ok "單一實例:已有實例時直接結束(結束碼 0)" || ng "單一實例" "rc=$rc $(cat "$TMP/dup.out")"; fi
+kill $LOCKPID 2>/dev/null; wait $LOCKPID 2>/dev/null
+rm -rf "$SUP"
+
 echo "----"
 echo "通過 $pass,失敗 $fail"
 [ $fail -eq 0 ]

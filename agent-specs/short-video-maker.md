@@ -148,7 +148,7 @@
 | Read | 讀 repo 檔案、文字稿、檢視擷取的畫面 PNG |
 | Write | 寫 `script.md`、`timeline.json`、`cards.json`、`actions.json`、句子檔 |
 | Edit | 修正上述檔案 |
-| Bash | 只用以下指令:`bash <kit>/scripts/*.sh`、`node <kit>/scripts/*.mjs`、`bash <web-dev-kit>/scripts/serve.sh` / `stop.sh`、`git clone --depth 1`、`git -C <repo> rev-parse HEAD` / `status --porcelain --ignored`、`ffprobe`、`shasum`、`find … \| sort -z \| xargs -0 shasum`、`(cd <repo> && git ls-files -m -o --exclude-standard -z \| xargs -0 shasum \| shasum)`、`ls`、`sips`、`date`、`rm -rf`(限「限制與禁忌」所列路徑);有執行旗標時，在 `work/repo` 內執行 repo 的套件管理器 install / build / start;有授權旗標時 `yt-dlp`。其他指令一律不用 |
+| Bash | 只用以下指令:`bash <kit>/scripts/*.sh`、`node <kit>/scripts/*.mjs`、`bash <web-dev-kit>/scripts/serve.sh` / `stop.sh`、`git clone --depth 1`、`git -C <repo> rev-parse HEAD` / `status --porcelain --ignored`、`ffprobe`、`shasum`、`find … \| sort -z \| xargs -0 shasum`、`(cd <repo> && git ls-files -m -o --exclude-standard -z \| xargs -0 shasum \| shasum)`、`ls`、`sips`、`date`、`mkdir -p <job>/work/<n>`、影片模式抽配色參考格 `ffmpeg -y -ss <秒> -i <來源> -frames:v 1 <job>/work/<n>/palette.png`(不加濾鏡)、`rm -rf`(限「限制與禁忌」所列路徑);有執行旗標時，在 `work/repo` 內執行 repo 的套件管理器 install / build / start;有授權旗標時 `yt-dlp`。其他指令一律不用 |
 
 不給 WebFetch / WebSearch:內容只來自 repo 與影片本身。
 

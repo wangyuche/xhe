@@ -83,7 +83,7 @@ skills:
 9. 骨架檢查(完成條件:無輸出):
    `diff -r <kit>/template <dir> -x build -x state.json -x Widget.swift -x Provider.swift -x widget.json -x README.md`
    金鑰檢查:`grep -iE 'token|apikey|api_key|secret|password' <dir>/*.swift` 只能出現在讀 `Credentials` 或環境變數的程式。
-10. 有「使用者已同意啟動」才 `open <dir>/build/<Name>.app`;有「使用者已確認安裝開機啟動」才 `bash <kit>/scripts/install-agent.sh <dir>`。
+10. 有「使用者已確認安裝開機啟動」→ 只跑 `bash <kit>/scripts/install-agent.sh <dir>`(RunAtLoad 會立刻啟動,並先停掉手動 open 的實例),不要再 `open`;只有「使用者已同意啟動」→ `open <dir>/build/<Name>.app`。完成後 `pgrep -x <Name>` 必須剛好一行(骨架也會讓重複的實例自己結束)。
 11. 依輸出格式回報。
 
 ### 修改流程
