@@ -13,7 +13,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
    - GitHub App name:例如 `xhe-bot`(commit 作者會顯示 `xhe-bot[bot]`)
    - Homepage URL:repo 網址即可
    - Webhook:取消勾選 **Active**
-   - Repository permissions:**Contents: Read and write**、**Pull requests: Read and write**(Metadata: Read 會自動帶入),其餘不要(要讓 bot 改 `.github/workflows/` 才另加 **Workflows: Read and write**,否則推送或合併含 workflow 檔的變更會被 GitHub 拒絕)
+   - Repository permissions:**Contents: Read and write**、**Pull requests: Read and write**、**Checks: Read**、**Commit statuses: Read**(merge 前要讀 CI 結果)(Metadata: Read 會自動帶入),其餘不要(要讓 bot 改 `.github/workflows/` 才另加 **Workflows: Read and write**,否則推送或合併含 workflow 檔的變更會被 GitHub 拒絕)
    - Where can this GitHub App be installed:**Only on this account**
 2. 建好後記下頁面上的 **App ID**,往下按 **Generate a private key**,下載 `.pem`。
 3. 左側 **Install App** → 選帳號 → **Only select repositories** → 勾要讓 bot 操作的 repo。

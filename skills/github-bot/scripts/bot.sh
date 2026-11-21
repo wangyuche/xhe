@@ -39,7 +39,7 @@ load_conf() {
   local c_app="" c_key="" c_tok="" c_gh="" k v
   if [[ -f $CONF ]]; then
     while IFS='=' read -r k v; do
-      v=${v%%[[:space:]]#*}               # 去掉行尾註解「 # ...」
+      [[ $v =~ ^[[:space:]]*[\"\'] ]] || v=${v%%[[:space:]]#*}   # 未加引號的值才去掉行尾註解「 # ...」
       k=$(trim_val "$k"); v=$(trim_val "$v")
       case $k in
         APP_ID)     c_app=$v ;;
@@ -107,6 +107,15 @@ api() {
   printf '%s\n' "$resp"
 }
 
+# api_try:同 api,但 HTTP 404 時不報錯、回傳 1(給「可能不存在」的查詢用)
+api_try() {
+  local out rc
+  out=$(api "$@" 2>&1) && { printf '%s\n' "$out"; return 0; }
+  rc=$?
+  grep -q '→ HTTP 404' <<<"$out" && return 1
+  printf '%s\n' "$out" >&2; exit $rc
+}
+
 # jfield <欄位> <json>:欄位缺或為 null 就失敗(避免 "null" 字串混過檢查)
 jfield() { jq -er "$1 // empty" <<<"$2" || die "API 回應缺 $1"; }
 
@@ -122,7 +131,7 @@ parse_repo() {
 resolve_repo() {
   [[ -n $REPO ]] && return
   local url; url=$(git remote get-url origin 2>/dev/null) || die "沒有 origin,請用 --repo owner/repo"
-  REPO=$(parse_repo "$url") || die "origin 不是 GitHub 網址:$url"
+  REPO=$(parse_repo "$url") || die "origin 不是 github.com 網址:$url(SSH host 別名等情況請加 --repo owner/repo)"
 }
 
 pat() {
@@ -187,7 +196,7 @@ cmd_commit() {
   # GIT_AUTHOR_* / GIT_COMMITTER_* 會蓋過 -c user.*,四個都明確設成 bot
   GIT_AUTHOR_NAME=$BOT_NAME GIT_AUTHOR_EMAIL=$BOT_EMAIL \
   GIT_COMMITTER_NAME=$BOT_NAME GIT_COMMITTER_EMAIL=$BOT_EMAIL \
-    git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" commit "$@"
+    git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" -c commit.gpgsign=false commit "$@"
 }
 
 # 把 token 寫進 0600 暫存檔(TOKEN_TMP,全域變數,讓 EXIT trap 在函式外也看得到),結束時刪除
@@ -202,7 +211,11 @@ token_file() {
 # 停用 hooks、token 只放在 0600 暫存檔由 credential helper 讀,不放進子程序的環境變數。
 # 用法:push_git <token 檔> <使用者> <git 子指令...>
 push_git() {
-  local tf=$1 user=$2 bad; shift 2
+  local tf=$1 user=$2 bad rc sd; shift 2
+  # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄)
+  local -a safe=()
+  while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
+    < <(git config --global --get-all safe.directory 2>/dev/null || true)
   # 推送用乾淨環境:不讀全域 / 系統設定,移除會注入設定、改 TLS / proxy / 除錯輸出的環境變數
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY
@@ -213,11 +226,15 @@ push_git() {
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0)
   # repo 的任何設定檔(local、worktree、include / includeIf)都不得有 url.* / http.* / credential.*:
   # 這些能改寫推送網址、走 proxy、關 TLS 驗證、附加別的認證或 helper
-  bad=$("${clean[@]}" git config --show-scope --includes --name-only --get-regexp '^(url|http|credential)\..*$' 2>/dev/null || true)
-  [[ -z $bad ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
+  # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(git 太舊、include 壞掉、dubious ownership)一律拒絕
+  bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
+          --get-regexp '^(url|http|credential|push|submodule)\..*$' 2>&1) && rc=0 || rc=$?
+  [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
+  [[ $rc -eq 1 ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
   "${clean[@]}" \
-  git -c credential.helper= \
-      -c "credential.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
+  git ${safe[@]+"${safe[@]}"} -c credential.helper= \
+      -c "credential.https://github.com.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
+      -c push.recurseSubmodules=no -c submodule.recurse=false \
       -c core.hooksPath=/dev/null \
       -c http.extraHeader= -c http.sslVerify=true -c http.proxy= -c http.cookieFile= \
       -c user.name=bot -c user.email=bot@invalid \
@@ -236,7 +253,7 @@ cmd_push() {
   def=$(jfield .default_branch "$(api GET "/repos/$REPO" "$t")")
   [[ $branch != "$def" ]] || die "不推預設分支 $def;請推功能分支再開 PR"
   token_file "$t"; unset t
-  push_git "$TOKEN_TMP" "$user" push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
+  push_git "$TOKEN_TMP" "$user" push --no-recurse-submodules "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
 }
 
 cmd_pr() {
@@ -259,6 +276,25 @@ cmd_pr() {
     "$(jq -nc --arg h "$head" --arg b "$base" --arg t "$title" --arg d "$body" \
         '{head:$h, base:$b, title:$t, body:$d}')")
   jfield .html_url "$r"
+}
+
+# CI 檢查:有 check run / commit status 未完成或失敗就拒絕;repo 有 workflow 但 CI 還沒登記也拒絕
+# (剛推完時 GitHub 還沒建 check suite,mergeable_state 會先顯示 clean)
+check_ci() {
+  local sha=$1 t=$2 runs st n bad wf
+  runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
+    || die "讀不到 check runs(App 要加 Checks: Read 權限)"
+  st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
+    || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
+  bad=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | "\(.name)=\(.conclusion // .status)"' <<<"$runs")
+  [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")"
+  [[ $(jq -r '.total_count' <<<"$st") == 0 || $(jq -r '.state' <<<"$st") == success ]] \
+    || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
+  n=$(( $(jq -r '.total_count' <<<"$runs") + $(jq -r '.total_count' <<<"$st") ))
+  if [[ $n -eq 0 ]] && wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t"); then
+    [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -eq 0 ]] \
+      || die "repo 有 GitHub Actions workflow 但這個 commit 還沒有任何 CI 結果,等 CI 跑完再合併"
+  fi
 }
 
 cmd_merge() {
@@ -294,6 +330,7 @@ cmd_merge() {
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
+  check_ci "$sha" "$t"
   local r
   r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
     "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')")

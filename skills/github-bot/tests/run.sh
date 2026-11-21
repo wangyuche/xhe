@@ -17,6 +17,7 @@ openssl genrsa -traditional -out "$TMP/key.pem" 2048 2>/dev/null || openssl genr
 openssl rsa -in "$TMP/key.pem" -pubout -out "$TMP/pub.pem" 2>/dev/null
 printf 'APP_ID=123456\nKEY_FILE=%s\n' "$TMP/key.pem" > "$TMP/config"
 export GITHUB_BOT_CONFIG="$TMP/config"
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1   # 不受開發者個人 git 設定(gpgsign 等)影響
 unset GITHUB_BOT_APP_ID GITHUB_BOT_KEY_FILE GITHUB_BOT_GH_USER GITHUB_BOT_TOKEN_FILE GITHUB_BOT_API_URL \
       GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
@@ -49,6 +50,8 @@ printf 'APP_ID = "123456" \nKEY_FILE="%s"\n' "$TMP/key.pem" > "$TMP/config-quote
 check "設定值去引號與空白" bash -c "GITHUB_BOT_CONFIG='$TMP/config-quoted' bash '$BOT' _jwt >/dev/null"
 check "API 網址限制" bash -c "GITHUB_BOT_API_URL=http://attacker.example bash '$BOT' --repo o/r token 2>&1 | grep -q '只能是'"
 printf 'APP_ID=123456  # my app\nKEY_FILE=%s\n' "$TMP/key.pem" > "$TMP/config-comment"
+printf 'APP_ID=123456\nKEY_FILE="%s"\n' "$TMP/k #1.pem" > "$TMP/config-hash"; cp "$TMP/key.pem" "$TMP/k #1.pem"
+check "引號內的 # 不當註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-hash' bash '$BOT' _jwt >/dev/null"
 check "設定行尾註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-comment' bash '$BOT' _jwt >/dev/null"
 check "--repo 缺值不 crash" bash -c "bash '$BOT' --repo 2>&1 | grep -q '後面要接值'"
 check "--repo 格式錯誤拒絕" bash -c "! bash '$BOT' --repo 'bad repo' token 2>/dev/null"
@@ -87,6 +90,9 @@ check "merge 缺值不 crash" bash -c "bash '$BOT' --repo o/r merge 7 --sha 2>&1
 check "pr 缺值不 crash" bash -c "bash '$BOT' --repo o/r pr --head 2>&1 | grep -q '後面要接值'"
 check "merge 檢查失敗拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
 check "merge closed 立即拒絕" bash -c "s=\$(date +%s); bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ \$(( \$(date +%s) - s )) -lt 3 ]"
+D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40))
+check "merge CI 進行中拒絕" bash -c "bash '$BOT' --repo o/r merge 11 --sha $D40 2>&1 | grep -q 'CI 未完成'"
+check "merge 有 workflow 但 CI 未登記拒絕" bash -c "bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '還沒有任何 CI'"
 check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
 check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"
 
@@ -129,6 +135,14 @@ git -C "$TMP/prepo" config --worktree http.https://github.com/.proxy http://evil
 check "worktree 設定的 http.* 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
 git -C "$TMP/prepo" config --worktree --unset http.https://github.com/.proxy
 check "SSL_CERT_FILE / CURL_CA_BUNDLE 被移除" [ -z "$(cd "$TMP/prepo" && SSL_CERT_FILE=/x CURL_CA_BUNDLE=/x bash "$BOT" _pushgit t u -c alias.e='!printenv SSL_CERT_FILE CURL_CA_BUNDLE' e)" ]
+CRED2=$(cd "$TMP/prepo" && printf 'protocol=https\nhost=evil.example\n\n' | bash "$BOT" _pushgit tok123 u credential fill 2>/dev/null || true)
+check "credential 不給 github.com 以外的主機" bash -c "! grep -q tok123 <<<'$CRED2'"
+git -C "$TMP/prepo" config push.recurseSubmodules on-demand
+check "push.recurseSubmodules 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
+git -C "$TMP/prepo" config --unset push.recurseSubmodules
+git -C "$TMP/prepo" config include.path "$TMP/unreadable.cfg"; printf '[url "x"]\n\tinsteadOf = y\n' > "$TMP/unreadable.cfg"; chmod 000 "$TMP/unreadable.cfg"
+check "設定檢查失敗時拒絕(fail closed)" bash -c "cd '$TMP/prepo' && ! bash '$BOT' _pushgit t u status >/dev/null 2>&1"
+chmod 600 "$TMP/unreadable.cfg"; git -C "$TMP/prepo" config --unset include.path
 check "GIT_SSL_NO_VERIFY 被移除" [ -z "$(cd "$TMP/prepo" && GIT_SSL_NO_VERIFY=1 bash "$BOT" _pushgit t u -c alias.e='!printenv GIT_SSL_NO_VERIFY' e)" ]
 check "強制 sslVerify" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config http.sslVerify)" = true ]
 

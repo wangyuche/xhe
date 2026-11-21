@@ -44,6 +44,23 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "unstable", "head": {"sha": "a" * 40}})
         if p == "/repos/o/r/pulls/10" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"state": "closed", "mergeable": None, "mergeable_state": "unknown", "head": {"sha": "a" * 40}})
+        a40, d40, e40 = "a" * 40, "d" * 40, "e" * 40
+        if p == f"/repos/o/r/commits/{a40}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "completed", "conclusion": "success"}]})
+        if p == f"/repos/o/r/commits/{a40}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
+        if p == f"/repos/o/r/commits/{d40}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "in_progress", "conclusion": None}]})
+        if p == f"/repos/o/r/commits/{d40}/status" or p == f"/repos/o/r/commits/{e40}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
+        if p == f"/repos/o/r/commits/{e40}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 0, "check_runs": []})
+        if p == f"/repos/o/r/contents/.github/workflows?ref={e40}":
+            return self.send(200, [{"name": "ci.yml"}])
+        if p == "/repos/o/r/pulls/11":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": d40}})
+        if p == "/repos/o/r/pulls/12":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": e40}})
         if p == "/repos/o/nodef" and self.auth() in (TOKEN, PAT):
             return self.send(200, {})
         if p == "/repos/o/r" and self.auth() in (TOKEN, PAT):
