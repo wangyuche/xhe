@@ -90,6 +90,20 @@ node "$S/render.mjs" lnk.json r3 --asset-root assets >/dev/null 2>&1; [ $? -eq 1
 
 echo '{"cards":[{"type":"title","file":"x.png","title":"沒有配色"}]}' > nothm.json
 e="$(node "$S/render.mjs" nothm.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme 缺' && ok "render.mjs 沒有 theme → 結束碼 2(沒有預設配色)" || bad "render.mjs 沒有 theme 沒被擋" "$e"
+echo '{"theme":{"bg":"#888888","bg2":"#888888","fg":"#777777","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"title","file":"x.png","title":"低對比"}]}' > lowc.json
+e="$(node "$S/render.mjs" lowc.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '對比' && ok "render.mjs fg 對比不足 → 結束碼 2" || bad "render.mjs 低對比沒被擋" "$e"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#3a4a5a"},"cards":[{"type":"title","file":"x.png","title":"副標太暗","subtitle":"看不清楚"}]}' > lowm.json
+e="$(node "$S/render.mjs" lowm.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme.muted 對 bg~bg2' && ok "render.mjs 副標 muted 對比不足 → 結束碼 2" || bad "render.mjs muted 低對比沒被擋" "$e"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#304860","muted":"#3a4a5a"},"cards":[{"type":"title","file":"x.png","title":"沒有副標與 tag"}]}' > nomuted.json
+o="$(node "$S/render.mjs" nomuted.json r5 2>&1)"; [ $? -eq 0 ] && ! echo "$o" | grep -q 'muted/' && ok "render.mjs 沒畫出來的顏色不檢查(沒有副標就不查 muted)" || bad "render.mjs 檢查了沒畫出來的顏色" "$o"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#304860","muted":"#a0a0a0"},"cards":[{"type":"point","file":"x.png","number":"1","title":"徽章看不到"}]}' > lowa.json
+e="$(node "$S/render.mjs" lowa.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme.bg 對 accent' && ok "render.mjs accent 與 bg 對比不足(徽章 / tag)→ 結束碼 2" || bad "render.mjs accent 低對比沒被擋" "$e"
+echo '{"theme":{"bg":"#ee0000","bg2":"#00aa00","fg":"#000000","accent":"#ffffff","muted":"#000000"},"cards":[{"type":"title","file":"x.png","title":"漸層中段"}]}' > midgrad.json
+e="$(node "$S/render.mjs" midgrad.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'bg~bg2' && ok "render.mjs 漸層兩端夠、中段不夠 → 結束碼 2" || bad "render.mjs 漸層中段沒被擋" "$e"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#203040","muted":"#a0a0a0"},"cards":[{"type":"point","file":"x.png","title":"徽章 0","number":0}]}' > num0.json
+e="$(node "$S/render.mjs" num0.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme.bg 對 accent' && ok "render.mjs number 為 0 也檢查徽章對比" || bad "render.mjs number 0 漏檢" "$e"
+echo '{"theme":{"bg":"#101010","bg2":"#101010","fg":"#181818","accent":"#ffcc00","muted":"#181818"},"cards":[{"type":"headline","file":"h.png","text":"只有標題"}]}' > hlonly.json
+o="$(node "$S/render.mjs" hlonly.json r5 2>&1)"; [ $? -eq 0 ] && echo "$o" | grep -q '"bg/accent"' && ! echo "$o" | grep -q '"fg/' && ok "render.mjs 只有 headline 時只檢查 bg/accent,輸出 contrast" || bad "render.mjs headline 對比檢查" "$o"
 echo '{"cards":[{"type":"subtitle","file":"s.png","text":"只有字幕"}]}' > subonly.json
 node "$S/render.mjs" subonly.json r5 >/dev/null 2>&1 && ok "render.mjs 只有字幕卡時不需要 theme" || bad "render.mjs 字幕卡不該要求 theme"
 echo '{"theme":{"bg":"#000","extra":1},"cards":[{"type":"subtitle","file":"s.png","text":"舊格式 theme"}]}' > oldthm.json

@@ -42,6 +42,14 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 - code 卡最多 15 行,超過截斷並在 stderr 提示。
 - subtitle / headline 由 compose.mjs 自動產生,通常不用手寫。
 
+## 配色
+
+`theme` 沒有預設值,每支影片自己選,不沿用別支或範例的色碼:
+- 派工有指定 → 照做。
+- repo → 依序找 logo / icon 圖、README 用的本機圖、網站或文件的主色(`theme-color`、`--primary`、`--brand`、tailwind 設定);都沒有就依專案性質推定並標明。
+- 影片 → compose 前先從來源抽一格(`mkdir -p <job>/work/<n> && ffmpeg -y -ss <起點> -i <影片> -frames:v 1 <job>/work/<n>/palette.png`,放在 work/ 內,收尾一起刪),主色取 `accent`、暗部取 `bg`。
+- 五個欄位都用 `#RRGGBB`。render.mjs(與 compose.mjs 的 headline 預檢)只檢查卡片裡實際畫出來的組合(值為 `0` 也算有畫),底色是漸層時沿漸層取樣取最低值,不足結束碼 2,通過時 stdout JSON 附 `contrast`:全版卡 → `fg` 對 bg~bg2 ≥ 4.5;漸層封面 → `fg` 對 bg~bg2~accent ≥ 4.5;有副標 → `muted` 對 bg~bg2 ≥ 3;有 tag 或 url → `accent` 對 bg~bg2 ≥ 3;有編號徽章或 headline → `bg` 對 accent ≥ 3。程式碼面板是固定深色底,不受 theme 影響。
+
 ## actions.json(record-web.mjs)
 
 ```json

@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, mkdirSync, realpathSync, existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, isAbsolute, sep, basename } from 'node:path';
 import { launchChrome, guardNetwork } from './_chrome.mjs';
+import { checkTheme, THEMED_TYPES } from './_theme.mjs';
 
 const W = 1080, H = 1920;
 export const SAFE = { x0: 60, x1: 930, y0: 1300, y1: 1620 };
@@ -38,18 +39,15 @@ const cards = Array.isArray(spec) ? spec : spec.cards;
 if (!Array.isArray(cards) || cards.length === 0) usage('卡片 JSON 要有 cards 陣列');
 // 沒有預設配色:每支影片依來源(repo 的 logo / 網站 / 文件配色,或影片畫面)自己選 theme。
 // 只有字幕卡、有 image 的封面不用 theme。
-const THEME_KEYS = ['bg', 'bg2', 'fg', 'accent', 'muted'];
-const needsTheme = cards.some(c => c && (['title', 'point', 'code', 'end', 'headline'].includes(c.type) || (c.type === 'cover' && !c.image)));
+const needsTheme = cards.some(c => c && (THEMED_TYPES.includes(c.type) || (c.type === 'cover' && !c.image)));
 // 不需要 theme 時(只有字幕卡、有圖封面)忽略 theme,不檢查格式。
 const theme = needsTheme ? ((Array.isArray(spec) ? undefined : spec.theme) ?? {}) : {};
 if (needsTheme && Array.isArray(spec)) usage('有 title / point / code / end / headline 卡或漸層封面時,要用 {"theme":{…},"cards":[…]} 物件格式(陣列格式放不了 theme)');
+let contrast = null;
 if (needsTheme) {
-  const missing = THEME_KEYS.filter(k => theme[k] === undefined);
-  if (missing.length) usage(`theme 缺 ${missing.join('、')}:沒有預設配色,依這支影片的來源選(見 SKILL.md「配色」)`);
-  for (const [k, v] of Object.entries(theme)) {
-    if (!THEME_KEYS.includes(k)) usage(`theme.${k} 不是可用欄位(${THEME_KEYS.join(', ')})`);
-    if (!/^#[0-9a-fA-F]{6}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);
-  }
+  const t = checkTheme(theme, cards);
+  if (t.error) usage(t.error);
+  contrast = t.contrast;
 }
 
 const TYPES = new Set(['title', 'point', 'code', 'end', 'subtitle', 'headline', 'cover']);
@@ -101,12 +99,12 @@ body{font-family:"PingFang TC","Heiti TC","Hiragino Sans",sans-serif;color:var(-
 .t2{font-size:48px;color:var(--muted);line-height:1.4;word-break:break-word}
 .num{width:110px;height:110px;border-radius:28px;background:var(--accent);color:var(--bg);font-size:64px;font-weight:800;display:flex;align-items:center;justify-content:center}
 .pt{font-size:76px;font-weight:800;line-height:1.25;word-break:break-word}
-.body{font-size:46px;line-height:1.5;color:var(--fg);opacity:.92;word-break:break-word}
+.body{font-size:46px;line-height:1.5;color:var(--fg);word-break:break-word}
 .img{max-width:100%;max-height:620px;object-fit:contain;border-radius:24px;align-self:flex-start;background:#fff1}
-.codewrap{background:#0008;border:2px solid #fff2;border-radius:24px;overflow:hidden}
-.codehead{font:600 30px Menlo,monospace;color:var(--muted);padding:22px 28px;border-bottom:2px solid #fff2;word-break:break-all}
+.codewrap{background:#0d1117;border:2px solid #30363d;border-radius:24px;overflow:hidden}
+.codehead{font:600 30px Menlo,monospace;color:#9da7b3;padding:22px 28px;border-bottom:2px solid #30363d;word-break:break-all}
 pre{font:30px/1.45 Menlo,monospace;padding:24px 28px;white-space:pre-wrap;word-break:break-all;color:#e2e8f0}
-.k{color:#c084fc}.s{color:#86efac}.c{color:#64748b;font-style:italic}.n{color:#fbbf24}
+.k{color:#c084fc}.s{color:#86efac}.c{color:#8b949e;font-style:italic}.n{color:#fbbf24}
 .url{font:600 40px Menlo,monospace;color:var(--accent);word-break:break-all}
 .subwrap{position:absolute;left:${SAFE.x0}px;width:${SAFE.x1 - SAFE.x0}px;bottom:${H - SAFE.y1 + 20}px;text-align:center}
 .sub{display:inline-block;text-wrap:balance;overflow:hidden;background:rgba(0,0,0,.62);border-radius:18px;padding:14px 26px;font-weight:700;line-height:1.3;color:#fff;word-break:break-word;text-shadow:0 2px 6px #000a;max-width:100%}
@@ -196,7 +194,7 @@ async function render(type,d,safe){
 </script></body></html>`;
 
 let cdp;
-const result = { files: [], subtitles: 0, blockedRequests: [] };
+const result = { files: [], subtitles: 0, blockedRequests: [], ...(contrast ? { contrast } : {}) };
 let exitCode = 0;
 try {
   cdp = await launchChrome();
