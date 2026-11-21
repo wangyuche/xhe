@@ -13,7 +13,7 @@
   3. 角色 LoRA。
   kit 不寫死任何模型清單(各環境裝的不同),每次由 `check` 決定可用方法。
 - 風格:每個遊戲不同,寫在該遊戲 repo 的 `art/STYLE.md`;**不提供共用風格範本或預設提示詞**,只固定章節。
-- 參考圖用 ComfyUI 內建 `/upload/image` 上傳到 input 目錄(使用者 2026-11-21 同意)。
+- 參考圖用 ComfyUI 內建 `/upload/image` 上傳(使用者 2026-11-21 同意),放 temp 區(ComfyUI 重開即清,不留在 input/);輸出用 PreviewImage,下載後刪 history。
 - **ComfyUI 位址是本機環境設定,不進 git**(使用者 2026-11-21:每個環境不同,傳到 GitHub 很怪):kit 依序讀環境變數 `COMFYUI_URL`、`~/.config/game-art-kit/config` 的 `COMFYUI_URL=`;簡報可臨時覆寫。`art/` 下所有產出(STYLE.md、character.md、manifest、workflow JSON)都不寫位址,kit 在結束時檢查。
 
 ## 模式
@@ -40,7 +40,7 @@
   3. 風格試作模式且參考有網址:檢查 node ≥ 22 與 Google Chrome 存在。
   4. 一般 / 角色定裝 / 風格定稿模式:讀 `art/STYLE.md`;一般模式另讀需求涉及角色的 `character.md` 並 Read `ref.png`。
   5. 逐條檢查「停止並詢問的情況」。
-- **上傳參考圖**:只上傳角色 `ref.png` 與 ControlNet 姿勢 / 構圖參考到 ComfyUI input,檔名 `<專案名>-<id>-<內容雜湊前 8 碼>.png`(不覆蓋別人的檔案),不上傳其他檔案。
+- **上傳參考圖**:只上傳角色 `ref.png` 與 ControlNet 姿勢 / 構圖參考到 ComfyUI temp 區,檔名 `<專案名>-<id>-<內容雜湊前 8 碼>.png`(同名即同內容,覆寫無害;不會和別人的檔案撞名),不上傳其他檔案。
 - **風格試作**:依風格描述(使用者原話)產生 2–4 張,每張不同的設定組合(checkpoint / LoRA / 提示詞方向),寫進 `art/out/<日期>-style-trials/`,回 BLOCKED,附每張的設定摘要與「請使用者選第幾張(可附修改意見)」。
 - **風格定稿**:依選定試作的設定寫 STYLE.md;簡報列的每個主要角色走一次角色定裝。
 - **角色定裝**:產生正面定裝 `ref.png`(全身、中性姿勢、素色背景)與三視圖 `sheet.png`(正 / 側 / 背,ControlNet 姿勢參考有的話用),寫 `character.md`。重新定裝時舊檔改名 `ref.prev.png` 保留。

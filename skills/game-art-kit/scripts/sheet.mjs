@@ -37,8 +37,11 @@ function exifOrientation(buf, t) {
   } catch { /* 讀不到就當 1 */ }
   return null;
 }
-// 讀不出尺寸就報錯,不猜比例(猜錯會把圖壓扁)
+// 讀不出尺寸就報錯,不猜比例(猜錯會把圖壓扁);檔案被截斷時讀超出範圍也一樣結束碼 2
 function imgSize(file, buf) {
+  try { return imgSizeRaw(file, buf); } catch (e) { if (e instanceof RangeError) die(`讀不出 ${file} 的尺寸(檔案不完整)`, 2); throw e; }
+}
+function imgSizeRaw(file, buf) {
   const ext = extname(file).toLowerCase();
   if (ext === '.png' && buf.toString('ascii', 1, 4) === 'PNG') return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
   if (/\.jpe?g$/.test(ext) && buf[0] === 0xff && buf[1] === 0xd8) {

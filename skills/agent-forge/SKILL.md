@@ -30,7 +30,7 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
   ```bash
   (cd <skill 目錄> && [ "$(find -L . -type f -name '*.md' | wc -l)" -gt 0 ] && find -L . -type f -name '*.md' -print0 | LC_ALL=C sort -z | xargs -0 shasum | shasum | cut -c1-8)
   ```
-  回報時附前 8 碼,並附來源狀態:`git -C <skill 目錄> rev-parse --short HEAD`、與 `origin/main` 是否相同(`git -C <skill 目錄> rev-parse HEAD origin/main`)、`git -C <skill 目錄> status --porcelain -- .` 是否為空。HEAD 不等於 `origin/main` 或有未 commit 的修改時,註明「規則含未審查的修改」。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。
+  回報時附前 8 碼,並附來源狀態:`git -C <skill 目錄> rev-parse --short HEAD`、與 `origin/main` 是否相同(先 `git -C <skill 目錄> fetch -q origin main`,再 `git -C <skill 目錄> rev-parse HEAD origin/main`;fetch 失敗或解析不到 `origin/main` 就當作未審查)、`git -C <skill 目錄> status --porcelain -- .` 是否為空。HEAD 不等於 `origin/main` 或有未 commit 的修改時,註明「規則含未審查的修改」。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。
 
 ## 派出審查角色
 

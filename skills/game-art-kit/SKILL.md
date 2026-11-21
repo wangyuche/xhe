@@ -24,7 +24,8 @@ ComfyUI 要用 `--listen` 啟動。macOS 連區網被擋(`No route to host`、0 
 node <kit>/scripts/comfy.mjs check                     # JSON:models(含 family)、consistency_methods、workflows_available、defaults(建議檔名)
 node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
-node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 300]
+node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 300] [--queue-timeout 1800]
+#   --timeout 只算開始執行後;排隊等待另算(--queue-timeout)。被 Ctrl-C / SIGTERM 中止時取消自己的工作再結束(130 / 143)
 #   → <目錄>/<檔名>.png、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);印 {"status":"ok","seconds":…,"files":[{file,width,height}]}
 node <kit>/scripts/comfy.mjs pngsize <圖>              # {"width":…,"height":…}
 node <kit>/scripts/comfy.mjs scrub-check <目錄>        # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1
