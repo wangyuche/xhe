@@ -97,10 +97,11 @@ const cfg = {"token": "live_abcdef654321"};
 const passwordPlaceholder = "Enter your password";
 const sessionTokenCookie = "app_session";
 const passwordLabel = "Passwordlabel1";
+log("x"); const apiToken: string | undefined = "live_typed987654";
 TS
 bash "$S/scope.sh" check t-sec frontend/ backend/ >/dev/null )
 out="$(cd "$R" && bash "$S/secret-scan.sh" t-sec)"; rc=$?
-if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=2" && echo "$out" | grep -q "form.ts:1:" && echo "$out" | grep -q "form.ts:2:"; then ok "secret-scan:TS 型別與 JSON 鍵命中、UI 文字與非秘密後綴不算"; else bad "secret-scan:TS / 誤報" "$out"; fi
+if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=3" && echo "$out" | grep -q "form.ts:1:" && echo "$out" | grep -q "form.ts:2:" && echo "$out" | grep -q "form.ts:6:" && ! echo "$out" | grep -q "live_"; then ok "secret-scan:TS 型別與 JSON 鍵命中、UI 文字與非秘密後綴不算"; else bad "secret-scan:TS / 誤報" "$out"; fi
 
 # ---------- node 腳本 ----------
 if command -v node >/dev/null 2>&1; then

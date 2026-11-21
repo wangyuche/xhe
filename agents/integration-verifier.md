@@ -40,7 +40,7 @@ skills:
 5b. **並發檢查**(使用者 2026-11-16 要求):端點清單中每個會寫入資料的端點(POST / PUT / PATCH / DELETE),經前端轉發同時送 10 個請求:
    `node <kit>/scripts/concurrency.mjs <前端url> <方法> <路徑> -n 10 --data <成功案例 body> [--cookie-jar <tmp>/<name>/cookies.txt] [--expect <成功狀態碼>]`
    需要唯一值的欄位用 `{uniq}`(例如註冊 email);用既有帳號的請求(例如登入)不放 `{uniq}`。會讓 session 失效的端點用另存的 `cookies-se-<n>.txt`(見第 5 步),不用 `cookies.txt`;10 個請求共用一個 session,只有第一個會成功,其餘是「未登入」錯誤,所以 `--expect` 要同時列成功與未登入的狀態碼(例如 `204,401`),判定看沒有 5xx 且至少一個成功。驗收情境有類型 `並發` 的,另照情境的 Given / When 實跑一次,以情境 Then 的條件(狀態碼分佈、不變量)判定;簡報另給的判定標準和情境 Then 衝突時,回報衝突並以情境為準。`ok` 必須是 true;有 5xx 時附回應樣本與後端 log 中對應的錯誤行,通常歸後端。
-6. **頁面檢查**:頁面清單每頁 `node <kit>/scripts/shot.mjs <url> 1280 800 <png>` 與 `… 390 844 <png> --mobile`(要登入的加 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`redirected` false(`finalUrl` 等於請求網址)、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,並用 Read 看圖。要登入的頁被導到登入頁(`redirected` true)是問題:會讓 session 失效的端點都沒用 `cookies.txt`,所以是別的步驟(或 session 本身)讓它失效。用 seed 的登入請求重新取得 cookie 再截一次:重截後正常 → 記為後端的 session 問題(附 `cookies.txt` 用過的步驟,例如某個寫入端點換掉了 session),頁面本身照重截結果判;仍被導走 → 依後端直連帶 cookie 的結果歸前端或後端。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。頁面清單為「無」時寫「無,未執行」。
+6. **頁面檢查**:頁面清單每頁 `node <kit>/scripts/shot.mjs <url> 1280 800 <png>` 與 `… 390 844 <png> --mobile`(要登入的加 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`redirected` false(`finalUrl` 等於請求網址)、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,並用 Read 看圖。本來就該轉址的頁(簡報標示,例如 `/` 導到 `/dashboard`)加 `--allow-redirect`,檢查 `finalUrl` 是預期的目的地。其餘頁被導走(`redirected` true,例如要登入的頁被導到登入頁)是問題:會讓 session 失效的端點都沒用 `cookies.txt`,所以是別的步驟(或 session 本身)讓它失效。用 seed 的登入請求重新取得 cookie 再截一次:重截後正常 → 記為後端的 session 問題(附 `cookies.txt` 用過的步驟,例如某個寫入端點換掉了 session),頁面本身照重截結果判;仍被導走 → 依後端直連帶 cookie 的結果歸前端或後端。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。頁面清單為「無」時寫「無,未執行」。
 7. **E2E**:在前端目錄 `E2E_BASE_URL=<前端url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e`,全部通過。失敗時 Read `<tmp>/<name>/e2e/` 裡的失敗截圖判斷原因。前端沒有 Playwright 或 `e2e/` → 「未執行:前端沒有 E2E」,判 ISSUES(歸前端)。
 8. **驗收情境對照**:每個情境找到以「編號 + 冒號」開頭且通過的測試:
    - E2E:第 7 步 list reporter 的輸出。
@@ -90,7 +90,7 @@ skills:
 1. 開始與結束的 `git rev-parse HEAD` 都等於第 0 步由簡報 SHA 轉出的完整 SHA,開始時工作目錄乾淨;回報附兩次結果。
 2. `contract-check` → `valid`,本次端點清單內的端點都不是 `planned`。
 3. 端點清單每項至少一個成功、一個錯誤案例,`proxy-diff.mjs` 的 `same` 為 true(非冪等用 `--structure`;忽略欄位有列出)。清單為「無」時寫「無,未執行」。
-3b. 端點清單中每個寫入端點的並發檢查(10 個同時請求)`ok` 為 true,回報附 statuses。
+3b. 端點清單中每個寫入端點的並發檢查(10 個同時請求)`ok` 為 true,而且 statuses 至少有一個成功狀態碼(會讓 session 失效的端點 `--expect` 含未登入狀態碼,全是 401 也會 `ok`,所以這條要另外看),回報附 statuses。
 4. 頁面清單每頁桌面與手機截圖皆 `http` 200、`redirected` false、`consoleErrors` 0、無橫向捲動,且已 Read 檢視;因需登入而未截的,指出覆蓋它的 E2E 測試。清單為「無」時寫「無,未執行」。
 5. `test:e2e` 全部通過,回報附通過數;有失敗時附失敗截圖的檢視結果與歸屬。
 6. 每個驗收情境都對應到以其編號開頭、而且通過的測試;回報附對照表。缺測試算 ISSUES。

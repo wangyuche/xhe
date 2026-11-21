@@ -51,6 +51,15 @@ if (cookies.length) reqHeaders.Cookie = cookieHeader(cookies);
 
 // 1. 先確認 HTTP 狀態(跟著轉址走,http 是最後一站的狀態;有轉址時 redirected = true)
 let fetchFinal = null;
+// 轉址判定:Chrome 最後停在的網址(含 JS 轉址)或 fetch 的最後一站,和請求網址不同(忽略 #hash)。逾時時也要做
+function checkRedirect() {
+  const norm = (x) => { try { const v = new URL(x); v.hash = ''; return v.href; } catch { return x; } };
+  result.finalUrl ??= fetchFinal;
+  for (const f of [fetchFinal, result.finalUrl]) {
+    if (f && norm(f) !== norm(url)) result.redirected = true;
+  }
+  if (result.redirected && !allowRedirect) result.errors.push(`redirect: ${url} → ${result.finalUrl}(預期轉址時加 --allow-redirect)`);
+}
 try {
   const r = await fetch(url, { headers: reqHeaders, redirect: 'follow' });
   result.http = r.status;
@@ -68,7 +77,7 @@ const cleanup = () => {
 };
 const hardTimeout = setTimeout(() => {
   result.errors.push('timeout: 60 秒內未完成');
-  cleanup(); console.log(JSON.stringify(result)); process.exit(2);
+  cleanup(); checkRedirect(); console.log(JSON.stringify(result)); process.exit(2);
 }, 60000);
 
 try {
@@ -169,13 +178,7 @@ try {
   cleanup();
 }
 
-// 轉址判定:Chrome 最後停在的網址(含 JS 轉址)或 fetch 的最後一站,和請求網址不同(忽略 #hash)
-const norm = (x) => { try { const v = new URL(x); v.hash = ''; return v.href; } catch { return x; } };
-result.finalUrl ??= fetchFinal;
-for (const f of [fetchFinal, result.finalUrl]) {
-  if (f && norm(f) !== norm(url)) result.redirected = true;
-}
-if (result.redirected && !allowRedirect) result.errors.push(`redirect: ${url} → ${result.finalUrl}(預期轉址時加 --allow-redirect)`);
+checkRedirect();
 
 result.consoleErrors = result.errors.filter(e => /^(console|exception|log):/.test(e)).length;
 console.log(JSON.stringify(result));

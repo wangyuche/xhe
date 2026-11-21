@@ -25,7 +25,7 @@
   4. 資料準備:依簡報的 seed 請求(curl 直連後端,只打本機;需要登入時用 `-c <tmp>/<name>/cookies.txt` 存下 session cookie),記下回傳的 id 以組出動態路由網址。
   5. 轉發檢查:端點清單每項用 `proxy-diff.mjs`,至少一個成功、一個錯誤案例。冪等端點(簡報標示;沒標時 GET / PUT / DELETE 算冪等)用預設比對;非冪等端點(沒標時 POST 算非冪等)用 `--structure` 並在 `--data` 用 `{uniq}`。需要登入的端點帶 `--cookie-jar <tmp>/<name>/cookies.txt`。忽略的欄位寫在回報。會讓 session 失效的端點(登出、改密碼、刪帳號、撤銷 session;依意義判斷,不確定當成會失效,登入不算)每次用重新登入另存的 `cookies-se-<n>.txt`,不用 `cookies.txt`(刪帳號類用另建的拋棄式帳號);並發檢查時只有第一個成功,`--expect` 同時列成功與未登入狀態碼;`proxy-diff` 同時送兩邊、共用 session,其中一邊因 session 已被另一邊結束而回未登入錯誤時,另用兩個新登入的 jar 分別確認(2026-11-22 整個專案 review:並發檢查送 10 個登出會讓第 6 步截圖的 cookie 失效)。
   5b. 並發檢查:端點清單中每個寫入端點經前端轉發同時送 10 個請求(`concurrency.mjs`,`{uniq}` 只用在需唯一值的欄位),`ok` 必須為 true;5xx 附樣本與後端 log,通常歸後端。(使用者 2026-11-16 要求;起因是同日整合驗證發現兩個同時登入其中一個回 500)
-  6. 頁面檢查:頁面清單每頁 `shot.mjs` 桌面與手機各一張(要登入的頁面帶 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`redirected` false、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,Read 檢視。被導到登入頁一律是問題(會失效的端點都沒用 `cookies.txt`):重新登入再截一次,重截正常歸後端 session 問題,仍被導走依直連結果歸屬。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。
+  6. 頁面檢查:頁面清單每頁 `shot.mjs` 桌面與手機各一張(要登入的頁面帶 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`redirected` false、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,Read 檢視。本來就該轉址的頁(簡報標示)加 `--allow-redirect` 並檢查 `finalUrl` 是預期目的地;其餘被導到登入頁一律是問題(會失效的端點都沒用 `cookies.txt`):重新登入再截一次,重截正常歸後端 session 問題,仍被導走依直連結果歸屬。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。
   7. E2E:在前端目錄 `E2E_BASE_URL=<前端 url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e`,全部通過。失敗時 Read `<tmp>/<name>/e2e/` 裡的失敗截圖判斷原因。前端沒有 Playwright 或 `e2e/` → 「未執行:前端沒有 E2E」,判 ISSUES(歸前端)。
   8. 驗收情境對照:每個情境(編號 `<FEATURE>-S<n>`)找到以「編號 + 冒號」開頭的測試:E2E 看 `test:e2e` 的 list reporter 輸出;httptest 在後端目錄跑 `GOTOOLCHAIN=local go test ./... -run '/^[A-Z]+-S[0-9]+:' -v`,從 `--- PASS:` / `--- FAIL:` 行取子測試名稱(Go 把空白換成 `_`);元件在前端目錄跑 `node_modules/.bin/vitest run --reporter=verbose`。結果必須通過。這些指令輸出中和情境無關的測試失敗,也列入 ISSUES(依所在目錄歸前端或後端)。找不到對應測試 = 缺口,判 ISSUES(依層級歸前端或後端)。
   9. log:兩個 server.log 用區分大小寫的 `grep -E 'panic|Error|level=ERROR|⨯'`;能對應到第 5 步刻意錯誤案例的逐條列出說明,不算失敗,其餘算失敗。
@@ -87,7 +87,7 @@ ISSUES 時每個問題寫:歸屬、指令、實際輸出、應有輸出、判斷
 1. 開始與結束的 `git rev-parse HEAD` 都等於簡報 SHA,開始時工作目錄乾淨;回報附兩次結果。
 2. `contract-check` → `valid`,本次端點清單內的端點都不是 `planned`。
 3. 端點清單每項至少一個成功、一個錯誤案例,`proxy-diff.mjs` 的 `same` 為 true(非冪等用 `--structure`;忽略欄位有列出)。清單為「無」時寫「無,未執行」。
-3b. 寫入端點的並發檢查 `ok` 為 true,回報附 statuses。
+3b. 寫入端點的並發檢查 `ok` 為 true,而且 statuses 至少有一個成功狀態碼,回報附 statuses。
 4. 頁面清單每頁桌面與手機截圖皆 `http` 200、`redirected` false、`consoleErrors` 0、無橫向捲動,且已 Read 檢視;因需登入而未截的,指出覆蓋它的 E2E 測試。
 5. `test:e2e` 全部通過,回報附通過數;有失敗時附失敗截圖的檢視結果與歸屬。
 6. 每個驗收情境都對應到以其編號開頭、而且通過的測試;回報附對照表。缺測試算 ISSUES。
