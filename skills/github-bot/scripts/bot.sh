@@ -273,10 +273,11 @@ token_file() {
 # 用法:push_git <token 檔> <使用者> <git 子指令...>
 push_git() {
   local tf=$1 user=$2 bad rc sd; shift 2
-  # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄)
+  # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
+  # --type=path 先把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);空值 = 清除前面的項目(跟 git 一樣)
   local -a safe=()
-  while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
-    < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
+  while IFS= read -r sd; do if [[ -n $sd ]]; then safe+=(-c "safe.directory=$sd"); else safe=(); fi; done \
+    < <({ git config --system --includes --type=path --get-all safe.directory; git config --global --includes --type=path --get-all safe.directory; } 2>/dev/null || true)
   # HOME 換成空目錄:git 的 libcurl 會讀 ~/.netrc,裡面若有 github.com 會用個人憑證推送
   mkdir -p "$SCRATCH/home"
   # 推送用乾淨環境:不讀全域 / 系統設定,移除會注入設定、改 TLS / proxy / 除錯輸出的環境變數
