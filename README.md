@@ -11,6 +11,7 @@
 | `stack-react` | React 元件與 Vitest 測試規則 |
 | `stack-nextjs` | Next.js 16 前端規則與骨架(轉發、契約型別、Prism mock、Playwright) |
 | `stack-go` | Go 後端規則與骨架(路由表、OpenAPI 3.0.3 契約測試、goose migration) |
+| `github-bot` | 以機器人身分(GitHub App 或機器人帳號)commit、push 功能分支、開 PR,自己 code review 沒問題就以 review 過的 SHA 合併(只限沒有 CI 的 repo;不直接推 main) |
 | `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成、規格驗證(short-video-maker 使用) |
 
 ## Agents
@@ -81,3 +82,10 @@ ln -s "$(pwd)/skills/agent-forge" ~/.claude/skills/agent-forge   # 在倉庫根�
 - 直接改 `skills/agent-forge/` 底下的檔案。全域連結指向這個工作目錄,所以所有專案用的都是**目前切到的分支**,包含還沒合併的修改。
 - playbook、角色、範本在下一個任務就會讀到新版;改到 `SKILL.md` 本身或新增 skill,要開新對話。
 - 正式修改走分支 → PR → 合併進 `main`;平常使用時把倉庫留在 `main`。
+
+GitHub 機器人(`github-bot`,設定步驟見 `skills/github-bot/SKILL.md`):
+
+```bash
+ln -s "$(pwd)/skills/github-bot" ~/.claude/skills/github-bot
+bash skills/github-bot/tests/run.sh
+```
