@@ -23,18 +23,27 @@ REPO=""
 die() { echo "bot.sh: $*" >&2; exit 1; }
 need_val() { [[ $2 -ge 2 ]] || die "$1 後面要接值"; }   # need_val <旗標> <剩餘參數數>
 
+# 去掉前後空白與成對引號:  "~/x"  →  ~/x
+trim_val() {
+  local v=$1
+  v=${v%$'\r'}
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  [[ $v == \"*\" || $v == \'*\' ]] && v=${v:1:${#v}-2}
+  printf '%s' "$v"
+}
+
 load_conf() {
   local c_app="" c_key="" c_tok="" c_gh="" k v
   if [[ -f $CONF ]]; then
     while IFS='=' read -r k v; do
-      v=${v%$'\r'}
+      k=$(trim_val "$k"); v=$(trim_val "$v")
       case $k in
         APP_ID)     c_app=$v ;;
         KEY_FILE)   c_key=${v/#\~/$HOME} ;;
         TOKEN_FILE) c_tok=${v/#\~/$HOME} ;;
         GH_USER)    c_gh=$v ;;
       esac
-    done < <(grep -E '^(APP_ID|KEY_FILE|TOKEN_FILE|GH_USER)=' "$CONF" || true)
+    done < <(grep -E '^[[:space:]]*(APP_ID|KEY_FILE|TOKEN_FILE|GH_USER)[[:space:]]*=' "$CONF" || true)
   fi
   GH_USER="" TOKEN_FILE="" APP_ID="" KEY_FILE=""
   if   [[ -n ${GITHUB_BOT_GH_USER:-} ]];    then GH_USER=$GITHUB_BOT_GH_USER
@@ -69,33 +78,38 @@ jwt() {
   printf '%s.%s.%s' "$h" "$p" "$s"
 }
 
-# api <METHOD> <path> <bearer> [json body]  —— token 經 stdin 給 curl,不出現在 ps
+# api <METHOD> <path> <bearer> [json body]  —— token 經 stdin 給 curl,不出現在 ps;
+# 回應不落地(不寫暫存檔),中斷也不會留下含 token 的檔案
 api() {
-  local method=$1 path=$2 bearer=$3 body=${4:-} out code
+  local method=$1 path=$2 bearer=$3 body=${4:-} resp code
+  [[ -n $bearer ]] || die "內部錯誤:$method $path 沒有 token"
   local -a data=()
   [[ -z $body ]] || data=(-H 'Content-Type: application/json' --data-binary "$body")
-  out=$(mktemp)
-  code=$(
+  resp=$(
     {
       printf 'header = "Authorization: Bearer %s"\n' "$bearer"
       printf 'header = "Accept: application/vnd.github+json"\n'
       printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
-    } | curl -sS -K - -X "$method" -o "$out" -w '%{http_code}' \
+    } | curl -sS -K - -X "$method" -w '\n%{http_code}' \
           ${data[@]+"${data[@]}"} "$API$path"
-  ) || { rm -f "$out"; die "連不到 $API$path"; }
+  ) || die "連不到 $API$path"
+  code=${resp##*$'\n'}; resp=${resp%$'\n'*}
   if [[ $code != 2* ]]; then
     echo "bot.sh: $method $path → HTTP $code" >&2
-    jq -r '.message // empty, (.errors[]? | tostring)' "$out" >&2 2>/dev/null || cat "$out" >&2
-    rm -f "$out"; exit 1
+    jq -r '.message // empty, (.errors[]? | tostring)' <<<"$resp" >&2 2>/dev/null || printf '%s\n' "$resp" >&2
+    exit 1
   fi
-  cat "$out"; rm -f "$out"
+  printf '%s\n' "$resp"
 }
+
+# jfield <欄位> <json>:欄位缺或為 null 就失敗(避免 "null" 字串混過檢查)
+jfield() { jq -er "$1 // empty" <<<"$2" || die "API 回應缺 $1"; }
 
 # 把 GitHub 遠端網址轉成 owner/repo
 parse_repo() {
-  local url=$1
-  [[ $url =~ ^(https://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)github\.com[:/]([^/]+)/([^/]+)$ ]] || return 1
-  local r="${BASH_REMATCH[4]}/${BASH_REMATCH[5]%.git}"
+  local url=${1%/}
+  [[ $url =~ ^(https://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)(ssh\.)?github\.com(:[0-9]+)?[:/]([^/]+)/([^/]+)$ ]] || return 1
+  local r="${BASH_REMATCH[6]}/${BASH_REMATCH[7]%.git}"
   [[ $r =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
   printf '%s' "$r"
 }
@@ -124,26 +138,31 @@ token() {
   resolve_repo
   local j inst
   j=$(jwt)
-  inst=$(api GET "/repos/$REPO/installation" "$j" | jq -r .id) \
+  inst=$(api GET "/repos/$REPO/installation" "$j") \
     || die "App 沒有安裝在 $REPO(到 App 設定頁 Install App)"
-  api POST "/app/installations/$inst/access_tokens" "$j" \
-    "$(jq -nc --arg r "${REPO#*/}" '{repositories:[$r]}')" | jq -r .token
+  inst=$(jfield .id "$inst")
+  local r
+  r=$(api POST "/app/installations/$inst/access_tokens" "$j" \
+    "$(jq -nc --arg r "${REPO#*/}" '{repositories:[$r]}')")
+  jfield .token "$r"
 }
 
 identity() {
   load_conf
   if [[ $MODE == pat ]]; then
-    local u login uid
-    u=$(api GET /user "$(pat)")
-    login=$(jq -r .login <<<"$u"); uid=$(jq -r .id <<<"$u")
+    local u login uid p
+    p=$(pat)
+    u=$(api GET /user "$p")
+    login=$(jfield .login "$u"); uid=$(jfield .id "$u")
     [[ $uid =~ ^[0-9]+$ && -n $login ]] || die "PAT 查不到帳號資料"
     BOT_NAME=$login
     BOT_EMAIL="${uid}+${login}@users.noreply.github.com"
     return
   fi
-  local slug uid
-  slug=$(api GET /app "$(jwt)" | jq -r .slug)
-  uid=$(api GET "/users/${slug}%5Bbot%5D" "$(token)" | jq -r .id)
+  local slug uid j t
+  j=$(jwt); t=$(token)
+  slug=$(jfield .slug "$(api GET /app "$j")")
+  uid=$(jfield .id "$(api GET "/users/${slug}%5Bbot%5D" "$t")")
   [[ $uid =~ ^[0-9]+$ ]] || die "查不到 ${slug}[bot] 的 user id"
   BOT_NAME="${slug}[bot]"
   BOT_EMAIL="${uid}+${slug}[bot]@users.noreply.github.com"
@@ -151,7 +170,10 @@ identity() {
 
 cmd_commit() {
   identity
-  git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" commit "$@"
+  # GIT_AUTHOR_* / GIT_COMMITTER_* 會蓋過 -c user.*,四個都明確設成 bot
+  GIT_AUTHOR_NAME=$BOT_NAME GIT_AUTHOR_EMAIL=$BOT_EMAIL \
+  GIT_COMMITTER_NAME=$BOT_NAME GIT_COMMITTER_EMAIL=$BOT_EMAIL \
+    git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" commit "$@"
 }
 
 # 把 token 寫進 0600 暫存檔(TOKEN_TMP,全域變數,讓 EXIT trap 在函式外也看得到),結束時刪除
@@ -166,13 +188,16 @@ token_file() {
 # 停用 hooks、token 只放在 0600 暫存檔由 credential helper 讀,不放進子程序的環境變數。
 # 用法:push_git <token 檔> <使用者> <git 子指令...>
 push_git() {
-  local tf=$1 user=$2; shift 2
-  git config --local --get-regexp '^url\.' >/dev/null 2>&1 \
-    && die "repo 的 .git/config 有 url.*insteadOf 設定,可能改寫推送網址;請先移除"
-  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  local tf=$1 user=$2 bad; shift 2
+  # 跟真正推送同一組環境檢查(含 include / includeIf、GIT_CONFIG_COUNT 等環境注入)
+  bad=$(env -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        git config --includes --name-only --get-regexp '^(url\..*|http\..*extraheader)$' 2>/dev/null || true)
+  [[ -z $bad ]] || die "repo 設定有會改寫推送網址或附加認證的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
+  env -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   git -c credential.helper= \
       -c "credential.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
       -c core.hooksPath=/dev/null \
+      -c http.extraHeader= \
       -c user.name=bot -c user.email=bot@invalid \
       "$@"
 }
@@ -185,7 +210,7 @@ cmd_push() {
   local t user=x-access-token def
   t=$(token)
   [[ $MODE == pat ]] && { identity; user=$BOT_NAME; }
-  def=$(api GET "/repos/$REPO" "$t" | jq -r .default_branch)
+  def=$(jfield .default_branch "$(api GET "/repos/$REPO" "$t")")
   [[ $branch != "$def" ]] || die "不推預設分支 $def;請推功能分支再開 PR"
   token_file "$t"; unset t
   push_git "$TOKEN_TMP" "$user" push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
@@ -205,10 +230,12 @@ cmd_pr() {
   [[ -n $head && -n $title ]] || die "用法:bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]"
   resolve_repo
   local t; t=$(token)
-  [[ -n $base ]] || base=$(api GET "/repos/$REPO" "$t" | jq -r .default_branch)
-  api POST "/repos/$REPO/pulls" "$t" \
+  [[ -n $base ]] || base=$(jfield .default_branch "$(api GET "/repos/$REPO" "$t")")
+  local r
+  r=$(api POST "/repos/$REPO/pulls" "$t" \
     "$(jq -nc --arg h "$head" --arg b "$base" --arg t "$title" --arg d "$body" \
-        '{head:$h, base:$b, title:$t, body:$d}')" | jq -r .html_url
+        '{head:$h, base:$b, title:$t, body:$d}')")
+  jfield .html_url "$r"
 }
 
 cmd_merge() {
@@ -244,8 +271,10 @@ cmd_merge() {
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
-  api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
-    "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')" | jq -r .sha
+  local r
+  r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
+    "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')")
+  jfield .sha "$r"
 }
 
 [[ ${1:-} == --repo ]] && { need_val --repo $#; REPO=$2; shift 2; }

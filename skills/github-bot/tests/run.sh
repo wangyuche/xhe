@@ -43,6 +43,10 @@ check "evilgithub.com 拒絕" bash -c "! bash '$BOT' _parse git@evilgithub.com:o
 check "github.com.example 拒絕" bash -c "! bash '$BOT' _parse https://github.com.example/o/r"
 check "ssh:// 網址" [ "$(bash "$BOT" _parse ssh://git@github.com/a/b.git)" = a/b ]
 check "repo 名稱怪字元拒絕" bash -c "! bash '$BOT' _parse 'https://github.com/a/b?x'"
+check "ssh.github.com:443" [ "$(bash "$BOT" _parse ssh://git@ssh.github.com:443/a/b.git)" = a/b ]
+check "結尾斜線" [ "$(bash "$BOT" _parse https://github.com/a/b/)" = a/b ]
+printf 'APP_ID = "123456" \nKEY_FILE="%s"\n' "$TMP/key.pem" > "$TMP/config-quoted"
+check "設定值去引號與空白" bash -c "GITHUB_BOT_CONFIG='$TMP/config-quoted' bash '$BOT' _jwt >/dev/null"
 check "--repo 缺值不 crash" bash -c "bash '$BOT' --repo 2>&1 | grep -q '後面要接值'"
 check "--repo 格式錯誤拒絕" bash -c "! bash '$BOT' --repo 'bad repo' token 2>/dev/null"
 
@@ -94,10 +98,23 @@ check "token 暫存檔結束後刪除" [ -z "$(ls -A "$TMP/tt")" ]
 check "失敗時也刪除 token 暫存檔" [ -z "$(ls -A "$TMP/tt")" ]
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 git -C "$TMP/prepo" config url."git@github.com:".insteadOf https://github.com/
-check "repo 有 url.* 設定拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u ls-remote --get-url x 2>&1 | grep -q insteadOf"
+git -C "$TMP/prepo" config --unset url."git@github.com:".insteadOf
+check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]
+printf '[url "git@github.com:"]\n\tpushInsteadOf = https://github.com/\n' > "$TMP/prepo/.git/extra.cfg"
+git -C "$TMP/prepo" config include.path extra.cfg
+check "include 的 url.* 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
+git -C "$TMP/prepo" config --unset include.path
+git -C "$TMP/prepo" config http.https://github.com/.extraheader 'AUTHORIZATION: basic xxx'
+check "extraheader 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q extraheader"
+git -C "$TMP/prepo" config --unset http.https://github.com/.extraheader
+check "GIT_CONFIG_COUNT 注入無效" bash -c "cd '$TMP/prepo' && [ \"\$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.git@github.com:.insteadOf GIT_CONFIG_VALUE_0=https://github.com/ bash '$BOT' _pushgit t u ls-remote --get-url https://github.com/o/r.git)\" = https://github.com/o/r.git ]"
+git -C "$TMP/prepo" config url."git@github.com:".insteadOf https://github.com/
+check "repo 有 url.* 設定拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u ls-remote --get-url x 2>&1 | grep -q insteadof"
 
 # --- 模式選擇:環境變數蓋過設定檔 ---
 check "env TOKEN_FILE 蓋過設定檔 GH_USER" [ "$(env GITHUB_BOT_CONFIG="$TMP/config-gh0" GITHUB_BOT_TOKEN_FILE="$TMP/pat0" bash "$BOT" --repo o/r token)" = ghp_testpat ]
+
+check "default_branch 缺失時拒推" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/nodef push develop 2>&1 | grep -q '缺 .default_branch'"
 
 # --- commit 以 bot 身分 ---
 git init -q "$TMP/repo" && (
@@ -121,6 +138,10 @@ git init -q "$TMP/repo2" && (
   cd "$TMP/repo2" && echo hi > a && git add a &&
   env "$PAT_ENV" bash "$BOT" commit -q -m test
 ) >/dev/null 2>&1
+(cd "$TMP/repo2" && GIT_AUTHOR_NAME=Alice GIT_AUTHOR_EMAIL=a@x GIT_COMMITTER_NAME=Alice GIT_COMMITTER_EMAIL=a@x \
+   env "$PAT_ENV" bash "$BOT" commit -q --allow-empty -m env) >/dev/null 2>&1
+check "GIT_AUTHOR_* 環境變數蓋不過 bot" [ "$(git -C "$TMP/repo2" log -1 --format='%an|%cn')" = 'xhe-bot|xhe-bot' ]
+git -C "$TMP/repo2" reset -q --hard HEAD~1 2>/dev/null
 check "pat commit 作者是機器人帳號" [ "$(git -C "$TMP/repo2" log -1 --format='%an <%ae>')" = 'xhe-bot <777+xhe-bot@users.noreply.github.com>' ]
 
 # --- gh 模式(token 從 gh auth token --user 取)---

@@ -44,6 +44,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "unstable", "head": {"sha": "a" * 40}})
         if p == "/repos/o/r/pulls/10" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"state": "closed", "mergeable": None, "mergeable_state": "unknown", "head": {"sha": "a" * 40}})
+        if p == "/repos/o/nodef" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {})
         if p == "/repos/o/r" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"default_branch": "develop"})
         self.send(401, {"message": "bad request " + p})

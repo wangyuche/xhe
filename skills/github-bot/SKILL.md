@@ -13,7 +13,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
    - GitHub App name:例如 `xhe-bot`(commit 作者會顯示 `xhe-bot[bot]`)
    - Homepage URL:repo 網址即可
    - Webhook:取消勾選 **Active**
-   - Repository permissions:**Contents: Read and write**、**Pull requests: Read and write**(Metadata: Read 會自動帶入),其餘不要
+   - Repository permissions:**Contents: Read and write**、**Pull requests: Read and write**(Metadata: Read 會自動帶入),其餘不要(要讓 bot 改 `.github/workflows/` 才另加 **Workflows: Read and write**,否則推送或合併含 workflow 檔的變更會被 GitHub 拒絕)
    - Where can this GitHub App be installed:**Only on this account**
 2. 建好後記下頁面上的 **App ID**,往下按 **Generate a private key**,下載 `.pem`。
 3. 左側 **Install App** → 選帳號 → **Only select repositories** → 勾要讓 bot 操作的 repo。
@@ -33,7 +33,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
 不建 App,改用另一個 GitHub 帳號當機器人(commit 作者顯示該帳號名稱,沒有 `[bot]`):
 
 1. 用主帳號到 repo → Settings → Collaborators → 邀請機器人帳號(Write 權限),再登入機器人帳號接受邀請。
-2. 機器人帳號產生 **classic** PAT(Settings → Developer settings → Tokens (classic)),scope 勾 `public_repo`(private repo 要勾 `repo`),設到期日。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
+2. 機器人帳號產生 **classic** PAT(放進 gh 的話 gh 要求至少 `repo`、`read:org`、`workflow`)(Settings → Developer settings → Tokens (classic)),scope 勾 `public_repo`(private repo 要勾 `repo`),設到期日。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
 3. **建議:token 放 gh(macOS 鑰匙圈,磁碟上沒有明文)**。gh 可同時登入多個帳號,不必切換,bot 用 `gh auth token --user` 取機器人的 token,gh 平常仍停在主帳號:
 
    ```bash
