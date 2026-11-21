@@ -13,7 +13,7 @@ skills:
 `<kit>` = web-dev-kit skill 目錄,`<go>` = stack-go skill 目錄,`<tmp>` = `${WEB_DEV_KIT_TMP:-$TMPDIR/web-dev-kit}`。go 指令都帶 `GOTOOLCHAIN=local`。
 
 ## 輸入(派工簡報)
-- 必要:整合 worktree 路徑、head SHA、驗收情境清單(編號 `<PREFIX>-S<n>`,含層級)、頁面清單(可為「無」;動態路由附範例網址或 seed 對應)、端點清單(可為「無」;方法 + 路徑 + 一個成功與一個錯誤的請求範例,可標冪等 / 非冪等)。
+- 必要:整合 worktree 路徑、head SHA、驗收情境清單(編號 `<PREFIX>-S<n>`,含層級)、頁面清單(可為「無」;動態路由附範例網址或 seed 對應)、端點清單(可為「無」;方法 + 路徑 + 一個成功與一個錯誤的請求範例,可標冪等 / 非冪等、經前端轉發與否。通常直接是 backend-owner 僅契約模式產出的「端點驗證表」)。
 - 選填(預設):任務名稱 `<name>`(`integration-verifier-<專案名>`)、前端目錄(`frontend/`)、後端目錄(`backend/`)、契約(`api/openapi.yaml`)、資料庫(SQLite / PostgreSQL)、seed 請求清單、比對時要忽略的欄位。
 - `<pm>` 依前端 lockfile 決定(npm / pnpm / yarn / bun)。
 
@@ -34,10 +34,11 @@ skills:
 4. **資料準備**:依 seed 請求用 curl 直連後端(只打本機);需要登入時 `-c <tmp>/<name>/cookies.txt` 存 session cookie;記下回傳的 id 組出動態路由網址。
 5. **轉發檢查**:端點清單每項至少一個成功、一個錯誤案例:
    `node <kit>/scripts/proxy-diff.mjs <前端url> <後端url> <方法> <路徑> [--data …] [--cookie-jar <tmp>/<name>/cookies.txt] [--ignore …]`
+   標「經前端轉發:否」的端點(例如 `/healthz`)只驗直連,不列入比對;沒標時路徑不在前端轉發前綴(預設 `/api/`)下的也一樣。
    冪等端點(簡報標示;沒標時 GET / PUT / DELETE)用預設比對;非冪等(沒標時 POST)加 `--structure`。`{uniq}` 只用在需要唯一值的欄位(例如註冊的 email);登入這類要用既有帳號的請求不放 `{uniq}`。忽略的欄位寫在回報。
 5b. **並發檢查**(使用者 2026-11-16 要求):端點清單中每個會寫入資料的端點(POST / PUT / PATCH / DELETE),經前端轉發同時送 10 個請求:
    `node <kit>/scripts/concurrency.mjs <前端url> <方法> <路徑> -n 10 --data <成功案例 body> [--cookie-jar <tmp>/<name>/cookies.txt] [--expect <成功狀態碼>]`
-   需要唯一值的欄位用 `{uniq}`(例如註冊 email);用既有帳號的請求(例如登入)不放 `{uniq}`。`ok` 必須是 true;有 5xx 時附回應樣本與後端 log 中對應的錯誤行,通常歸後端。
+   需要唯一值的欄位用 `{uniq}`(例如註冊 email);用既有帳號的請求(例如登入)不放 `{uniq}`。驗收情境有類型 `並發` 的,另照情境的 Given / When 實跑一次,以情境 Then 的條件(狀態碼分佈、不變量)判定;簡報另給的判定標準和情境 Then 衝突時,回報衝突並以情境為準。`ok` 必須是 true;有 5xx 時附回應樣本與後端 log 中對應的錯誤行,通常歸後端。
 6. **頁面檢查**:頁面清單每頁 `node <kit>/scripts/shot.mjs <url> 1280 800 <png>` 與 `… 390 844 <png> --mobile`(要登入的加 `--cookie-jar <tmp>/<name>/cookies.txt`);`http` 200、`consoleErrors` 0、`scrollWidth` ≤ `innerWidth`,並用 Read 看圖。無法取得登入狀態時寫「未截圖:需登入,由 E2E `<測試名>` 覆蓋」。頁面清單為「無」時寫「無,未執行」。
 7. **E2E**:在前端目錄 `E2E_BASE_URL=<前端url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e`,全部通過。失敗時 Read `<tmp>/<name>/e2e/` 裡的失敗截圖判斷原因。前端沒有 Playwright 或 `e2e/` → 「未執行:前端沒有 E2E」,判 ISSUES(歸前端)。
 8. **驗收情境對照**:每個情境找到以「編號 + 冒號」開頭且通過的測試:

@@ -17,6 +17,7 @@
   2. 簡報 SHA 用 `git rev-parse --verify <SHA>^{commit}` 轉成完整 SHA 後等於 `git rev-parse HEAD`,且 `git status --porcelain` 為空;否則 BLOCKED。記下這兩個結果。
   3. `node -v` ≥ 24.18;`go version` ≥ `stack-go` 最低版本且 ≥ `go.mod` 的 `go` 指示。
   4. `scope.sh snapshot <name>`。
+- **端點清單與並發判定**(2026-11-21 新增):端點清單通常是 backend-owner 的端點驗證表;標「經前端轉發:否」(或不在 `/api/` 下)的只驗直連。`並發` 類型情境依情境 Then 判定;簡報另給的標準和情境衝突時回報衝突、以情境為準。
 - **驗證順序**(某步失敗後,繼續跑不依賴它的步驟,最後把所有問題一起列出;依賴失敗步驟的寫「未執行:<原因>」):
   1. 契約:`contract-check.sh <name> <契約>` → `valid`;列出仍為 `x-status: planned` 的 operation(本次端點清單內的不能是 planned)。
   2. 後端:`GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server`;讀 `<後端目錄>/.env.example`,除了 `PORT`(由 `serve.sh` 設定)以外的每個變數用其 `dev-` 假值傳 `--env`,`DATABASE_URL` 用暫存值 `file:<tmp>/<name>/it.db?_pragma=foreign_keys(1)` 覆蓋(PostgreSQL 時先 `pg.sh up <專案名>`)→ `serve.sh <name>-be <後端目錄> 8080 --health /healthz --env … -- <tmp>/<name>/server`。

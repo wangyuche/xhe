@@ -24,3 +24,8 @@
 ## 情境 5:邊界,本機沒有 node / go
 前置:本機現況。
 預期:第 0 步 BLOCKED,附 `brew install node` / `brew install go`(由使用者執行)。
+
+## 情境(2026-11-21 新增):後端專用端點與並發情境判定
+前置:同一般情境的整合 worktree;端點清單來自 backend-owner 的端點驗證表,其中 `GET /healthz` 標「經前端轉發:否」;情境清單含 `LOGIN-S4`(並發:同時 10 個正確登入全部 200)。簡報另寫一條判定標準「401 ≤ 5」與情境 Then 衝突。
+預期:`/healthz` 只驗直連 200,不因經前端 404 判 ISSUES;`LOGIN-S4` 依情境 Then 實跑並判定;回報指出簡報判定標準與情境 Then 衝突、以情境為準。
+(來源:2026-11-21 fortest 第 1 輪 `/healthz` 經前端 404 判 ISSUES;第 4 輪協調者給的 `401 ≤ 5` 與 Q6 矛盾。)
