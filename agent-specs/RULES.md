@@ -48,6 +48,58 @@
 | 旁白模式的橫式錄影鏡頭置頂、不裁左右;用 `region` 逐鏡頭放大，放大後會壓到字幕區就結束碼 6 | 結構(compose.mjs 置頂 + `region`)+ 測試(kit tests 7b:第二版設定 → 結束碼 6;UI 下緣 ≤ 1280、字幕區是底色) | 2026-11-18 craft-anything 第二版整支 `fit: crop`,右側欄與函式名稱被切。原規則「逐張確認…沒有被裁切」只是文字，錯誤仍發生，依 improve.md 視為重複，升級 |
 | 每個鏡頭的中點與結尾都要擷圖並看過;講到的元素被切或被字幕蓋住要重做，不能寫進已知限制就判 PASS | 檢查(verify.sh `--scenes` 必填、鏡頭表要涵蓋整支)+ 測試(kit tests 7)+ 文字(附失敗範例) | 同上;第二版 25/50/75% 擷圖漏看鏡頭，agent 看到裁切仍回 PASS |
 
+## acceptance-designer
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 第 11 個固定面向「並發與資源成長」:每個寫入端點都有結論;有次數限制時「擋」與「放」兩條 `並發` 情境;會累積的表要有清理情境;整數極大值 → 400 | 結構(面向表必填、類型 `並發`)+ 成功標準 1 + 測試(tests 情境 5,2026-11-21 實跑通過)+ 文字(附失敗範例) | 2026-11-21 fortest 登入 + RBAC:第一版 30 條情境沒有並發,4 輪 code review 才補出 8 項 |
+
+## backend-owner
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 有 `並發` 情境或涉及先檢查再寫入、計數 / 鎖定、不變量、會累積的表 → 先讀 `stack-go/references/concurrency.md`;並發測試用 Hook 做確定性交錯、附反向驗證、擋與放都測 | 成功標準 11 + 測試(tests 情境 6,待實跑)+ 文字(reference 附失敗範例) | 2026-11-21 fortest:並發猜密碼、互相降級、交易內重驗、清理死結等,4 輪 review 共 6 次 |
+| 修正模式:每個修正補「不該被擋的正向路徑」測試,受影響寫入端點重跑 `concurrency.mjs` | 成功標準 11 + 文字(附失敗範例) | 2026-11-21 fortest:第 2 輪「預約額度」讓並發正確登入收到 423;同輪交易內清理造成第 3 輪死結(修正帶出回歸 2 次) |
+| 僅契約模式回報附「端點驗證表」(成功 / 錯誤範例、冪等、經前端轉發) | 成功標準 12 + 測試(tests 情境 7,待實跑) | 2026-11-21 integration-verifier 因簡報缺端點範例 BLOCKED;`/healthz` 被列入轉發比對 |
+| 簡報有沒編號的需求 → BLOCKED | 第 0 步 + 測試(tests 情境 8,待實跑) | 2026-11-21 前端自訂 `RBAC-Q8-UI:`,verifier BLOCKED |
+| Go 模組名取主 repo 目錄名,不是 worktree 目錄名 | 結構(`new-backend.sh` 從 git common dir 推專案名)+ 檢查(stack-go tests) | 2026-11-21 worktree 裡得到 `example.com/backend/backend`,主 agent 手動改名 |
+
+## frontend-owner(2026-11-21 追加)
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 列表直接修改資料 / `並發` 元件情境 → 先讀 `stack-react/references/optimistic-updates.md`,5 條各有測試 | 成功標準 11a + 測試(tests 情境 9,待實跑)+ 文字(附失敗範例) | 2026-11-21 fortest 使用者列表:確認框重複送出、整列快照覆蓋、403 未重新取得權限、重新載入覆蓋新值,4 輪 review 每輪都有 |
+| 簡報有沒編號的需求 → BLOCKED | 第 0 步 + 測試(tests 情境 10,待實跑) | 同 backend-owner |
+
+## integration-verifier
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 標「經前端轉發:否」或不在 `/api/` 下的端點只驗直連 | 工作流程第 5 步 + 測試(tests 新情境,待實跑) | 2026-11-21 fortest 第 1 輪 `/healthz` 經前端 404 判 ISSUES |
+| `並發` 情境依情境 Then 判定;簡報標準衝突時回報、以情境為準 | 工作流程第 5b 步 + 測試(同上) | 2026-11-21 協調者寫的並發判定兩次錯(A2/B2 觸發不了 409、`401 ≤ 5` 與 Q6 矛盾) |
+
+## 協調者(多 agent 網站開發)
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 派工前逐條對照決策表:每條決策對應情境編號並出現在某 owner 簡報;判定標準引用情境 Then 或 owner 產出的表 | 文字(agent-forge `multi-agent.md` 派工第 8 條,附失敗範例);由 owner 的「沒編號 → BLOCKED」與 verifier 的「缺範例 → BLOCKED」兩道檢查兜底 | 2026-11-21 fortest:漏 Q8、追加需求沒編號、缺端點範例、並發標準寫錯 2 次 |
+
+## gitlab-bot
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| GitLab API 回應先以 python 寬鬆解析(JSON 字串內可能有未跳脫控制字元)再交給 jq | 結構(`bot.sh` `api()`)+ 測試(tests 控制字元情境,含反向驗證) | 2026-11-21 MR !1 查詢時 jq `Invalid string: control characters` |
+| merge 前觸發 `with_merge_status_recheck`,`unchecked` / `checking` 時輪詢最多 60 秒 | 結構(`bot.sh merge`)+ 測試(含反向驗證) | 2026-11-21 MR !1 第一次 merge 因 `unchecked` 被拒 |
+| token 需要 `api` + `write_repository`;`identity` / `project` 檢查 scope,缺少時結束碼 3 | 結構(`bot.sh`)+ 測試 + SKILL.md | 2026-11-21 token 只有 `read_api`,開 MR 403 `insufficient_scope` |
+| 查詢 `.gitlab-ci.yml` 只有 404 算「沒有 CI」,其他失敗拒絕合併 | 結構(`bot.sh ci_file_at`)+ 測試(MR !10 回 500,含反向驗證) | 2026-11-21 寫 gitlab-bot 測試時發現:401 / 500 會被當成沒有 CI 而自動合併 |
+
+## 網站骨架(web-dev-kit / stack-go / stack-nextjs)
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 本機開發一律 Docker:骨架內建 Dockerfile 與執行時 `/api` 轉發;compose 只透過 `web-dev-kit/scripts/compose.sh`(必帶 `-p`,不刪 volume) | 結構(骨架、`compose.sh`)+ 測試(kit tests) | 使用者 2026-11-21 指示「本機開發都用 docker」;當次 backend-owner 規則只允許 `pg.sh`,compose build 只能由主 agent 跑 |
+| integration-verifier 用 standalone `server.js` 啟動前端 | 結構(骨架 `start` 腳本)+ 工作流程第 3 步 | 2026-11-21 fortest 每輪驗證都出現 `"next start" does not work with "output: standalone"` 警告 |
+
 ## 待辦(暫緩)
 
 只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。
@@ -62,3 +114,5 @@
 | short-video-maker 字幕蓋住內容(非置頂鏡頭) | 2026-11-18 craft-anything 第二版字幕蓋住 Add a brain 卡片。置頂鏡頭已由結構避免;直式鏡頭(網頁錄影、原聲模式)仍可能發生 | 再發生時,verify.sh 對直式鏡頭比對字幕框區域在有 / 無字幕時的畫面差異,或 record-web 預留字幕區 |
 | short-video-maker 沙盒錄影(Docker + Xvfb,桌面 App / 不信任的 repo) | 2026-11-18 主 agent 手動完成:先建只含系統工具的映像檔(`--cap-drop ALL` 下 apt 會失敗),再以 uid 1000、`--cap-drop ALL`、`no-new-privileges`、不掛載、只開 127.0.0.1 埠執行;用官方預編版本不編譯;egui App 收不到 `xdotool type`、檔案對話框打不開 → 改用點擊與啟動參數帶路徑;錄完刪容器與映像檔 | 再有使用者要求時,把流程做成 kit 腳本(`sandbox-record.sh`)與新模式,加測試 |
 | short-video-maker 旁白事實簡化失真 | 2026-11-18 craft-anything 第一版把 MIT / Apache-2.0 雙授權念成「MIT 授權」,沒提 early alpha(agent 自己列在已知限制) | 再發生時,在 repo 模式第 2 步加「授權、版本狀態照 README / LICENSE 原文,不簡化」並在 script.md 附來源 |
+| integration-verifier:非 `/api/` 端點自動只驗直連(不靠簡報標示) | 2026-11-21 `/healthz`(1 次,且是協調者簡報錯誤;已由端點驗證表的「經前端轉發」欄涵蓋) | 再發生時,verifier 第 5 步改為讀前端 `proxy.ts` 的 matcher 自動判定 |
+| 協調者沒先 build 就跑 `tsc`(`LayoutProps` 找不到) | 2026-11-21 主 agent 在新 checkout 直接 `tsc --noEmit`;frontend-owner 已有「build 之後才跑 tsc」規則 | 再發生時,骨架 `typecheck` 腳本改為 `next typegen && tsc --noEmit` |

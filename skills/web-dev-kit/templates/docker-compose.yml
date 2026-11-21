@@ -1,0 +1,53 @@
+# 本機開發用 compose 範例(stack-go 後端 + stack-nextjs 前端 + PostgreSQL)。放在專案根目錄。
+# 啟動:bash <kit>/scripts/compose.sh up -p dev-<專案名> --build   → url=http://localhost:3000 …
+# 帳密都是 dev 假值,可用環境變數或根目錄 .env 覆寫(不要提交真實值)。
+# 只有 frontend 對外,而且只綁 127.0.0.1;瀏覽器打 /api/* 由前端同源轉發到 http://backend:8080。
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      # POSTGRES_USER / POSTGRES_PASSWORD 直接放進 URL:用 .env 覆寫時只用 URL 安全字元(英數、- _ .)
+      DATABASE_URL: postgres://${POSTGRES_USER:-dev}:${POSTGRES_PASSWORD:-devpass}@db:5432/${POSTGRES_DB:-app}?sslmode=disable
+      CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
+    healthcheck:
+      # distroless 映像沒有 shell / curl:用伺服器自己的 healthcheck 子命令打 /healthz
+      test: ["CMD", "/server", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    expose:
+      - "8080"            # 只在 compose 網路內,不對外開埠
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: http://backend:8080   # 執行時由 src/proxy.ts 讀取,換後端不用重 build
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  db-data:

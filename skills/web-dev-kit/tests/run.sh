@@ -148,6 +148,110 @@ else
   skip "cookiejar / proxy-diff / shot:沒有 node"
 fi
 
+# ---------- compose(離線:用 PATH 上的假 docker,不碰真的 Docker)----------
+FAKE="$WORK/fakebin"; FD="$WORK/fakedocker"; mkdir -p "$FAKE" "$FD"
+cat > "$FAKE/docker" <<'SH'
+#!/bin/bash
+# 假 docker:記錄呼叫;行為由 $FD 下的檔案決定
+FD="${FAKE_DOCKER_DIR:?}"
+echo "$*" >> "$FD/calls"
+[ "${1:-}" = info ] && { [ -f "$FD/info-fail" ] && exit 1; exit 0; }
+[ "${1:-}" = compose ] || exit 0
+shift
+[ "${1:-}" = version ] && { echo "Docker Compose version v9-fake"; exit 0; }
+while [ $# -gt 0 ]; do case "$1" in -p|-f) shift 2 ;; *) break ;; esac; done
+case "$1" in
+  config) cat "$FD/config.json" ;;
+  up) [ -f "$FD/up-fail" ] && exit 1; touch "$FD/started"; exit 0 ;;
+  port) [ -f "$FD/started" ] && [ -f "$FD/port.$2.$3" ] && cat "$FD/port.$2.$3"; exit 0 ;;
+  ps)
+    if [ "${3:-}" = --format ]; then
+      n="$(cat "$FD/ps-n" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$FD/ps-n"
+      while [ ! -f "$FD/ps.$n" ] && [ "$n" -gt 1 ]; do n=$((n - 1)); done
+      cat "$FD/ps.$n" 2>/dev/null
+    else echo "FAKE-PS-TABLE"; fi ;;
+  logs) echo "FAKE-LOGS $*" ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$FAKE/docker"
+export FAKE_DOCKER_DIR="$FD"
+fake_reset() { rm -f "$FD"/*; echo '{"services":{"frontend":{"ports":[{"host_ip":"127.0.0.1","target":3000,"published":"'"${1:-3999}"'"}]},"backend":{}}}' > "$FD/config.json"; }
+C="$S/compose.sh"
+CP="$WORK/cproj/myshop"; mkdir -p "$CP"
+printf 'services:\n  frontend:\n    ports: ["127.0.0.1:${WEB_PORT:-%s}:3000"]\n' 3999 > "$CP/compose.yaml"
+fc() { ( cd "$CP" && PATH="$FAKE:$PATH" COMPOSE_SH_POLL=0.2 bash "$C" "$@" ); }
+
+fake_reset
+out="$(fc up 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "缺少 -p" && [ ! -f "$FD/calls" ] && ok "compose:缺 -p 拒絕(不呼叫 docker)" || bad "compose:缺 -p" "rc=$rc $out"
+out="$(fc up -p Bad_Name 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "小寫英文" && ok "compose:專案名格式檢查" || bad "compose:名稱格式" "rc=$rc $out"
+out="$(fc start -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "未知子命令" && ok "compose:未知子命令" || bad "compose:子命令" "rc=$rc $out"
+out="$(fc logs -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "logs -p" && ok "compose:logs 缺服務名" || bad "compose:logs 參數" "rc=$rc $out"
+out="$(fc down -p kit-x --build 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "只用在 up" && ok "compose:選項不屬於子命令時拒絕" || bad "compose:選項" "rc=$rc $out"
+out="$(fc up -p myshop 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "預設專案名" && [ ! -f "$FD/calls" ] && ok "compose:拒絕目錄預設專案名" || bad "compose:預設名" "rc=$rc $out"
+out="$(cd "$CP" && COMPOSE_PROJECT_NAME=other-proj PATH="$FAKE:$PATH" bash "$C" down -p other-proj 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "預設專案名" && ok "compose:拒絕 COMPOSE_PROJECT_NAME" || bad "compose:COMPOSE_PROJECT_NAME" "rc=$rc $out"
+printf 'export COMPOSE_PROJECT_NAME="envproj"  # 使用者的\n' > "$CP/.env"
+out="$(cd "$CP" && PATH="$FAKE:$PATH" bash "$C" down -p envproj --volumes 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "預設專案名" && ok "compose:拒絕 .env 裡的 COMPOSE_PROJECT_NAME" || bad "compose:.env 專案名" "rc=$rc $out"
+rm -f "$CP/.env"
+out="$(fc down -p myshop --allow-default 2>&1)"; rc=$?
+[ $rc -eq 0 ] && grep -q -- "-p myshop" "$FD/calls" && ok "compose:--allow-default 放行" || bad "compose:--allow-default" "rc=$rc $out"
+
+fake_reset; touch "$FD/info-fail"
+out="$(fc ps -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 3 ] && echo "$out" | grep -q "Docker 沒有在執行" && ok "compose:Docker 沒開結束碼 3" || bad "compose:Docker 沒開" "rc=$rc $out"
+NODOCKER="$WORK/nodocker"; mkdir -p "$NODOCKER"; for t in bash sed grep tr basename dirname head lsof; do ln -sf "$(command -v $t)" "$NODOCKER/$t"; done
+out="$(cd "$CP" && PATH="$NODOCKER" bash "$C" ps -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 3 ] && echo "$out" | grep -q "找不到 docker" && ok "compose:沒有 docker 指令結束碼 3" || bad "compose:沒有 docker" "rc=$rc $out"
+
+# up:starting → healthy,印 url;down 預設保留 volume
+fake_reset
+printf 'db|running|starting|0\nbackend|created||0\nfrontend|created||0\n' > "$FD/ps.1"
+printf 'db|running|healthy|0\nbackend|running|healthy|0\nmigrate|exited||0\nfrontend|running|healthy|0\n' > "$FD/ps.3"
+echo "127.0.0.1:3999" > "$FD/port.frontend.3000"
+out="$(fc up -p kit-x 2>&1)"; rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q "^url=http://localhost:3999 port=3999 service=frontend$" && echo "$out" | grep -q "^up project=kit-x" \
+   && grep -q -- "-p kit-x -f $CP/compose.yaml up -d$" "$FD/calls"; then ok "compose:up -d、等到 healthy、印 url/port"; else bad "compose:up" "rc=$rc $out"; fi
+fc down -p kit-x >/dev/null 2>&1
+grep -E -- "-p kit-x .*down$" "$FD/calls" >/dev/null && ok "compose:down 預設不刪 volume" || bad "compose:down" "$(tail -1 "$FD/calls")"
+printf 'services: {}\n' > "$CP/compose.override.yaml"; fake_reset
+out="$(fc ps -p kit-x 2>&1)"; grep -q -- "-f $CP/compose.yaml -f $CP/compose.override.yaml" "$FD/calls" && ok "compose:自動找到的檔案也帶上 compose.override.yaml" || bad "compose:override" "$(cat "$FD/calls")"
+rm -f "$CP/compose.override.yaml"
+out="$(fc down -p kit-x --volumes --images 2>&1)"
+grep -E -- "down --volumes --rmi local$" "$FD/calls" >/dev/null && echo "$out" | grep -q "volumes=removed" && ok "compose:down --volumes --images" || bad "compose:down --volumes" "$out"
+
+fake_reset; printf 'db|running|starting|0\n' > "$FD/ps.1"
+out="$(fc up -p kit-x --timeout 1 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "沒有全部就緒" && echo "$out" | grep -q "FAKE-PS-TABLE" && echo "$out" | grep -q "FAKE-LOGS" && ok "compose:逾時結束碼 1 並印 ps 與 log" || bad "compose:逾時" "rc=$rc $out"
+fake_reset; printf 'db|running|healthy|0\nbackend|running|unhealthy|0\n' > "$FD/ps.1"
+out="$(fc up -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "backend(unhealthy)" && ok "compose:unhealthy 立即失敗" || bad "compose:unhealthy" "rc=$rc $out"
+fake_reset; printf 'backend|exited||2\n' > "$FD/ps.1"
+out="$(fc up -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "backend(exited,exit=2)" && ok "compose:容器非 0 結束時失敗" || bad "compose:exited" "rc=$rc $out"
+
+# 對外埠被占用:結束碼 4、建議換埠變數、不呼叫 up
+PB="$(free_port)"
+bash "$S/serve.sh" t-busy "$WORK" "$PB" -- python3 -m http.server '{port}' --bind 127.0.0.1 >/dev/null
+printf 'services:\n  frontend:\n    ports: ["127.0.0.1:${WEB_PORT:-%s}:3000"]\n' "$PB" > "$CP/compose.yaml"
+fake_reset "$PB"
+out="$(fc up -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$out" | grep -q "$PB 已被占用" && echo "$out" | grep -q "WEB_PORT=" && ! grep -q " up " "$FD/calls" && ok "compose:埠被占用結束碼 4、建議 WEB_PORT、不 up" || bad "compose:埠被占用" "rc=$rc $out"
+# 寫死主機埠(沒有 ${VAR:-埠})被占用:仍結束碼 4 並說明,不能因 pipefail 無訊息結束
+printf 'services:\n  frontend:\n    ports: ["127.0.0.1:%s:3000"]\n' "$PB" > "$CP/compose.yaml"
+fake_reset "$PB"
+out="$(fc up -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$out" | grep -q "$PB 已被占用" && ! grep -q " up " "$FD/calls" && ok "compose:寫死的埠被占用也結束碼 4 並說明" || bad "compose:寫死埠被占用" "rc=$rc $out"
+printf 'services:\n  frontend:\n    ports: ["127.0.0.1:${WEB_PORT:-%s}:3000"]\n' 3999 > "$CP/compose.yaml"
+bash "$S/stop.sh" t-busy >/dev/null
+
 # ---------- pg ----------
 if [ "${WEB_DEV_KIT_TEST_PG:-0}" = "1" ] && docker info >/dev/null 2>&1; then
   HAD_IMAGE=0; docker image inspect postgres:17 >/dev/null 2>&1 && HAD_IMAGE=1

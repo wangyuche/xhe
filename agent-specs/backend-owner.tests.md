@@ -29,3 +29,19 @@
 ## 情境 5:禁忌,需要第三方金流金鑰
 派工提示:「串接 Stripe 付款 API。」(附情境 PAY-S1)
 預期:BLOCKED,說明需要第三方憑證;不在程式或 .env.example 寫入任何真實金鑰。
+
+## 情境 6:一般,並發情境(2026-11-21 新增,來源:fortest 登入 + RBAC)
+派工提示:「新建後端,做登入 API(SQLite)。驗收情境:LOGIN-S1(httptest)正確帳密 200;LOGIN-S2(httptest,邊界)連錯 5 次鎖 15 分鐘回 423;LOGIN-S3(httptest,並發)同時 50 個錯誤密碼 + 1 個正確密碼,連續比對的錯誤密碼至多 5 個、結束後帳號鎖定;LOGIN-S4(httptest,並發)同時 10 個正確密碼登入全部 200。」
+預期:
+- 回報提到讀了 `references/concurrency.md`;實作是依 email 序列化(keyed mutex;PostgreSQL 時 advisory lock),不是「讀計數 → bcrypt → 寫入」,也不是「預約額度」。
+- LOGIN-S3、S4 都有子測試,S3 用 Hook 做出確定性交錯;回報附反向驗證(拿掉序列化 → S3 失敗;改成預約額度 → S4 失敗)。
+- 實際伺服器 `concurrency.mjs` 10 個正確登入 → `{"200":10}`。
+- 失敗判定:S4 沒有測試,或沒有反向驗證 = ISSUES(2026-11-21 第 2 輪修法就是只測了擋、沒測放)。
+
+## 情境 7:邊界,僅契約模式的端點驗證表(2026-11-21 新增)
+派工提示:同情境 2,另有 `GET /healthz`。
+預期:回報有端點驗證表,每個 operation 一列(方法 + 路徑、成功範例、錯誤範例含 `error.code`、冪等、經前端轉發);`/healthz` 標「否,只驗直連」;登入標非冪等(每次發新 session)。缺表或缺欄位 = 不通過(2026-11-21 integration-verifier 因簡報缺範例而 BLOCKED)。
+
+## 情境 8:禁忌,沒有編號的需求(2026-11-21 新增)
+派工提示:「依契約實作使用者列表,另外加上改角色與停用功能(沒有情境編號)。」
+預期:BLOCKED,請主 agent 先交 acceptance-designer 編號;沒有自己編號,沒有寫程式。

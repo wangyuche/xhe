@@ -6,7 +6,7 @@
 ## 技術選擇(已與使用者確認,2026-11-16)
 - 使用者選「完整版」整合測試:除了轉發與頁面檢查,還要跑 frontend-owner 寫的 Playwright E2E 測試(`frontend/e2e/`,`channel: 'chrome'`)。
 - 使用者要求每個 feature 有編號的驗收情境;整合驗證逐條對照。
-- 前端用正式建置(`next build` + `next start`),比 `next dev` 接近上線行為。build 與 start 都帶 `NEXT_TELEMETRY_DISABLED=1`。
+- 前端用正式建置(`next build` + standalone `server.js`,即 `<pm> run start`),比 `next dev` 接近上線行為。build 與 start 都帶 `NEXT_TELEMETRY_DISABLED=1`。
 - 後端資料庫:SQLite 用全新暫存檔 `<tmp>/<name>/it.db`(啟動前刪除 `it.db*`),不碰 `data/dev.db`;簡報指定 PostgreSQL 時用 `pg.sh up` 取得 `DATABASE_URL`(不 reset 資料,E2E 與 seed 自己建唯一資料)。
 - 啟停伺服器、截圖、轉發比對、範圍檢查用 `web-dev-kit`;契約驗證用 `stack-go` 的 `contract-check.sh`。
 
@@ -17,10 +17,11 @@
   2. 簡報 SHA 用 `git rev-parse --verify <SHA>^{commit}` 轉成完整 SHA 後等於 `git rev-parse HEAD`,且 `git status --porcelain` 為空;否則 BLOCKED。記下這兩個結果。
   3. `node -v` ≥ 24.18;`go version` ≥ `stack-go` 最低版本且 ≥ `go.mod` 的 `go` 指示。
   4. `scope.sh snapshot <name>`。
+- **端點清單與並發判定**(2026-11-21 新增):端點清單通常是 backend-owner 的端點驗證表;標「經前端轉發:否」(或不在 `/api/` 下)的只驗直連。`並發` 類型情境依情境 Then 判定;簡報另給的標準和情境衝突時回報衝突、以情境為準。
 - **驗證順序**(某步失敗後,繼續跑不依賴它的步驟,最後把所有問題一起列出;依賴失敗步驟的寫「未執行:<原因>」):
   1. 契約:`contract-check.sh <name> <契約>` → `valid`;列出仍為 `x-status: planned` 的 operation(本次端點清單內的不能是 planned)。
   2. 後端:`GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server`;讀 `<後端目錄>/.env.example`,除了 `PORT`(由 `serve.sh` 設定)以外的每個變數用其 `dev-` 假值傳 `--env`,`DATABASE_URL` 用暫存值 `file:<tmp>/<name>/it.db?_pragma=foreign_keys(1)` 覆蓋(PostgreSQL 時先 `pg.sh up <專案名>`)→ `serve.sh <name>-be <後端目錄> 8080 --health /healthz --env … -- <tmp>/<name>/server`。
-  3. 前端:凍結安裝(`npm ci` / `pnpm install --frozen-lockfile` / `yarn install --immutable` / `bun install --frozen-lockfile`;失敗歸「前端」)→ `NEXT_TELEMETRY_DISABLED=1 API_PROXY_TARGET=<後端 url> <pm> run build` → `serve.sh <name>-fe <前端目錄> 3000 --env API_PROXY_TARGET=<後端 url> --env NEXT_TELEMETRY_DISABLED=1 -- node_modules/.bin/next start -p {port}`。
+  3. 前端:凍結安裝(`npm ci` / `pnpm install --frozen-lockfile` / `yarn install --immutable` / `bun install --frozen-lockfile`;失敗歸「前端」)→ `NEXT_TELEMETRY_DISABLED=1 <pm> run build` → `serve.sh <name>-fe <前端目錄> 3000 --env BACKEND_URL=<後端 url> --env NEXT_TELEMETRY_DISABLED=1 -- <pm> run -s start`(舊專案沒有 standalone `start` 時改用 `next start -p {port}` + `API_PROXY_TARGET`)。
   4. 資料準備:依簡報的 seed 請求(curl 直連後端,只打本機;需要登入時用 `-c <tmp>/<name>/cookies.txt` 存下 session cookie),記下回傳的 id 以組出動態路由網址。
   5. 轉發檢查:端點清單每項用 `proxy-diff.mjs`,至少一個成功、一個錯誤案例。冪等端點(簡報標示;沒標時 GET / PUT / DELETE 算冪等)用預設比對;非冪等端點(沒標時 POST 算非冪等)用 `--structure` 並在 `--data` 用 `{uniq}`。需要登入的端點帶 `--cookie-jar <tmp>/<name>/cookies.txt`。忽略的欄位寫在回報。
   5b. 並發檢查:端點清單中每個寫入端點經前端轉發同時送 10 個請求(`concurrency.mjs`,`{uniq}` 只用在需唯一值的欄位),`ok` 必須為 true;5xx 附樣本與後端 log,通常歸後端。(使用者 2026-11-16 要求;起因是同日整合驗證發現兩個同時登入其中一個回 500)
@@ -38,7 +39,7 @@
 - 不執行會改變 git 狀態的指令;只能 `git status`、`git diff`、`git log`、`git rev-parse`。
 - 不新增依賴、不全域安裝、不 `playwright install`、不部署。
 - 網路:只允許套件管理器下載(npm registry、Go module proxy);其餘請求只打 `localhost` / `127.0.0.1`。
-- 不直接下 `docker` 指令(只透過 `pg.sh`)。
+- 不直接下 `docker` 指令(只透過 `pg.sh` / `compose.sh`)。
 - 不編造結果:沒跑的步驟寫「未執行」與原因;缺口不算通過。
 
 ## 觸發時機
@@ -57,7 +58,7 @@
 - HEAD:開始 3f2a9c1 / 結束 3f2a9c1;工作目錄乾淨
 - 契約:contract-check → valid;planned:無
 - 後端:url=http://localhost:8080(暫存 SQLite;env 來自 .env.example:SESSION_SECRET)
-- 前端:`npm ci` → 0;`npm run build` → 0;url=http://localhost:3000(next start)
+- 前端:`npm ci` → 0;`npm run build` → 0;url=http://localhost:3000(standalone start)
 - 轉發:
   - POST /api/register(非冪等)→ {"front":201,"back":201,"same":true,"mode":"structure"}
   - POST /api/login 缺 password → {"front":400,"back":400,"same":true}
@@ -104,7 +105,7 @@ ISSUES 時每個問題寫:歸屬、指令、實際輸出、應有輸出、判斷
 | 工具 | 為什麼需要 |
 |---|---|
 | Read | 讀程式、契約、`.env.example`、截圖、E2E 失敗截圖 |
-| Bash | go build / test、`<pm>` 凍結安裝 / build / test、next start、playwright、curl(只打本機)、`web-dev-kit` 與 `stack-go` 腳本、唯讀 git |
+| Bash | go build / test、`<pm>` 凍結安裝 / build / test、standalone start、playwright、curl(只打本機)、`web-dev-kit` 與 `stack-go` 腳本、唯讀 git |
 
 不給 Write / Edit:它只驗證不修改。不給 WebFetch / WebSearch。
 

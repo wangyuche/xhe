@@ -4,7 +4,7 @@ KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIT_TMP="${WEB_DEV_KIT_TMP:-${TMPDIR:-/tmp}/web-dev-kit}"
 KIT_TMP="${KIT_TMP%/}"
 
-die() { echo "錯誤:$*" >&2; exit "${2:-1}"; }
+die() { echo "錯誤:$1" >&2; exit "${2:-1}"; }
 
 check_name() {
   [ -n "${1:-}" ] || die "缺少 <name>"

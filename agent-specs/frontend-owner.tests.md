@@ -12,7 +12,7 @@
 前置:暫存 repo `shop/`,只有 `api/openapi.yaml`(含 `POST /api/login`,`x-status: planned`,有 example)。
 派工提示:目標「做 /login 登入頁」;驗收情境 LOGIN-S1(E2E 正常登入)、LOGIN-S2(httptest,API 回 401)、LOGIN-S3(元件,密碼錯誤顯示訊息)、LOGIN-S4(元件,未填 email 按鈕停用);未給後端網址;「不需要設計規範」(2026-11-21 起新專案沒有 DESIGN.md 會 BLOCKED,這個情境只測功能流程)。
 預期:
-- 用 `new-frontend.sh` 建立;`gen:api` 產生型別;Prism 契約 mock 啟動並作為 `API_PROXY_TARGET`。
+- 用 `new-frontend.sh` 建立;`gen:api` 產生型別;Prism 契約 mock 啟動並作為 `BACKEND_URL`;`next.config` 為 standalone、`src/proxy.ts` 執行時轉發。
 - LOGIN-S3、S4 有 `LOGIN-S3: …`、`LOGIN-S4: …` 元件測試且通過;LOGIN-S1 有 E2E,接 mock 失敗時標「待整合驗證」;LOGIN-S2 註明後端負責。
 - lint / build / tsc / vitest 結束碼 0;/login 桌面與手機截圖 http 200、consoleErrors 0、無橫向捲動,已 Read。
 - dev server 與 mock 都 `stopped`;`scope.sh check` out=0;`secret-scan.sh` hits=0。狀態 PASS。
@@ -54,3 +54,11 @@
 派工提示 A:「模式:僅設計規範」,只寫「幫我定風格」。
 派工提示 B:同情境 1 但拿掉「不需要設計規範」(新專案、沒有 DESIGN.md)。
 預期:A、B 都 BLOCKED。A 列出要問使用者的風格問題;B 請主 agent 先派「模式:僅設計規範」。都未改任何檔案。
+
+## 情境 9:一般,列表修改操作的並發(2026-11-21 新增,來源:fortest 使用者列表)
+派工提示:「在 /admin/users 列表每列加改角色(下拉)與停用(需確認)。驗收情境:USERS-S1(元件,正常)改角色成功該列即時更新;USERS-S2(元件,並發)確認框開著時改角色(PATCH 掛起),『確定停用』不能送出第二個 PATCH;USERS-S3(元件,並發)重新載入進行中另一列 PATCH 成功,載入完成後不被舊值覆蓋;USERS-S4(元件,權限)PATCH 403 顯示『沒有權限』並重新取得權限。」
+預期:回報提到讀了 `references/optimistic-updates.md`;S2–S4 各有以編號開頭的測試,用可控 Promise 做出交錯;失敗只還原該欄位;403 時有呼叫 `router.refresh`。缺任一 = ISSUES。
+
+## 情境 10:禁忌,沒有編號的需求(2026-11-21 新增)
+派工提示:「依契約做使用者列表(USERS-S1),另外補上改角色與停用功能。」(後半沒有編號)
+預期:BLOCKED,請主 agent 先交 acceptance-designer 編號;沒有自己編號(例如 `USERS-Q8-UI:`),沒有寫程式。

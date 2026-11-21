@@ -1,6 +1,6 @@
 ---
 name: web-dev-kit
-description: 網站開發驗證用的固定腳本:背景啟動 / 停止 dev server(整個程序群組)、找可用埠、Chrome headless 整頁截圖(CDP,含 scrollWidth 與 console 錯誤)、前端轉發與後端直連比對、git 範圍檢查(相對基準)、秘密掃描、本機 PostgreSQL 容器。frontend-owner、backend-owner、integration-verifier 驗證時使用;任何要在本機啟動網站並驗證的情境也可用。
+description: 網站開發驗證用的固定腳本:背景啟動 / 停止 dev server(整個程序群組)、找可用埠、Chrome headless 整頁截圖(CDP,含 scrollWidth 與 console 錯誤)、前端轉發與後端直連比對、git 範圍檢查(相對基準)、秘密掃描、本機 PostgreSQL 容器、docker compose 整站啟停(專案名隔離、等 healthy)。frontend-owner、backend-owner、integration-verifier 驗證時使用;任何要在本機啟動網站並驗證的情境也可用。
 ---
 
 # web-dev-kit
@@ -38,7 +38,21 @@ bash <kit>/scripts/secret-scan.sh <name>                    # 掃最近一次 ch
 bash <kit>/scripts/pg.sh up <專案名>      # → DATABASE_URL=postgres://…
 bash <kit>/scripts/pg.sh schema <專案名> <表>
 bash <kit>/scripts/pg.sh down <專案名>    # 只 stop,不刪資料。Docker 沒開:結束碼 3
+
+# docker compose 整站(在 compose 檔所在目錄執行,或 -f 指定)。-p <專案名> 必填
+bash <kit>/scripts/compose.sh build -p <專案名> [<服務>...]
+bash <kit>/scripts/compose.sh up -p <專案名> [--build] [--timeout 180]
+#   up -d → 等所有有 healthcheck 的服務 healthy(沒 healthcheck 的要 running,一次性的要 exit 0)
+#   → 每個對外埠一行 url=http://localhost:<埠> port=<埠> service=<服務>,最後 up project=… services=…
+#   unhealthy / 容器非 0 結束 / 逾時:結束碼 1,stderr 印 ps -a 與最後 50 行 log
+#   對外埠被別的程式占用:結束碼 4,印占用者與建議的環境變數(例如 FRONTEND_PORT=3001),不 up、不停任何容器
+bash <kit>/scripts/compose.sh ps -p <專案名>
+bash <kit>/scripts/compose.sh logs -p <專案名> <服務> [--tail 200]   # 不 follow
+bash <kit>/scripts/compose.sh down -p <專案名> [--volumes] [--images]  # 預設保留 volume 與映像
+#   Docker 沒開或沒有 docker compose:結束碼 3
 ```
+
+範例 compose 檔:`<kit>/templates/docker-compose.yml`(複製到專案根目錄)。db(postgres:17,`pg_isready` healthcheck,named volume)→ backend(依 db healthy,`/server healthcheck`,只 `expose` 不對外)→ frontend(依 backend healthy,`BACKEND_URL=http://backend:8080`,唯一對外埠 `127.0.0.1:${FRONTEND_PORT:-3000}`)。
 
 ## 規則
 
@@ -46,10 +60,14 @@ bash <kit>/scripts/pg.sh down <專案名>    # 只 stop,不刪資料。Docker �
 - 後端先 `go build -o <tmp>/<name>/server ./cmd/server` 再交給 `serve.sh`(`go run` 會多一層子程序)。
 - `scope.sh` 只能判斷「這個 checkout」的變動,平行的寫入 agent 必須在不同 worktree。
 - `shot.mjs` 每次用暫存的 Chrome profile,結束時關閉 Chrome 並刪除 profile。
+- Docker 只透過 `pg.sh` / `compose.sh`,不直接 `docker run` / `docker compose` / `docker stop`。
+- `compose.sh` 的專案名:預設 `dev-<專案名>`;驗證用的暫存專案用 `kit-test-<時間戳>` 之類的唯一名稱。不能等於 compose 預設專案名(目錄 basename、`COMPOSE_PROJECT_NAME`、compose 檔 `name:`),那可能是使用者自己 `docker compose up` 的專案;只有使用者明確要求時才加 `--allow-default`。
+- `compose.sh down` 預設保留 volume(資料庫資料);只有暫存 / 測試專案或使用者要求時才 `--volumes`。暫存專案收尾:`down --volumes --images`。
+- compose 檔的對外埠一律綁 `127.0.0.1`(`compose.sh up` 遇到綁所有介面的埠會警告),埠寫成 `${X_PORT:-預設}` 讓埠衝突時可換。
 
 ## 自我測試
 
 ```bash
-bash <kit>/tests/run.sh                         # 沒有 node / Chrome 的項目印 SKIP(不算通過)
+bash <kit>/tests/run.sh                         # 沒有 node / Chrome 的項目印 SKIP(不算通過);compose.sh 用假 docker 離線測
 WEB_DEV_KIT_TEST_PG=1 bash <kit>/tests/run.sh   # 加測 PostgreSQL(會拉映像,測完刪除本來沒有的映像)
 ```

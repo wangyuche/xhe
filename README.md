@@ -12,6 +12,7 @@
 | `stack-nextjs` | Next.js 16 前端規則與骨架(轉發、契約型別、Prism mock、Playwright) |
 | `stack-go` | Go 後端規則與骨架(路由表、OpenAPI 3.0.3 契約測試、goose migration) |
 | `github-bot` | 以機器人身分(GitHub App 或機器人帳號)commit、push 功能分支、開 PR,自己 code review 沒問題就以 review 過的 SHA 合併(只限沒有 CI 的 repo;不直接推 main) |
+| `gitlab-bot` | 在自建 GitLab(或 gitlab.com)commit、push 功能分支、開 MR,review 沒問題以 review 過的 SHA 合併(只限沒有 CI 的專案;不直接推 main);多專案共用一筆鑰匙圈 token(需 `api` + `write_repository`) |
 | `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成、規格驗證(short-video-maker 使用) |
 | `game-art-kit` | 區網 ComfyUI 出圖腳本:check、上傳參考圖、送 workflow 輪詢下載(不在伺服器留檔)、workflow 骨架、拼分鏡表(game-concept-artist 使用);位址放 `~/.config/game-art-kit/config` |
 

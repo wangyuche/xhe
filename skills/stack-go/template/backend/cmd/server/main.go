@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,11 @@ import (
 )
 
 func main() {
+	// `server healthcheck`:打 127.0.0.1:$PORT/healthz,200 結束碼 0,否則 1。
+	// 給容器 HEALTHCHECK 用(distroless 映像沒有 shell / curl)。
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(logger); err != nil {
 		logger.Error("server exited", "err", err)
@@ -27,9 +33,14 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	database, err := db.Open(ctx, env("DATABASE_URL", db.DefaultSQLiteURL))
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = db.DefaultSQLiteURL
+		logger.Warn("DATABASE_URL is not set; using SQLite data/dev.db relative to the working directory")
+	}
+	database, err := db.Open(ctx, dbURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer database.Close()
 
@@ -56,6 +67,21 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func healthcheck() int {
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + env("PORT", "8080") + "/healthz")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "healthcheck: status", resp.StatusCode)
+		return 1
+	}
+	return 0
 }
 
 func env(key, def string) string {

@@ -18,7 +18,18 @@ while [ $# -gt 0 ]; do
     *) echo "未知參數:$1" >&2; exit 2 ;;
   esac
 done
-PROJ="$(basename "$ROOT" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g')"
+# 專案名取主 repo 目錄名:在 git worktree 裡 basename "$ROOT" 會是 worktree 目錄名(例如 backend),
+# 得到 example.com/backend/backend(2026-11-21 fortest)。git common dir 的上層才是主 repo。
+# 只有 ROOT 本身是「連結的 worktree 根目錄」時才改用主 repo 名;一般 repo 或 monorepo 的子目錄仍用 basename ROOT。
+PROJ_DIR="$ROOT"
+if TOP="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" && [ "$(cd "$TOP" && pwd -P)" = "$ROOT" ]; then
+  GD="$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir 2>/dev/null)" || GD=""
+  COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || COMMON=""
+  if [ -n "$GD" ] && [ "$GD" != "$COMMON" ]; then
+    case "$COMMON" in */.git) PROJ_DIR="$(dirname "$COMMON")" ;; esac
+  fi
+fi
+PROJ="$(basename "$PROJ_DIR" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g')"
 [ -n "$MODULE" ] || MODULE="example.com/$PROJ/backend"
 go_ok || { echo "錯誤:需要 Go >= $GO_MIN(brew install go 或 brew upgrade go,由使用者執行)" >&2; exit 3; }
 

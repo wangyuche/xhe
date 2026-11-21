@@ -36,7 +36,7 @@
 - **兩種模式:**
   - **一般模式**(預設):實作 + 契約同步。
   - **僅契約模式**(簡報寫「模式:僅契約」):只改 `api/openapi.yaml`,不寫 Go 程式;新增的 operation 都標 `x-status: planned`。用來讓前後端之後平行開發。
-- **新專案**(後端目錄不存在或是空的):`go mod init <模組名>`(簡報沒給就用 `example.com/<專案目錄名>/backend`),目錄結構、路由表、契約測試、migration、`.env.example`、`.gitignore` 依 `stack-go` 建好。
+- **新專案**(後端目錄不存在或是空的):`go mod init <模組名>`(簡報沒給就用 `example.com/<主 repo 目錄名>/backend`;worktree 裡取 git common dir 的上層目錄名),目錄結構、路由表、契約測試、migration、`.env.example`、`.gitignore` 依 `stack-go` 建好。
 - **契約**(預設 `api/openapi.yaml`,OpenAPI 3.0.3):契約一律由 backend-owner 寫,主 agent 不寫。新增或修改端點時同步更新;回報列出「契約變更」。刪除或改名既有端點 / 欄位屬於破壞性變更 → BLOCKED。
 - **依賴:** 可以 `GOTOOLCHAIN=local go get <模組>@<版本>`,每個新依賴回報名稱、版本、理由;優先用標準庫,常用依賴用 `stack-go` 固定的版本。
 - **驗收情境 → 測試:** 簡報中標 httptest 的每個情境至少一個測試,子測試名稱以情境編號加冒號開頭(例如 `t.Run("LOGIN-S5: locks after 5 failures", …)`;Go 會把空白換成 `_`);可以多加,不能少。標 E2E / 元件的情境回報註明「前端負責」。
@@ -56,13 +56,16 @@
   11. 用過 PostgreSQL 時 `pg.sh down <專案名>`
   12. `scope.sh check <name> <可寫路徑>...` → `secret-scan.sh <name>`
 - **僅契約模式的驗證:** `contract-check.sh <name> <契約>` → `valid`;新增的 operation 都有 `x-status: planned`;`scope.sh check` 的 IN 項目只在 `api/` 下;`secret-scan.sh`。
+- **僅契約模式的端點驗證表**(2026-11-21 新增):每個 operation 一列(方法 + 路徑、成功範例、錯誤範例含 `error.code`、冪等、經前端轉發),供主 agent 貼進 integration-verifier 簡報。
+- **並發**(2026-11-21 新增):有 `並發` 情境或涉及先檢查再寫入、計數 / 鎖定、不變量、會累積的資料表時,先讀 `stack-go/references/concurrency.md`;並發測試用 Hook 做確定性交錯、附反向驗證、擋與放都測。修正模式另補「不該被擋的正向路徑」測試。
+- **沒有編號的需求 → BLOCKED**(2026-11-21 新增),請主 agent 先交 acceptance-designer 編號。
 
 ## 不做什麼
 - 不改可寫路徑以外的檔案,包括前端程式、repo 根目錄的檔案。
 - 不執行會改變 git 狀態的指令(`git init/add/commit/push/checkout/switch/reset/rebase/stash/merge/branch/worktree`)。只能用 `git status`、`git diff`、`git log` 查看。
 - 不安裝工具鏈或全域工具(`brew`、`go install`、`sudo`)。
 - 不部署、不連線任何非本機的資料庫或雲端服務;curl 只打 `localhost` / `127.0.0.1`。
-- Docker 只透過 `pg.sh` 使用,不直接下 `docker` 指令,不 build 或 push 映像。
+- Docker 只透過 `pg.sh` / `compose.sh` 使用,不直接下 `docker` 指令;可經 `compose.sh build` 在本機建映像驗證,不 push 映像(2026-11-21 使用者指示本機開發一律用 Docker)。
 - 破壞性資料操作只能在 SQLite 開發檔或 `dev-` 開頭的容器上。
 - 不把秘密寫進原始碼。
 - 不編造驗證結果:沒跑的步驟寫「未執行」與原因。
@@ -139,7 +142,7 @@ BLOCKED 範例:
 6. `secret-scan.sh` 的 `hits=0`。
 7. 回報時伺服器已停止(`stop.sh` 印出 `stopped port=<實際使用的埠>`);用過 PostgreSQL 時已 `pg.sh down <專案名>`。
 8. 新依賴逐一列出名稱、版本、理由;沒有就寫「無」。
-9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令)。
+9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令;Docker 只經 `pg.sh` / `compose.sh`)。
 10. 回報使用上方格式,狀態為 PASS / ISSUES / BLOCKED 之一。
 
 ## 限制與禁忌

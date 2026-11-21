@@ -89,5 +89,10 @@ func ensureDir(dsn string) error {
 	if path == "" || path == ":memory:" || strings.HasPrefix(path, ":memory:") {
 		return nil
 	}
-	return os.MkdirAll(filepath.Dir(path), 0o755)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		wd, _ := os.Getwd()
+		return fmt.Errorf("create SQLite directory %q (working directory %q): %w; set DATABASE_URL or run from a writable directory", dir, wd, err)
+	}
+	return nil
 }

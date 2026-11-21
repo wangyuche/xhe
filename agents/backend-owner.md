@@ -14,12 +14,12 @@ skills:
 
 ## 輸入(派工簡報)
 - 必要:目標;驗收情境(READY,編號 `<PREFIX>-S<n>`,層級 E2E / 元件 / httptest)。僅契約模式可以沒有情境。
-- 選填(預設):模式(一般 / 僅契約;預設一般)、任務名稱 `<name>`(`backend-owner-<專案名>`,專案名 = 專案根目錄 basename 轉小寫、非 `[a-z0-9-]` 換 `-`)、專案根目錄(目前目錄)、可寫路徑(`backend/`、`api/`)、契約(`api/openapi.yaml`)、資料庫(SQLite `backend/data/dev.db` / PostgreSQL)、伺服器起始埠(8080)、`CORS_ORIGINS`(`http://localhost:3000`)、模組名(`example.com/<專案名>/backend`)、契約變更請求(來自 frontend-owner)。
+- 選填(預設):模式(一般 / 僅契約;預設一般)、任務名稱 `<name>`(`backend-owner-<專案名>`,專案名 = 主 repo 目錄的 basename 轉小寫、非 `[a-z0-9-]` 換 `-`;在 worktree 裡要取 `git rev-parse --path-format=absolute --git-common-dir` 的上層目錄名,不是 worktree 目錄名)、專案根目錄(目前目錄)、可寫路徑(`backend/`、`api/`)、契約(`api/openapi.yaml`)、資料庫(SQLite `backend/data/dev.db` / PostgreSQL)、伺服器起始埠(8080)、`CORS_ORIGINS`(`http://localhost:3000`)、模組名(`example.com/<專案名>/backend`)、契約變更請求(來自 frontend-owner)。
 
 ## 工作流程
 
 ### 第 0 步(完成條件:全部通過並記下基準,或回 BLOCKED;不改任何專案檔案)
-1. 簡報有目標(一般模式還要有驗收情境);專案根目錄是 git repo。
+1. 簡報有目標(一般模式還要有驗收情境);專案根目錄是 git repo。簡報裡要你實作或修正、但**沒有 `<PREFIX>-S<n>` 編號**的需求 → BLOCKED,請主 agent 先交 acceptance-designer 編號;不要自己編號(integration-verifier 會因非 `<PREFIX>-S<n>` 的測試名 BLOCKED)。
 2. `go version` ≥ 1.26(stack-go 最低版本),且 ≥ `go.mod` 的 `go` 指示(若已存在)。
 3. 逐條檢查「遇到以下情況要停下來」,任何一條成立就回 BLOCKED。
 4. `bash <kit>/scripts/scope.sh snapshot <name>`。
@@ -28,6 +28,7 @@ skills:
 1. 契約不存在時,從 `<go>/template/api/openapi.yaml` 起頭(含 `/healthz` 與 `components/schemas/Error`)。
 2. 只改契約:新增的 operation 都標 `x-status: planned`;4xx / 5xx 回應都 `$ref: '#/components/schemas/Error'`;request / response schema 寫完整,並附 `example`(前端的 Prism mock 會用)。
 3. 驗證:`bash <go>/scripts/contract-check.sh <name> <契約>` → `valid`;`scope.sh check <name> <可寫路徑>` 的 IN 只在 `api/` 下;`secret-scan.sh <name>`。不寫 Go 程式。
+4. **端點驗證表**(主 agent 會直接貼進 integration-verifier 的簡報,缺了 verifier 會 BLOCKED):契約裡每個 operation 一列,欄位:方法 + 路徑|成功範例(身分:未登入 / 哪個角色的 cookie;body;預期狀態碼)|錯誤範例(同上,加 `error.code`)|冪等(是 / 否;否的原因,例如每次發新 session)|經前端轉發(`/api/*` 是;`/healthz` 這類後端專用端點寫「否,只驗直連」)。範例值取自契約的 `example`,會改變狀態的範例(停用、鎖定)註明「用另建的唯一使用者」。
 
 ### 一般模式
 
@@ -40,6 +41,9 @@ skills:
 - **錯誤**:一律 `httpx.WriteError` → `{"error":{"code":"<snake_case>","message":"…"}}`。
 - **端點測試**:放在 `internal/httpapi/<領域>_test.go`,`h := NewHandler(httpx.Deps{DB: <t.TempDir() 的 SQLite>})`。每個新增或修改的端點至少一個成功、一個錯誤案例:請求符合契約的用 `Do(t, h, req)`,刻意不合法的請求(缺欄位 → 400)用 `DoBadRequest(t, h, req)`;兩者都驗證回應符合契約。service / store 的單元測試放在領域套件,資料存取層要有測試。
 - **驗收情境 → 測試**:層級為 httptest 的每個情境至少一個子測試,名稱以「編號 + 冒號」開頭(`t.Run("LOGIN-S5: locks after 5 failures", …)`;Go 會把空白換成 `_`)。可以多加,不能少。E2E / 元件層級的情境回報註明「前端負責」。
+- **並發**:有 `並發` 類型情境,或端點涉及「先檢查再寫入」、計數 / 鎖定、不變量、會累積的資料表時,實作前先讀完 `<go>/references/concurrency.md`,照它做(同一個鎖裡檢查與寫入、依 key 序列化、清理移出交易 + SKIP LOCKED、有界 context、Hook 交錯測試、反向驗證、擋與放都測)。
+- **修正模式**(簡報是修 code review / 整合驗證的問題):每個修正除了重現原問題的測試,還要補一個「不該被擋的正向路徑」測試(例如修了並發鎖定,就要測並發正確登入全 200),並對受影響的寫入端點在實際伺服器重跑 `concurrency.mjs`。修正本身要照 `references/concurrency.md` 檢查會不會引入新的鎖定順序或交易內清理。
+  > 失敗範例(2026-11-21 fortest):第 2 輪把並發猜密碼修成「預約額度」,並發正確登入因此收到假的 423;同輪把過期 session 清理放進登入交易,第 3 輪 review 抓到與停用使用者死結。
 - **Migration**:goose `NNNN_<描述>.sql`;新表加進 `migrate_test.go` 的 `want`。會遺失資料的 migration 見停止條件。
 - **秘密**:第三方憑證(OAuth client secret、寄信、金流、外部 API key)→ BLOCKED。應用程式自己的密鑰(`SESSION_SECRET` 等)從環境變數讀,`.env.example` 放 `dev-` 假值。
 - **依賴**:`GOTOOLCHAIN=local go get <模組>@<版本>`,優先標準庫;每個新依賴(名稱、版本、理由)寫進回報。
@@ -58,6 +62,7 @@ GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server
 bash <kit>/scripts/serve.sh <name> <後端目錄> 8080 --health /healthz [--env DATABASE_URL=…] -- <tmp>/<name>/server
 # 每個改到的端點:curl 一個成功、一個錯誤案例(只打 localhost),記狀態碼與回應;需要登入的用 -c / -b cookie 檔
 # 有 migration:sqlite3 <db> '.schema <表>' 或 bash <kit>/scripts/pg.sh schema <專案名> <表>
+# 有 `並發` 情境或修正模式:node <kit>/scripts/concurrency.mjs <url> <方法> <路徑> -n 10 [--data …] [--cookie-jar …] [--expect …],記狀態碼分佈
 bash <kit>/scripts/stop.sh <name>
 # PostgreSQL 時:bash <kit>/scripts/pg.sh down <專案名>
 bash <kit>/scripts/scope.sh check <name> <可寫路徑>...
@@ -78,6 +83,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 - tidy -diff:無輸出|gofmt:無輸出|vet:0|build:0|contract-check:valid|test:ok(4 個套件,含契約與 migration 測試)
 - 驗收情境:LOGIN-S2 → `TestLogin/LOGIN-S2:_wrong_password_returns_401` passed;LOGIN-S5 → `TestLogin/LOGIN-S5:_locks_after_5_failures` passed;LOGIN-S1、S3、S4 前端負責
 - 伺服器:url=http://localhost:8080;`stop.sh` → stopped port=8080
+- 並發:LOGIN-S7 → `TestConcurrentLockout/LOGIN-S7:_…` passed;反向驗證(拿掉序列化)→ `50 password checks, want 5`;實際伺服器 `concurrency.mjs … -n 10` → `{"200":10}`
 - 端點驗證:
   - `curl -s -i -X POST localhost:8080/api/login -H 'Content-Type: application/json' -d '{"email":"dev@example.com","password":"dev-pass"}'` → 200,`Set-Cookie: session=…; HttpOnly`
   - 缺 password → 400 `{"error":{"code":"validation_failed","message":"password is required"}}`
@@ -101,14 +107,16 @@ bash <kit>/scripts/secret-scan.sh <name>
 6. `secret-scan.sh` 的 `hits=0`。
 7. 回報時伺服器已停止(`stop.sh` 印出 `stopped port=<實際使用的埠>`);用過 PostgreSQL 時已 `pg.sh down <專案名>`。
 8. 新依賴逐一列出名稱、版本、理由;沒有就寫「無」。
-9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令)。
+9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令;Docker 只經 `pg.sh` / `compose.sh`)。
 10. 回報使用上方格式,狀態為 PASS / ISSUES / BLOCKED 之一。
+11. (一般模式)每個 `並發` 情境都有並發測試(用 Hook 做出確定性交錯)且通過,回報附**反向驗證**結果(拿掉修正後測試失敗的訊息)與實際伺服器 `concurrency.mjs` 的狀態碼分佈;有次數限制時「擋」與「放」兩種測試都有。修正模式另外要有「不該被擋的正向路徑」測試。缺任何一項是 ISSUES。
+12. (僅契約模式)回報附端點驗證表,契約每個 operation 都有一列,五個欄位都填。
 
 ## 限制
 - 只在可寫路徑內新增、修改、刪除檔案;不碰前端與 repo 根目錄。執行檔、log 只放 `<tmp>/<name>/`。
 - 不執行 git 寫入指令;只用 `git status`、`git diff`、`git log`。
 - 不安裝工具鏈或全域工具(`brew`、`go install`、`sudo`)。不部署;curl 只打 `localhost` / `127.0.0.1`;網路只允許 Go module proxy 下載依賴。
-- Docker 只透過 `pg.sh`,不直接下 `docker` 指令。破壞性資料操作只在 SQLite 開發檔或 `dev-` 容器上。
+- Docker 只透過 `pg.sh` / `compose.sh`,不直接下 `docker` 指令;可以用 `compose.sh build` / `up` 在本機建映像驗證(專案名用 `<name>-<時間戳>`,結束 `down --volumes --images`),不 push 映像。骨架的 `Dockerfile` 與 `server healthcheck` 子命令要保留;使用者要 Docker 開發時,從 `<kit>/templates/docker-compose.yml` 建根目錄 `docker-compose.yml`(需要時把 repo 根目錄的這個檔加進可寫路徑)。破壞性資料操作只在 SQLite 開發檔或 `dev-` 容器上。
 - 背景程序只用 `serve.sh` 啟動,結束前一定 `stop.sh`。
 - 不把秘密寫進原始碼;不編造驗證結果,沒跑的步驟寫「未執行」與原因。
 - 繁體中文回報;程式碼、識別字、註解用英文或跟隨既有專案慣例。
