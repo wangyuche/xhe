@@ -28,7 +28,8 @@ die() { echo "bot.sh: $*" >&2; exit 1; }
 
 # 所有暫存(token 檔、推送用的空 HOME)都在 SCRATCH 底下,結束或被中斷時整個刪掉
 SCRATCH=$(umask 077; mktemp -d)
-cleanup() { rm -rf "$SCRATCH"; }
+CHILD_PID=""
+cleanup() { [[ -z $CHILD_PID ]] || kill "$CHILD_PID" 2>/dev/null; rm -rf "$SCRATCH"; }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
@@ -300,6 +301,10 @@ cmd_push() {
   [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != -* && $branch != HEAD && $branch != refs/* ]] \
     && git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "分支名稱不合法:$branch"
   case $branch in main|master) die "不推 $branch;請推功能分支再開 PR" ;; esac
+  # 推送時停用 hooks、換掉 HOME,git-lfs 的 pre-push 不會執行 → LFS 物件不會上傳
+  if git grep -q 'filter=lfs' HEAD -- .gitattributes ':(glob)**/.gitattributes' 2>/dev/null; then
+    die "這個 repo 使用 Git LFS,bot.sh push 不支援(LFS 物件不會上傳);請改用一般 git push"
+  fi
   load_conf; resolve_repo
   local t user=x-access-token def
   t=$(token)
@@ -342,21 +347,33 @@ cmd_pr() {
 #   出現後再觀察 15 秒(3 次輪詢數量不變)才判斷,避免晚幾秒才登記的 workflow 被漏掉。
 #   最多等約 2 分鐘;沒有 CI 就拒絕,確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
 # 有任何 check suite / check run / commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
-ci_snapshot() {   # 設定 runs st suites nr ns
+ci_snapshot() {   # 設定 runs st suites wruns nr ns nw
   runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
-    || die "讀不到 check runs(App 要加 Checks: Read 權限)"
+    || die "讀不到 check runs(若上面是 HTTP 403 / 404:App 要加 Checks: Read 權限)"
   suites=$(api GET "/repos/$REPO/commits/$sha/check-suites?per_page=100" "$t") \
-    || die "讀不到 check suites(App 要加 Checks: Read 權限)"
+    || die "讀不到 check suites(若上面是 HTTP 403 / 404:App 要加 Checks: Read 權限)"
   st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
-    || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
-  nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st")
+    || die "讀不到 commit status(若上面是 HTTP 403 / 404:App 要加 Commit statuses: Read 權限)"
+  wruns=$(api GET "/repos/$REPO/actions/runs?head_sha=$sha&per_page=100" "$t") \
+    || die "讀不到 GitHub Actions workflow runs(若上面是 HTTP 403 / 404:App 要加 Actions: Read 權限)"
+  nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st"); nw=$(jq -r '.total_count' <<<"$wruns")
   [[ $nr -le $(jq -r '.check_runs | length' <<<"$runs") ]] || die "check runs 超過 100 個,無法全部確認,不合併"
   [[ $(jq -r '.total_count' <<<"$suites") -le $(jq -r '.check_suites | length' <<<"$suites") ]] \
     || die "check suites 超過 100 個,無法全部確認,不合併"
+  [[ $nw -le $(jq -r '.workflow_runs | length' <<<"$wruns") ]] || die "workflow runs 超過 100 個,無法全部確認,不合併"
 }
 
+# CI 判斷:
+#   - GitHub Actions:以 workflow runs API 為準。每個 workflow 取這個 commit 上最新的一次 run
+#     (重跑會更新同一個 run),必須 completed 且 success / neutral / skipped;排隊中、需要核准、
+#     被取消(例如 concurrency)、失敗一律拒絕。被取消就重跑那個 workflow 再合併。
+#   - 其他 App 的 check suite(有 run 的)與 check run、commit status:必須完成且成功。
+#   - 確定永遠不會跑的項目,用 --ignore-suite <check suite id> 明確略過(錯誤訊息會列出 id)。
+# 等待:先等 CI 登記(有 workflow 的 repo 要等到 Actions 的 workflow run;沒有就等任何 CI),
+# 登記後觀察 15 秒數量不變才判斷;60 秒都沒有就拒絕,除非 --allow-no-ci。不會等 CI 跑完。
 check_ci() {
-  local sha=$1 t=$2 allow_no_ci=$3 ignore_suites=${4:-} runs st suites nr ns wf rc has_wf=0 ready=0 stable=0 last=-1 bad i
+  local sha=$1 t=$2 allow_no_ci=$3 ignore_suites=${4:-} runs st suites wruns nr ns nw wf rc
+  local has_wf=0 ready=0 stable=0 last=-1 bad i
   wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
   case $rc in
     0) [[ $(jq -r 'if type=="array" then map(select(.name | test("\\.ya?ml$"))) | length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
@@ -365,15 +382,11 @@ check_ci() {
   esac
   for i in $(seq 24); do
     ci_snapshot
-    if [[ $has_wf -eq 1 ]]; then
-      [[ $(jq -r '[.check_runs[] | select(.app.slug == "github-actions")] | length' <<<"$runs") -gt 0 ]] && ready=1
-    else
-      [[ $((nr + ns)) -gt 0 ]] && ready=1
-    fi
+    if [[ $has_wf -eq 1 ]]; then [[ $nw -gt 0 ]] && ready=1; else [[ $((nr + ns + nw)) -gt 0 ]] && ready=1; fi
     # --allow-no-ci:沒有 workflow 時仍等 15 秒給外部 CI 登記;有 workflow 時等滿 60 秒
     [[ $ready -eq 0 && $allow_no_ci -eq 1 && $has_wf -eq 0 && $i -ge 4 ]] && break
     if [[ $ready -eq 1 ]]; then
-      if [[ $((nr + ns)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns)); fi
+      if [[ $((nr + ns + nw)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns + nw)); fi
       [[ $stable -ge 3 ]] && break
     fi
     [[ $ready -eq 0 && $i -ge 13 ]] && break       # 60 秒內都沒出現就放棄等待
@@ -381,25 +394,28 @@ check_ci() {
   done
   if [[ $ready -eq 0 && $allow_no_ci -ne 1 ]]; then
     if [[ $has_wf -eq 1 ]]; then
-      die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 GitHub Actions 的 check run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
+      die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 GitHub Actions 的 workflow run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
     fi
     die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
   [[ $ready -eq 0 || $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
-  # 以下對「目前已有的」check suite / run / status 一律檢查(--allow-no-ci 也一樣)
-  # 有 check run 的 suite、以及 GitHub Actions 的 suite(不論新舊、有沒有 run)都必須完成且成功;
-  # 排隊中(例如 concurrency 等待)或需要核准(action_required)一律拒絕。
-  # 確定永遠不會跑的 suite,由呼叫端以 --ignore-suite <id> 明確略過(錯誤訊息會列出 id)。
-  # 已完成但 cancelled / stale 的 suite(被同 SHA 的新一輪取代)不看 suite 本身,改由下面的
-  # check runs 判斷:check-runs 預設只回每個名稱最新的一次,舊的被取消的 run 若沒被成功的取代就會被擋。
-  bad=$(jq -r --arg ign " $ignore_suites " '.check_suites[]
-          | select(((.latest_check_runs_count // 0) > 0) or .app.slug == "github-actions")
-          | . as $su | select(($ign | contains(" \($su.id) ")) | not)
-          | select((.status == "completed" and ((.conclusion // "") | IN("cancelled","stale"))) | not)
-          | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not))
-          | "suite:\(.app.slug)#\(.id)=\(.conclusion // .status)"' <<<"$suites")
-  bad+=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | " \(.name)=\(.conclusion // .status)"' <<<"$runs")
-  [[ -z ${bad// /} ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(確定某個 suite 永遠不會跑,才用 --ignore-suite <id> 略過)"
+  # 以下對「目前已有的」CI 一律檢查(--allow-no-ci 也一樣)
+  local ok='IN("success","neutral","skipped")'
+  bad=$(jq -r --arg ign " $ignore_suites " ".workflow_runs
+          | group_by(.workflow_id) | map(sort_by(.created_at, (.run_attempt // 1)) | last) | .[]
+          | . as \$w | select((\$ign | contains(\" \(\$w.check_suite_id) \")) | not)
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"workflow:\(.name)#\(.check_suite_id)=\(.conclusion // .status)\"" <<<"$wruns")
+  bad+=$'\n'$(jq -r --arg ign " $ignore_suites " ".check_suites[]
+          | select(.app.slug != \"github-actions\" and (.latest_check_runs_count // 0) > 0)
+          | . as \$su | select((\$ign | contains(\" \(\$su.id) \")) | not)
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"suite:\(.app.slug)#\(.id)=\(.conclusion // .status)\"" <<<"$suites")
+  bad+=$'\n'$(jq -r ".check_runs[] | select((.app.slug // \"\") != \"github-actions\")
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"run:\(.name)=\(.conclusion // .status)\"" <<<"$runs")
+  bad=$(grep -v '^[[:space:]]*$' <<<"$bad" || true)
+  [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(被取消就重跑;確定某項永遠不會跑才用 --ignore-suite <id> 略過)"
   [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
     || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
 }
@@ -467,6 +483,6 @@ case ${1:-} in
   _parse)   parse_repo "$2" ;;                         # 測試用
   _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
             token_file "$2"; u=$3; shift 3; push_git "$TOKEN_TMP" "$u" "$@" ;;
-  _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & wait $!; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
+  _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & CHILD_PID=$!; wait $CHILD_PID; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -26,6 +26,33 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = self.path
+        # GitHub Actions workflow runs(依 head SHA)
+        def wr(wid, name, status, concl, csid, created):
+            return {"workflow_id": wid, "name": name, "status": status, "conclusion": concl,
+                    "check_suite_id": csid, "created_at": created, "run_attempt": 1}
+        WRUNS = {
+            "4" * 40: [wr(1, "lint", "completed", "skipped", 171, "2026-01-01T00:00:00Z"),
+                       wr(2, "test", "queued", None, 172, "2026-01-01T00:00:01Z")],
+            "5" * 40: [wr(1, "ci", "completed", "success", 181, "2026-01-01T00:00:00Z"),
+                       wr(2, "docs", "queued", None, 182, "2026-01-01T00:00:01Z")],
+            "9" * 40: [wr(1, "ci", "completed", "cancelled", 221, "2026-01-01T00:00:00Z"),
+                       wr(1, "ci", "completed", "success", 222, "2026-01-01T00:00:05Z")],
+            "0" * 40: [wr(1, "lint", "completed", "success", 231, "2026-01-01T00:00:00Z"),
+                       wr(2, "test", "completed", "cancelled", 232, "2026-01-01T00:00:01Z")],
+        }
+        if p.startswith("/repos/o/r/actions/runs?head_sha=") and self.auth() in (TOKEN, PAT):
+            sha = p.split("head_sha=")[1].split("&")[0]
+            runs = WRUNS.get(sha, [])
+            return self.send(200, {"total_count": len(runs), "workflow_runs": runs})
+        s23 = "0" * 40
+        if p == "/repos/o/r/pulls/23":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s23}})
+        if p == f"/repos/o/r/contents/.github/workflows?ref={s23}":
+            return self.send(200, [{"name": "lint.yml"}, {"name": "test.yml"}])
+        if p == f"/repos/o/r/commits/{s23}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 1, "check_runs": [{"name": "lint", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}}]})
+        if p == f"/repos/o/r/commits/{s23}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
         if p == "/repos/o/r/installation" and self.is_jwt():
             return self.send(200, {"id": 42})
         if p == "/repos/o/missing/installation":
