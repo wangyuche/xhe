@@ -127,6 +127,10 @@ check "同 workflow 不同事件:失敗的不被成功的蓋掉" bash -c "bash '
 check "workflow 自建的測試報告失敗擋 merge" bash -c "bash '$BOT' --repo o/r merge 25 --sha $(printf 'a2%.0s' $(seq 20)) 2>&1 | grep -q 'run:Test Report#251=failure'"
 check "其他 App 的 suite 卡住:未略過時擋" bash -c "bash '$BOT' --repo o/r merge 26 --sha $(printf 'a3%.0s' $(seq 20)) 2>&1 | grep -q 'suite:foo#555=queued'"
 check "--ignore-suite 連同 run 略過且接受 unstable" [ "$(bash "$BOT" --repo o/r merge 26 --sha "$(printf 'a3%.0s' $(seq 20))" --ignore-suite 555)" = "$C40" ]
+check "重跑成功後舊 attempt 的取消不再擋" [ "$(bash "$BOT" --repo o/r merge 28 --sha "$(printf 'b1%.0s' $(seq 20))")" = "$C40" ]
+check "失敗的 run 不被之後 skipped 的 run 蓋掉" bash -c "bash '$BOT' --repo o/r merge 29 --sha $(printf 'b2%.0s' $(seq 20)) 2>&1 | grep -q 'workflow:ci(pull_request)#111=failure'"
+check "合併前再判斷一次 CI(之後才出現的失敗)" bash -c "bash '$BOT' --repo o/r merge 27 --sha $(printf 'b3%.0s' $(seq 20)) 2>&1 | grep -q 'commit status 為 failure'"
+check "旗標缺值時不吃掉下一個旗標" bash -c "bash '$BOT' --repo o/r pr --head x --title --body-file /dev/null 2>&1 | grep -q -- '--title 後面要接值'"
 check "--allow-no-ci 無 workflow 仍等外部 CI 登記" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 --allow-no-ci >/dev/null 2>&1; [ \$(wc -l < '$TMP/sleep.log') -ge 3 ]"
 check "--allow-no-ci 仍檢查外部 CI 失敗" bash -c "bash '$BOT' --repo o/r merge 21 --sha $S21 --allow-no-ci 2>&1 | grep -q 'commit status 為 failure'"
 S19=$(printf '6%.0s' $(seq 40)); S20=$(printf '7%.0s' $(seq 40))

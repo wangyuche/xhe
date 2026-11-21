@@ -34,7 +34,7 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 trap 'cleanup; exit 129' HUP
-need_val() { [[ $2 -ge 2 ]] || die "$1 後面要接值"; }   # need_val <旗標> <剩餘參數數>
+need_val() { [[ $2 -ge 2 && ${3-} != --* ]] || die "$1 後面要接值"; }   # need_val <旗標> <剩餘參數數> <值>
 
 # 去掉前後空白與成對引號:  "~/x"  →  ~/x
 trim_val() {
@@ -286,9 +286,9 @@ push_git() {
   # 無害、常見的 http 調校設定允許(不能改網址、proxy、TLS、認證)
   [[ $rc -eq 0 ]] && bad=$(grep -viE '[[:space:]]http\.(postbuffer|version|lowspeedlimit|lowspeedtime|maxrequests|minsessions)$' <<<"$bad" || true)
   [[ $rc -eq 1 || -z $bad ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
-  "${clean[@]}" \
+  "${clean[@]}" BOT_TOKEN_FILE="$tf" \
   git ${safe[@]+"${safe[@]}"} -c credential.helper= \
-      -c "credential.https://github.com.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
+      -c "credential.https://github.com.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat \"\$BOT_TOKEN_FILE\")\"; }; f" \
       -c push.recurseSubmodules=no -c submodule.recurse=false \
       -c core.hooksPath=/dev/null \
       -c http.extraHeader= -c http.sslVerify=true -c http.proxy= -c http.cookieFile= \
@@ -320,10 +320,10 @@ cmd_pr() {
   local head="" base="" title="" body=""
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --head) need_val "$1" $#; head=$2; shift 2 ;;
-      --base) need_val "$1" $#; base=$2; shift 2 ;;
-      --title) need_val "$1" $#; title=$2; shift 2 ;;
-      --body-file) need_val "$1" $#; [[ -r $2 ]] || die "讀不到 $2"; body=$(cat "$2"); shift 2 ;;
+      --head) need_val "$1" $# "${2-}"; head=$2; shift 2 ;;
+      --base) need_val "$1" $# "${2-}"; base=$2; shift 2 ;;
+      --title) need_val "$1" $# "${2-}"; title=$2; shift 2 ;;
+      --body-file) need_val "$1" $# "${2-}"; [[ -r $2 ]] || die "讀不到 $2"; body=$(cat "$2"); shift 2 ;;
       *) die "pr 不認得參數 $1" ;;
     esac
   done
@@ -363,17 +363,59 @@ ci_snapshot() {   # 設定 runs st suites wruns nr ns nw
   [[ $nw -le $(jq -r '.workflow_runs | length' <<<"$wruns") ]] || die "workflow runs 超過 100 個,無法全部確認,不合併"
 }
 
-# CI 判斷:
-#   - GitHub Actions workflow:以 workflow runs API 為準。每個 (workflow, 觸發事件) 取這個 commit 上
-#     最新一次 run(重跑會更新同一個 run),必須 completed 且 success / neutral / skipped;排隊中、
-#     需要核准、被取消(例如 concurrency)、失敗一律拒絕。被取消就重跑那個 workflow 再合併。
-#   - check run:抓這個 commit 的全部 run(filter=all),排除「被同 workflow + 同事件的新 run 取代」的
-#     舊 suite 與 --ignore-suite 指定的 suite,其餘(含 workflow 自己建立的測試報告等)都必須成功。
-#   - 其他 App 的 check suite(有 run 的)、commit status:必須完成且成功。
+# CI 判斷(judge_ci,用 ci_snapshot 的結果):
+#   - GitHub Actions workflow runs:每個 run 看它目前這次 attempt(重跑會更新同一個 run),必須 completed
+#     且 success / neutral / skipped。唯一的例外:同 workflow + 同事件、較舊且 conclusion 為 cancelled 的
+#     run(被 concurrency 等取代)不看。失敗的 run 不會被別的 run 蓋掉,要重跑它本身。
+#   - GitHub Actions 的 check run(含 workflow 自建的測試報告):只看「目前 attempt」的 suite
+#     (= 某個 workflow run 現在的 check_suite_id),排除上述被取代的 cancelled run 與 --ignore-suite。
+#   - 其他 App 的 check run:每個 (App, 名稱) 取最新一次;其他 App 有 run 的 suite、commit status:
+#     必須完成且成功。
 #   - 確定永遠不會跑的項目,用 --ignore-suite <check suite id> 明確略過(錯誤訊息會列出 id);
-#     有略過時 GitHub 的 mergeable_state 會是 unstable,merge 會接受(仍尊重分支規則 blocked)。
+#     有略過時 GitHub 的 mergeable_state 會是 unstable,merge 會接受,但合併前會再判斷一次 CI。
+#   - 已知限制:其他 App 建了 suite 但還沒有任何 run 時不列入(GitHub 常留下永遠不跑的空 suite)。
 # 等待:先等 CI 登記(有 workflow 的 repo 要等到 Actions 的 workflow run;沒有就等任何 CI),
 # 登記後觀察 15 秒數量不變才判斷;60 秒都沒有就拒絕,除非 --allow-no-ci。不會等 CI 跑完。
+judge_ci() {   # 用 runs st suites wruns ns ignore_suites
+  local ok='IN("success","neutral","skipped")' cur bad
+  bad=$(jq -r --arg ign " $ignore_suites " "
+          .workflow_runs as \$all
+          | [ \$all | group_by([.workflow_id, .event])[] | sort_by(.created_at, (.run_attempt // 1))
+              | (.[:-1][] | select(.conclusion == \"cancelled\") | .check_suite_id) ] as \$superseded
+          | \$all[] | . as \$w
+          | select((\$superseded | index(\$w.check_suite_id)) | not)
+          | select((\$ign | contains(\" \(\$w.check_suite_id) \")) | not)
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"workflow:\(.name)(\(.event))#\(.check_suite_id)=\(.conclusion // .status)\"" <<<"$wruns")
+  # 目前有效的 Actions suite:各 workflow run 現在的 check_suite_id,扣掉被取代的 cancelled 與略過的
+  cur=$(jq -c --arg ign " $ignore_suites " "
+          .workflow_runs as \$all
+          | [ \$all | group_by([.workflow_id, .event])[] | sort_by(.created_at, (.run_attempt // 1))
+              | (.[:-1][] | select(.conclusion == \"cancelled\") | .check_suite_id) ] as \$superseded
+          | [ \$all[] | .check_suite_id | select((\$superseded | index(.)) | not)
+              | select((\$ign | contains(\" \(.) \")) | not) ]" <<<"$wruns")
+  bad+=$'\n'$(jq -r --argjson cur "$cur" "
+          [.check_runs[] | select((.app.slug // \"\") == \"github-actions\")
+                         | select(.check_suite.id as \$id | \$cur | index(\$id))][]
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"run:\(.name)#\(.check_suite.id)=\(.conclusion // .status)\"" <<<"$runs")
+  bad+=$'\n'$(jq -r --arg ign " $ignore_suites " "
+          [.check_runs[] | select((.app.slug // \"\") != \"github-actions\")
+                         | . as \$r | select((\$ign | contains(\" \((\$r.check_suite.id // 0)) \")) | not)]
+          | group_by([(.app.slug // \"\"), .name]) | map(sort_by(.id // 0) | last) | .[]
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"run:\(.name)#\(.check_suite.id // 0)=\(.conclusion // .status)\"" <<<"$runs")
+  bad+=$'\n'$(jq -r --arg ign " $ignore_suites " ".check_suites[]
+          | select(.app.slug != \"github-actions\" and (.latest_check_runs_count // 0) > 0)
+          | . as \$su | select((\$ign | contains(\" \(\$su.id) \")) | not)
+          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
+          | \"suite:\(.app.slug)#\(.id)=\(.conclusion // .status)\"" <<<"$suites")
+  bad=$(grep -v '^[[:space:]]*$' <<<"$bad" || true)
+  [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(被取消或失敗就重跑;確定某項永遠不會跑才用 --ignore-suite <id> 略過)"
+  [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
+    || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
+}
+
 check_ci() {
   local sha=$1 t=$2 allow_no_ci=$3 ignore_suites=${4:-} runs st suites wruns nr ns nw wf rc
   local has_wf=0 ready=0 stable=0 last=-1 bad i
@@ -402,29 +444,7 @@ check_ci() {
     die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
   [[ $ready -eq 0 || $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
-  # 以下對「目前已有的」CI 一律檢查(--allow-no-ci 也一樣)
-  local ok='IN("success","neutral","skipped")' skip
-  # 被取代的 workflow run(同 workflow + 同事件的較舊 run)所屬 suite id,加上使用者指定略過的
-  skip=" $ignore_suites $(jq -r '.workflow_runs | group_by([.workflow_id, .event])
-          | map(sort_by(.created_at, (.run_attempt // 1)) | .[:-1][] | .check_suite_id) | map(tostring) | join(" ")' <<<"$wruns") "
-  bad=$(jq -r --arg ign " $ignore_suites " ".workflow_runs
-          | group_by([.workflow_id, .event]) | map(sort_by(.created_at, (.run_attempt // 1)) | last) | .[]
-          | . as \$w | select((\$ign | contains(\" \(\$w.check_suite_id) \")) | not)
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"workflow:\(.name)(\(.event))#\(.check_suite_id)=\(.conclusion // .status)\"" <<<"$wruns")
-  bad+=$'\n'$(jq -r --arg ign " $ignore_suites " ".check_suites[]
-          | select(.app.slug != \"github-actions\" and (.latest_check_runs_count // 0) > 0)
-          | . as \$su | select((\$ign | contains(\" \(\$su.id) \")) | not)
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"suite:\(.app.slug)#\(.id)=\(.conclusion // .status)\"" <<<"$suites")
-  bad+=$'\n'$(jq -r --arg skip "$skip" ".check_runs[]
-          | . as \$r | select((\$skip | contains(\" \((\$r.check_suite.id // 0)) \")) | not)
-          | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"run:\(.name)#\(.check_suite.id // 0)=\(.conclusion // .status)\"" <<<"$runs")
-  bad=$(grep -v '^[[:space:]]*$' <<<"$bad" || true)
-  [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(被取消就重跑;確定某項永遠不會跑才用 --ignore-suite <id> 略過)"
-  [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
-    || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
+  judge_ci                                 # 對「目前已有的」CI 一律檢查(--allow-no-ci 也一樣)
 }
 
 cmd_merge() {
@@ -433,10 +453,10 @@ cmd_merge() {
   shift
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --sha) need_val "$1" $#; sha=$2; shift 2 ;;
-      --method) need_val "$1" $#; method=$2; shift 2 ;;
+      --sha) need_val "$1" $# "${2-}"; sha=$2; shift 2 ;;
+      --method) need_val "$1" $# "${2-}"; method=$2; shift 2 ;;
       --allow-no-ci) allow_no_ci=1; shift ;;
-      --ignore-suite) need_val "$1" $#; [[ $2 =~ ^[0-9]+$ ]] || die "--ignore-suite 要數字 id"; ignore_suites+=" $2"; shift 2 ;;
+      --ignore-suite) need_val "$1" $# "${2-}"; [[ $2 =~ ^[0-9]+$ ]] || die "--ignore-suite 要數字 id"; ignore_suites+=" $2"; shift 2 ;;
       *) die "merge 不認得參數 $1" ;;
     esac
   done
@@ -467,13 +487,16 @@ cmd_merge() {
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
+  # 合併前用最新狀態再判斷一次 CI(check_ci 之後才出現的失敗也要擋)
+  local runs st suites wruns nr ns nw
+  ci_snapshot; judge_ci
   local r
   r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
     "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')")
   jfield .sha "$r"
 }
 
-[[ ${1:-} == --repo ]] && { need_val --repo $#; [[ -n $2 ]] || die "--repo 不能是空的"; REPO=${2%.git}; shift 2; }
+[[ ${1:-} == --repo ]] && { need_val --repo $# "${2-}"; [[ -n $2 ]] || die "--repo 不能是空的"; REPO=${2%.git}; shift 2; }
 [[ -z $REPO ]] || valid_repo "$REPO" || die "--repo 格式錯誤:$REPO"
 
 if [[ ${1:-} == _* && ${GITHUB_BOT_TEST:-} != 1 ]]; then

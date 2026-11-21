@@ -44,6 +44,9 @@ class H(BaseHTTPRequestHandler):
             "a1" * 20: [wr(1, "ci", "completed", "failure", 241, "2026-01-01T00:00:00Z", "pull_request"),
                         wr(1, "ci", "completed", "success", 242, "2026-01-01T00:00:05Z", "push")],
             "a2" * 20: [wr(1, "ci", "completed", "success", 251, "2026-01-01T00:00:00Z")],
+            "b1" * 20: [dict(wr(1, "ci", "completed", "success", 101, "2026-01-01T00:00:00Z"), run_attempt=2)],
+            "b2" * 20: [wr(1, "ci", "completed", "failure", 111, "2026-01-01T00:00:00Z"),
+                        wr(1, "ci", "completed", "skipped", 112, "2026-01-01T00:00:05Z")],
         }
         CRUNS = {
             "4" * 40: [cr("lint", "completed", "skipped", 171)],
@@ -53,11 +56,21 @@ class H(BaseHTTPRequestHandler):
             "a1" * 20: [cr("ci", "completed", "failure", 241), cr("ci", "completed", "success", 242)],
             "a2" * 20: [cr("ci", "completed", "success", 251), cr("Test Report", "completed", "failure", 251)],
             "a3" * 20: [cr("ci", "completed", "success", 261, "some-ci"), cr("lint", "queued", None, 555, "foo")],
+            "b1" * 20: [cr("ci", "completed", "cancelled", 100), cr("ci", "completed", "success", 101)],
+            "b2" * 20: [cr("ci", "completed", "failure", 111), cr("ci", "completed", "skipped", 112)],
         }
         for sha, runs in CRUNS.items():
             if p == f"/repos/o/r/commits/{sha}/check-runs?filter=all&per_page=100":
                 return self.send(200, {"total_count": len(runs), "check_runs": runs})
-        for n, sha, st in ((24, "a1" * 20, "clean"), (25, "a2" * 20, "clean"), (26, "a3" * 20, "unstable")):
+        b3 = "b3" * 20
+        if p == "/repos/o/r/pulls/27":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": b3}})
+        if p == f"/repos/o/r/commits/{b3}/status":
+            H.status_calls = getattr(H, "status_calls", 0) + 1
+            # check_ci 等待期間(前 4 次)是 success,合併前最後一次變成 failure
+            return self.send(200, {"state": "success" if H.status_calls <= 4 else "failure", "total_count": 1})
+        for n, sha, st in ((24, "a1" * 20, "clean"), (25, "a2" * 20, "clean"), (26, "a3" * 20, "unstable"),
+                           (28, "b1" * 20, "clean"), (29, "b2" * 20, "clean")):
             if p == f"/repos/o/r/pulls/{n}":
                 return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": st, "head": {"sha": sha}})
             if p == f"/repos/o/r/commits/{sha}/status":
@@ -220,6 +233,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {})
         if p == "/repos/o/r" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"default_branch": "develop"})
+        if "/check-runs?filter=all&per_page=100" in p and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"total_count": 0, "check_runs": []})
         self.send(401, {"message": "bad request " + p})
 
     def do_POST(self):
@@ -234,6 +249,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/repos/o/r/pulls/28/merge" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/26/merge" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/22/merge" and self.auth() in (TOKEN, PAT):
