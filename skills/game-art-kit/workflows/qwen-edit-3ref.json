@@ -6,7 +6,7 @@
    "unet": "diffusion model 檔名",
    "clip": "text encoder(Qwen2.5-VL)",
    "vae": "VAE",
-   "lora": "LoRA 檔名(不用時填 none,lora_strength 隨便填)",
+   "lora": "LoRA 檔名(不用時填 none,lora_strength 仍要填一個數字)",
    "lora_strength": "LoRA 權重",
    "shift": "ModelSamplingAuraFlow shift",
    "prompt": "指示(英文;用 'the character in image 1' 指稱參考圖中的角色)",

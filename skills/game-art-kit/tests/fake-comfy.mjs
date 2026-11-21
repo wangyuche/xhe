@@ -47,19 +47,23 @@ createServer(async (req, res) => {
   if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, { input: {} }])));
   if (p === '/upload/image') return send(res, 200, { name: entry.filename, subfolder: '', type: entry.type });
   if (p === '/prompt' && req.method === 'POST') {
+    if (/SLOWSUBMIT/.test(JSON.stringify(entry.body ?? {}))) await new Promise(r => setTimeout(r, 1500)); // 送出很慢
     const g = entry.body?.prompt ?? {};
     const bad = Object.entries(g).filter(([, v]) => !NODES.includes(v.class_type));
     if (bad.length) return send(res, 400, { error: { type: 'invalid_prompt' }, node_errors: Object.fromEntries(bad.map(([k, v]) => [k, { class_type: v.class_type, errors: [{ message: 'unknown node' }] }])) });
     const id = `fake-${++n}`;
     const lat = Object.values(g).find(v => v.class_type === 'EmptySD3LatentImage')?.inputs ?? {};
     const text = JSON.stringify(g);
-    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text) };
+    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEDOWN/.test(text) ? 1e9 : /QUEUEERR/.test(text) ? 3 : 0, histDrop: /FLAKYHIST/.test(text) ? 2 : 0 };
     jobs.set(id, job);
-    if (!job.slow) setTimeout(() => { job.done = true; }, 300);
+    // QUEUED:先排隊 2.5 秒(queue_pending),再執行 0.3 秒
+    if (job.pending) setTimeout(() => { job.pending = false; setTimeout(() => { job.done = true; }, 300); }, 2500);
+    else if (!job.slow) setTimeout(() => { job.done = true; }, 300);
     return send(res, 200, { prompt_id: id, number: n });
   }
   if (p.startsWith('/history/')) {
     const id = p.slice(9), j = jobs.get(id);
+    if (j && j.histDrop > 0) { j.histDrop--; return req.socket.destroy(); }
     if (!j || !j.done) return send(res, 200, {});
     if (j.error) return send(res, 200, { [id]: { status: { status_str: 'error', completed: false, messages: [['execution_error', { exception_message: 'fake failure' }]] }, outputs: {} } });
     return send(res, 200, { [id]: { status: { status_str: 'success', completed: true }, outputs: { 11: { images: [{ filename: `${id}.png`, subfolder: '', type: 'temp' }] } } } });
@@ -71,7 +75,8 @@ createServer(async (req, res) => {
     if (j.dropview) return req.socket.destroy();
     return send(res, 200, png(j.w, j.h), 'image/png');
   }
-  if (p === '/queue' && req.method === 'GET') return send(res, 200, { queue_running: [...jobs].filter(([, j]) => j.slow).map(([id]) => [0, id]), queue_pending: [] });
+  if (p === '/queue' && req.method === 'GET' && [...jobs.values()].some(j => j.queueErr > 0 && !j.done)) { for (const j of jobs.values()) if (j.queueErr > 0) j.queueErr--; return send(res, 500, { error: 'busy' }); }
+  if (p === '/queue' && req.method === 'GET') return send(res, 200, { queue_running: [...jobs].filter(([, j]) => j.slow).map(([id]) => [0, id]), queue_pending: [...jobs].filter(([, j]) => j.pending).map(([id]) => [0, id]) });
   if (p === '/interrupt') { const j = jobs.get(entry.body?.prompt_id); if (j) { j.slow = false; j.done = true; j.error = true; } return send(res, 200, {}); }
   if (p === '/queue') return send(res, 200, {});
   send(res, 404, {});

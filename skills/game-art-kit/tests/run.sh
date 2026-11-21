@@ -61,15 +61,27 @@ r="$(C run "$K/workflows/flux-t2i.json" --out "$W/o" --name f1 "${FS[@]}" --set 
 r="$(C run "$K/workflows/flux-kontext.json" --out "$W/o" --name k1 "${FS[@]}" --set 'ref1=r.png [temp]')" && ok "flux-kontext 送出成功" || bad "flux-kontext" "$r"
 r="$(C run "$K/workflows/zimage-t2i.json" --out "$W/o" --name z1 --set unet=u --set clip=c --set vae=v --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple --set width=64 --set height=64)" && ok "zimage-t2i 送出成功" || bad "zimage-t2i" "$r"
 r="$(C run "$K/workflows/qwen-t2i-canny.json" --out "$W/o" --name c1 "${QS[@]}" --set width=64 --set height=64 --set controlnet=x --set 'control_image=s.png [temp]' --set control_strength=0.8 --set control_end=0.8)" && ok "qwen-t2i-canny 送出成功" || bad "qwen-t2i-canny" "$r"
-grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每張完成後刪除 history"
-r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/sig" --name sg "${QS[@]/prompt=p/prompt=SLOW}" --set width=64 --set height=64 --timeout 60 2>&1 & p=$!; sleep 1.5; kill -TERM $p; wait $p; echo "rc=$?")"
-echo "$r" | grep -q 'rc=143' && tail -3 "$W/req.log" | grep -q '"path":"/history","query":{},"body":{"delete"' && [ ! -e "$W/sig/sg.png" ] && ok "收到 SIGTERM → 取消並刪 history 後結束(143)" || bad "SIGTERM 收尾" "$r $(tail -3 "$W/req.log")" || bad "沒刪 history" "$(tail -3 "$W/req.log")"
+grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每張完成後刪除 history" || bad "每張完成後刪除 history" "$(tail -5 "$W/req.log")"
+r="$( (exec node "$K/scripts/comfy.mjs" run "$K/workflows/qwen-t2i.json" --out "$W/sig" --name sg "${QS[@]/prompt=p/prompt=SLOW}" --set width=64 --set height=64 --timeout 60 2>&1) & p=$!; sleep 1.5; kill -TERM $p; wait $p; echo "rc=$?")"
+echo "$r" | grep -q 'rc=143' && tail -3 "$W/req.log" | grep -q '"path":"/history","query":{},"body":{"delete"' && [ ! -e "$W/sig/sg.png" ] && ok "收到 SIGTERM → 取消並刪 history 後結束(143)" || bad "SIGTERM 收尾" "$r $(tail -3 "$W/req.log")"
 
 # 4. 參數檢查與錯誤
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'width' && ok "缺參數 → 結束碼 2 並列出" || bad "缺參數" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set typo=1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'typo' && ok "多餘參數 → 結束碼 2" || bad "多餘參數" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name failx "${QS[@]}" --set width=64 --set height=64 --set prompt=FAIL 2>&1)"; [ $? -eq 3 ] && [ ! -e "$W/o/workflows/failx.json" ] && ok "執行錯誤 → 結束碼 3,不留 workflow 檔" || bad "執行錯誤" "$o"
-o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; [ $? -eq 4 ] && grep -q '"path":"/interrupt","query":{},"body":{"prompt_id":"fake-' "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作、結束碼 4" || bad "逾時" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; rc=$?
+tid="$(echo "$o" | sed -n 's/.*"prompt_id":"\([^"]*\)".*/\1/p')"
+[ $rc -eq 4 ] && grep -q "\"path\":\"/interrupt\",\"query\":{},\"body\":{\"prompt_id\":\"$tid\"" "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作($tid)、結束碼 4" || bad "逾時" "$o rc=$rc tid=$tid"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qd "${QS[@]/prompt=p/prompt=QUEUED}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qd.png" ] && ok "排隊時間不算 --timeout(排隊 2.5 秒、--timeout 1 仍成功)" || bad "排隊計時" "$r"
+L0="$(wc -l < "$W/req.log" | tr -d ' ')"
+r="$( (exec node "$K/scripts/comfy.mjs" run "$K/workflows/qwen-t2i.json" --out "$W/sig2" --name ss "${QS[@]/prompt=p/prompt=SLOW_SLOWSUBMIT}" --set width=64 --set height=64 --timeout 30 2>&1) & p=$!; sleep 0.5; kill -TERM $p; wait $p; echo "rc=$?")"
+NEW="$(tail -n +"$((L0 + 1))" "$W/req.log")"
+echo "$r" | grep -q 'rc=143' && echo "$NEW" | grep -q '"path":"/interrupt","query":{},"body":{"prompt_id":"fake-' && echo "$NEW" | tail -2 | grep -q '"path":"/history","query":{},"body":{"delete"' \
+  && ok "送出途中收到 SIGTERM → 等到 prompt_id 再取消、刪 history(143)" || bad "送出途中中止" "$r $NEW"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name fh "${QS[@]/prompt=p/prompt=FLAKYHIST}" --set width=64 --set height=64 2>&1)" && [ -e "$W/o/fh.png" ] && ok "輪詢 /history 暫時斷線 → 重試後成功" || bad "輪詢斷線重試" "$r"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qdn "${QS[@]/prompt=p/prompt=QUEUED_QUEUEDOWN}" --set width=64 --set height=64 --timeout 5 --queue-timeout 1 2>&1)" && [ -e "$W/o/qdn.png" ] && ok "/queue 一直回 500:不套排隊逾時、靠總時限兜底,工作完成" || bad "/queue 持續錯誤" "$r"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qe "${QS[@]/prompt=p/prompt=QUEUED_QUEUEERR}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qe.png" ] && ok "/queue 暫時回 500 不當成已開始執行" || bad "/queue 錯誤誤判" "$r"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qx "${QS[@]/prompt=p/prompt=QUEUED}" --set width=64 --set height=64 --queue-timeout 1 2>&1)"; [ $? -eq 4 ] && echo "$o" | grep -q '"reason":"queue"' && ok "排隊超過 --queue-timeout → 移出佇列、結束碼 4" || bad "--queue-timeout" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --timeout 5m 2>&1)"; [ $? -eq 2 ] && ok "--timeout 不是數字 → 結束碼 2" || bad "--timeout 檢查" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]/seed=1/seed=18446744073709551615}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "seed 超過安全整數 → 結束碼 2" || bad "大 seed" "$o"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name s1 "${QS[@]/negative=n/negative=0}" --set width=64 --set height=64)" && grep -q '"text": "0"' "$W/o/workflows/s1.json" && grep -q '"seed": 1,' "$W/o/workflows/s1.json" \
@@ -101,6 +113,9 @@ rm "$W/s/d.md"
 echo 'see http://comfy/view' > "$W/s/b.md"; o="$(C scrub-check "$W/s" --url http://comfy)"; [ $? -eq 1 ] && ok "scrub-check:--url 覆寫的主機也會檢查" || bad "scrub-check --url" "$o"
 
 # 7. sheet.mjs
+# 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束
+mkdir -p "$W/o"; printf 'RIFFxxxxWEBPVP8X' > "$W/o/bad.webp"
+echo '{"items":[{"image":"bad.webp"}]}' > "$W/o/bw.json"; o="$(node "$K/scripts/sheet.mjs" "$W/o/bw.json" "$W/o/bw.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '不完整' && ok "sheet.mjs:截斷的 WebP → 結束碼 2" || bad "sheet 截斷 WebP" "$o"
 if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}" ]; then
   cp "$W/o/q1.png" "$W/o/a.png"; cp "$W/o/q1.png" "$W/o/b.png"
   echo '{"title":"測試分鏡","cols":2,"cellWidth":300,"items":[{"image":"a.png","label":"01","caption":"第一格"},{"image":"b.png","label":"02","caption":"第二格","note":"備註"},{"image":"a.png","label":"03","caption":"第三格"}]}' > "$W/o/spec.json"
@@ -108,7 +123,6 @@ if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Ch
     && ok "sheet.mjs:2 欄 3 格、寬度正確" || bad "sheet.mjs" "$o"
   # 高度 = 上下 padding 48 + 標題 64 + 兩列(圖 200 + 說明 64)+ 一個間距 20 = 660(最後一列不加間距)
   [ "$(C pngsize "$W/o/sheet.png" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).height)')" = 660 ] && ok "sheet.mjs:高度正確(最後一列不多算間距)" || bad "sheet 高度" "$(C pngsize "$W/o/sheet.png")"
-  printf 'RIFFxxxxWEBPVP8X' > "$W/o/bad.webp"; printf '\0\0\0\0\0\0\0\0\0\0\0\0\0\0' >> "$W/o/bad.webp"
   node -e 'const fs=require("fs");const b=Buffer.alloc(30);b.write("RIFF",0);b.write("WEBP",8);b.write("VP8X",12);b.writeUIntLE(1023,24,3);b.writeUIntLE(511,27,3);fs.writeFileSync(process.argv[1],b)' "$W/o/x.webp"
   echo '{"cols":1,"cellWidth":300,"items":[{"image":"x.webp","caption":"webp"}]}' > "$W/o/w.json"
   o="$(HOME="$REAL_HOME" node "$K/scripts/sheet.mjs" "$W/o/w.json" "$W/o/w.png" 2>&1)"; h="$(C pngsize "$W/o/w.png" 2>/dev/null | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).height)' 2>/dev/null)"
