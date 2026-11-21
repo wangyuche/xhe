@@ -70,7 +70,7 @@ o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" 2>&1)";
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set typo=1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'typo' && ok "多餘參數 → 結束碼 2" || bad "多餘參數" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name failx "${QS[@]}" --set width=64 --set height=64 --set prompt=FAIL 2>&1)"; [ $? -eq 3 ] && [ ! -e "$W/o/workflows/failx.json" ] && ok "執行錯誤 → 結束碼 3,不留 workflow 檔" || bad "執行錯誤" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; rc=$?
-tid="fake-$(grep -c '"path":"/prompt"' "$W/req.log")"
+tid="$(echo "$o" | sed -n 's/.*"prompt_id":"\([^"]*\)".*/\1/p')"
 [ $rc -eq 4 ] && grep -q "\"path\":\"/interrupt\",\"query\":{},\"body\":{\"prompt_id\":\"$tid\"" "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作($tid)、結束碼 4" || bad "逾時" "$o rc=$rc tid=$tid"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qd "${QS[@]/prompt=p/prompt=QUEUED}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qd.png" ] && ok "排隊時間不算 --timeout(排隊 2.5 秒、--timeout 1 仍成功)" || bad "排隊計時" "$r"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qe "${QS[@]/prompt=p/prompt=QUEUED_QUEUEERR}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qe.png" ] && ok "/queue 暫時回 500 不當成已開始執行" || bad "/queue 錯誤誤判" "$r"

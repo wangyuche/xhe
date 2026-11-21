@@ -39,7 +39,10 @@ function exifOrientation(buf, t) {
 }
 // 讀不出尺寸就報錯,不猜比例(猜錯會把圖壓扁);檔案被截斷時讀超出範圍也一樣結束碼 2
 function imgSize(file, buf) {
-  try { return imgSizeRaw(file, buf); } catch (e) { if (e instanceof RangeError) die(`讀不出 ${file} 的尺寸(檔案不完整)`, 2); throw e; }
+  let r;
+  try { r = imgSizeRaw(file, buf); } catch (e) { if (e instanceof RangeError) die(`讀不出 ${file} 的尺寸(檔案不完整)`, 2); throw e; }
+  if (!(r.w > 0 && r.h > 0)) die(`${file} 的寬高不合理(${r.w}×${r.h})`, 2);
+  return r;
 }
 function imgSizeRaw(file, buf) {
   const ext = extname(file).toLowerCase();

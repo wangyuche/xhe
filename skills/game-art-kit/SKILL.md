@@ -25,8 +25,8 @@ node <kit>/scripts/comfy.mjs check                     # JSON:models(含 family)
 node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 300] [--queue-timeout 240]
-#   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 240)。兩者相加要小於呼叫端(例如 Bash 工具,最長 600 秒)的逾時,
-#   否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGTERM 中止時取消自己的工作再結束(130 / 143)
+#   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 240)。兩者相加要比呼叫端(例如 Bash 工具,最長 600 秒)的逾時
+#   少 180 秒以上(偵測延遲加上取消收尾最多約 2 分鐘),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGTERM 中止時取消自己的工作再結束(130 / 143)
 #   → <目錄>/<檔名>.png、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);印 {"status":"ok","seconds":…,"files":[{file,width,height}]}
 node <kit>/scripts/comfy.mjs pngsize <圖>              # {"width":…,"height":…}
 node <kit>/scripts/comfy.mjs scrub-check <目錄>        # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1

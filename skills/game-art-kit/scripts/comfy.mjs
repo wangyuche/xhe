@@ -261,12 +261,19 @@ async function run() {
   };
   // 被外部中止(Ctrl-C、Bash 工具逾時送 SIGTERM)時也收尾,不在伺服器留下工作
   let stage = null; // 下載暫存目錄;中止時也要刪
+  let printed = false; // 已印出 ok 結果、檔案已就位
   const onSignal = async (sig) => {
     STOPPING = true;
-    console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`);
-    await cleanup();
-    if (stage) rmSync(stage, { recursive: true, force: true });
-    process.exit(sig === 'SIGINT' ? 130 : 143);
+    try {
+      if (!printed) console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`);
+      await cleanup();
+      if (stage) rmSync(stage, { recursive: true, force: true });
+    } catch (e) {
+      console.error(`警告:中止時收尾失敗:${e?.message || e}`);
+    } finally {
+      // 結果已印出就算成功(只是收尾被打斷),否則 130 / 143
+      process.exit(printed ? 0 : sig === 'SIGINT' ? 130 : 143);
+    }
   };
   const halt = () => new Promise(() => {}); // 中止中:停在這裡,等訊號處理結束程序
   process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal); process.once('SIGHUP', onSignal);
@@ -331,6 +338,7 @@ async function run() {
     // 成功才存實際送出的 workflow(不含位址),避免留下沒有對應圖片的檔案
     writeFileSync(join(out, 'workflows', `${name}.json`), JSON.stringify({ _meta: { ...meta, skeleton: basename(skelPath), params: vals }, ...graph }, null, 1));
     console.log(JSON.stringify({ name, status: 'ok', seconds: Math.round((Date.now() - t0) / 100) / 10, files, params: vals }));
+    printed = true;
   } finally {
     await cleanup();
   }
