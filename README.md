@@ -6,6 +6,8 @@
 |---|---|
 | `agent-forge` | 造專業 agent、協調多個 agent 同時做事、依使用成果改進 agent |
 | `tw-stock-calc` | 台股技術指標與合理價的固定計算腳本(tw-stock-analyst 使用) |
+| `tw-bottom-signal` | 台股大盤 / 個股「底部訊號」:30 / 60 分 K 依序判斷鈍化、背離、黃金交叉、突破,輸出標記點位的 SVG(需 `fugle.sh`) |
+| `audio-transcribe` | 錄音 / 影片轉中文逐字稿:ffmpeg 轉 wav → whisper.cpp 轉錄(防重複參數)→ 清幻覺與重複 |
 | `mac-widget-kit` | Mac 桌面浮窗 / 選單列 widget 骨架與腳本,免 Xcode(mac-widget-builder 使用) |
 | `web-dev-kit` | 網站驗證腳本:啟停 dev server、Chrome 整頁截圖、轉發比對、範圍檢查、秘密掃描、本機 PostgreSQL |
 | `stack-react` | React 元件與 Vitest 測試規則 |
@@ -42,7 +44,34 @@ ln -s "$(pwd)/agents/mac-widget-builder.md" ~/.claude/agents/mac-widget-builder.
 ln -s "$(pwd)/skills/mac-widget-kit" ~/.claude/skills/mac-widget-kit  # widget 骨架與腳本
 ```
 
-`tw-stock-analyst` 需要在 host 核准規格中列出的網域;可選擇設定環境變數 `FINMIND_TOKEN` 提高 FinMind 額度。
+`tw-stock-analyst` 需要在 host 核准規格中列出的網域;可選擇設定環境變數 `FINMIND_TOKEN` 提高 FinMind 額度(免 token 額度用完時 FinMind 回 402,報告會標「無資料(FinMind 額度用完)」)。
+
+台股其他 skill:
+
+```bash
+ln -s "$(pwd)/skills/tw-bottom-signal" ~/.claude/skills/tw-bottom-signal   # 底部訊號(需要下面的 fugle.sh)
+ln -s "$(pwd)/skills/audio-transcribe" ~/.claude/skills/audio-transcribe   # 法說會錄音轉文字
+brew install ffmpeg whisper-cpp
+mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+# 模型放在別處時(本機設定,不進 git):
+# mkdir -p ~/.config/audio-transcribe && echo 'WHISPER_MODEL=<模型路徑>' > ~/.config/audio-transcribe/config
+```
+
+**`~/.claude/tg/fugle.sh`(本機檔案,不在 repo):** [富果 MarketData API](https://developer.fugle.tw/) 的包裝腳本,金鑰只由它讀取。用法 `fugle.sh <endpoint> [輸出檔]`:呼叫 `https://api.fugle.tw/marketdata/v1.0/stock/<endpoint>`;沒給輸出檔時把回應印到 stdout,有給時寫進檔案並印 `{"http":<狀態碼>}`。參考寫法(金鑰放 `~/.claude/tg/fugle_key`,`chmod 600`):
+
+```bash
+#!/bin/bash
+KEYF="$HOME/.claude/tg/fugle_key"
+[ -s "$KEYF" ] || { echo '{"error":"no fugle_key file"}'; exit 1; }
+URL="https://api.fugle.tw/marketdata/v1.0/stock/$1"
+# 金鑰經 stdin 的 curl 設定傳入,不出現在指令列(ps 看不到)
+HDR=$(printf 'header = "X-API-KEY: %s"' "$(tr -d ' \n' < "$KEYF")")
+if [ -n "$2" ]; then printf '%s\n' "$HDR" | curl -s -m 20 -K - -o "$2" -w '{"http":%{http_code}}\n' "$URL"
+else printf '%s\n' "$HDR" | curl -s -m 20 -K - "$URL"; echo; fi
+```
+
+沒有 `fugle.sh` 時:`tw-stock-analyst` 盤中即時價改用 Yahoo Finance(報告會註明),其他分析不受影響;`tw-bottom-signal` 沒有替代來源,會報錯結束(結束碼 1)。
 
 網站 agent 組(安裝與流程):
 
@@ -101,4 +130,11 @@ GitHub 機器人(`github-bot`,設定步驟見 `skills/github-bot/SKILL.md`):
 ```bash
 ln -s "$(pwd)/skills/github-bot" ~/.claude/skills/github-bot
 bash skills/github-bot/tests/run.sh
+```
+
+GitLab 機器人(`gitlab-bot`,設定步驟見 `skills/gitlab-bot/SKILL.md`):
+
+```bash
+ln -s "$(pwd)/skills/gitlab-bot" ~/.claude/skills/gitlab-bot
+bash skills/gitlab-bot/tests/run.sh
 ```

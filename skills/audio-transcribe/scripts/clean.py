@@ -7,12 +7,25 @@ whisper hallucinates during silence / music / crosstalk:
   - the same sentence looping (e.g. one line 160x in a row)
   - stray YouTube-style lines (請不吝點贊 訂閱 轉發 ..., 字幕由 ... 提供)
 This script drops filler-only lines, collapses consecutive duplicates, removes known
-hallucination phrases, and prints stats so the caller can judge transcript quality."""
+hallucination phrases (only whole channel-promo lines, never a line that merely mentions 訂閱/轉發), and prints stats so the caller can judge transcript quality."""
 import re, sys
 from collections import Counter
 
 FILLER = {"對", "嗯", "好", "是", "謝謝", "你好", "對對對", "對對", "OK", "ok", "那", "然後", "對啊", "好的"}
-HALLU = re.compile(r"(點贊|点赞|訂閱|订阅|轉發|转发|打賞|打赏|字幕由|字幕提供|明鏡與點點|明镜与点点)")
+# 幻覺句只認「整句都是頻道宣傳」的樣子,不能只因出現「訂閱」「轉發」就刪(例如「訂閱制營收年增 30%」是正常內容):
+#   STRONG:這些片語本身就是頻道宣傳 / 字幕組署名;CTA:一行短句裡出現 2 種以上宣傳動作才算
+STRONG = re.compile(r"明鏡與點點|明镜与点点|字幕由.{0,20}提供|字幕提供|請不吝|请不吝"
+                    r"|(訂閱|订阅)(我的|我們的|我们的|本)?(頻道|频道)|(開啟|开启|打開|打开)小(鈴鐺|铃铛)")
+CTA = [re.compile(p) for p in (r"點贊|点赞|按讚|按赞", r"訂閱|订阅", r"轉發|转发|分享", r"打賞|打赏", r"小鈴鐺|小铃铛")]
+CTA_MAX_LEN = 30
+
+
+def is_hallucination(line):
+    if STRONG.search(line):
+        return True
+    core = re.sub(r"[\s,，。.、!！?？]+", "", line)
+    return len(core) <= CTA_MAX_LEN and sum(1 for c in CTA if c.search(core)) >= 2
+
 
 src, dst = sys.argv[1], sys.argv[2]
 lines = [l.strip() for l in open(src, encoding="utf-8")]
@@ -23,7 +36,7 @@ for l in raw:
     core = re.sub(r"[\s,，。.、!！?？]+", "", l)
     if core in FILLER or re.fullmatch(r"(對|好|嗯|謝謝)+", core or "x"):
         dropped_filler += 1; continue
-    if HALLU.search(l):
+    if is_hallucination(l):
         dropped_hallu += 1; continue
     if out and out[-1] == l:
         dropped_dup += 1; continue

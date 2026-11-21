@@ -15,7 +15,7 @@ bash ~/.claude/skills/tw-bottom-signal/scripts/run.sh [代號] [輸出目錄]
 ```
 
 - 代號預設 `IX0001`（加權指數）；個股直接給代號，例如 `2330`。輸出目錄預設 `~/.claude/tg/work`。
-- 資料：`~/.claude/tg/fugle.sh`。Fugle **歷史 K 不含今天盤中**，所以 run.sh 另外抓 `intraday/candles` 接在後面（`scripts/combine.py`）；非交易日或還沒開盤時只用歷史。
+- 資料：`~/.claude/tg/fugle.sh`。Fugle **歷史 K 不含今天盤中**，所以 run.sh 另外抓 `intraday/candles` 接在後面（`scripts/combine.py`）；非交易日或還沒開盤時只用歷史。每次執行先刪掉上次的資料檔:**歷史 K 抓不到就報錯結束(結束碼 1、stderr「資料錯誤」),不沿用舊資料**;盤中 K 抓不到時 stderr 印「警告」並只用歷史,回覆要註明結果缺今天盤中。找不到 `fugle.sh` 也報錯(格式見 xhe README「台股」)。
 - 輸出 30 分 K 的 ①～⑥、`STAGE n/6`，接著 ⑦ 60 分 K 確認。30 分 K 走到 ② 以上時另輸出 `bottom_<代號>_30m.svg`。
 - 圖標題：指數為「加權指數」，個股為「代號 公司名」（名稱取自 Fugle 報價，抓不到就只放代號）。
 
@@ -76,4 +76,4 @@ python3 -I scripts/bottom_signal.py <30分K.json> [<60分K.json>] [--asof "YYYY-
 python3 -I tests/test_bottom_signal.py
 ```
 
-fixture 為 2026-10-01～11-16 加權指數 30／60 分 K（歷史 K），接到 2026-11-18 盤中的版本（`*_to_20261118.json`，測低點那根交叉、水平壓力區間、前波高點、`--zone-days`），以及 `ix0001_30m_to_20261119.json`（測跌破背離低點失效）。涵蓋：13:30 合併、11/16 STAGE 1、11/06 STAGE 3（60 分 K 3）、11/09 STAGE 5（60 分 K 4）、超出 4 天回看就不算、背離不偷看未來、只到 ① 不畫圖、資料錯誤訊息、combine 合併盤中。
+fixture 為 2026-10-01～11-16 加權指數 30／60 分 K（歷史 K），接到 2026-11-18 盤中的版本（`*_to_20261118.json`，測低點那根交叉、水平壓力區間、前波高點、`--zone-days`），以及 `ix0001_30m_to_20261119.json`（測跌破背離低點失效）。涵蓋：13:30 合併、11/16 STAGE 1、11/06 STAGE 3（60 分 K 3）、11/09 STAGE 5（60 分 K 4）、超出 4 天回看就不算、背離不偷看未來、只到 ① 不畫圖、資料錯誤訊息、combine 合併盤中,以及 `run.sh` 用假 `fugle.sh`(`FUGLE_SH`)測抓不到歷史 K 時報錯不沿用舊檔、盤中抓不到時警告。

@@ -147,6 +147,8 @@
 - Bash 只能執行 `curl` 和 `python3`(只用標準函式庫),外加串接多次 curl 用的 `for`、`{ …; }`、`echo`、管線;不安裝套件、不執行其他指令,不重新導向到檔案。
 - 股價來源依序嘗試,前一個失敗才換下一個:上市為證交所 → FinMind → Yahoo;上櫃為櫃買中心 → FinMind → Yahoo。全部失敗才標「無資料」。
 - FinMind token 從環境變數 `FINMIND_TOKEN` 讀取;沒設定時用免 token 的額度。絕不能把 token 印在輸出或報告裡。
+- FinMind `status` 不是 200(**402 額度用完**、401 token 無效)是資料缺口:`valuation.py` 結束碼 1;報告標「無資料」附原因,不寫成「不適用」;402 時不重抓,有備援的改用備援(2026-11-22 加入,起因:402 時腳本結束碼 0、三種方法被寫成不適用)。
+- `~/.claude/tg/fugle.sh`(富果即時報價包裝,本機檔案,不在 repo;格式見 README)不存在或失敗時,即時價改用 Yahoo Finance 並註明。
 - 資料來源優先順序:臺灣證券交易所(上市)、櫃買中心(上櫃)、FinMind(歷史股價、財報、本益比)、Yahoo Finance(股價備援)。
 - 需要使用者在 host 核准的網域:
   - 股價與財報:`openapi.twse.com.tw`、`www.twse.com.tw`、`www.tpex.org.tw`、`api.finmindtrade.com`、`query1.finance.yahoo.com`

@@ -54,7 +54,7 @@ curl -s "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id
       --eps4q <近4季EPS合計> --bvps <最新每股淨值> --dividend <近一年現金股利> --price <目前股價>
 ```
 
-沒有的數字不要給(例如未配息就不給 `--dividend`),該方法會標為不適用並附原因。沒給 `--bvps` 時,腳本用「`--price` ÷ 最新一筆 PBR」推每股淨值(`--price` 要用資料截至日的收盤價)。輸出每種方法的 `valid_count`、`p25`、`p75`、`fair_low`、`fair_high`、`position`(高於上限 / 區間內 / 低於下限),或 `applicable: false` 加 `reason`;另有 `fair_range`(只供顯示)、`verdict`(偏便宜 / 合理 / 偏貴)與 `verdict_rule`。回應無法解析(例如被擋時回 HTML)會輸出 `error`,結束碼 1。
+沒有的數字不要給(例如未配息就不給 `--dividend`),該方法會標為不適用並附原因。沒給 `--bvps` 時,腳本用「`--price` ÷ 最新一筆 PBR」推每股淨值(`--price` 要用資料截至日的收盤價)。輸出每種方法的 `valid_count`、`p25`、`p75`、`fair_low`、`fair_high`、`position`(高於上限 / 區間內 / 低於下限),或 `applicable: false` 加 `reason`;另有 `fair_range`(只供顯示)、`verdict`(偏便宜 / 合理 / 偏貴)與 `verdict_rule`。回應無法解析(例如被擋時回 HTML)或 FinMind 回錯誤狀態(`status` 不是 200,例如 **402 額度用完**、401 token 無效)會輸出 `error`(含 `status`、`api_message`),結束碼 1:這是**資料缺口**,不是「不適用」,報告要寫成資料缺口並附原因(402 時建議設定 `FINMIND_TOKEN` 或稍後重試)。
 
 ## 短期預估區間:`forecast.py`
 

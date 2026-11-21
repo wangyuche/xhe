@@ -113,4 +113,38 @@ finally:
     for p in (out, intra):
         if os.path.exists(p): os.remove(p)
 
+# 9. run.sh:用假 fugle.sh(FUGLE_SH)測抓資料失敗時不沿用上次的舊檔
+import shutil
+work = tempfile.mkdtemp(prefix="bs_run_", dir=TMP)
+fake = os.path.join(work, "fake_fugle.sh")
+open(fake, "w").write("""#!/bin/bash
+# 假 fugle.sh:FAKE_MODE=ok | histfail | intrafail
+case "$1" in
+  historical/*timeframe=30*) SRC="%s" ;;
+  historical/*timeframe=60*) SRC="%s" ;;
+esac
+# histfail:像斷線一樣不寫檔(curl -o 連不上時不會覆蓋舊檔),舊版 run.sh 會沿用上次的資料
+if [ "$FAKE_MODE" = histfail ] && [[ "$1" == historical/* ]]; then echo '{"http":000}'; exit 0; fi
+if [ "$FAKE_MODE" = intrafail ] && [[ "$1" == intraday/* ]]; then echo '{"http":000}'; exit 0; fi
+if [[ "$1" == historical/* ]]; then cat "$SRC" > "$2"; else echo '{"data":[]}' > "$2"; fi
+echo '{"http":200}'
+""" % (F30, F60))
+RUN = os.path.join(SCRIPTS, "run.sh")
+def runsh(mode):
+    env = dict(os.environ, FUGLE_SH=fake, FAKE_MODE=mode)
+    return subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
+try:
+    r = runsh("ok")
+    check("run.sh 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
+    r = runsh("histfail")
+    check("run.sh 歷史抓不到 → 報錯、不沿用舊檔", r.returncode != 0 and "資料錯誤" in r.stderr and "STAGE" not in r.stdout
+          and not os.path.exists(os.path.join(work, "bottom_IX0001_30m.json")))
+    r = runsh("intrafail")
+    check("run.sh 盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))
+    r = subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
+    check("run.sh 沒有 fugle.sh → 報錯", r.returncode != 0 and "找不到" in r.stderr)
+finally:
+    shutil.rmtree(work, ignore_errors=True)
+
 sys.exit(1 if fails else 0)

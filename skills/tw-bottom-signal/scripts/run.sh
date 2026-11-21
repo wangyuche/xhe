@@ -1,23 +1,36 @@
 #!/bin/bash
 # 底部訊號一鍵執行:抓 Fugle 30/60 分 K(歷史 + 今天盤中)→ 依序判斷 ①~⑥ → 30 分 K 到 ② 以上才輸出 SVG。
 # 用法: bash run.sh [代號,預設 IX0001] [輸出目錄,預設 ~/.claude/tg/work]
-# 需要 ~/.claude/tg/fugle.sh(含 Fugle 金鑰)。不使用 here-string / heredoc(沙盒不准寫 /tmp)。
+# 需要 ~/.claude/tg/fugle.sh(含 Fugle 金鑰;FUGLE_SH 可指定別的路徑)。不使用 here-string / heredoc(沙盒不准寫 /tmp)。
+# 每次執行前先刪掉上次的資料檔;歷史 K 抓不到就報錯結束(不沿用舊檔),盤中 K 抓不到時警告並只用歷史。
 SYM="${1:-IX0001}"
 OUT="${2:-$HOME/.claude/tg/work}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
-FUGLE="$HOME/.claude/tg/fugle.sh"
+FUGLE="${FUGLE_SH:-$HOME/.claude/tg/fugle.sh}"
+[ -f "$FUGLE" ] || { echo "資料錯誤: 找不到 $FUGLE(Fugle 包裝腳本,見 xhe README「台股」)" >&2; exit 1; }
+mkdir -p "$OUT" || exit 1
 FROM=$(python3 -I -c 'import datetime as d; print((d.date.today()-d.timedelta(days=45)).isoformat())')
 TO=$(python3 -I -c 'import datetime as d; print(d.date.today().isoformat())')
+# fugle.sh <endpoint> <檔案> 印 {"http":<狀態碼>};回傳 0 = HTTP 200 且檔案非空
+fetch() {
+  local st
+  st=$(bash "$FUGLE" "$1" "$2" 2>/dev/null)
+  case "$st" in *'"http":200'*) [ -s "$2" ] ;; *) echo "${st:-無輸出}" >&2; return 1 ;; esac
+}
 # 圖標題:指數用中文名;個股用「代號 公司名」(名稱取自 Fugle 報價,抓不到就只放代號)
 if [ "$SYM" = "IX0001" ]; then NAME="加權指數"; else
   CNAME=$(bash "$FUGLE" "intraday/quote/$SYM" | jq -r '.name // empty' 2>/dev/null)
   NAME="$SYM${CNAME:+ $CNAME}"
 fi
+rm -f "$OUT/bottom_${SYM}_30m.svg"
 for TF in 30 60; do
   H="$OUT/bottom_${SYM}_${TF}m_hist.json"; I="$OUT/bottom_${SYM}_${TF}m_intraday.json"; J="$OUT/bottom_${SYM}_${TF}m.json"
+  rm -f "$H" "$I" "$J"
   # 歷史 K 不含今天盤中,另外抓 intraday 接在後面
-  bash "$FUGLE" "historical/candles/$SYM?timeframe=$TF&from=$FROM&to=$TO" "$H" > /dev/null
-  bash "$FUGLE" "intraday/candles/$SYM?timeframe=$TF" "$I" > /dev/null
+  fetch "historical/candles/$SYM?timeframe=$TF&from=$FROM&to=$TO" "$H" \
+    || { echo "資料錯誤: ${TF} 分 K 歷史資料抓不到(Fugle 回應見上一行),不使用舊資料" >&2; exit 1; }
+  fetch "intraday/candles/$SYM?timeframe=$TF" "$I" \
+    || { echo "警告: ${TF} 分 K 盤中資料抓不到,只用歷史 K(交易時間內結果會缺今天)" >&2; rm -f "$I"; }
   python3 -I "$DIR/combine.py" "$H" "$I" "$J" || exit 1
 done
 python3 -I "$DIR/bottom_signal.py" "$OUT/bottom_${SYM}_30m.json" "$OUT/bottom_${SYM}_60m.json" \
