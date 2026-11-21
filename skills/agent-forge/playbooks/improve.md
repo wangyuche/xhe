@@ -59,7 +59,7 @@ playbook 和角色檔每次任務都會被重讀,加越多,每次的成本越高
 - **不要自動套用。** 先把完整的改動清單(接受、拒絕、暫緩)給使用者看,同意才改。
 - 小改(一行規則或更正一個事實)直接改。大改(新增一整段、超過約 10 行)先給使用者看改動內容。
 - 不 push、不開 PR。
-- **要改的是 agent-forge 本身**(playbook、角色、範本)時,照 `SKILL.md`「修改 agent-forge 本身」:其他專案只提出清單,實際修改在 xhe repo 走分支和 PR,合併後才發佈。
+- **要改的是 agent-forge 本身**(playbook、角色、範本)時,照 `SKILL.md`「修改 agent-forge 本身」:其他專案只提出清單,實際修改在 xhe repo 走分支和 PR,合併後在 xhe 本機回到 `main` 並 `git pull` 才生效。
 - 各專案自己的 agent(`.claude/agents/` 底下)可以直接在該專案改,不用走 xhe 的 PR。
 - 暫緩項目記在 `.claude/agent-specs/RULES.md` 的「待辦」區。
 

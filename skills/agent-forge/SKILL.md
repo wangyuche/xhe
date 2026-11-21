@@ -20,7 +20,7 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 任務不屬於任何一份時,先告訴使用者,不要硬套;需要時再提議新增 playbook。
 
-**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是最新版,xhe 的 `main` 更新後下個任務就會用到新規則。
+**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是當下的檔案:skill 目錄連到 xhe 的本機工作目錄,下個任務用的是那裡**目前 checkout 的版本**(包括未合併的分支與未 commit 的修改)。
 
 ## 檔案位置
 
@@ -38,12 +38,13 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 ## 修改 agent-forge 本身
 
-skill 目錄直接連到 xhe repo,只有合併進 `main` 的版本才算數。要改 agent-forge 本身(playbook、角色、範本):
+skill 目錄是 xhe 本機工作目錄的連結(使用者 2026-11-21 決定不另開只放 `main` 的副本):目前 checkout 的分支與未 commit 的修改會直接生效。要改 agent-forge 本身(playbook、角色、範本):
 
 1. 在其他專案裡,只**提出**改動清單,不要直接修改 skill 目錄。
-2. 實際修改在 xhe repo 開分支、commit、開 PR,審查後合併。
-3. 合併後,xhe 本機的工作目錄回到 `main` 並 `git pull`,連結就會指到新版(第一次安裝:`ln -s <xhe>/skills/agent-forge ~/.claude/skills/agent-forge`)。
-4. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
+2. 實際修改在 xhe repo 開分支、commit、開 PR,由使用者審查合併,或由 bot 依 `github-bot` 的規則自我審查後合併。
+3. 合併後,確認 xhe 工作目錄乾淨(`git status` 沒有其他分支的進行中修改)再切回 `main` 並 `git pull`;有其他工作在進行時,等它結束,不要硬切。
+4. 第一次安裝:用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。目標已存在(例如舊的 sbx 安裝目錄)時先移除舊的,否則會在舊目錄裡多建一層連結。
+5. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
 
 ## 原則
 
