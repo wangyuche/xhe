@@ -9,8 +9,8 @@
 - 分鏡交付:一格一張 PNG + `storyboard.md` + 一張拼好的分鏡表 `sheet.png`(附格號與短說明)。
 - 角色一致性:要很像。用該角色的 `ref.png` 當參考圖,接 `check` 查到的「參考圖一致性方法」,優先序:
   1. 參考圖編輯模型:Qwen-Image-Edit(`TextEncodeQwenImageEditPlus`,一張圖最多 3 張參考圖 → 最多 3 個角色各自一致)、Flux Kontext(`ReferenceLatent`)。
-  2. IP-Adapter(含 CLIP Vision)。
-  3. 角色 LoRA。
+  2. IP-Adapter(含 CLIP Vision)。kit 目前沒有 IP-Adapter 骨架:`check` 把它列在 `unsupported_consistency`,agent 不用(2026-11-22 補)。
+  3. 角色 LoRA。kit 目前也沒有角色 LoRA 的一致性骨架,`check` 不會列出(2026-11-22 補)。
   kit 不寫死任何模型清單(各環境裝的不同),每次由 `check` 決定可用方法。
 - 風格:每個遊戲不同,寫在該遊戲 repo 的 `art/STYLE.md`;**不提供共用風格範本或預設提示詞**,只固定章節。
 - 參考圖用 ComfyUI 內建 `/upload/image` 上傳(使用者 2026-11-21 同意),放 temp 區(ComfyUI 重開即清,不留在 input/);輸出用 PreviewImage,下載後刪 history。
@@ -36,7 +36,7 @@
 ## 做什麼
 - **第 0 步**(不改任何檔案):
   1. 簡報有模式所需欄位;專案根目錄是 git repo;記下 `git status --porcelain` 基準。
-  2. `comfy.mjs check`(位址由 kit 從環境變數 / 本機設定取得):連線、列出各類模型(checkpoints、diffusion_models、text_encoders、vae、loras、controlnet、clip_vision、style_models、ipadapter)、依檔名推斷模型家族(推斷不了標「未知」)、列出可用的參考圖一致性方法(依 `/object_info` 有無對應節點與模型)。
+  2. `comfy.mjs check`(位址由 kit 從環境變數 / 本機設定取得):連線、列出各類模型(checkpoints、diffusion_models、text_encoders、vae、loras、controlnet、clip_vision、style_models、ipadapter)、依檔名推斷模型家族(推斷不了標「未知」)、列出可用的參考圖一致性方法(依 `/object_info` 有無對應節點與模型,且 kit 有可用骨架;主機有但沒有骨架的方法列在 `unsupported_consistency`)。
   3. 風格試作模式且參考有網址:檢查 node ≥ 22 與 Google Chrome 存在。
   4. 一般 / 角色定裝 / 風格定稿模式:讀 `art/STYLE.md`;一般模式另讀需求涉及角色的 `character.md` 並 Read `ref.png`。
   5. 逐條檢查「停止並詢問的情況」。
@@ -126,7 +126,7 @@ art/
 
 ## 停止並詢問的情況(回 BLOCKED)
 - 找不到 ComfyUI 位址(環境變數與 `~/.config/game-art-kit/config` 都沒有):附設定方式,由使用者設定;或 `check` 連不到。
-- 需要角色一致,但 `check` 沒有任何一致性方法(參考圖編輯模型、IP-Adapter、角色 LoRA 都沒有):列出缺少項目與建議的模型 / 節點包。
+- 需要角色一致,但 `check` 的 `consistency_methods` 是空的(kit 只有參考圖編輯模型的骨架;IP-Adapter 只列在 `unsupported_consistency`,不能用):列出缺少項目與建議的模型 / 節點包。
 - 一般 / 角色定裝模式、`art/STYLE.md` 不存在,簡報也沒寫「不需要風格規範」:請先走風格試作。
 - 需求涉及的角色沒有 `ref.png`,簡報也沒要求角色定裝。
 - 角色定裝時 `ref.png` 已存在,簡報沒寫「重新定裝 <id>」。

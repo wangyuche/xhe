@@ -1,23 +1,29 @@
 #!/usr/bin/env node
-// 假的 ComfyUI(離線測試用)。用法:node fake-comfy.mjs <埠> <請求記錄檔>
+// 假的 ComfyUI(離線測試用)。用法:node fake-comfy.mjs <埠> <請求記錄檔> [ipadapter-only]
+// ipadapter-only:只有 Flux dev + IP-Adapter 節點與模型(沒有 Qwen-Image-Edit、Kontext),測 check 不列沒有骨架的方法。
 // 行為:/prompt 收到未知節點 → 400 node_errors;含 "FAIL" 提示詞 → 執行錯誤;含 "SLOW" → 永遠不完成(測逾時);
 // 其他 → 0.3 秒後完成,輸出一張 width×height 的 PNG(取 EmptySD3LatentImage 的尺寸,沒有就 64×64)。
 import { createServer } from 'node:http';
 import { appendFileSync } from 'node:fs';
 import { deflateSync, crc32 } from 'node:zlib';
 
-const [port, logFile] = process.argv.slice(2);
+const [port, logFile, profile] = process.argv.slice(2);
 const log = (o) => appendFileSync(logFile, JSON.stringify(o) + '\n');
 const NODES = ['UNETLoader', 'CLIPLoader', 'DualCLIPLoader', 'VAELoader', 'LoraLoaderModelOnly', 'ModelSamplingAuraFlow', 'CFGNorm', 'CLIPTextEncode',
   'EmptySD3LatentImage', 'KSampler', 'VAEDecode', 'PreviewImage', 'SaveImage', 'LoadImage', 'ImageScaleToTotalPixels', 'TextEncodeQwenImageEditPlus',
   'FluxGuidance', 'ConditioningZeroOut', 'FluxKontextImageScale', 'VAEEncode', 'ReferenceLatent', 'ImageScale', 'Canny', 'ControlNetLoader',
   'SetUnionControlNetType', 'ControlNetApplyAdvanced'];
-const MODELS = {
+let MODELS = {
   diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors'],
   text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors'],
   vae: ['qwen_image_vae.safetensors', 'ae.safetensors'], loras: ['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'],
   checkpoints: [], controlnet: [], clip_vision: [], style_models: [],
 };
+if (profile === 'ipadapter-only') {
+  NODES.push('IPAdapterAdvanced', 'IPAdapterModelLoader', 'CLIPVisionLoader');
+  MODELS = { diffusion_models: ['flux1-dev-fp8.safetensors'], text_encoders: ['clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors'], vae: ['ae.safetensors'],
+    loras: [], checkpoints: [], controlnet: [], clip_vision: ['clip_vision_h.safetensors'], style_models: [], ipadapter: ['ip-adapter_plus.safetensors'] };
+}
 
 function png(w, h) {
   const chunk = (type, data) => { const b = Buffer.alloc(8 + data.length + 4); b.writeUInt32BE(data.length, 0); b.write(type, 4); data.copy(b, 8); b.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type), data])) >>> 0, 8 + data.length); return b; };

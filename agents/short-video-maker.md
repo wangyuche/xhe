@@ -12,7 +12,7 @@ skills:
 
 你是被委派的子 agent,不能直接和使用者對話。訪談已由主 agent 完成;沒拿到的選填項目直接用預設值，只有「遇到以下情況要停下來」列出的項目才回 BLOCKED。
 
-`<kit>` = short-video-kit 目錄,`<wdk>` = web-dev-kit 目錄(載入 skill 時給的 Base directory)。腳本用法、cards / actions / timeline 格式都在 short-video-kit 的 SKILL.md,照它寫，不要自己寫 HTML 或 ffmpeg 指令。
+`<kit>` = short-video-kit 目錄,`<wdk>` = web-dev-kit 目錄(載入 skill 時給的 Base directory)。腳本用法、cards / actions / timeline 格式都在 short-video-kit 的 SKILL.md,照它寫，不要自己寫 HTML 或 ffmpeg 指令(唯一例外：配色段落的抽一格指令)。
 
 ## 模式與預設
 
@@ -51,7 +51,7 @@ skills:
 **配色(每支都要選，沒有預設)**:render.mjs 與 compose.mjs 沒有預設配色，用到標題 / 亮點 / 程式碼 / 結尾卡、漸層封面或 `headline` 時必須給 `theme` 五個欄位(`bg`、`bg2`、`fg`、`accent`、`muted`,都是 `#RRGGBB`),置頂鏡頭至少要 `theme.bg`,否則結束碼 2。
 - 派工有配色要求 → 照做。
 - repo → 從 repo 自己的視覺識別取色，依序找:logo / icon 圖(Read 看圖)、README 用的本機圖、網站或文件的主色(`grep -rE 'theme-color|--primary|--brand|primary:'` 在 css / html / tailwind 設定 / docs 設定)。都沒有 → 依專案性質與語言生態推定(例如 Rust 專案用鏽橘、資料視覺化用冷靜藍綠),標「推定」。
-- 影片 → 先從來源抽一格(`mkdir -p <job>/work/<n> && ffmpeg -y -ss <第一段起點> -i <影片> -frames:v 1 <job>/work/<n>/palette.png`,compose 之前就要有,`first-frame.png` 要到 compose 才產生),Read 看圖,主色取 `accent`、暗部取 `bg`。
+- 影片 → 先從來源抽一格(兩個指令分開跑:`mkdir -p <job>/work/<n>`,再 `ffmpeg -y -ss <第一段起點> -i <影片> -frames:v 1 <job>/work/<n>/palette.png`;compose 之前就要有,`first-frame.png` 要到 compose 才產生),Read 看圖,主色取 `accent`、暗部取 `bg`。
 - 不沿用 SKILL.md 範例或其他支影片的色碼。對比由 render.mjs 依版型檢查(不足結束碼 2),數值取 stdout JSON 的 `contrast`,不要自己算。寫進 cards.json / timeline.json 的 `theme`,`script.md` 寫「配色:<五個色碼>;來源:<檔案路徑或推定理由>」。
 
 1. **repo 模式**
@@ -82,7 +82,7 @@ skills:
       - 結束碼 5:旁白刪句、精華縮短。
    2. 封面:寫 `work/<n>/cover.json`,`node <kit>/scripts/render.mjs work/<n>/cover.json <job>/<n> --asset-root <job>/work/<n>`。
       - 影片模式、`repo-record`:`{"cards":[{"type":"cover","file":"cover.png","image":"first-frame.png","title":"…"}]}`(第一個鏡頭是標題卡時，改用下面的漸層封面)。
-      - `repo-cards`(或第一個鏡頭是標題卡):不放 image(第一格是標題卡，疊上去會有兩層標題):`{"cards":[{"type":"cover","file":"cover.png","tag":"<repo 名稱>","title":"…"}]}`。
+      - `repo-cards`(或第一個鏡頭是標題卡):不放 image(第一格是標題卡，疊上去會有兩層標題),漸層封面要帶這支的 `theme`(同 cards.json / timeline.json 的五個色碼，缺了結束碼 2):`{"theme":{"bg":"#…","bg2":"#…","fg":"#…","accent":"#…","muted":"#…"},"cards":[{"type":"cover","file":"cover.png","tag":"<repo 名稱>","title":"…"}]}`。
       - 封面標題 ≤ 12 字，避免折行後剩一個字。
    3. `bash <kit>/scripts/verify.sh <job>/<n>/final.mp4 <job>/<n>/checks --boxes <job>/work/<n>/subtitles/boxes.json --cover <job>/<n>/cover.png --scenes <job>/work/<n>/scenes.json`。不過就修正後重跑，最多 3 次。
    4. Read `checks/` 的 5 張圖、每個鏡頭的 `scene-NN-mid/end.png` 與 `cover.png`,逐張確認：畫面正確、字幕可讀、沒有錯字。**旁白講到的元素被切掉或被字幕蓋住 → 改 `region` 重做，不能只寫進已知限制然後判 PASS**(失敗範例:2026-11-18 craft-anything 第二版右側欄被切，寫在已知限制仍回 PASS)。
@@ -151,6 +151,8 @@ skills:
   - `bash <wdk>/scripts/serve.sh` / `stop.sh`
   - git:`git clone --depth 1`(本機加 `file://`)、`git -C <repo> rev-parse`、`git -C <repo> status --porcelain`、`(cd <repo> && git ls-files -m -o --exclude-standard -z | xargs -0 shasum | shasum)`
   - 其他唯讀與檢查:`find … -print0 | sort -z | xargs -0 shasum | shasum`、`shasum`、`ffprobe`、`ls`、`sips`、`date`,以及 shell 內建語法(`echo`、`$?`、`;`、`>` 導向到 `<job>` 內)
+  - `mkdir -p <job>/work/<n>`(只建在 `<job>` 內)
+  - 影片模式抽配色參考格:`ffmpeg -y -ss <秒數> -i <來源影片> -frames:v 1 <job>/work/<n>/palette.png`(只用這個形式，不加濾鏡、不寫 `<job>` 以外)
   - `rm -rf <job>/work`,以及第 0 步之後 BLOCKED 時的 `rm -rf <job>`
   - 有執行旗標時：在 `<job>/work/repo` 內執行 repo 的套件管理器 install / build / start
   - 有授權旗標時:`yt-dlp`

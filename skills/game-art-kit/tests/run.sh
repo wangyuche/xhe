@@ -10,7 +10,8 @@ ok()   { echo "PASS  $1"; PASS=$((PASS + 1)); }
 bad()  { echo "FAIL  $1"; [ -n "${2:-}" ] && echo "$2" | sed 's/^/      /' | tail -15; FAIL=$((FAIL + 1)); }
 skip() { echo "SKIP  $1"; SKIP=$((SKIP + 1)); }
 W="$(mktemp -d)"; PID=""; REAL_HOME="$HOME"
-cleanup() { [ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -rf "$W"; }
+PID2=""
+cleanup() { [ -n "$PID" ] && kill "$PID" 2>/dev/null; [ -n "$PID2" ] && kill "$PID2" 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
 if [ "${1:-}" = "--live" ]; then
@@ -46,6 +47,18 @@ c="$(C check)"
 echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const m=d.consistency_methods.map(x=>x.method);process.exit(m.includes("qwen-image-edit")&&!m.includes("flux-kontext")&&d.workflows_available["qwen-t2i"]&&d.workflows_available["qwen-edit-3ref"]===true&&d.workflows_available["flux-t2i"]===true?0:1)' \
   && ok "check:依節點與模型判斷一致性方法(有 Qwen-Edit 1–3 參考、沒有 Kontext;flux-t2i 可用)" || bad "check 方法判斷" "$c"
 echo "$c" | grep -q '"family": "qwen-image-edit"' && ! echo "$c" | grep -q '"family": "sdxl"' && echo "$c" | grep -q '"name": "t5xxl_fp8_e4m3fn.safetensors",' && ok "check:依檔名推斷模型家族(t5xxl 不誤判成 SDXL)" || bad "check 家族" "$c"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(Array.isArray(d.unsupported_consistency)&&d.unsupported_consistency.length===0?0:1)' \
+  && ok "check:沒有 IP-Adapter 時 unsupported_consistency 為空陣列" || bad "check unsupported_consistency" "$c"
+# 只有 IP-Adapter 的主機:consistency_methods 為空(kit 沒有 IP-Adapter 骨架),IP-Adapter 只列在 unsupported_consistency
+P2=$((PORT - 10000))   # PORT 在 20000–39999,P2 在 10000–29999:和第一個不同,也避開 macOS 臨時埠(49152 起)
+node "$K/tests/fake-comfy.mjs" "$P2" "$W/req2.log" ipadapter-only > "$W/fake2.out" 2>&1 & PID2=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake2.out" 2>/dev/null && break; sleep 0.1; done
+if ! grep -q listening "$W/fake2.out"; then bad "第二個假 ComfyUI 沒有啟動(埠 $P2)" "$(cat "$W/fake2.out")"; kill "$PID2" 2>/dev/null; PID2=""; else
+c2="$(C check --url "http://127.0.0.1:$P2" 2>"$W/c2.err")"
+kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
+echo "$c2" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;const ok=d.consistency_methods.length===0&&d.unsupported_consistency.map(x=>x.method).join()==="ipadapter"&&w["flux-t2i"]===true&&w["qwen-edit-1ref"]===false&&w["flux-kontext"]===false;process.exit(ok?0:1)' \
+  && ok "check:只有 IP-Adapter 的主機 → consistency_methods 為空、ipadapter 列在 unsupported_consistency" || bad "check IP-Adapter-only" "$c2 $(cat "$W/c2.err")"
+fi
 
 # 3. 骨架:每個都能填、送出、拿回正確尺寸
 QS=(--set unet=u --set clip=c --set vae=v --set lora=none --set lora_strength=1 --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple)
@@ -58,6 +71,8 @@ for n in 1 2 3; do
   r="$(C run "$K/workflows/qwen-edit-${n}ref.json" --out "$W/o" --name e$n "${QS[@]}" --set width=64 --set height=64 "${refs[@]}")" && ok "qwen-edit-${n}ref 送出成功" || bad "qwen-edit-${n}ref" "$r"
 done
 r="$(C run "$K/workflows/flux-t2i.json" --out "$W/o" --name f1 "${FS[@]}" --set width=64 --set height=64)" && ok "flux-t2i 送出成功" || bad "flux-t2i" "$r"
+r="$(C run "$K/workflows/flux-t2i.json" --out "$W/o" --name fneg "${FS[@]}" --set width=64 --set height=64 --set negative=n 2>&1)"; rc=$?
+[ $rc -eq 2 ] && echo "$r" | grep -q negative && [ ! -e "$W/o/fneg.png" ] && ok "Flux 骨架沒有 negative:多給 → 結束碼 2(agent 只在 _meta.params 有 negative 時才給)" || bad "flux-t2i 多給 negative" "rc=$rc $r"
 r="$(C run "$K/workflows/flux-kontext.json" --out "$W/o" --name k1 "${FS[@]}" --set 'ref1=r.png [temp]')" && ok "flux-kontext 送出成功" || bad "flux-kontext" "$r"
 r="$(C run "$K/workflows/zimage-t2i.json" --out "$W/o" --name z1 --set unet=u --set clip=c --set vae=v --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple --set width=64 --set height=64)" && ok "zimage-t2i 送出成功" || bad "zimage-t2i" "$r"
 r="$(C run "$K/workflows/qwen-t2i-canny.json" --out "$W/o" --name c1 "${QS[@]}" --set width=64 --set height=64 --set controlnet=x --set 'control_image=s.png [temp]' --set control_strength=0.8 --set control_end=0.8)" && ok "qwen-t2i-canny 送出成功" || bad "qwen-t2i-canny" "$r"

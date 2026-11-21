@@ -14,6 +14,8 @@ description: Mac 桌面 widget 骨架與腳本(SwiftUI + AppKit,只需 Command L
 | `widget.json` | `name`、`displayName`、`width`、`height`、`placement`、`position`、`refreshSeconds`、`kit` 標記 |
 | `README.md` | 這個 widget 的說明 |
 
+常駐模式只允許一個實例:已有同名 widget 在執行時(`~/Library/Application Support/com.widget.<name>/instance.lock` 被鎖住),新啟動的直接結束(結束碼 0),所以 `open` 與 LaunchAgent 重疊也不會出現兩個。
+
 其他檔案(`main.swift`、`Support.swift`、`WindowHost.swift`、`Snapshot.swift`、`Credentials.swift`)是骨架,不要改。載入中、錯誤畫面(「無資料:<原因>」)、右鍵「重新整理 / 結束」都由骨架負責。
 
 ## 腳本
@@ -21,14 +23,15 @@ description: Mac 桌面 widget 骨架與腳本(SwiftUI + AppKit,只需 Command L
 `<kit>` = 這個 skill 的目錄。
 
 ```bash
-bash <kit>/scripts/new-widget.sh <name> <dir>      # 建立;目錄已存在則失敗
+bash <kit>/scripts/new-widget.sh <name> <dir>      # 建立;目錄已存在、或 app 名稱(去連字號的 PascalCase)超過 16 字元則失敗
 bash <kit>/scripts/build.sh <dir>                  # 編譯 → <dir>/build/<Name>.app,印「警告:N」
 <dir>/build/<Name>.app/Contents/MacOS/<Name> --once        # 取一次資料,印一行 JSON
 bash <kit>/scripts/snapshot.sh <dir>               # → build/snapshot.png(+ stdout 資料、menubar: / menubar-length: 行;取資料失敗結束碼 3)
 bash <kit>/scripts/snapshot.sh <dir> --error       # → build/snapshot-error.png(模擬錯誤)
 <dir>/build/<Name>.app/Contents/MacOS/<Name> --self-check  # 建立視窗 / 選單列項目(不可見)後印狀態
-bash <kit>/scripts/install-agent.sh <dir>          # 開機自動啟動(需使用者確認)
-bash <kit>/scripts/uninstall-agent.sh <dir>        # 移除開機自動啟動
+bash <kit>/scripts/install-agent.sh <dir>          # 開機自動啟動(需使用者確認);會立刻啟動,並先停掉手動 open 的實例,之後不要再 open
+bash <kit>/scripts/uninstall-agent.sh <dir>        # 移除開機自動啟動(並停掉執行中的實例)
+bash <kit>/scripts/update-skeleton.sh <dir>        # 既有 widget 的骨架檔更新成目前 template(不動 4 個可改檔案)
 bash <kit>/tests/run.sh                            # 骨架自我測試
 ```
 

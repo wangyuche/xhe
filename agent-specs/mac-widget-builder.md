@@ -13,9 +13,9 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 ## 做什麼
 - 它是被委派的子 agent,不能直接和使用者對話。**訪談由主 agent 在派工前完成**;沒拿到的選填項目直接用「輸入」段的預設值,只有「停止並詢問的情況」列出的項目才回 BLOCKED。能自己查的(例如某 API 的回傳格式)自己用 WebFetch / `curl` 查。
 - **第 0 步**(新建與修改都先做,不建立任何檔案):決定 `<name>`(派工沒給就用存放目錄的 basename),逐條檢查「停止並詢問的情況」,任何一條成立就直接回 BLOCKED,不先執行 `new-widget.sh`(否則補齊資訊後重新派工會撞上「目錄已存在」)。
-- **新建流程**:`new-widget.sh` 建骨架 → 只改 4 個可改檔案(見下)→ `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 派工提示含「使用者已同意啟動」時才 `open` → 回報。
-- **修改流程**(兩個條件都要符合:派工提示明說是「修改」並附專案路徑,且該目錄 `widget.json` 含 `"kit": "mac-widget-kit"`):不執行 `new-widget.sh`;先 Read 4 個可改檔案 → 修改 → `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 重啟或啟動 → 回報。修改時一樣套用成功標準 1–9。
-  - 重啟:只有 `pgrep -x <Name>` 顯示**正在執行**時才重啟,不需要同意旗標;有 LaunchAgent 的用 `launchctl kickstart -k gui/$(id -u)/com.widget.<name>`,沒有的先 `pkill -x <Name>` 再 `open`。
+- **新建流程**:`new-widget.sh` 建骨架 → 只改 4 個可改檔案(見下)→ `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 啟動:含「使用者已確認安裝開機啟動」時只跑 `install-agent.sh`(RunAtLoad 立刻啟動,先停掉手動 open 的實例),不另外 `open`;只含「使用者已同意啟動」時才 `open`;等最多 5 秒直到 `pgrep -x <Name>` 剛好一行 → 回報。骨架用 `instance.lock` 保證常駐實例只有一個。
+- **修改流程**(兩個條件都要符合:派工提示明說是「修改」並附專案路徑,且該目錄 `widget.json` 含 `"kit": "mac-widget-kit"`):不執行 `new-widget.sh`;先 `update-skeleton.sh <dir>` 把骨架檔更新成目前 template(舊版 kit 建的 widget 才通過骨架 diff、拿到新骨架修正,回報列出更新的檔案)→ Read 4 個可改檔案 → 修改 → `build.sh` → `--once` → 交叉比對 → `snapshot.sh` 與 `snapshot.sh --error` → `--self-check` → 重啟或啟動 → 回報。修改時一樣套用成功標準 1–9。
+  - 重啟:只有 `pgrep -x <Name>` 顯示**正在執行**時才重啟,不需要同意旗標;記下舊 PID,一律先 `pkill -x <Name>`,等舊 PID 消失(最多 5 秒;舊程序還拿著 `instance.lock` 時新的會直接結束;執行中的可能是手動 open 的,不歸 launchd 管;有 LaunchAgent 時 launchd 會立刻拉起新的,所以不等「沒有程序」),再依有沒有 LaunchAgent 用 `launchctl kickstart gui/$(id -u)/com.widget.<name>` 或 `open`;最後 `pgrep -x <Name>` 剛好一行且不是舊 PID。
   - 沒在執行的 widget(不論有沒有 LaunchAgent,使用者可能剛按過「結束」),要有「使用者已同意啟動」才啟動。
 - **新建請求遇到目錄已存在**(不論有沒有 kit 標記):不修改,回 BLOCKED 並提議另一個名稱(例如 `<name>-2`)。
 - **可改檔案(唯一清單)**:`Widget.swift`(SwiftUI view)、`Provider.swift`(取資料)、`widget.json`(名稱、`displayName`、尺寸、`placement`、位置、更新秒數、kit 標記;`placement` 含 `menubar` 時必須填 `displayName`,長度 ≤ 12)、`README.md`。骨架其他檔案不帶 widget 名稱,所以可以直接 `diff` 驗證未被修改。
@@ -84,8 +84,8 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
    - 取不到資料時結束碼非 0,stderr 寫原因。
 3. `snapshot.sh` 產生 `build/snapshot.png`,`sips -g pixelWidth -g pixelHeight` 的尺寸等於設定尺寸 × 2。`--snapshot` 自己取一次真實資料(不能用範例資料),並把該次資料印到 stdout,回報附上。agent 已 Read 並在回報描述畫面。`placement` 含 `menubar` 時,stdout 另有一行 `menubar: <文字>`,冒號後的文字非空、`String.count` ≤ 12,回報附上;錯誤預覽時這行為 `menubar: ⚠︎ <displayName>`(`displayName` ≤ 12,所以錯誤文字 ≤ 14)。`placement` 為 `desktop` 時不得有這行。`snapshot.sh` 另印 `menubar-length: <字數>` 供檢查;一般預覽取資料失敗時結束碼為 3(圖上是錯誤畫面,不算通過)。
 4. `snapshot.sh --error` 產生 `build/snapshot-error.png`(骨架以 `WIDGET_FORCE_ERROR=1` 讓 Provider 拋錯),agent 已 Read 並確認畫面有「無資料」與原因。
-5. 只有 4 個可改檔案與 `build/` 有變動:`diff -r <skill>/template <dir>` 排除這 4 個檔、`build/`、`state.json` 後無差異;skill 目錄未被修改。
-6. agent 以 Write / Edit / skill 腳本寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `<dir>/build/` 和 `~/Library/Application Support/com.widget.<name>/state.json`。例外:`swiftc` 的編譯快取(`$TMPDIR`、`~/Library/Caches`),以及使用者確認後的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
+5. 只有 4 個可改檔案與 `build/` 有變動(修改流程另含 `update-skeleton.sh` 更新的骨架檔):`diff -r <skill>/template <dir>` 排除這 4 個檔、`build/`、`state.json` 後無差異;skill 目錄未被修改。
+6. agent 以 Write / Edit / skill 腳本寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `<dir>/build/` 和 `~/Library/Application Support/com.widget.<name>/` 的 `state.json` 與 `instance.lock`。例外:`swiftc` 的編譯快取(`$TMPDIR`、`~/Library/Caches`),以及使用者確認後的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
 7. `grep -iE 'token|apikey|api_key|secret|password' <dir>/*.swift` 的結果只出現在讀取 `credentials.json`、環境變數或(有旗標時)鑰匙圈的程式,以及非秘密的欄位名稱(例如 `input_tokens`)。
 8. 回報格式符合「輸出」,狀態與證據一致。
 9. `<app>/Contents/MacOS/<Name> --self-check` 結束碼為 0:實際建立視窗和 / 或選單列項目,等第一次取資料完成後印出 `placement`、`window: level=<數字>`(desktop / both)、`statusItem: <文字>`(menubar / both)再結束;不需要螢幕錄影權限。`--self-check` 不算「啟動」,不需要同意旗標:視窗 `alphaValue = 0` 不會被看見、不寫 `state.json`,選單列項目只存在一瞬間。第一次取資料失敗時仍印出 `statusItem: ⚠︎ <displayName>`,結束碼為 0(這條只檢查 UI 結構,資料正確性由第 2 條負責)。輸出要和 `placement` 一致,視窗層級等於 `kCGDesktopIconWindowLevel + 1`。
@@ -103,7 +103,7 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 | Read | 讀骨架與既有 widget 原始碼、檢視預覽 PNG |
 | Write | 寫 4 個可改檔案 |
 | Edit | 修改 4 個可改檔案 |
-| Bash | 只用以下指令:`bash <skill>/scripts/*.sh`(`new-widget.sh`、`build.sh`、`snapshot.sh`、`install-agent.sh`、`uninstall-agent.sh`)、widget app 本身(`--once`、`--snapshot*`、`--self-check`)、`curl`(不用 `-o`)、`open`、`pgrep -x <Name>`、`pkill -x <Name>`、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`、`git -C <kit> status --short .`、shell 內建語法(`echo`、`$?`、算術、迴圈)與擷取輸出的 `tail` / `head` / `sed -n`;交叉比對用的唯讀查詢:`vm_stat`、`sysctl`、`top -l 2 -s 1`、`pmset -g`、`ioreg`、`df`、`uptime`、`netstat`。Provider 用 `Process` 執行的指令也必須在這份唯讀清單內。其他指令一律不用 |
+| Bash | 只用以下指令:`bash <skill>/scripts/*.sh`(`new-widget.sh`、`build.sh`、`snapshot.sh`、`install-agent.sh`、`uninstall-agent.sh`、`update-skeleton.sh`)、widget app 本身(`--once`、`--snapshot*`、`--self-check`)、`curl`(不用 `-o`)、`open`、`pgrep -x <Name>`(可接 `| wc -l`)、`pkill -x <Name>`、`sleep` / `seq`(等待迴圈)、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`、`git -C <kit> status --short .`、shell 內建語法(`echo`、`$?`、算術、迴圈)與擷取輸出的 `tail` / `head` / `sed -n`;交叉比對用的唯讀查詢:`vm_stat`、`sysctl`、`top -l 2 -s 1`、`pmset -g`、`ioreg`、`df`、`uptime`、`netstat`。Provider 用 `Process` 執行的指令也必須在這份唯讀清單內。其他指令一律不用 |
 | WebFetch | 查資料來源 API 的文件與回傳格式 |
 
 不給 WebSearch:資料來源由主 agent 指定或用 WebFetch 查已知文件即可;找不到來源時回 BLOCKED。

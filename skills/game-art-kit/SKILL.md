@@ -21,7 +21,7 @@ ComfyUI 要用 `--listen` 啟動。macOS 連區網被擋(`No route to host`、0 
 ## 腳本
 
 ```bash
-node <kit>/scripts/comfy.mjs check                     # JSON:models(含 family)、consistency_methods、workflows_available、defaults(建議檔名)
+node <kit>/scripts/comfy.mjs check                     # JSON:models(含 family)、consistency_methods(只列有可用骨架的)、unsupported_consistency(主機有但沒骨架,例如 IP-Adapter)、workflows_available、defaults(建議檔名)
 node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
@@ -42,7 +42,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 ## workflow 骨架(`workflows/`)
 
-只放節點結構;`{{key}}` 由 `--set` 填。只有 `_meta.numeric` 列的參數會轉成數字(seed 不可超過 2^53−1),其他(提示詞、檔名)一律是字串。缺參數或多給參數都會結束碼 2。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
+只放節點結構;`{{key}}` 由 `--set` 填。只有 `_meta.numeric` 列的參數會轉成數字(seed 不可超過 2^53−1),其他(提示詞、檔名)一律是字串。缺參數或多給參數都會結束碼 2(例如 Flux 骨架沒有 `negative`,不能給)。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
 
 | 骨架 | 用途 | 實測參數(2026-11,秒數依硬體而異) |
 |---|---|---|

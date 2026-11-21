@@ -121,24 +121,26 @@ async function check() {
     zimage_unet: pick(dm, /z.?image/), zimage_clip: pick(te, /qwen_?3_?4b/),
     qwen_controlnet_union: pick(models.controlnet, /qwen.*union/),
   };
-  const methods = [];
-  if (has('TextEncodeQwenImageEditPlus') && d.qwen_edit_unet && d.qwen_clip && d.qwen_vae)
-    methods.push({ method: 'qwen-image-edit', maxRefs: 3, workflows: ['qwen-edit-1ref', 'qwen-edit-2ref', 'qwen-edit-3ref'] });
-  if (has('ReferenceLatent') && d.flux_kontext_unet && d.clip_l && d.t5 && d.flux_vae)
-    methods.push({ method: 'flux-kontext', maxRefs: 1, workflows: ['flux-kontext'] });
-  const ipaNodes = Object.keys(oi).filter(n => /ipadapter/i.test(n));
-  if (ipaNodes.length && models.ipadapter.length && models.clip_vision.length)
-    methods.push({ method: 'ipadapter', maxRefs: 1, workflows: [], note: '本 kit 沒有 IP-Adapter 骨架,需自行組 workflow' });
   const workflows = {
     'qwen-t2i': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae),
-    'qwen-edit-1ref': !!methods.find(m => m.method === 'qwen-image-edit') && has('CFGNorm') && has('ImageScaleToTotalPixels') && has('EmptySD3LatentImage'),
+    'qwen-edit-1ref': !!(has('TextEncodeQwenImageEditPlus') && d.qwen_edit_unet && d.qwen_clip && d.qwen_vae)
+      && has('CFGNorm') && has('ModelSamplingAuraFlow') && has('ImageScaleToTotalPixels') && has('EmptySD3LatentImage'),
     'qwen-edit-2ref': null, 'qwen-edit-3ref': null, // 同 qwen-edit-1ref,下面補
     'flux-t2i': !!(d.flux_unet && d.clip_l && d.t5 && d.flux_vae),
-    'flux-kontext': !!methods.find(m => m.method === 'flux-kontext'),
+    'flux-kontext': !!(has('ReferenceLatent') && has('ConditioningZeroOut') && has('FluxKontextImageScale') && has('FluxGuidance') && has('VAEEncode') && d.flux_kontext_unet && d.clip_l && d.t5 && d.flux_vae),
     'zimage-t2i': !!(d.zimage_unet && d.zimage_clip && d.flux_vae && has('ModelSamplingAuraFlow')),
     'qwen-t2i-canny': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae && d.qwen_controlnet_union && has('Canny') && has('SetUnionControlNetType')),
   };
   workflows['qwen-edit-2ref'] = workflows['qwen-edit-3ref'] = workflows['qwen-edit-1ref'];
+  // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
+  // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。
+  const methods = [];
+  if (workflows['qwen-edit-1ref']) methods.push({ method: 'qwen-image-edit', maxRefs: 3, workflows: ['qwen-edit-1ref', 'qwen-edit-2ref', 'qwen-edit-3ref'] });
+  if (workflows['flux-kontext']) methods.push({ method: 'flux-kontext', maxRefs: 1, workflows: ['flux-kontext'] });
+  const unsupported = [];
+  const ipaNodes = Object.keys(oi).filter(n => /ipadapter/i.test(n));
+  if (ipaNodes.length && models.ipadapter.length && models.clip_vision.length)
+    unsupported.push({ method: 'ipadapter', note: '主機有 IP-Adapter,但本 kit 沒有 IP-Adapter 骨架,不能用' });
   const out = {
     ok: true,
     comfyui_version: stats.system?.comfyui_version ?? null,
@@ -146,6 +148,7 @@ async function check() {
     devices: (stats.devices ?? []).map(x => ({ name: x.name, vram_gb: Math.round((x.vram_total ?? 0) / 2 ** 30) })),
     models: Object.fromEntries(Object.entries(models).map(([k, v]) => [k, v.map(n => ({ name: n, family: family(n) }))])),
     consistency_methods: methods,
+    unsupported_consistency: unsupported,
     workflows_available: workflows,
     defaults: d,
   };
