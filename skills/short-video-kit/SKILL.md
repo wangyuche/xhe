@@ -42,6 +42,14 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 - code 卡最多 15 行,超過截斷並在 stderr 提示。
 - subtitle / headline 由 compose.mjs 自動產生,通常不用手寫。
 
+## 配色
+
+`theme` 沒有預設值,每支影片自己選,不沿用別支或範例的色碼:
+- 派工有指定 → 照做。
+- repo → 依序找 logo / icon 圖、README 用的本機圖、網站或文件的主色(`theme-color`、`--primary`、`--brand`、tailwind 設定);都沒有就依專案性質推定並標明。
+- 影片 → compose 前先從來源抽一格(`ffmpeg -ss <起點> -i <影片> -frames:v 1 palette.png`),主色取 `accent`、暗部取 `bg`。
+- 五個欄位都用 `#RRGGBB`;`fg` 對 `bg`、`bg2` 對比 ≥ 4.5:1。
+
 ## actions.json(record-web.mjs)
 
 ```json

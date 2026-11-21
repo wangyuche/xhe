@@ -17,7 +17,7 @@ skills:
 - 必要:目標;驗收情境(由 acceptance-designer 起草、狀態 READY,每條有編號 `<PREFIX>-S<n>`、Given / When / Then、層級 E2E / 元件 / httptest)。僅設計規範模式不需要情境,改為必附「風格描述」(使用者原話:關鍵字、參考網站或圖片路徑、品牌色、字體、深色模式、不要什麼;至少要有關鍵字或參考其中一項)。
 - 模式:一般 / 僅設計規範(預設一般)。
 - 前端目錄(僅設計規範模式用來找既有樣式;和可寫路徑分開):`frontend/`。
-- 設計規範路徑 `<design>`:`design/DESIGN.md`(相對專案根目錄,參考圖放 `design/refs/`)。放在前端目錄外,建立 Next.js 專案時不會被擋或被覆蓋;一般模式只讀不改。僅設計規範模式的可寫路徑預設為 `design/`。
+- 設計規範路徑固定為 `design/DESIGN.md`(相對專案根目錄,參考圖放 `design/refs/`),不可由簡報改。放在前端目錄外,建立 Next.js 專案時不會被擋或被覆蓋;一般模式只讀不改。僅設計規範模式的可寫路徑固定是 `design/`,簡報給的「可寫路徑」只用於一般模式(前端在哪裡用「前端目錄」指定)。
 - 選填(預設):任務名稱 `<name>`(`frontend-owner-<專案名>`,專案名 = 專案根目錄 basename 轉小寫、非 `[a-z0-9-]` 換 `-`)、專案根目錄(目前目錄)、可寫路徑(`frontend/`)、契約(`api/openapi.yaml`,OpenAPI 3.0.3)、後端網址(見下)、dev server 起始埠(3000)、代表頁面、動態路由範例網址、「先用 mock 做純畫面」。
 - 套件管理器 `<pm>` 依 lockfile:`package-lock.json` → npm、`pnpm-lock.yaml` → pnpm、`yarn.lock` → yarn、`bun.lock(b)` → bun;沒有 lockfile 用 npm。
 
@@ -28,10 +28,10 @@ skills:
 2. `node -v` ≥ 24.18;`<pm>` 存在。僅設計規範模式改為:只有參考含網址時檢查 `node -v` ≥ 22 與 Google Chrome 存在(`${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}`,`shot.mjs` 需要)。
 3. 逐條檢查「遇到以下情況要停下來」,任何一條成立就回 BLOCKED。
 4. `bash <kit>/scripts/scope.sh snapshot <name>`。
-5. (一般模式)`<design>` 存在就完整讀過,裡面列的參考圖用 Read 看過;之後的實作與截圖檢視都以它為準。不存在就照既有畫面的風格,回報寫「設計規範:無 DESIGN.md」。
+5. (一般模式)`design/DESIGN.md` 存在就完整讀過,裡面列的參考圖用 Read 看過;之後的實作與截圖檢視都以它為準。不存在就照既有畫面的風格,回報寫「設計規範:無 DESIGN.md」。
 
 ### 僅設計規範模式(簡報寫「模式:僅設計規範」)
-只寫 `<design>`(可寫路徑 `design/`),不改前端程式碼、不建立 Next.js 專案、不啟動服務。使用者給的本機參考圖複製到 `design/refs/`,DESIGN.md 用相對路徑 `refs/<檔名>` 指它;已經有 `<design>` 時是修訂,在原檔上改。
+只寫 `design/DESIGN.md`(可寫路徑 `design/`),不改前端程式碼、不建立 Next.js 專案、不啟動服務。使用者給的本機參考圖複製到 `design/refs/`,DESIGN.md 用相對路徑 `refs/<檔名>` 指它;已經有 `design/DESIGN.md` 時是修訂,在原檔上改。
 1. **內容全部來自這個專案的風格描述**:不套用固定的配色、字體或範例值,也不沿用其他專案的 DESIGN.md。描述沒提到的項目,依關鍵字與參考推導出具體值,並在該項後面標「(推定)」讓使用者確認。
 2. 參考是圖片路徑 → 複製到 `design/refs/` 後 Read 看圖;是網址 → `node <kit>/scripts/shot.mjs <網址> 1280 800 design/refs/ref-<n>.png` 截圖後 Read 看圖(外部網站常有 console 錯誤,結束碼 2 但有截圖就可用)。寫下從參考學到的具體特徵(配色、字重、留白、圓角、排版密度)。
 3. 既有前端專案(簡報的「前端目錄」,預設 `frontend/`,有 `package.json`)→ 先讀現有樣式(`globals.css`、主要元件),DESIGN.md 寫明哪些現有樣式要保留、哪些要改。
@@ -45,7 +45,7 @@ skills:
    - `## 禁止`:這個專案不要的東西
    - `## 參考`:網址或圖片路徑,與要學它的哪一點
 5. 回報前重讀 DESIGN.md 全文:前後矛盾、和風格描述衝突的地方直接修正(這個模式就是在寫 DESIGN.md;一般模式才不改它)。
-6. 驗證:標題行必須和規定完全相同(不加註記、行尾不留空白),8 個各出現一次:`for h in 風格 色彩 字體 間距與圓角 元件 版面與響應式 禁止 參考; do printf '%s=%s\n' "$h" "$(grep -cx "## $h" design/DESIGN.md)"; done` 每行都是 `=1`(不能用 `grep -c '^## '`;DESIGN.md 裡不要在程式碼區塊內寫 `## ` 開頭的行,否則會被重複計算);`scope.sh check <name> design/` 的 IN 只在 `design/` 下;`secret-scan.sh <name>`。回報附 DESIGN.md 全文與「(推定)」項目清單。
+6. 驗證:標題行必須和規定完全相同(不加註記、行尾不留空白),8 個各出現一次:`for h in 風格 色彩 字體 間距與圓角 元件 版面與響應式 禁止 參考; do printf '%s=%s\n' "$h" "$(grep -cx "## $h" design/DESIGN.md)"; done` 每行都是 `=1`(不能用 `grep -c '^## '`;程式碼區塊裡若出現和規定標題完全相同的行,例如 `## 色彩`,會被多算一次,所以範例裡不要寫這 8 行);`scope.sh check <name> design/` 的 IN 只在 `design/` 下;`secret-scan.sh <name>`。回報附 DESIGN.md 全文與「(推定)」項目清單。
 
 以下第 1–4 步只用於一般模式。
 
@@ -160,7 +160,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 - (僅設計規範模式)參考有網址,而 `node -v` 失敗或低於 22,或找不到 Google Chrome(`shot.mjs` 需要):附安裝方式(由使用者執行),或請使用者改給截圖檔。
 - 專案根目錄不是 git repo;一般模式但簡報沒有驗收情境。
 - 僅設計規範模式但簡報沒有風格描述(關鍵字與參考都沒有),或描述互相矛盾(例如「極簡」又要「大量裝飾」):列出要問使用者的問題。
-- 一般模式、新專案(可寫路徑不存在或是空的)而沒有 `<design>`,簡報也沒寫「不需要設計規範」:請主 agent 先派「模式:僅設計規範」。
+- 一般模式、新專案(可寫路徑不存在或是空的)而沒有 `design/DESIGN.md`,簡報也沒寫「不需要設計規範」:請主 agent 先派「模式:僅設計規範」。
 - 目標有多種合理解讀,選錯會影響畫面或資料流程。
 - 需要第三方金鑰、帳號或付費服務。
 - 需要改可寫路徑以外的檔案(契約除外:契約走 ISSUES 的變更請求)。

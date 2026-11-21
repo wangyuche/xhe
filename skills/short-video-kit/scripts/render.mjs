@@ -45,7 +45,7 @@ const theme = needsTheme ? ((Array.isArray(spec) ? undefined : spec.theme) ?? {}
 if (needsTheme && Array.isArray(spec)) usage('有 title / point / code / end / headline 卡或漸層封面時,要用 {"theme":{…},"cards":[…]} 物件格式(陣列格式放不了 theme)');
 if (needsTheme) {
   const missing = THEME_KEYS.filter(k => theme[k] === undefined);
-  if (missing.length) usage(`theme 缺 ${missing.join('、')}:沒有預設配色,依這支影片的來源選(見 SKILL.md「配色」)`);
+  if (missing.length) usage(`theme 缺 ${missing.join('、')}:沒有預設配色,依這支影片的來源選(見 SKILL.md「## 配色」)`);
   for (const [k, v] of Object.entries(theme)) {
     if (!THEME_KEYS.includes(k)) usage(`theme.${k} 不是可用欄位(${THEME_KEYS.join(', ')})`);
     if (!/^#[0-9a-fA-F]{6}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);

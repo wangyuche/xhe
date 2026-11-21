@@ -44,7 +44,7 @@
 - 兩份的色彩、字體、圓角明顯不同,各自符合描述(cafe 暖色、圓角;ledger 冷靜、密集、有深色色票);描述沒提到的值標「(推定)」。狀態 PASS(僅設計規範)。
 
 ## 情境 7:一般模式照 DESIGN.md 做
-前置:情境 6 的 `cafe/`(有 `design/DESIGN.md`、沒有 `frontend/`)加上情境 1 的契約。
+前置:暫存 repo `cafe7/`,自備 fixture:`design/DESIGN.md`(手寫一份 8 個標題齊全的固定規範,例如主色 `#8B5A2B`、背景 `#FBF4EA`、內文字體 Nunito、圓角 12px)、情境 1 的 `api/openapi.yaml`;沒有 `frontend/`。不依賴情境 6 的產物(情境 6 測完即刪)。
 派工提示:同情境 1,但**不寫**「不需要設計規範」(有 DESIGN.md 就照它做)。
 預期:`new-frontend.sh` 直接建立 `frontend/`(DESIGN.md 在外面,不用搬);預設樣板的 `globals.css` 改成 DESIGN.md 的色彩與字體;/login 截圖逐節對照並回報「符合」或不符合之處;DESIGN.md 內容沒被改動。
 

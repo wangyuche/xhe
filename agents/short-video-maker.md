@@ -111,7 +111,7 @@ skills:
 - 腳本:鉤子「一個人怎麼管 8 個 AI 助手？」+ 3 個亮點(agents/、skills/web-dev-kit/、README「安裝」)+ 結尾;旁白 9 句，實測 38.4 秒
 - 畫面檢查(已檢視):0.1 秒 標題卡;25% 程式碼卡 agents/backend-owner.md;50% 重點卡;75% 重點卡;末 1 秒 結尾卡;封面 標題清楚;字幕完整、無錯字
 - 逐鏡頭(scene-NN-mid/end):01 標題卡;02 程式碼卡，第 1–15 行完整;03 重點卡;04 結尾卡;旁白講到的元素都完整、沒被字幕蓋住
-- 設定:Meijia、語速 190、fit blur、無背景音樂、輸出 ~/Movies/Shorts/、配色 accent #DEA584(來源:repo 的 assets/logo.svg)
+- 設定:Meijia、語速 190、fit blur、無背景音樂、輸出 ~/Movies/Shorts/、配色 bg #1A1A2E / bg2 #2B2B45 / fg #F5F5F5 / accent #F2A65A / muted #A8A8C0(來源:推定,repo 沒有 logo 或網站配色,依「開發工具」性質選)
 - 亮點路徑檢查(commit a1b2c3d):`ls` agents/ skills/web-dev-kit/ README.md → 都存在
 - 清理:work/ 已刪除;服務:無
 - 來源指紋：無本機來源(GitHub clone)
