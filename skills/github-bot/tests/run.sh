@@ -110,6 +110,9 @@ check "token 失敗只報真正原因" bash -c "! bash '$BOT' --repo o/missing t
 check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
 S17=$(printf '4%.0s' $(seq 40))
 check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'suite:github-actions=queued'"
+S18=$(printf '5%.0s' $(seq 40))
+check "舊的空 queued suite(被過濾的 workflow)不擋 merge" [ "$(bash "$BOT" --repo o/r merge 18 --sha "$S18")" = "$C40" ]
+check "--repo 空值拒絕" bash -c "bash '$BOT' --repo '' token 2>&1 | grep -q '不能是空的'"
 check "merge 用法列出 --allow-no-ci" bash -c "bash '$BOT' merge abc 2>&1 | grep -q -- --allow-no-ci"
 check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
 check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"

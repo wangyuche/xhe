@@ -167,7 +167,7 @@ token() {
   [[ $MODE == pat ]] && { pat; return; }
   resolve_repo
   local j inst
-  j=$(jwt)
+  j=$(jwt) || exit 1
   inst=$(api GET "/repos/$REPO/installation" "$j") \
     || die "取不到 $REPO 的 App installation(HTTP 404 = App 沒裝在這個 repo,到 App 設定頁 Install App;401 = APP_ID / 私鑰不對或系統時間偏差)"
   inst=$(jfield .id "$inst") || exit 1
@@ -190,7 +190,7 @@ identity() {
     return
   fi
   local slug uid j t="" u
-  j=$(jwt)
+  j=$(jwt) || exit 1
   local app; app=$(api GET /app "$j") || exit 1
   slug=$(jfield .slug "$app")
   # 有 repo(--repo 或 GitHub origin)就用 installation token 查,避免匿名 60 次 / 小時限制;
@@ -324,6 +324,8 @@ ci_snapshot() {   # 設定 runs st suites nr ns
     || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
   nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st")
   [[ $nr -le $(jq -r '.check_runs | length' <<<"$runs") ]] || die "check runs 超過 100 個,無法全部確認,不合併"
+  [[ $(jq -r '.total_count' <<<"$suites") -le $(jq -r '.check_suites | length' <<<"$suites") ]] \
+    || die "check suites 超過 100 個,無法全部確認,不合併"
 }
 
 check_ci() {
@@ -337,7 +339,7 @@ check_ci() {
   for i in $(seq 24); do
     ci_snapshot
     if [[ $has_wf -eq 1 ]]; then [[ $nr -gt 0 ]] && ready=1; else [[ $((nr + ns)) -gt 0 ]] && ready=1; fi
-    [[ $ready -eq 0 && $allow_no_ci -eq 1 ]] && break
+    [[ $ready -eq 0 && $allow_no_ci -eq 1 && $has_wf -eq 0 ]] && break   # 有 workflow 時仍等滿 60 秒
     if [[ $ready -eq 1 ]]; then
       if [[ $((nr + ns)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns)); fi
       [[ $stable -ge 3 ]] && break
@@ -353,8 +355,12 @@ check_ci() {
     die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
   [[ $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
-  # GitHub Actions 的 suite,或已有 check run 的 suite,必須全部完成且成功
-  bad=$(jq -r '.check_suites[] | select(.app.slug == "github-actions" or (.latest_check_runs_count // 0) > 0)
+  # 有 check run 的 suite 必須全部完成且成功。GitHub Actions 的 suite 還沒有 run 時:
+  # 建立不到 2 分鐘視為「還在登記」→ 拒絕(稍後再合併);更久仍是 0 個 run 的(例如被 paths / branches
+  # 過濾掉、GitHub 留下的空 suite)不算,否則會永遠擋住。
+  bad=$(jq -r --argjson now "$(date +%s)" '.check_suites[]
+          | select(((.latest_check_runs_count // 0) > 0)
+                   or (.app.slug == "github-actions" and $now - ((.created_at // "1970-01-01T00:00:00Z") | fromdateiso8601) < 120))
           | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not))
           | "suite:\(.app.slug)=\(.conclusion // .status)"' <<<"$suites")
   bad+=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | " \(.name)=\(.conclusion // .status)"' <<<"$runs")
@@ -404,7 +410,7 @@ cmd_merge() {
   jfield .sha "$r"
 }
 
-[[ ${1:-} == --repo ]] && { need_val --repo $#; REPO=${2%.git}; shift 2; }
+[[ ${1:-} == --repo ]] && { need_val --repo $#; [[ -n $2 ]] || die "--repo 不能是空的"; REPO=${2%.git}; shift 2; }
 [[ -z $REPO || $REPO =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo 格式錯誤:$REPO"
 
 case ${1:-} in

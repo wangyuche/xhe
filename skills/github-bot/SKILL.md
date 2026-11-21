@@ -74,7 +74,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 - push 拒絕 `main`、`master`、repo 預設分支,也不支援 force;要改歷史先問使用者。
 - curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0700 暫存目錄裡的 0600 檔只給 credential helper 讀(結束、Ctrl-C、TERM、HUP 都會刪除),不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、HOME 換成空目錄(不讀 `~/.netrc` 的個人憑證)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、`SSL_CERT_*`、`CURL_CA_BUNDLE`、proxy、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有任何 `url.*`、`http.*`、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
 - 合併前置條件見下方「自己 review 後合併」;bot 的權限(App 的 Contents: write、機器人帳號的 Write)本來就能合併,把關靠這個流程與 `--sha`。
-- 錯誤 `App 沒有安裝在 ...`:到 App 設定頁的 Install App 把該 repo 加進去。
+- 錯誤 `取不到 <repo> 的 App installation(HTTP 404 ...)`:到 App 設定頁的 Install App 把該 repo 加進去。
 - 換 App / 換電腦:只要重做第 4 步。私鑰外洩時到 App 設定頁刪掉該 key 並重新產生。
 
 ## 自己 review 後合併
@@ -85,7 +85,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,回到第 1 步用新 SHA 重新 review。
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
-4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;會先等 CI 出現,最多 60 秒:有 `.github/workflows` 的 repo 要等到 Actions check run,沒有的要等到任何 check run 或 commit status;仍沒有就拒絕。**確定 repo 沒有 CI**(或 workflow 不在 PR 分支觸發)才加 `--allow-no-ci`,例如 xhe 目前沒有 CI),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
+4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;會先等 CI 出現(最多 60 秒),出現後再觀察 15 秒數量不變才判斷,整體最多約 2 分鐘,期間不要中斷:有 `.github/workflows` 的 repo 要等到 Actions check run,沒有的要等到任何 check run 或 commit status;仍沒有就拒絕。**確定 repo 沒有 CI**(或 workflow 不在 PR 分支觸發)才加 `--allow-no-ci`,例如 xhe 目前沒有 CI;repo 有 workflow 時加了 `--allow-no-ci` 仍會先等滿 60 秒),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。
 
 `main` 的分支規則若要求 approval,作者不能核准自己的 PR,合併會被擋;要讓 bot 自己合併,規則只開「Require a pull request」、approvals 設 0。
