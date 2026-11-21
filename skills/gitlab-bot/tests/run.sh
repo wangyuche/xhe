@@ -117,6 +117,7 @@ check "mr 送出的 body 正確(預設 base=develop)" bash -c "grep '^POST .*/me
 : > "$TMP/req.log"
 check "已有 open MR 時印既有網址" [ "$(bash "$BOT" mr --head feat/existing --title T)" = https://gitlab.example.test/grp/proj/-/merge_requests/5 ]
 check "已有 open MR 時不重複建立(沒有 POST)" bash -c "! grep -q '^POST' '$TMP/req.log'"
+check "既有 MR 的目標分支不同時不沿用,另開新的" [ "$(bash "$BOT" mr --head feat/existing --base main --title T)" != https://gitlab.example.test/grp/proj/-/merge_requests/5 ]
 check "mr 缺 --title 失敗" bash -c "! bash '$BOT' mr --head feat/x 2>/dev/null"
 check "mr 只有 read_api 時 403 失敗" bash -c "GITLAB_BOT_TOKEN_CMD='echo glpat-readapi' bash '$BOT' mr --head feat/x --title T 2>&1 | grep -q 'HTTP 403.*insufficient_scope'"
 
@@ -147,6 +148,9 @@ for t in "5 $C40 head 有 .gitlab-ci.yml" "6 $D40 head 有 1 個 pipeline" "7 $A
   check "merge !$iid($msg)以結束碼 2 拒絕" bash -c "bash '$BOT' merge $iid --sha $sha 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF -- '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 done
 
+: > "$TMP/req.log"; echo '{"ci_config_path": "ci/pipeline.yml"}' > "$TMP/scenario.json"
+check "merge !1(專案設自訂 ci_config_path)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF 'ci/pipeline.yml' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+echo '{}' > "$TMP/scenario.json"
 : > "$TMP/req.log"
 check "merge !10(查詢 .gitlab-ci.yml 回 500)拒絕且不送合併" bash -c "! bash '$BOT' merge 10 --sha $F40 2>'$TMP/err' && grep -q '無法確認' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 

@@ -128,7 +128,7 @@ $bad"
   mkdir -p "$SCRATCH/home"
   (umask 077; printf '%s' "$TOKEN" > "$SCRATCH/t")
   local helper="!f(){ test \"\$1\" = get && printf 'username=oauth2\\npassword=%s\\n' \"\$(cat $SCRATCH/t)\"; }; f"
-  env -u GIT_CONFIG -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u SSL_CERT_FILE -u CURL_CA_BUNDLE \
+  env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u SSL_CERT_FILE -u CURL_CA_BUNDLE \
       -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u GIT_TRACE -u GIT_CURL_VERBOSE \
       HOME="$SCRATCH/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     git -c credential.helper= -c credential.helper="$helper" -c core.hooksPath=/dev/null \
@@ -174,8 +174,8 @@ case $cmd in
     done
     [[ -n $head && -n $title ]] || die "需要 --head 與 --title"
     [[ -n $base ]] || base=$(project_json | jq -r .default_branch)
-    hq=$(jq -rn --arg h "$head" '$h|@uri')
-    existing=$(api GET "/projects/$PID_ENC/merge_requests?state=opened&source_branch=$hq" | jq -r '.[0].web_url // empty')
+    hq=$(jq -rn --arg h "$head" '$h|@uri'); bq=$(jq -rn --arg b "$base" '$b|@uri')
+    existing=$(api GET "/projects/$PID_ENC/merge_requests?state=opened&source_branch=$hq&target_branch=$bq" | jq -r '.[0].web_url // empty')
     if [[ -n $existing ]]; then echo "$existing"; exit 0; fi
     body=""; [[ -z $bodyf ]] || body=$(cat "$bodyf")
     payload=$(jq -n --arg s "$head" --arg t "$base" --arg ti "$title" --arg d "$body" \
@@ -200,6 +200,9 @@ case $cmd in
     [[ $(jq -r .has_conflicts <<<"$m") == false ]] || die "MR 有衝突"
     src=$(jq -r .source_branch <<<"$m"); tgt=$(jq -r .target_branch <<<"$m")
     found=()
+    # 專案設了自訂 CI 設定路徑(ci_config_path,含遠端設定)→ 視為有 CI;pipeline 可能還沒建立,不能靠 pipelines 查詢
+    cip=$(project_json | jq -r '.ci_config_path // empty')
+    [[ -z $cip || $cip == .gitlab-ci.yml ]] || found+=("專案設定自訂 CI 設定路徑:$cip")
     for r in "$sha" "$tgt"; do
       case $(ci_file_at "$r") in
         no) ;;

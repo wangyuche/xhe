@@ -5,7 +5,7 @@ description: 在自建 GitLab(或 gitlab.com)上 commit、push 功能分支、�
 
 # gitlab-bot
 
-腳本:`scripts/bot.sh`(只需 bash、curl、jq、git、macOS `security`)。
+腳本:`scripts/bot.sh`(只需 bash、curl、jq、git、python3、macOS `security`)。
 
 ## 一次性設定(每台 GitLab 主機一次)
 

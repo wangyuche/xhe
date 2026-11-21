@@ -132,8 +132,11 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"id": 1, "name": "xhe-bot", "scopes": scopes, "active": True,
                                    "revoked": False, "expires_at": "2027-01-31"})
         if p in (PROJ, "/projects/42"):
-            return self.send(200, {"id": 42, "path_with_namespace": "grp/proj", "default_branch": "develop",
-                                   "web_url": WEB, "permissions": {"project_access": {"access_level": 30}}})
+            proj = {"id": 42, "path_with_namespace": "grp/proj", "default_branch": "develop",
+                    "web_url": WEB, "permissions": {"project_access": {"access_level": 30}}}
+            if "ci_config_path" in scenario():
+                proj["ci_config_path"] = scenario()["ci_config_path"]
+            return self.send(200, proj)
         if not p.startswith(PROJ + "/"):
             return self.send(404, {"message": "404 Not Found " + p})
         rest = p[len(PROJ) + 1:]
@@ -147,7 +150,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(500, {"message": "500 Internal Server Error"})
             return self.send(404, {"message": "404 File Not Found"})
         if rest == "merge_requests":
-            if q.get("state") == ["opened"] and q.get("source_branch") == ["feat/existing"]:
+            # 既有 MR:feat/existing → develop;查別的 target_branch 時不算
+            if q.get("state") == ["opened"] and q.get("source_branch") == ["feat/existing"] and q.get("target_branch", ["develop"]) == ["develop"]:
                 return self.send(200, [{"iid": 5, "web_url": f"{WEB}/-/merge_requests/5"}])
             return self.send(200, [])
         if rest.startswith("merge_requests/"):

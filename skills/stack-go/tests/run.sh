@@ -74,8 +74,10 @@ out="$(PORT="$GP" "$SRV" healthcheck 2>&1)"; rc=$?
 [ $rc -eq 1 ] && ok "healthcheck:沒在跑時結束碼 1" || bad "healthcheck:沒在跑" "rc=$rc $out"
 # 工作目錄不可寫(像 distroless 的 /)且沒設 DATABASE_URL:清楚的錯誤,不是 panic
 RO="$WORK/ro"; mkdir -p "$RO"; chmod 555 "$RO"
+if [ "$(id -u)" = 0 ]; then echo "SKIP  唯讀工作目錄(root 不受權限限制)"; else
 out="$(cd "$RO" && env -u DATABASE_URL PORT="$GP" "$SRV" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$out" | grep -q "set DATABASE_URL or run from a writable directory" && ! echo "$out" | grep -q panic && ok "唯讀工作目錄:清楚錯誤並結束碼 1" || bad "唯讀工作目錄" "rc=$rc $out"
+fi
 chmod 755 "$RO"
 grep -q "gcr.io/distroless/static-debian12:nonroot" Dockerfile && grep -q "CGO_ENABLED=0" Dockerfile && grep -q "golang:$GO_MIN-alpine" Dockerfile \
   && ok "Dockerfile:多階段、CGO_ENABLED=0、distroless nonroot、Go 版本 = GO_MIN" || bad "Dockerfile" "$(cat Dockerfile)"

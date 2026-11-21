@@ -22,10 +22,10 @@ while [ $# -gt 0 ]; do
     -f|--file) [ $# -ge 2 ] || die "$1 需要檔案路徑"; FILE="$2"; shift 2 ;;
     --allow-default) ALLOW_DEFAULT=1; shift ;;
     --build) [ "$CMD" = up ] || die "--build 只用在 up"; BUILD=1; shift ;;
-    --timeout) [ "$CMD" = up ] || die "--timeout 只用在 up"; TIMEOUT="${2:-}"; shift 2 ;;
+    --timeout) [ "$CMD" = up ] || die "--timeout 只用在 up"; [ $# -ge 2 ] || die "--timeout 缺值"; TIMEOUT="$2"; shift 2 ;;
     --volumes) [ "$CMD" = down ] || die "--volumes 只用在 down"; VOLUMES=1; shift ;;
     --images) [ "$CMD" = down ] || die "--images 只用在 down"; IMAGES=1; shift ;;
-    --tail) [ "$CMD" = logs ] || die "--tail 只用在 logs"; TAIL="${2:-}"; shift 2 ;;
+    --tail) [ "$CMD" = logs ] || die "--tail 只用在 logs"; [ $# -ge 2 ] || die "--tail 缺值"; TAIL="$2"; shift 2 ;;
     -*) die "未知參數:$1" ;;
     *) SERVICES+=("$1"); shift ;;
   esac

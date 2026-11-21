@@ -20,9 +20,14 @@ while [ $# -gt 0 ]; do
 done
 # 專案名取主 repo 目錄名:在 git worktree 裡 basename "$ROOT" 會是 worktree 目錄名(例如 backend),
 # 得到 example.com/backend/backend(2026-11-21 fortest)。git common dir 的上層才是主 repo。
+# 只有 ROOT 本身是「連結的 worktree 根目錄」時才改用主 repo 名;一般 repo 或 monorepo 的子目錄仍用 basename ROOT。
 PROJ_DIR="$ROOT"
-if COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
-  case "$COMMON" in */.git) PROJ_DIR="$(dirname "$COMMON")" ;; esac
+if TOP="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" && [ "$(cd "$TOP" && pwd -P)" = "$ROOT" ]; then
+  GD="$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir 2>/dev/null)"
+  COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  if [ -n "$GD" ] && [ "$GD" != "$COMMON" ]; then
+    case "$COMMON" in */.git) PROJ_DIR="$(dirname "$COMMON")" ;; esac
+  fi
 fi
 PROJ="$(basename "$PROJ_DIR" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g')"
 [ -n "$MODULE" ] || MODULE="example.com/$PROJ/backend"
