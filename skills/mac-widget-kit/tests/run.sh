@@ -5,7 +5,8 @@ set -uo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 S="$KIT/scripts"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/mwk-test.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+LOCKPID=""; DUP=""
+trap '[ -n "$LOCKPID" ] && kill $LOCKPID 2>/dev/null; [ -n "$DUP" ] && kill $DUP 2>/dev/null; rm -rf "$TMP"' EXIT
 pass=0; fail=0
 ok()  { echo "PASS  $1"; pass=$((pass+1)); }
 ng()  { echo "FAIL  $1"; [ $# -ge 2 ] && echo "      $2"; fail=$((fail+1)); }
@@ -96,7 +97,7 @@ DUP=$!
 for _ in $(seq 1 50); do kill -0 $DUP 2>/dev/null || break; sleep 0.1; done
 if kill -0 $DUP 2>/dev/null; then kill $DUP; wait $DUP 2>/dev/null; ng "單一實例:已有實例時要直接結束" "5 秒內沒有結束"
 else wait $DUP; rc=$?; [ $rc -eq 0 ] && grep -q '已有一個 t-sample 在執行' "$TMP/dup.out" && ok "單一實例:已有實例時直接結束(結束碼 0)" || ng "單一實例" "rc=$rc $(cat "$TMP/dup.out")"; fi
-kill $LOCKPID 2>/dev/null; wait $LOCKPID 2>/dev/null
+kill $LOCKPID 2>/dev/null; wait $LOCKPID 2>/dev/null; LOCKPID=""; DUP=""
 rm -rf "$SUP"
 
 echo "----"

@@ -91,7 +91,7 @@ skills:
 1. Read 4 個可改檔案,再修改(完成條件:只動這 4 個檔)。
 2. 照新建流程第 3–9 步完整驗證(一樣套用全部成功標準)。
 3. 重啟或啟動:
-   - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart -k gui/$(id -u)/com.widget.<name>`;沒有就 `pkill -x <Name>`,等舊程序真的結束(`for i in $(seq 1 50); do pgrep -x <Name> >/dev/null || break; sleep 0.1; done`;舊程序還拿著 `instance.lock` 時新的會直接結束)仍在執行就回報,結束了才 `open`,最後同樣確認 `pgrep -x <Name>` 剛好一行。
+   - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。一律先 `pkill -x <Name>`,等舊程序真的結束(`for i in $(seq 1 50); do pgrep -x <Name> >/dev/null || break; sleep 0.1; done`;舊程序還拿著 `instance.lock` 時新的會直接結束;執行中的可能是手動 open 的,不一定歸 launchd 管),仍在執行就回報。結束後:有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart gui/$(id -u)/com.widget.<name>`(launchd 可能已經自己拉起新的,這時 kickstart 不會再開第二個);沒有就 `open`。最後同樣等到 `pgrep -x <Name>` 剛好一行。
    - 沒在執行(使用者可能剛按過「結束」):要有「使用者已同意啟動」才 `open`。
 4. 回報。
 

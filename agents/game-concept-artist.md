@@ -119,7 +119,7 @@ skills:
 
 ## 遇到以下情況要停下來(回 BLOCKED)
 - 找不到 ComfyUI 位址(kit 結束碼 2 並附設定方式),或連不上(結束碼 5)。
-- 需要角色一致,但 `check` 的 `consistency_methods` 是空的:列出缺少項目與建議的模型(Qwen-Image-Edit-2511 + `TextEncodeQwenImageEditPlus`,或 Flux Kontext + `ReferenceLatent`);`unsupported_consistency` 有 IP-Adapter 時寫明「主機有 IP-Adapter,但 kit 沒有對應骨架,不能用」。不改用沒有一致性的文生圖硬出。
+- 需要角色一致,但 `check` 的 `consistency_methods` 是空的:對照 check.json 的 `defaults`(null 的模型)與 `/object_info` 找出缺少項目再列出:Qwen-Image-Edit 需要 edit 模型、Qwen2.5-VL text encoder、qwen_image_vae 與節點 `TextEncodeQwenImageEditPlus`、`CFGNorm`、`ImageScaleToTotalPixels`、`EmptySD3LatentImage`;Flux Kontext 需要 kontext 模型、clip_l、t5xxl、ae 與節點 `ReferenceLatent`、`FluxKontextImageScale`、`FluxGuidance`、`VAEEncode`;`unsupported_consistency` 有 IP-Adapter 時寫明「主機有 IP-Adapter,但 kit 沒有對應骨架,不能用」。不改用沒有一致性的文生圖硬出。
 - 一般 / 角色定裝模式、`art/STYLE.md` 不存在,簡報也沒寫「不需要風格規範」:請先走風格試作。
 - 需求涉及的角色沒有 `ref.png`,簡報也沒要求角色定裝。
 - 角色定裝時 `ref.png` 已存在,簡報沒寫「重新定裝 <id>」;風格定稿時 STYLE.md 已存在,簡報沒寫「修訂風格」。
