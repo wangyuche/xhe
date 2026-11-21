@@ -275,11 +275,15 @@ push_git() {
   local tf=$1 user=$2 bad rc sd; shift 2
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
   # 逐筆用 git 的 --type=path 把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);展不開的(例如不存在的 ~user)
-  # 保留原值、不影響其他項目;空值 = 清除前面的項目(跟 git 一樣)
+  # 跳過並警告(原值傳給 git 會讓 git 直接 fatal),不影響其他項目;空值 = 清除前面的項目(跟 git 一樣)
   local -a safe=()
   while IFS= read -r sd; do
     if [[ -z $sd ]]; then safe=(); continue; fi
-    [[ $sd == '~'* || $sd == '%(prefix)/'* ]] && sd=$(git -c "botsafe.dir=$sd" config --type=path botsafe.dir 2>/dev/null || printf '%s' "$sd")
+    if [[ $sd == '~'* || $sd == '%(prefix)/'* ]]; then
+      local raw=$sd
+      sd=$(cd / && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c "botsafe.dir=$raw" config --type=path botsafe.dir 2>/dev/null) \
+        || { echo "警告:safe.directory「${raw}」展不開,略過" >&2; continue; }
+    fi
     safe+=(-c "safe.directory=$sd")
   done < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
   # HOME 換成空目錄:git 的 libcurl 會讀 ~/.netrc,裡面若有 github.com 會用個人憑證推送
