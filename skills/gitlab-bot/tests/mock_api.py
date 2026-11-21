@@ -141,6 +141,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(404, {"message": "404 Not Found " + p})
         rest = p[len(PROJ) + 1:]
         if rest == "protected_branches":
+            if "prot_status" in scenario():
+                return self.send(scenario()["prot_status"], {"message": "403 Forbidden"})
             return self.send(200, [{"name": "main"}, {"name": "develop"}])
         if rest == "repository/files/.gitlab-ci.yml":
             ref = q.get("ref", [""])[0]

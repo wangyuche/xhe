@@ -153,6 +153,7 @@ EOF
           running:healthy|running:) ;;
           *:unhealthy) failed="$failed $svc(unhealthy)" ;;
           exited:*|dead:*) [ "${code:-1}" = 0 ] || failed="$failed $svc($state,exit=$code)" ;;
+          restarting:*) failed="$failed $svc(restarting,exit=$code)" ;;   # crash loop:不等到逾時
           *) waiting="$waiting $svc($state${health:+/$health})" ;;
         esac
       done <<EOF

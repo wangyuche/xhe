@@ -71,6 +71,7 @@ api() {
   local method=$1 path=$2 body=${3-} out=$SCRATCH/resp code
   local args=(-q -sS -o "$out" -w '%{http_code}' -X "$method" -H @- "$API$path")
   [[ -n $body ]] && args+=(-H 'Content-Type: application/json' --data-binary "$body")
+  : >"$out"   # 空回應時 curl 不會截斷,先清空,避免讀到上一個呼叫的內容
   code=$(printf 'PRIVATE-TOKEN: %s\n' "$TOKEN" | curl "${args[@]}") || die "連不到 $API"
   if [[ $code != 2* ]]; then
     echo "bot.sh: GitLab API $method $path → HTTP $code: $(head -c 500 "$out")" >&2; return 1
@@ -84,7 +85,7 @@ ident() {
   local u; u=$(api GET /user)
   NAME=$(jq -r '.name // .username' <<<"$u")
   EMAIL=$(jq -r '(.commit_email // "") as $c | if $c != "" and $c != "_private" then $c else (.email // "") end' <<<"$u")
-  [[ -n $EMAIL ]] || EMAIL="$(jq -r .username <<<"$u")@users.noreply.$HOST"
+  [[ -n $EMAIL ]] || EMAIL="$(jq -r '"\(.id)-\(.username)"' <<<"$u")@users.noreply.$HOST"   # GitLab 私人信箱格式 <id>-<username>
   USERNAME=$(jq -r .username <<<"$u")
 }
 
@@ -123,7 +124,8 @@ clean_push() {
   local branch=$1
   # repo 設定裡能改寫網址/認證/TLS 的項目一律拒絕
   local bad
-  bad=$(git config --local --includes --get-regexp '^(url\.|credential|core\.sshcommand|http\.)' 2>/dev/null \
+  # 不限 --local:也要查 config.worktree(extensions.worktreeConfig);全域 / 系統設定推送時本來就不讀
+  bad=$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git config --includes --get-regexp '^(url\.|credential|core\.sshcommand|http\.)' 2>/dev/null \
         | grep -viE '^http\.(postbuffer|version|lowspeedlimit|lowspeedtime) ' || true)
   [[ -z $bad ]] || die "repo 設定含會影響推送的項目,拒絕推送:
 $bad"
@@ -150,7 +152,8 @@ case $cmd in
     p=$(project_json)
     jq -r '"id:             \(.id)\npath:           \(.path_with_namespace)\ndefault_branch: \(.default_branch)\nweb_url:        \(.web_url)\naccess_level:   \(.permissions.project_access.access_level // .permissions.group_access.access_level)"' <<<"$p"
     echo "gitlab-ci.yml:  $(ci_file_at "$(jq -r .default_branch <<<"$p")") (預設分支)"
-    prot=$(api GET "/projects/$PID_ENC/protected_branches" | jq -r '[.[].name]|join(", ")')
+    # Developer 權限可能查不到 protected_branches(403):不中斷,照樣印出 token scope
+    prot=$(api GET "/projects/$PID_ENC/protected_branches" 2>/dev/null | jq -r '[.[].name]|join(", ")') || prot="(無法查詢,可能權限不足)"
     echo "protected:      ${prot:-(無)}"
     token_scopes; exit "$SCOPE_RC" ;;
   commit)

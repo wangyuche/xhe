@@ -23,8 +23,8 @@ done
 # 只有 ROOT 本身是「連結的 worktree 根目錄」時才改用主 repo 名;一般 repo 或 monorepo 的子目錄仍用 basename ROOT。
 PROJ_DIR="$ROOT"
 if TOP="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" && [ "$(cd "$TOP" && pwd -P)" = "$ROOT" ]; then
-  GD="$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir 2>/dev/null)"
-  COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  GD="$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir 2>/dev/null)" || GD=""
+  COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || COMMON=""
   if [ -n "$GD" ] && [ "$GD" != "$COMMON" ]; then
     case "$COMMON" in */.git) PROJ_DIR="$(dirname "$COMMON")" ;; esac
   fi

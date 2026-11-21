@@ -68,6 +68,10 @@ echo '{}' > "$TMP/scenario.json"
 PJ=$(bash "$BOT" project 2>/dev/null); rc=$?
 check "project 印預設分支與受保護分支" bash -c "grep -q 'default_branch: develop' <<<'$PJ' && grep -q 'protected: *main, develop' <<<'$PJ' && grep -q 'gitlab-ci.yml:  no' <<<'$PJ'"
 check "project scope 齊全時結束碼 0" [ $rc -eq 0 ]
+echo '{"prot_status": 403}' > "$TMP/scenario.json"
+PJ=$(bash "$BOT" project 2>/dev/null); rc=$?
+check "project:protected_branches 403 時照樣印 scope、不中斷" bash -c "[ $rc -eq 0 ] && grep -q '無法查詢' <<<'$PJ' && grep -qi 'scope' <<<'$PJ'"
+echo '{}' > "$TMP/scenario.json"
 PJ=$(GITLAB_BOT_TOKEN_CMD="echo glpat-readapi" bash "$BOT" project 2>"$TMP/err"); rc=$?
 check "project scope 缺 api 時結束碼 3 且仍印完專案資訊" bash -c "[ $rc -eq 3 ] && grep -q 'default_branch: develop' <<<'$PJ' && grep -q insufficient_scope '$TMP/err'"
 check "token 錯誤時 identity 失敗(非 3)" bash -c "GITLAB_BOT_TOKEN_CMD='echo glpat-wrong' bash '$BOT' identity >/dev/null 2>&1; r=\$?; [ \$r -ne 0 ] && [ \$r -ne 3 ]"
