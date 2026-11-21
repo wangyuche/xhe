@@ -119,27 +119,93 @@ ci_file_at() {
   case $code in 2*) echo yes ;; 404) echo no ;; *) echo "bot.sh: 查詢 .gitlab-ci.yml($1)→ HTTP $code" >&2; echo error ;; esac
 }
 
-# 推送用的乾淨 git:不讀全域/系統設定、HOME 為空目錄、停用 hooks;token 只在 0600 暫存檔給 credential helper
+# 推送用的乾淨 git:不讀全域/系統設定、HOME 為空目錄、停用 hooks、不遞迴推 submodule;
+# token 只在 0600 暫存檔給 credential helper,helper 只綁 origin 的主機($BASE),送不到別的主機
 clean_push() {
-  local branch=$1
-  # repo 設定裡能改寫網址/認證/TLS 的項目一律拒絕
-  local bad
-  # 不限 --local:也要查 config.worktree(extensions.worktreeConfig);全域 / 系統設定推送時本來就不讀
-  bad=$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git config --includes --get-regexp '^(url\.|credential|core\.sshcommand|http\.)' 2>/dev/null \
-        | grep -viE '^http\.(postbuffer|version|lowspeedlimit|lowspeedtime) ' || true)
-  [[ -z $bad ]] || die "repo 設定含會影響推送的項目,拒絕推送:
-$bad"
+  local branch=$1 bad rc sd
+  # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄)
+  local -a safe=()
+  while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
+    < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
+  local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS
+    -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u GIT_SSL_CERT_PASSWORD_PROTECTED
+    -u GIT_HTTP_PROXY_AUTHMETHOD -u GIT_PROXY_SSL_CERT -u GIT_PROXY_SSL_KEY -u GIT_PROXY_SSL_CAINFO
+    -u SSL_CERT_FILE -u SSL_CERT_DIR -u CURL_CA_BUNDLE -u GIT_EXEC_PATH -u NO_PROXY -u no_proxy
+    -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy
+    -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_TRACE_PACKET -u GIT_CURL_VERBOSE
+    -u XDG_CONFIG_HOME -u NETRC -u GIT_SSH -u GIT_SSH_COMMAND
+    HOME="$SCRATCH/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0)
+  # repo 的任何設定檔(local、worktree、include / includeIf)都不得有能改寫網址 / 認證 / TLS / proxy 的項目:
+  # url.*、http.*(少數無害調校除外)、credential.*、remote.<網址>.*(推到網址時 git 會套用,例如 pushurl)、core.sshCommand。
+  # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(include 壞掉、dubious ownership)一律拒絕
+  bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
+          --get-regexp '^((url|http|credential)\..*|remote\.[a-z+]+://.*|remote\./.*|core\.sshcommand)$' 2>&1) && rc=0 || rc=$?
+  [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
+  [[ $rc -eq 0 ]] && bad=$(grep -viE '[[:space:]]http\.(postbuffer|version|lowspeedlimit|lowspeedtime|maxrequests|minsessions)$' <<<"$bad" || true)
+  [[ $rc -eq 1 || -z $bad ]] || die "repo 設定含會影響推送的項目,拒絕推送:
+$bad"
   (umask 077; printf '%s' "$TOKEN" > "$SCRATCH/t")
   local helper="!f(){ test \"\$1\" = get && printf 'username=oauth2\\npassword=%s\\n' \"\$(cat $SCRATCH/t)\"; }; f"
-  env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u SSL_CERT_FILE -u SSL_CERT_DIR -u CURL_CA_BUNDLE -u GIT_EXEC_PATH -u NO_PROXY -u no_proxy \
-      -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u GIT_TRACE -u GIT_CURL_VERBOSE \
-      HOME="$SCRATCH/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
-    git -c credential.helper= -c credential.helper="$helper" -c core.hooksPath=/dev/null \
-      push "$PUSH_URL" "HEAD:refs/heads/$branch"
+  "${clean[@]}" \
+    git ${safe[@]+"${safe[@]}"} -c credential.helper= -c "credential.$BASE.helper=$helper" -c credential.useHttpPath=false \
+      -c push.recurseSubmodules=no -c submodule.recurse=false -c core.hooksPath=/dev/null \
+      -c http.extraHeader= -c http.sslVerify=true -c http.proxy= -c http.cookieFile= \
+      push --no-recurse-submodules "$PUSH_URL" "HEAD:refs/heads/$branch"
   rm -f "$SCRATCH/t"
   # 只有推到 origin 時才更新本機的 origin 追蹤分支(GITLAB_BOT_PUSH_URL 指到別處時不更新)
   [[ -n ${GITLAB_BOT_PUSH_URL:-} ]] || git update-ref "refs/remotes/origin/$branch" HEAD 2>/dev/null || true
+}
+
+# ci_signals <head SHA> <目標分支>:有任何 CI 跡象或無法確認就結束(exit 2 交給使用者;查詢失敗 exit 1)。
+# 不在子 shell 呼叫,die 才會結束整個腳本。
+nonneg() { [[ ${1-} =~ ^[0-9]+$ ]] || die "$2 查詢回應不是預期的 JSON,不合併"; }
+ci_signals() {
+  local sha=$1 tgt=$2 found=() pj cip k v r tsha n c tq
+  pj=$(project_json) || die "查不到專案設定,不合併"
+  # Developer 權限的 token 看不到這些欄位;缺欄位 = 無法確認,不能當成沒有 CI
+  for k in ci_config_path auto_devops_enabled only_allow_merge_if_pipeline_succeeds; do
+    jq -e --arg k "$k" 'has($k)' >/dev/null <<<"$pj" || found+=("專案回應沒有 $k 欄位(token 權限可能不足,需要 Maintainer),無法確認沒有 CI")
+  done
+  # 專案設了自訂 CI 設定路徑(ci_config_path,含遠端設定)→ 視為有 CI;pipeline 可能還沒建立,不能靠 pipelines 查詢
+  cip=$(jq -r '.ci_config_path // empty' <<<"$pj")
+  [[ -z $cip || $cip == .gitlab-ci.yml ]] || found+=("專案設定自訂 CI 設定路徑:$cip")
+  # Auto DevOps / 規定 pipeline 成功才能合併:沒有 CI 檔也會跑 CI(pipeline 可能還沒建立)
+  for k in "auto_devops_enabled:專案開啟 Auto DevOps" "only_allow_merge_if_pipeline_succeeds:專案規定 pipeline 成功才能合併"; do
+    v=$(jq -r --arg k "${k%%:*}" '.[$k] | if . == null then "false" else tostring end' <<<"$pj")
+    case $v in false) ;; true) found+=("${k#*:}") ;; *) found+=("${k%%:*} 的值不是 true / false($v),無法確認") ;; esac
+  done
+  # 目標分支目前的 commit:目標分支上才有的 CI(外部 CI、只在目標分支跑的 pipeline)合併後就會觸發
+  tq=$(jq -rn --arg b "$tgt" '$b|@uri')
+  r=$(api GET "/projects/$PID_ENC/repository/branches/$tq") || die "查不到目標分支 $tgt,不合併"
+  tsha=$(jq -r '.commit.id // empty' <<<"$r"); [[ $tsha =~ ^[0-9a-f]{40}$ ]] || die "目標分支 $tgt 的回應不是預期的 JSON,不合併"
+  for c in "$sha:head" "$tsha:$tgt"; do
+    case $(ci_file_at "${c%%:*}") in
+      no) ;;
+      yes) found+=("${c#*:} 有 .gitlab-ci.yml") ;;
+      *) die "無法確認 ${c#*:} 有沒有 .gitlab-ci.yml,不合併" ;;
+    esac
+    r=$(api GET "/projects/$PID_ENC/pipelines?sha=${c%%:*}") || die "查不到 ${c#*:} 的 pipeline,不合併"
+    n=$(jq -r 'if type=="array" then length else "x" end' <<<"$r"); nonneg "$n" pipeline
+    [[ $n == 0 ]] || found+=("${c#*:} 有 $n 個 pipeline")
+    r=$(api GET "/projects/$PID_ENC/repository/commits/${c%%:*}/statuses") || die "查不到 ${c#*:} 的 commit status,不合併"
+    n=$(jq -r 'if type=="array" then length else "x" end' <<<"$r"); nonneg "$n" "commit status"
+    [[ $n == 0 ]] || found+=("${c#*:} 有 $n 個 commit status")
+  done
+  # MR pipeline(detached / merged results)不一定掛在 head SHA 上
+  r=$(api GET "/projects/$PID_ENC/merge_requests/$iid/pipelines") || die "查不到 MR 的 pipeline,不合併"
+  n=$(jq -r 'if type=="array" then length else "x" end' <<<"$r"); nonneg "$n" "MR pipeline"
+  [[ $n == 0 ]] || found+=("MR 有 $n 個 pipeline")
+  if [[ ${#found[@]} -gt 0 ]]; then
+    printf 'bot.sh: 偵測到 CI 或無法確認,不自動合併,請使用者確認 CI 後自行合併:\n' >&2; printf '  - %s\n' "${found[@]}" >&2; exit 2
+  fi
+}
+
+# check_mr:$m 是 open、head 等於 review 過的 $sha、沒有衝突
+check_mr() {
+  [[ $(jq -r .state <<<"$m") == opened ]] || die "MR !$iid 不是 open"
+  [[ $(jq -r .sha <<<"$m") == "$sha" ]] || die "MR head 是 $(jq -r .sha <<<"$m"),不是 review 過的 $sha"
+  [[ $(jq -r .has_conflicts <<<"$m") == false ]] || die "MR 有衝突"
 }
 
 need() { [[ $# -ge 2 && -n $2 && $2 != --* ]] || die "$1 後面要接值"; }
@@ -193,6 +259,14 @@ case $cmd in
     sha=""
     while [[ $# -gt 0 ]]; do case $1 in --sha) need "$@"; sha=$2; shift 2 ;; *) die "不認得的參數:$1" ;; esac; done
     [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要完整 40 碼 SHA"
+    m=$(api GET "/projects/$PID_ENC/merge_requests/$iid")
+    check_mr
+    tgt=$(jq -r .target_branch <<<"$m")
+    # 外部 CI 可能晚幾秒才登記:等 15 秒(4 次查詢,間隔 5 秒)都沒有才算沒有 CI
+    for i in 1 2 3 4; do
+      ci_signals "$sha" "$tgt"
+      [[ $i -eq 4 ]] || sleep 5
+    done
     # GitLab 延遲計算可合併狀態:觸發重新檢查,unchecked / checking 時最多等 60 秒
     for _ in $(seq 1 20); do
       m=$(api GET "/projects/$PID_ENC/merge_requests/$iid?with_merge_status_recheck=true")
@@ -201,34 +275,11 @@ case $cmd in
         *) break ;;
       esac
     done
-    [[ $(jq -r .state <<<"$m") == opened ]] || die "MR !$iid 不是 open"
-    [[ $(jq -r .sha <<<"$m") == "$sha" ]] || die "MR head 是 $(jq -r .sha <<<"$m"),不是 review 過的 $sha"
-    [[ $(jq -r .has_conflicts <<<"$m") == false ]] || die "MR 有衝突"
-    src=$(jq -r .source_branch <<<"$m"); tgt=$(jq -r .target_branch <<<"$m")
-    found=()
-    # 專案設了自訂 CI 設定路徑(ci_config_path,含遠端設定)→ 視為有 CI;pipeline 可能還沒建立,不能靠 pipelines 查詢
-    pj=$(project_json)
-    cip=$(jq -r '.ci_config_path // empty' <<<"$pj")
-    [[ -z $cip || $cip == .gitlab-ci.yml ]] || found+=("專案設定自訂 CI 設定路徑:$cip")
-    # Auto DevOps / 規定 pipeline 成功才能合併:沒有 CI 檔也會跑 CI(pipeline 可能還沒建立)
-    [[ $(jq -r '.auto_devops_enabled // false' <<<"$pj") != true ]] || found+=("專案開啟 Auto DevOps")
-    [[ $(jq -r '.only_allow_merge_if_pipeline_succeeds // false' <<<"$pj") != true ]] || found+=("專案規定 pipeline 成功才能合併")
-    for r in "$sha" "$tgt"; do
-      case $(ci_file_at "$r") in
-        no) ;;
-        yes) [[ $r == "$sha" ]] && found+=("head 有 .gitlab-ci.yml") || found+=("$tgt 有 .gitlab-ci.yml") ;;
-        *) die "無法確認 $r 有沒有 .gitlab-ci.yml,不合併" ;;
-      esac
-    done
-    np=$(api GET "/projects/$PID_ENC/pipelines?sha=$sha" | jq length)
-    [[ $np == 0 ]] || found+=("head 有 $np 個 pipeline")
-    ns=$(api GET "/projects/$PID_ENC/repository/commits/$sha/statuses" | jq length)
-    [[ $ns == 0 ]] || found+=("head 有 $ns 個 commit status")
-    if [[ ${#found[@]} -gt 0 ]]; then
-      printf 'bot.sh: 偵測到 CI,不自動合併,請使用者確認 CI 後自行合併:\n' >&2; printf '  - %s\n' "${found[@]}" >&2; exit 2
-    fi
+    check_mr
+    [[ $(jq -r .target_branch <<<"$m") == "$tgt" ]] || die "MR !$iid 的目標分支改了,請重新 review"
     st=$(jq -r '.detailed_merge_status // .merge_status' <<<"$m")
     case $st in mergeable|can_be_merged) ;; *) die "GitLab 回報無法合併:$st" ;; esac
+    ci_signals "$sha" "$tgt"   # 合併前再確認一次(等待期間才登記的也要擋)
     r=$(api PUT "/projects/$PID_ENC/merge_requests/$iid/merge" "$(jq -n --arg s "$sha" '{sha:$s, should_remove_source_branch:false}')")
     jq -r '"merged: \(.web_url)\nmerge_commit_sha: \(.merge_commit_sha // .squash_commit_sha // "(fast-forward)")"' <<<"$r" ;;
   *)

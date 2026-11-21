@@ -35,7 +35,7 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
 ```
 
 - push 拒絕 `main`、`master`、預設分支,不支援 force;改歷史先問使用者。
-- token 不進指令列、環境變數、remote URL 或 `.git/config`:API 經 stdin 給 curl,push 時只在 0700 暫存目錄的 0600 檔給 credential helper 讀,結束即刪。push 不讀全域/系統 git 設定、HOME 換成空目錄、停用 hooks;repo 本地設定有 `url.*`、`credential*`、`http.*`(少數無害項除外)、`core.sshCommand` 就拒絕。
+- token 不進指令列、環境變數、remote URL 或 `.git/config`:API 經 stdin 給 curl,push 時只在 0700 暫存目錄的 0600 檔給 credential helper 讀,結束即刪;helper 只綁 origin 的主機(`credential.https://<主機>.helper`),不會送給別的主機。push 不讀全域/系統 git 設定(保留 safe.directory)、HOME 換成空目錄、停用 hooks、不遞迴推 submodule(`--no-recurse-submodules`),並移除 proxy、TLS、SSH、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有 `url.*`、`credential.*`、`http.*`(`postBuffer`、`version`、`lowSpeedLimit`、`lowSpeedTime`、`maxRequests`、`minSessions` 除外)、`remote.<網址>.*`(例如 pushurl)、`core.sshCommand` 就拒絕。
 - 平行任務在各自 worktree 執行即可(worktree 共用 origin)。
 
 ## 自己 review 後合併
@@ -43,7 +43,11 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
 1. `bash $BOT mr ...` 開 MR,記下 `HEAD_SHA=$(git rev-parse HEAD)`。
 2. 用 `code-review` skill 審這個分支相對預設分支的變更。
 3. 有 `important` → 修好、commit、push、更新 HEAD_SHA,回第 2 步。只剩 `nit` / `pre_existing` / 無發現 → 可合併。測試失敗、有衝突、需要使用者決定的產品問題 → 不合併,回報。
-4. `bash $BOT merge <iid> --sha $HEAD_SHA`。偵測到 `.gitlab-ci.yml`、pipeline 或 commit status 就拒絕(exit 2)→ 回報使用者,讓使用者看過 CI 後自己合併。
+4. `bash $BOT merge <iid> --sha $HEAD_SHA`。偵測到 CI 或無法確認就拒絕(exit 2)→ 回報使用者,讓使用者看過 CI 後自己合併:
+   - head 與目標分支目前的 commit 任一有 `.gitlab-ci.yml`、pipeline、commit status,或 MR 本身有 pipeline;
+   - 專案設了自訂 `ci_config_path`、開了 Auto DevOps、規定 pipeline 成功才能合併;
+   - 專案回應沒有這三個欄位(Developer 權限的 token 看不到)→ 視為無法確認。要讓 bot 自己合併,token 擁有者需要 Maintainer。
+   - 外部 CI 可能晚登記:等 15 秒(4 次查詢)都沒有才算沒有 CI,合併前再確認一次。任何查詢失敗都不合併(exit 1)。
 5. 回報:MR 網址、review 結論、merge commit SHA。使用者沒授權自動合併時,停在第 3 步回報即可。
 
 ## 自我測試
@@ -53,7 +57,7 @@ bash skills/gitlab-bot/tests/run.sh
 ```
 
 離線執行(只需 bash、python3、jq、git、curl):`tests/mock_api.py` 是只聽 127.0.0.1 的假 GitLab API,push 推到暫存的本機 bare repo。
-涵蓋 identity / project 的 scope 檢查、push 拒絕規則與 token 不落地、mr 建立與沿用、merge 的各種拒絕情況,以及兩個真實踩過的 bug:
+涵蓋 identity / project 的 scope 檢查、push 拒絕規則(含 pushurl、worktree / include 設定)、helper 綁主機、不遞迴 submodule 與 token 不落地、mr 建立與沿用、merge 的各種拒絕情況(目標分支、MR pipeline、晚登記的 CI、缺欄位、查詢失敗),以及兩個真實踩過的 bug:
 回應 JSON 字串含未跳脫控制字元(jq 直接解析會失敗)、`detailed_merge_status` 先 `unchecked` / `checking` 才變 `mergeable`;
 並在暫存複本上拿掉對應修正做反向驗證。
 

@@ -22,6 +22,14 @@ MR 情境(iid → 說明),head SHA 預設 a*40:
   8  已關閉
   9  head(e*40)有 commit status
   10 查詢 head(f*40)的 .gitlab-ci.yml 回 500(必須拒絕,不能當成沒有 CI)
+  11 head(0*40)的 pipeline 第 3 次查詢起才出現(晚登記的外部 CI)
+  13 目標分支 tgtci 的 commit(1*40)有 commit status(head 沒有)
+  14 MR 自己有 pipeline(detached,不掛在 head SHA)
+  15 查詢 head(9*40)的 pipelines 回 500
+  16 目標分支 gone 不存在(查分支 404)
+分支 → commit:develop / main → 2*40,withci → 3*40(有 .gitlab-ci.yml),tgtci → 1*40;其他 404。
+專案預設回傳 Maintainer 看得到的 CI 欄位(ci_config_path "",兩個布林 false);
+情境 {"hide_fields": [...]} 拿掉欄位(模擬 Developer 權限),{<欄位>: 值} 覆寫。
 """
 import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -35,6 +43,8 @@ TOKENS = {
     "glpat-noself": None,
 }
 A, C, D, E, F = "a" * 40, "c" * 40, "d" * 40, "e" * 40, "f" * 40
+G, T1, T2, T3, N = "0" * 40, "1" * 40, "2" * 40, "3" * 40, "9" * 40
+BRANCHES = {"develop": T2, "main": T2, "withci": T3, "tgtci": T1}
 WEB = "https://gitlab.example.test/grp/proj"
 PROJ = "/projects/grp%2Fproj"
 
@@ -56,10 +66,16 @@ MRS = {
     8: mr(8, state="closed", status="not_open"),
     9: mr(9, sha=E),
     10: mr(10, sha=F),
+    11: mr(11, sha=G),
+    13: mr(13, target="tgtci"),
+    14: mr(14),
+    15: mr(15, sha=N),
+    16: mr(16, target="gone"),
 }
-CI_FILE_REFS = {C, "withci"}
+CI_FILE_REFS = {C, T3}
 PIPELINES = {D: [{"id": 1, "status": "running"}]}
-STATUSES = {E: [{"name": "jenkins", "status": "pending"}]}
+STATUSES = {E: [{"name": "jenkins", "status": "pending"}], T1: [{"name": "jenkins", "status": "success"}]}
+LATE = {}  # sha → pipelines 查詢次數
 RECHECK = {}  # iid → 帶 recheck 的 GET 次數
 
 
@@ -134,9 +150,13 @@ class H(BaseHTTPRequestHandler):
         if p in (PROJ, "/projects/42"):
             proj = {"id": 42, "path_with_namespace": "grp/proj", "default_branch": "develop",
                     "web_url": WEB, "permissions": {"project_access": {"access_level": 30}}}
+            sc = scenario()
+            proj.update({"ci_config_path": "", "auto_devops_enabled": False, "only_allow_merge_if_pipeline_succeeds": False})
             for k in ("ci_config_path", "auto_devops_enabled", "only_allow_merge_if_pipeline_succeeds"):
-                if k in scenario():
-                    proj[k] = scenario()[k]
+                if k in sc:
+                    proj[k] = sc[k]
+            for k in sc.get("hide_fields", []):
+                proj.pop(k, None)
             return self.send(200, proj)
         if not p.startswith(PROJ + "/"):
             return self.send(404, {"message": "404 Not Found " + p})
@@ -157,6 +177,14 @@ class H(BaseHTTPRequestHandler):
             if q.get("state") == ["opened"] and q.get("source_branch") == ["feat/existing"] and q.get("target_branch", ["develop"]) == ["develop"]:
                 return self.send(200, [{"iid": 5, "web_url": f"{WEB}/-/merge_requests/5"}])
             return self.send(200, [])
+        if rest.startswith("repository/branches/"):
+            b = unquote(rest[len("repository/branches/"):])
+            if b not in BRANCHES:
+                return self.send(404, {"message": "404 Branch Not Found"})
+            return self.send(200, {"name": b, "commit": {"id": BRANCHES[b]}})
+        if rest.startswith("merge_requests/") and rest.endswith("/pipelines"):
+            iid = int(rest.split("/")[1])
+            return self.send(200, [{"id": 7, "status": "running"}] if iid == 14 else [])
         if rest.startswith("merge_requests/"):
             iid = int(rest.split("/")[1])
             if iid not in MRS:
@@ -169,7 +197,13 @@ class H(BaseHTTPRequestHandler):
                 m["detailed_merge_status"] = "unchecked" if n < 2 else "checking" if n < 3 else "mergeable"
             return self.send(200, m, control_chars=(iid == 2))
         if rest == "pipelines":
-            return self.send(200, PIPELINES.get(q.get("sha", [""])[0], []))
+            sha = q.get("sha", [""])[0]
+            if sha == N:
+                return self.send(500, {"message": "500 Internal Server Error"})
+            if sha == G:
+                LATE[G] = LATE.get(G, 0) + 1
+                return self.send(200, [{"id": 9, "status": "pending"}] if LATE[G] >= 3 else [])
+            return self.send(200, PIPELINES.get(sha, []))
         if rest.startswith("repository/commits/") and rest.endswith("/statuses"):
             sha = rest.split("/")[2]
             return self.send(200, STATUSES.get(sha, []))
@@ -181,6 +215,7 @@ class H(BaseHTTPRequestHandler):
         p, _ = self.route()
         if p == "/__reset":
             RECHECK.clear()
+            LATE.clear()
             return self.send(200, {})
         if self.token() is None:
             return self.send(401, {"message": "401 Unauthorized"})
