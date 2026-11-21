@@ -26,7 +26,7 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 - **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 都在這裡。這個目錄是 xhe repo 的連結(`~/.claude/skills/agent-forge` → xhe):在其他專案裡**不要直接改**;在 xhe 的分支上改會立刻對所有專案生效。改法見下方。
 - **產出**一律寫在**目前專案的根目錄**底下:`.claude/agents/`、`.claude/agent-specs/`、`.claude/skills/`。不要寫進 skill 目錄。
-- **版本指紋:** 對 skill 目錄算一次內容雜湊,用來判斷規則有沒有變:`cd <skill 目錄> && find -L . -type f -name '*.md' | sort | xargs shasum | shasum`(skill 目錄是連結,要 `-L`;用相對路徑,連結路徑和實際路徑算出來才一樣)。先確認 `find -L . -type f -name '*.md' | wc -l` 大於 0,否則指紋無效。回報時可附上前 8 碼。
+- **版本指紋:** 對 skill 目錄算一次內容雜湊,用來判斷規則有沒有變:`cd <skill 目錄> && find -L . -type f -name '*.md' | sort | xargs shasum | shasum`(skill 目錄是連結,要 `-L`;用相對路徑,連結路徑和實際路徑算出來才一樣)。先確認 `find -L . -type f -name '*.md' | wc -l` 大於 0,否則指紋無效。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。回報時可附上前 8 碼。
 
 ## 派出審查角色
 
@@ -41,13 +41,13 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 skill 目錄是 xhe 本機工作目錄的連結(使用者 2026-11-21 決定不另開只放 `main` 的副本):目前 checkout 的分支與未 commit 的修改會直接生效。要改 agent-forge 本身(playbook、角色、範本):
 
 1. 在其他專案裡,只**提出**改動清單,不要直接修改 skill 目錄。
-2. 實際修改在 xhe repo 開分支、commit、開 PR。**在 xhe 裡要用獨立的 worktree 改**(`git worktree add <暫存路徑> -b <分支> origin/main`),不要在連結指向的那個工作目錄切分支或改檔:那裡的任何修改、切換都會立刻影響所有專案。PR 由使用者審查合併,或由 bot 依 `github-bot` 的規則自我審查後合併。
-3. 合併後,`git -C <xhe> branch --show-current` 是 `main` 或剛合併的分支、且 `git status` 乾淨,才切回 `main` 並 `git pull`;是其他分支(即使乾淨,也可能是別的 session 的工作)或有未 commit 的修改時,停下來問使用者,不要硬切。
+2. 實際修改在 xhe repo 開分支、commit、開 PR。**在 xhe 裡要用獨立的 worktree 改**(`git fetch origin && git worktree add --no-track <暫存路徑> -b <分支> origin/main`),不要在連結指向的那個工作目錄切分支或改檔:那裡的任何修改、切換都會立刻影響所有專案。PR 由使用者審查合併,或由 bot 依 `github-bot` 的規則自我審查後合併。
+3. 合併後,`git -C <xhe> branch --show-current` 是 `main` 或剛合併的分支、且 `git status` 乾淨,才切回 `main` 並 `git pull --ff-only`(失敗就停下來問使用者);是其他分支(即使乾淨,也可能是別的 session 的工作)或有未 commit 的修改時,停下來問使用者,不要硬切。最後 `git worktree remove <暫存路徑>` 並刪掉功能分支。
 4. 第一次安裝:先 `ls -la ~/.claude/skills/agent-forge` 看目標。
    - 已經是指到 xhe 的連結:不用做。
    - 指錯的連結:`rm ~/.claude/skills/agent-forge`(不要 `rm -rf` 穿過連結)。
-   - 實體目錄(舊的 sbx 安裝):問過使用者後 `mv ~/.claude/skills/agent-forge ~/.claude/skills/agent-forge.old`。
-   - 確認 `test ! -e ~/.claude/skills/agent-forge` 後,用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。
+   - 實體目錄(舊的 sbx 安裝):問過使用者後移到 skills 目錄**外面** `mv ~/.claude/skills/agent-forge ~/.claude/agent-forge.old`(留在 skills 裡會被當成第二個 agent-forge 載入)。
+   - `mkdir -p ~/.claude/skills`,確認 `test ! -e ~/.claude/skills/agent-forge` 後,用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。
 5. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
 
 ## 原則
