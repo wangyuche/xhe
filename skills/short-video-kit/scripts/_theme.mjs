@@ -9,20 +9,28 @@ const lum = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
   .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0);
 export const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
 
-// 版型實際畫出來的組合與門檻(WCAG:一般文字 4.5,大字 3):
-//   標題 / 內文 / 程式碼卡標題 / 漸層封面標題:fg 在 bg→bg2 漸層上 ≥ 4.5
-//   title / end 的副標(.t2):muted 在漸層上 ≥ 3(48px 大字)
-//   tag、end 的 url:accent 在漸層上 ≥ 3(大字)
+// 版型實際畫出來的組合與門檻(WCAG:一般文字 4.5,大字 3)。底色是漸層時,沿漸層取樣(sRGB 線性內插,跟瀏覽器一樣),取最低值:
+//   標題 / 內文 / 程式碼卡標題:fg 在 bg→bg2 上 ≥ 4.5
+//   漸層封面標題:fg 在 bg→bg2→accent 上 ≥ 4.5(160deg 漸層 bg 0%、bg2 60%、accent 140%,畫面內最多到 bg2→accent 的一半)
+//   title / end 的副標(.t2):muted 在 bg→bg2 上 ≥ 3(48px 大字)
+//   tag、end 的 url:accent 在 bg→bg2 上 ≥ 3(大字)
 //   point 的編號徽章、headline:bg 字在 accent 底上 ≥ 3(大字)
-// 未涵蓋:漸層封面右下角漸進到 accent 的區域(標題在左上,不在那裡)。
+const present = (v) => v !== undefined && v !== null && String(v) !== ''; // 和 render.mjs 一樣:非空就會畫
+const mix = (a, b, t) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - t) + parseInt(b.slice(i, i + 2), 16) * t).toString(16).padStart(2, '0')).join('');
+const SAMPLES = [0, 0.25, 0.5, 0.75, 1];
+// 底色:{ name, colors(theme) → 取樣色陣列 }
+const BG = { name: 'bg~bg2', colors: (t) => SAMPLES.map(x => mix(t.bg, t.bg2, x)) };
+const COVER = { name: 'bg~bg2~accent', colors: (t) => [...SAMPLES.map(x => mix(t.bg, t.bg2, x)), ...SAMPLES.map(x => mix(t.bg2, t.accent, x * 0.5))] };
+const ACCENT = { name: 'accent', colors: (t) => [t.accent] };
 function pairsFor(cards) {
   const has = (f) => cards.some(c => c && f(c));
-  const plainCover = (c) => c.type === 'cover' && !c.image;
+  const plainCover = (c) => c.type === 'cover' && !present(c.image);
   const pairs = [];
-  if (has(c => ['title', 'point', 'code', 'end'].includes(c.type) || plainCover(c))) pairs.push(['fg', 'bg', 4.5], ['fg', 'bg2', 4.5]);
-  if (has(c => ['title', 'end'].includes(c.type) && c.subtitle)) pairs.push(['muted', 'bg', 3], ['muted', 'bg2', 3]);
-  if (has(c => (['title', 'end'].includes(c.type) || plainCover(c)) && c.tag) || has(c => c.type === 'end' && c.url)) pairs.push(['accent', 'bg', 3], ['accent', 'bg2', 3]);
-  else if (has(c => (c.type === 'point' && c.number) || c.type === 'headline')) pairs.push(['accent', 'bg', 3]);
+  if (has(c => ['title', 'point', 'code', 'end'].includes(c.type))) pairs.push(['fg', BG, 4.5]);
+  if (has(plainCover)) pairs.push(['fg', COVER, 4.5]);
+  if (has(c => ['title', 'end'].includes(c.type) && present(c.subtitle))) pairs.push(['muted', BG, 3]);
+  if (has(c => (['title', 'end'].includes(c.type) || plainCover(c)) && present(c.tag)) || has(c => c.type === 'end' && present(c.url))) pairs.push(['accent', BG, 3]);
+  if (has(c => (c.type === 'point' && present(c.number)) || c.type === 'headline')) pairs.push(['bg', ACCENT, 3]);
   return pairs;
 }
 
@@ -35,10 +43,10 @@ export function checkTheme(theme, cards) {
     if (!/^#[0-9a-fA-F]{6}$/.test(String(v))) return { error: `theme.${k} 必須是 #RRGGBB 色碼` };
   }
   const contrast = {};
-  for (const [a, b, min] of pairsFor(cards)) {
-    const r = Math.round(ratio(theme[a], theme[b]) * 100) / 100;
-    contrast[`${a}/${b}`] = r;
-    if (r < min) return { error: `theme.${a} 對 theme.${b} 對比 ${r.toFixed(2)}:1 < ${min}:1(版型會把這兩色疊在一起),換更深或更淺的顏色` };
+  for (const [fgk, bgDef, min] of pairsFor(cards)) {
+    const r = Math.min(...bgDef.colors(theme).map(c => ratio(theme[fgk], c)));
+    contrast[`${fgk}/${bgDef.name}`] = Math.floor(r * 100) / 100;
+    if (r < min) return { error: `theme.${fgk} 對 ${bgDef.name} 的最低對比 ${r.toFixed(2)}:1 < ${min}:1(版型會把這些顏色疊在一起;漸層取樣含中段),換更深或更淺的顏色` };
   }
   return { contrast };
 }
