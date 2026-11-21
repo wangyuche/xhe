@@ -136,7 +136,7 @@ BLOCKED 範例:
 2. 每個新增的使用者流程都有 E2E 測試,`node_modules/.bin/playwright test --list` 成功;接真實後端時 `test:e2e` 全部通過,接契約 mock 時失敗項目已標「待整合驗證」。
 2a. 簡報的每個驗收情境(層級屬於前端者)都有以情境編號開頭的測試,回報附「情境 → 測試 → 結果」對照表;少一個就是 ISSUES。
 2b. 有契約時,`gen:api` 已執行,API 型別來自 `schema.d.ts`,沒有手寫的 API 型別。
-3. 依「截圖範圍」應截的每頁都有桌面與手機截圖:`shot.mjs` 輸出 `http` 為 200、`consoleErrors` 為 0、`scrollWidth` ≤ `innerWidth`(無橫向捲動),而且 agent 用 Read 檢視過,寫出看到的重點。沒有頁面變更時寫「無頁面變更,未截圖」。
+3. 依「截圖範圍」應截的每頁都有桌面與手機截圖:`shot.mjs` 輸出 `http` 為 200、`redirected` 為 false(要登入的頁被導到登入頁就是 true)、`consoleErrors` 為 0、`scrollWidth` ≤ `innerWidth`(無橫向捲動),而且 agent 用 Read 檢視過,寫出看到的重點。沒有頁面變更時寫「無頁面變更,未截圖」。
 4. dev server log 沒有 `Error` 或 `⨯`。
 5. `scope.sh check` 的 `out=0`,回報附 IN 項目數。
 6. `secret-scan.sh` 的 `hits=0`。

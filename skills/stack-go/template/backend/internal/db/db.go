@@ -34,6 +34,9 @@ func Open(ctx context.Context, url string) (*sql.DB, error) {
 	if strings.HasPrefix(url, "postgres://") || strings.HasPrefix(url, "postgresql://") {
 		driver, dialect = "pgx", "postgres"
 	} else {
+		if perConnectionSQLite(url) {
+			return nil, fmt.Errorf("SQLite DSN %q is a per-connection database (in-memory or empty path): each pooled connection would see its own empty database; use a file such as filepath.Join(t.TempDir(), \"test.db\")", url)
+		}
 		if err := ensureDir(url); err != nil {
 			return nil, err
 		}
@@ -80,14 +83,32 @@ func withSQLiteSafety(dsn string) string {
 	return dsn
 }
 
+// perConnectionSQLite reports DSNs whose database exists only inside one connection
+// (":memory:", "file::memory:", mode=memory, or an empty path). database/sql pools
+// connections, so the second connection sees an empty database without the migrated
+// tables ("no such table" under concurrent tests). Shared-cache memory DBs are rejected
+// too: shared cache uses table locks that ignore busy_timeout (SQLITE_LOCKED).
+func perConnectionSQLite(dsn string) bool {
+	path, query := strings.TrimPrefix(dsn, "file:"), ""
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path, query = path[:i], path[i+1:]
+	}
+	if path == "" || strings.HasPrefix(path, ":memory:") {
+		return true
+	}
+	for _, kv := range strings.Split(query, "&") {
+		if strings.EqualFold(kv, "mode=memory") {
+			return true
+		}
+	}
+	return false
+}
+
 // ensureDir creates the directory of a SQLite file DSN (data/ is gitignored, so a fresh worktree lacks it).
 func ensureDir(dsn string) error {
 	path := strings.TrimPrefix(dsn, "file:")
 	if i := strings.IndexByte(path, '?'); i >= 0 {
 		path = path[:i]
-	}
-	if path == "" || path == ":memory:" || strings.HasPrefix(path, ":memory:") {
-		return nil
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

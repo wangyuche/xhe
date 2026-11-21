@@ -26,14 +26,16 @@ while IFS= read -r f; do
     # 排除:dev / test / example / changeme 開頭的值
     my $fake = qr/^(dev|test|example|changeme)/i;
     if ($line =~ /NEXT_PUBLIC_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)/) { $hit = 1 }
-    while ($line =~ /(?i:secret|password|passwd|api[_-]?key|token|private[_-]?key)\s*[:=]\s*["\x27]([^"\x27]{8,})["\x27]/g) {
-      $hit = 1 unless $1 =~ $fake;
+    # 名稱可帶後綴(secretKey、tokenValue);指定方式 = 、 : 、 Go 的 := 與 var x string =
+    # 字串用雙引號、單引號或 Go 的反引號
+    while ($line =~ /(?i:secret|password|passwd|api[_-]?key|token|private[_-]?key)\w*\s*(?::=|[:=]|\s+[A-Za-z_][\w.*\[\]]*\s*=)\s*(["\x27\x60])([^"\x27\x60]{8,})\1/g) {
+      $hit = 1 unless $2 =~ $fake;
     }
     $hit = 1 if $line =~ /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
     $hit = 1 if $line =~ /sk-[A-Za-z0-9]{20,}/ && $line !~ /sk-(dev|test|example)/;
     $hit = 1 if $line =~ /AKIA[0-9A-Z]{16}/;
     if ($hit) {
-      (my $m = $line) =~ s/(["\x27])[^"\x27]{4,}(["\x27])/$1***$2/g;
+      (my $m = $line) =~ s/(["\x27\x60])[^"\x27\x60]{4,}(["\x27\x60])/$1***$2/g;
       $m =~ s/(sk-|AKIA)[A-Za-z0-9]+/$1***/g;
       chomp $m; print "$ARGV:$.: $m\n";
     }
