@@ -102,6 +102,13 @@ kill $LOCKPID 2>/dev/null; wait $LOCKPID 2>/dev/null; LOCKPID=""; DUP=""
 rm -rf "$SUP"
 fi
 
+# update-skeleton.sh:舊版骨架被更新回 template,4 個可改檔案不動
+echo "// old" >> "$D/main.swift"; cp "$D/Provider.swift" "$TMP/prov.bak"
+u="$(bash "$S/update-skeleton.sh" "$D" 2>&1)"
+d="$(diff -r "$KIT/template" "$D" -x build -x state.json -x Widget.swift -x Provider.swift -x widget.json -x README.md 2>&1)"
+[ -z "$d" ] && grep -q 'main.swift' <<<"$u" && cmp -s "$D/Provider.swift" "$TMP/prov.bak" && [ "$(bash "$S/update-skeleton.sh" "$D")" = "骨架已是最新" ] \
+  && ok "update-skeleton.sh 更新舊骨架、不動可改檔案" || ng "update-skeleton.sh" "$u $d"
+
 echo "----"
 echo "通過 $pass,失敗 $fail"
 [ $fail -eq 0 ]

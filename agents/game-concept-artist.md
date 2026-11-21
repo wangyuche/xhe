@@ -40,7 +40,7 @@ skills:
 6. 逐條檢查「遇到以下情況要停下來」,同時成立的全部列出。
 
 ### 風格試作(完成條件:2–4 張 + manifest,回 BLOCKED)
-1. 參考是圖片 → Read 看圖;是網址 → `node <web-dev-kit>/scripts/shot.mjs <網址> 1280 800 <tmp>/ref-<n>.png`(只截簡報給的網址),Read 看圖。既有作品的參考只抽一般特徵(上色方式、線條粗細、飽和度、光影),**不當參考圖餵進任何模型,提示詞不寫作品名或作者名**。
+1. 參考是圖片 → Read 看圖;是網址 → `node <web-dev-kit>/scripts/shot.mjs <網址> 1280 800 <tmp>/ref-<n>.png --allow-redirect`(只截簡報給的網址;參考網站常轉址,例如 http→https、語系頁,所以加 `--allow-redirect`),stdout JSON 的 `redirected` 為 true 時,manifest 與回報的參考來源記 `finalUrl`;轉到的網域和原網址不同、或像登入頁 / 錯誤頁時,不當參考,回報說明。Read 看圖。既有作品的參考只抽一般特徵(上色方式、線條粗細、飽和度、光影),**不當參考圖餵進任何模型,提示詞不寫作品名或作者名**。
 2. 2–4 張各用不同設定組合(不同骨架 / 模型家族 / 提示詞方向),同一個代表性畫面(例如主角站在代表場景前),寫進 `art/out/<日期>-style-trials/`,每張的設定寫進 manifest。
 3. Read 每張,回 BLOCKED:逐張附設定摘要、看到的特點,問「請選第幾張,可附修改意見」。
 

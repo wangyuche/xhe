@@ -30,7 +30,8 @@ bash <kit>/scripts/snapshot.sh <dir>               # → build/snapshot.png(+ st
 bash <kit>/scripts/snapshot.sh <dir> --error       # → build/snapshot-error.png(模擬錯誤)
 <dir>/build/<Name>.app/Contents/MacOS/<Name> --self-check  # 建立視窗 / 選單列項目(不可見)後印狀態
 bash <kit>/scripts/install-agent.sh <dir>          # 開機自動啟動(需使用者確認);會立刻啟動,並先停掉手動 open 的實例,之後不要再 open
-bash <kit>/scripts/uninstall-agent.sh <dir>        # 移除開機自動啟動
+bash <kit>/scripts/uninstall-agent.sh <dir>        # 移除開機自動啟動(並停掉執行中的實例)
+bash <kit>/scripts/update-skeleton.sh <dir>        # 既有 widget 的骨架檔更新成目前 template(不動 4 個可改檔案)
 bash <kit>/tests/run.sh                            # 骨架自我測試
 ```
 

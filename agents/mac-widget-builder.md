@@ -88,7 +88,8 @@ skills:
 
 ### 修改流程
 
-1. Read 4 個可改檔案,再修改(完成條件:只動這 4 個檔)。
+0. `bash <kit>/scripts/update-skeleton.sh <dir>`(完成條件:印「骨架已是最新」或「已更新骨架:…」;舊版 kit 建的 widget 會在這步拿到新骨架,例如單一實例鎖,之後的骨架 diff 才會通過)。有更新時回報列出更新的骨架檔。
+1. Read 4 個可改檔案,再修改(完成條件:4 個可改檔案以外,只有第 0 步更新的骨架檔有變動)。
 2. 照新建流程第 3–9 步完整驗證(一樣套用全部成功標準)。
 3. 重啟或啟動:
    - `pgrep -x <Name>` 顯示**正在執行**:直接重啟,不需要同意旗標。記下舊 PID(`old=$(pgrep -x <Name>)`),一律先 `pkill -x <Name>`(執行中的可能是手動 open 的,不一定歸 launchd 管,只 `kickstart -k` 殺不到),等舊 PID 消失(`for i in $(seq 1 50); do pgrep -x <Name> | grep -qx "$old" || break; sleep 0.1; done`;舊程序還拿著 `instance.lock` 時新的會直接結束),仍在就回報。有 LaunchAgent 時 launchd 會因 SIGTERM 立刻拉起新的,所以只等舊 PID 消失,不等「沒有程序」。之後:有 LaunchAgent(`ls ~/Library/LaunchAgents/com.widget.<name>.plist` 存在)用 `launchctl kickstart gui/$(id -u)/com.widget.<name>`(已被 launchd 拉起時不會再開第二個);沒有就 `open`。最後等到 `pgrep -x <Name>` 剛好一行,且不是舊 PID。
@@ -97,7 +98,7 @@ skills:
 
 ## Bash 只能用這些指令
 
-- `bash <kit>/scripts/*.sh`(new-widget、build、snapshot、install-agent、uninstall-agent)
+- `bash <kit>/scripts/*.sh`(new-widget、build、snapshot、install-agent、uninstall-agent、update-skeleton)
 - widget app 本身(`--once`、`--snapshot*`、`--self-check`)
 - `curl`(不用 `-o`)、`open`(含第 4b 步的 `open -n -W --stdout … --stderr … --args --once`)、`pgrep -x <Name>`(可接 `| wc -l`)、`pkill -x <Name>`、`sleep`(只用在上面的等待迴圈)、`seq`、`launchctl kickstart`、`id -u`、`diff`、`grep`、`plutil`、`sips`、`date`、`ls`
 - 字數:不用自己數,看 `snapshot.sh` 印出的 `menubar-length:`
@@ -163,7 +164,7 @@ BLOCKED 範例:
 2. `--once` 結束碼為 0,印出一行 JSON。另外執行一個獨立指令交叉比對,把指令與輸出寫進回報:百分比類差距 ≤ 10 個百分點;容量類相對誤差 ≤ 10%;外部來源數值完全一致或差一個跳動單位,且為同一欄位;純計算型 JSON 含計算依據並用 `date` 驗算。取不到資料時結束碼非 0,stderr 寫原因。另外第 4b 步從 `open` 啟動的 `--once` 也要拿到 JSON(stderr 空白)。
 3. `snapshot.sh` 產生 `build/snapshot.png`,尺寸等於設定尺寸 × 2;預覽用的是真實資料,stdout 的資料附在回報;已 Read 並描述畫面。`placement` 含 `menubar` 時,`menubar:` 行的文字非空、≤ 12 字元並附在回報;`desktop` 時不得有這行。
 4. `snapshot.sh --error` 產生 `build/snapshot-error.png`,已 Read 並確認畫面有「無資料」與原因。
-5. 只有 4 個可改檔案與 `build/` 有變動:骨架 `diff -r` 無差異;skill 目錄未被修改。
+5. 只有 4 個可改檔案與 `build/` 有變動(修改流程另含 `update-skeleton.sh` 更新的骨架檔):骨架 `diff -r` 無差異;skill 目錄未被修改。
 6. 你寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `build/` 和 `~/Library/Application Support/com.widget.<name>/state.json`(骨架負責)。例外:`swiftc` 編譯快取,以及有同意旗標時的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
 7. 金鑰 grep 的結果只出現在讀 `Credentials`、環境變數、或(有旗標時)鑰匙圈的程式,以及用量欄位名稱這類非秘密文字(例如 `input_tokens`);有鑰匙圈旗標時,`--once` 輸出與回報不含秘密(`grep -c` 為 0)。
 8. 回報格式符合「輸出格式」,狀態與證據一致。

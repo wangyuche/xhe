@@ -6,6 +6,13 @@ source "$(dirname "$0")/_common.sh"
 load_widget "$@"
 [ -x "$APP_BIN" ] || die "找不到 $APP_BIN,請先執行 build.sh"
 plist="$HOME/Library/LaunchAgents/$LABEL.plist"
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+if pgrep -x "$APP_NAME" >/dev/null; then
+  pkill -x "$APP_NAME" || true
+  for _ in $(seq 1 50); do pgrep -x "$APP_NAME" >/dev/null || break; sleep 0.1; done
+  pgrep -x "$APP_NAME" >/dev/null && die "停不掉執行中的 $APP_NAME,請手動結束後重跑"
+  echo "已停止執行中的 $APP_NAME(改由 LaunchAgent 啟動)"
+fi
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -20,12 +27,5 @@ cat > "$plist" <<PLIST
 </dict>
 </plist>
 PLIST
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-if pgrep -x "$APP_NAME" >/dev/null; then
-  pkill -x "$APP_NAME" || true
-  for _ in $(seq 1 50); do pgrep -x "$APP_NAME" >/dev/null || break; sleep 0.1; done
-  pgrep -x "$APP_NAME" >/dev/null && die "停不掉執行中的 $APP_NAME,請手動結束後重跑"
-  echo "已停止手動啟動的 $APP_NAME(改由 LaunchAgent 啟動)"
-fi
 launchctl bootstrap "gui/$(id -u)" "$plist"
 echo "已安裝並啟動:$plist"
