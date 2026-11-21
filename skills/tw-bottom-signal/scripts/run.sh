@@ -12,15 +12,20 @@ FUGLE="${FUGLE_SH:-$HOME/.claude/tg/fugle.sh}"
 mkdir -p "$OUT" || exit 1
 FROM=$(python3 -I -c 'import datetime as d; print((d.date.today()-d.timedelta(days=45)).isoformat())')
 TO=$(python3 -I -c 'import datetime as d; print(d.date.today().isoformat())')
-# fugle.sh <endpoint> <檔案> 通常印 {"http":<狀態碼>}。成功 = 有寫出非空檔案,且沒有印出非 200 的狀態碼
-# (檔案事先刪掉,所以非空一定是這次寫的;內容是否為有效 K 線由 combine.py 檢查)
+# fugle.sh <endpoint> <檔案> 通常印 {"http":<狀態碼>}。成功 = fugle.sh 結束碼 0、沒有印出非 200 的狀態碼,
+# 且檔案是含 data 陣列的 JSON(檔案事先刪掉,所以一定是這次寫的;逾時截斷或錯誤內容都算失敗)
 fetch() {
-  local st
-  st=$(bash "$FUGLE" "$1" "$2" 2>/dev/null)
+  local st rc
+  st=$(bash "$FUGLE" "$1" "$2" 2>/dev/null); rc=$?
+  [ "$rc" = 0 ] || { echo "Fugle 失敗(結束碼 $rc):${st:-無輸出}" >&2; return 1; }
   if printf '%s' "$st" | grep -q '"http"' && ! printf '%s' "$st" | grep -Eq '"http" *: *200([^0-9]|$)'; then
     echo "Fugle 回應: $st" >&2; return 1
   fi
   [ -s "$2" ] || { echo "Fugle 沒有寫出資料(${st:-無輸出})" >&2; return 1; }
+  python3 -I -c 'import json,sys
+try: d = json.load(open(sys.argv[1]))
+except Exception as e: sys.exit(f"Fugle 回應不是完整的 JSON:{e}")
+if not isinstance(d, dict) or not isinstance(d.get("data"), list): sys.exit("Fugle 回應沒有 data:" + str(d)[:200])' "$2"
 }
 # 圖標題:指數用中文名;個股用「代號 公司名」(名稱取自 Fugle 報價,抓不到就只放代號)
 if [ "$SYM" = "IX0001" ]; then NAME="加權指數"; else

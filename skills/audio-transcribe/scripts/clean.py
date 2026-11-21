@@ -21,7 +21,7 @@ STRONG = re.compile(r"明鏡與點點|明镜与点点|字幕由.{0,20}提供|字
 _ITEM = r"(點贊|点赞|按讚|按赞|點個讚|点个赞|按個讚|訂閱|订阅|轉發|转发|打賞|打赏|(開啟|开启|打開|打开)?小(鈴鐺|铃铛))"
 _PREFIX = (r"((謝謝|谢谢|感謝|感谢)(大家)?(的)?(支持|收看|觀看|观看)?)?"
            r"(請|请|記得|记得|歡迎|欢迎|麻煩|麻烦)?(大家)?(多多)?(幫忙|帮忙)?")
-_SUFFIX = r"((我的|我們的|我们的|本)?(頻道|频道|欄目|栏目))?(一起分享)?(喔|哦|吧)?"
+_SUFFIX = r"(?P<chan>(我的|我們的|我们的|本)?(頻道|频道|欄目|栏目))?(一起分享)?(喔|哦|吧)?"
 # 分享 / 收藏只能接在其他宣傳動作後面(「謝謝大家的分享」不是宣傳)
 PROMO = re.compile(rf"(?P<pre>{_PREFIX}){_ITEM}({_ITEM}|分享|收藏)*{_SUFFIX}")
 PROMO_ONLY = re.compile(r"點贊|点赞|按讚|按赞|點個讚|点个赞|按個讚|打賞|打赏|小鈴鐺|小铃铛")
@@ -32,7 +32,8 @@ def is_hallucination(line):
         return True
     core = re.sub(r"[\s,，。.、!！?？~～]+", "", line)
     m = PROMO.fullmatch(core)
-    return bool(m) and (bool(m.group("pre")) or bool(PROMO_ONLY.search(core)))
+    # 「訂閱我的頻道」這種有頻道結尾的也算;「頻道訂閱」(頻道在前)不會整行符合
+    return bool(m) and bool(m.group("pre") or m.group("chan") or PROMO_ONLY.search(core))
 
 
 src, dst = sys.argv[1], sys.argv[2]
@@ -46,10 +47,10 @@ for l in raw:
         dropped_filler += 1; continue
     if is_hallucination(l):
         dropped_hallu += 1; continue
+    # 同一字元重複很多次(例如「法法法法法法法」)壓成 3 個;先壓再比對連續重複
+    l = re.sub(r"(.)\1{5,}", r"\1\1\1", l)
     if out and out[-1] == l:
         dropped_dup += 1; continue
-    # 同一字元重複很多次(例如「法法法法法法法」)壓成 3 個
-    l = re.sub(r"(.)\1{5,}", r"\1\1\1", l)
     out.append(l)
 open(dst, "w", encoding="utf-8").write("\n".join(out) + "\n")
 loops = [(l, c) for l, c in counts.most_common(5) if c >= 20]

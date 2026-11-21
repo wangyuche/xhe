@@ -126,6 +126,10 @@ esac
 # histfail:像斷線一樣不寫檔(curl -o 連不上時不會覆蓋舊檔),舊版 run.sh 會沿用上次的資料
 if [ "$FAKE_MODE" = histfail ] && [[ "$1" == historical/* ]]; then echo '{"http":000}'; exit 0; fi
 if [ "$FAKE_MODE" = intrafail ] && [[ "$1" == intraday/* ]]; then echo '{"http":000}'; exit 0; fi
+# intratrunc:像 curl -m 逾時一樣,印 200、寫一半、結束碼 28
+if [ "$FAKE_MODE" = intratrunc ] && [[ "$1" == intraday/* ]]; then printf '{"data":[{"date"' > "$2"; echo '{"http":200}'; exit 28; fi
+# intraerr:不印狀態碼、寫錯誤內容
+if [ "$FAKE_MODE" = intraerr ] && [[ "$1" == intraday/* ]]; then echo '{"statusCode":429,"message":"Rate limit exceeded"}' > "$2"; exit 0; fi
 if [[ "$1" == historical/* ]]; then cat "$SRC" > "$2"; else echo '{"data":[]}' > "$2"; fi
 [ "$FAKE_MODE" = quiet ] || echo '{"http": 200}'
 """ % (F30, F60))
@@ -143,6 +147,9 @@ try:
           and not any(os.path.exists(os.path.join(work, f"bottom_IX0001_{tf}m.json")) for tf in (30, 60)))
     r = runsh("intrafail", "1")
     check("run.sh 交易時間盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    for mode in ("intratrunc", "intraerr"):
+        r = runsh(mode, "1")
+        check(f"run.sh 盤中 {mode} → 警告", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
     r = runsh("intrafail", "0")
     check("run.sh 非交易時間盤中抓不到 → 不警告", r.returncode == 0 and "警告" not in r.stderr and "STAGE 1/6" in r.stdout)
     env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))

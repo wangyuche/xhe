@@ -15,14 +15,14 @@ def check(name, cond):
 # 1. clean.py:填充字、連續重複、幻覺句、單字重複
 src = os.path.join(TMP, "at_in.txt"); dst = os.path.join(TMP, "at_out.txt")
 lines = (["第三季營收 56.67 億"] + ["對"] * 30 + ["毛利率 25.4%"] + ["我們要看這家客戶"] * 150
-         + ["謝謝謝謝"] + ["請不吝點贊 訂閱 轉發 打賞支持明鏡與點點欄目"] + ["所以方法法法法法法法法法吗"] + ["展望明年 10-15% 成長"])
+         + ["謝謝謝謝"] + ["請不吝點贊 訂閱 轉發 打賞支持明鏡與點點欄目"] + ["所以方法法法法法法法法法吗"] * 3 + ["展望明年 10-15% 成長"])
 open(src, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 r = subprocess.run([sys.executable, "-I", os.path.join(S, "clean.py"), src, dst], capture_output=True, text=True, check=True)
 out = open(dst, encoding="utf-8").read().splitlines()
 check("填充字刪掉", "對" not in out and "謝謝謝謝" not in out)
 check("連續重複壓成一行", out.count("我們要看這家客戶") == 1)
 check("幻覺句刪掉", not any("點贊" in l for l in out))
-check("單字重複壓成 3 個", "所以方法法法吗" in out)
+check("單字重複壓成 3 個(壓完再合併連續重複)", out.count("所以方法法法吗") == 1)
 check("內容保留且順序不變", out[0] == "第三季營收 56.67 億" and out[-1] == "展望明年 10-15% 成長" and "毛利率 25.4%" in out)
 check("迴圈警告", "LOOP 150x" in r.stdout and "WARN" in r.stdout)
 for p in (src, dst): os.remove(p)
@@ -33,7 +33,7 @@ keep = ["訂閱制營收年增 30%", "我們的轉發服務明年擴大到東南
         "分享會", "還請各位不吝指教，請不吝提問", "訂閱數", "訂閱頻道數成長三成", "加訂閱",
         "頻道訂閱", "我們的訂閱", "訂閱和轉發", "支持訂閱", "訂閱轉發"]
 drop = ["請不吝點贊 訂閱 轉發 打賞支持明鏡與點點欄目", "字幕由Amara.org社區提供", "歡迎訂閱我的頻道",
-        "記得按讚訂閱", "點贊、分享、開啟小鈴鐺", "歡迎訂閱我的頻道 一起分享", "請訂閱", "點贊", "感謝打賞", "謝謝大家的支持 請訂閱"]
+        "記得按讚訂閱", "點贊、分享、開啟小鈴鐺", "歡迎訂閱我的頻道 一起分享", "订阅我的频道", "轉發訂閱我的頻道", "請訂閱", "點贊", "感謝打賞", "謝謝大家的支持 請訂閱"]
 open(src, "w", encoding="utf-8").write("\n".join(keep + drop) + "\n")
 r = subprocess.run([sys.executable, "-I", os.path.join(S, "clean.py"), src, dst], capture_output=True, text=True, check=True)
 out = open(dst, encoding="utf-8").read().splitlines()
