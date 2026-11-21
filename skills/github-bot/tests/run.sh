@@ -60,6 +60,14 @@ check "push master 拒絕" bash -c "! bash '$BOT' --repo o/r push master 2>/dev/
 check "push 預設分支拒絕" bash -c "bash '$BOT' --repo o/r push develop 2>&1 | grep -q '不推預設分支'"
 check "push 選項式分支名拒絕" bash -c "! bash '$BOT' --repo o/r push --force 2>/dev/null"
 
+A40=$(printf 'a%.0s' $(seq 40)); B40=$(printf 'b%.0s' $(seq 40)); C40=$(printf 'c%.0s' $(seq 40))
+check "merge 回傳 merge commit" [ "$(bash "$BOT" --repo o/r merge 7 --sha "$A40")" = "$B40" ]
+check "merge SHA 不符拒絕" bash -c "bash '$BOT' --repo o/r merge 7 --sha $C40 2>&1 | grep -q '重新 review'"
+check "merge 缺 --sha 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 2>/dev/null"
+check "merge 短 SHA 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha abc1234 2>/dev/null"
+check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '無法合併'"
+check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"
+
 # --- commit 以 bot 身分 ---
 git init -q "$TMP/repo" && (
   cd "$TMP/repo" && echo hi > a && git add a &&

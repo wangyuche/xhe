@@ -36,6 +36,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"id": 12345})
         if p == "/user" and self.auth() == PAT:
             return self.send(200, {"login": "xhe-bot", "id": 777})
+        if p == "/repos/o/r/pulls/7" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"state": "open", "mergeable": True, "head": {"sha": "a" * 40}})
+        if p == "/repos/o/r/pulls/8" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"state": "open", "mergeable": False, "head": {"sha": "a" * 40}})
         if p == "/repos/o/r" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"default_branch": "develop"})
         self.send(401, {"message": "bad request " + p})
@@ -48,6 +52,14 @@ class H(BaseHTTPRequestHandler):
             return self.send(201, {"token": TOKEN})
         if self.path == "/repos/o/r/pulls" and self.auth() in (TOKEN, PAT):
             return self.send(201, {"html_url": "https://github.com/o/r/pull/7", "echo": body})
+        self.send(401, {"message": "bad request " + self.path})
+
+    def do_PUT(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/repos/o/r/pulls/7/merge" and self.auth() in (TOKEN, PAT):
+            if body != {"sha": "a" * 40, "merge_method": "merge"}:
+                return self.send(422, {"message": "bad merge body"})
+            return self.send(200, {"merged": True, "sha": "b" * 40})
         self.send(401, {"message": "bad request " + self.path})
 
 srv = HTTPServer(("127.0.0.1", 0), H)

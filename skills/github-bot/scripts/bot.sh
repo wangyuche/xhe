@@ -5,6 +5,8 @@
 #   bot.sh commit <git commit 參數...>      以 bot 身分 git commit
 #   bot.sh push <分支>                      把 HEAD 推到遠端 <分支>(拒絕預設分支、main、master,不 force)
 #   bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]
+#   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase]
+#                                           SHA 不符(review 後又有新 commit)GitHub 會拒絕
 # 共用選項(放在子指令前):--repo owner/repo(預設取 origin)
 # 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),二選一:
 #   App 模式:APP_ID=、KEY_FILE=(環境變數 GITHUB_BOT_APP_ID、GITHUB_BOT_KEY_FILE 可覆蓋)
@@ -183,6 +185,35 @@ cmd_pr() {
         '{head:$h, base:$b, title:$t, body:$d}')" | jq -r .html_url
 }
 
+cmd_merge() {
+  local num=${1:-} sha="" method=merge
+  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase]"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --sha) sha=$2; shift 2 ;;
+      --method) method=$2; shift 2 ;;
+      *) die "merge 不認得參數 $1" ;;
+    esac
+  done
+  [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要完整 40 碼 SHA(review 過的 PR head)"
+  case $method in merge|squash|rebase) ;; *) die "--method 只能是 merge / squash / rebase" ;; esac
+  resolve_repo
+  local t pr i m
+  t=$(token)
+  for i in 1 2 3 4 5 6 7 8 9 10; do        # mergeable 剛開 PR 時可能是 null,等 GitHub 算完
+    pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
+    m=$(jq -r .mergeable <<<"$pr")
+    [[ $m != null ]] && break
+    sleep 2
+  done
+  [[ $(jq -r .state <<<"$pr") == open ]] || die "PR #$num 不是 open"
+  [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
+  [[ $m == true ]] || die "PR #$num 無法合併(衝突或檢查未過,mergeable=$m)"
+  api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
+    "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')" | jq -r .sha
+}
+
 [[ ${1:-} == --repo ]] && { REPO=${2:?--repo 要 owner/repo}; shift 2; }
 [[ -z $REPO || $REPO =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo 格式錯誤:$REPO"
 
@@ -192,6 +223,7 @@ case ${1:-} in
   commit)   shift; cmd_commit "$@" ;;
   push)     shift; cmd_push "$@" ;;
   pr)       shift; cmd_pr "$@" ;;
+  merge)    shift; cmd_merge "$@" ;;
   _jwt)     load_conf; jwt ;;                         # 測試用
   _parse)   parse_repo "$2" ;;                         # 測試用
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
