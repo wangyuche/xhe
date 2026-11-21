@@ -240,6 +240,7 @@ async function run() {
   const post = (path, obj, ms = 10000) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(obj), timeoutMs: ms });
   let id = null;
   let finished = false;
+  let submitting = null; // 送出中的 /prompt;中止時等它回來才知道要取消哪個工作
   // 收尾:沒完成就只取消自己的工作(佇列中 → 移出;確認在執行 → 指定 prompt_id 中斷),等 history 出現再刪。
   // 總時間上限 40 秒;/queue 查不到狀態時只做「移出佇列」(不盲目中斷,避免舊版 ComfyUI 中斷到別人的工作)。
   const CLEANUP_BUDGET = 40000;
@@ -248,13 +249,22 @@ async function run() {
     const end = Date.now() + CLEANUP_BUDGET;
     const left = () => Math.max(1000, end - Date.now());
     try {
+      const safe = async (f) => { try { return await f(); } catch { return null; } }; // 單次網路錯誤不中斷收尾
       if (!finished) {
-        const q = await json('/queue', { timeoutMs: Math.min(10000, left()) });
-        const running = Array.isArray(q.queue_running) && q.queue_running.some(x => x[1] === id);
-        if (!running) await post('/queue', { delete: [id] }, Math.min(10000, left()));
-        else {
-          await post('/interrupt', { prompt_id: id }, Math.min(10000, left()));
-          while (Date.now() < end - 6000) { const h = await json(`/history/${id}`, { timeoutMs: 5000 }); if (h && h[id]) break; await sleep(500); }
+        // /queue 在預算內重試,確定狀態才決定要移出佇列還是中斷
+        let q = null;
+        for (let i = 0; i < 3 && Date.now() < end - 15000; i++) {
+          q = await safe(() => json('/queue', { timeoutMs: Math.min(5000, left()) }));
+          if (q && !q.__status && Array.isArray(q.queue_running)) break;
+          q = null; await sleep(1000);
+        }
+        const running = !!q && q.queue_running.some(x => x[1] === id);
+        if (!running) {
+          await safe(() => post('/queue', { delete: [id] }, Math.min(5000, left())));
+          if (!q) console.error(`警告:查不到 ComfyUI 佇列狀態,已嘗試移出佇列;若工作 ${id} 已在執行,可能仍會跑完並留下 history`);
+        } else {
+          await safe(() => post('/interrupt', { prompt_id: id }, Math.min(5000, left())));
+          while (Date.now() < end - 6000) { const h = await safe(() => json(`/history/${id}`, { timeoutMs: 3000 })); if (h && h[id]) break; await sleep(500); }
         }
       }
       await post('/history', { delete: [id] }, Math.min(10000, left()));
@@ -268,6 +278,11 @@ async function run() {
     STOPPING = true;
     try {
       if (!printed) console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`);
+      if (!id && submitting) {
+        const r = await Promise.race([submitting.catch(() => null), sleep(15000).then(() => null)]);
+        if (r?.prompt_id) id = r.prompt_id;
+        else if (!r) console.error('警告:送出中被中止且等不到 prompt_id,ComfyUI 上可能留下這個工作');
+      }
       await cleanup();
       if (stage) rmSync(stage, { recursive: true, force: true });
     } catch (e) {
@@ -280,7 +295,8 @@ async function run() {
   const halt = () => new Promise(() => {}); // 中止中:停在這裡,等訊號處理結束程序
   for (const sg of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sg, onSignal);
 
-  const sub = await json('/prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id }) });
+  submitting = json('/prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id }) });
+  const sub = await submitting;
   if (sub.prompt_id) id = sub.prompt_id;
   if (STOPPING) await halt();
   if (sub.__status || sub.error) {
@@ -315,8 +331,7 @@ async function run() {
           lastPending = q.queue_pending.some(x => x[1] === id);
           const running = Array.isArray(q.queue_running) && q.queue_running.some(x => x[1] === id);
           if (!lastPending || running) { startedAt = Date.now(); lastPending = false; }
-        }
-        // /queue 查不到(錯誤)時維持上一次的判斷
+        } else lastPending = false; // 狀態不明時不累計排隊時間,交給總時限兜底
       } else lastPending = false;
       const ran = startedAt === null ? 0 : (Date.now() - startedAt) / 1000;
       const waited = queuedMs / 1000, total = (Date.now() - t0) / 1000;

@@ -47,6 +47,7 @@ createServer(async (req, res) => {
   if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, { input: {} }])));
   if (p === '/upload/image') return send(res, 200, { name: entry.filename, subfolder: '', type: entry.type });
   if (p === '/prompt' && req.method === 'POST') {
+    if (/SLOWSUBMIT/.test(JSON.stringify(entry.body ?? {}))) await new Promise(r => setTimeout(r, 1500)); // 送出很慢
     const g = entry.body?.prompt ?? {};
     const bad = Object.entries(g).filter(([, v]) => !NODES.includes(v.class_type));
     if (bad.length) return send(res, 400, { error: { type: 'invalid_prompt' }, node_errors: Object.fromEntries(bad.map(([k, v]) => [k, { class_type: v.class_type, errors: [{ message: 'unknown node' }] }])) });
