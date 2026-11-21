@@ -2,7 +2,7 @@
 # 底部訊號一鍵執行:抓 Fugle 30/60 分 K(歷史 + 今天盤中)→ 依序判斷 ①~⑥ → 30 分 K 到 ② 以上才輸出 SVG。
 # 用法: bash run.sh [代號,預設 IX0001] [輸出目錄,預設 ~/.claude/tg/work]
 # 需要 ~/.claude/tg/fugle.sh(含 Fugle 金鑰;FUGLE_SH 可指定別的路徑)。不使用 here-string / heredoc(沙盒不准寫 /tmp)。
-# 每次執行前先刪掉上次的資料檔;歷史 K 抓不到就報錯結束(不沿用舊檔),盤中 K 抓不到時只用歷史(交易時間內才警告)。
+# 每次執行前先刪掉上次的資料檔;歷史 K 抓不到就報錯結束(不沿用舊檔),盤中 K 抓不到時只用歷史(交易日 09:00 後才警告,收盤後歷史 K 也還沒有今天)。
 SYM="${1:-IX0001}"
 OUT="${2:-$HOME/.claude/tg/work}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,12 +29,12 @@ if not isinstance(d, dict) or not isinstance(d.get("data"), list): sys.exit("Fug
 }
 # 圖標題:指數用中文名;個股用「代號 公司名」(名稱取自 Fugle 報價,抓不到就只放代號)
 if [ "$SYM" = "IX0001" ]; then NAME="加權指數"; else
-  CNAME=$(bash "$FUGLE" "intraday/quote/$SYM" | jq -r '.name // empty' 2>/dev/null)
+  CNAME=$(bash "$FUGLE" "intraday/quote/$SYM" 2>/dev/null | jq -r 'if type == "object" and .symbol then .name // empty else empty end' 2>/dev/null)
   NAME="$SYM${CNAME:+ $CNAME}"
 fi
-# 交易時間(台北週一到週五 09:00–13:59;TW_IN_SESSION=0/1 可覆寫,測試用)
+# 今天應該有盤中 K 的時間(台北週一到週五 09:00 之後,收盤後歷史 K 仍不含今天;TW_IN_SESSION=0/1 可覆寫,測試用)
 NOW=$(TZ=Asia/Taipei date +%u%H%M)
-IN_SESSION="${TW_IN_SESSION:-$([ "${NOW:0:1}" -le 5 ] && [ "${NOW:1}" -ge 0900 ] && [ "${NOW:1}" -lt 1400 ] && echo 1 || echo 0)}"
+IN_SESSION="${TW_IN_SESSION:-$([ "${NOW:0:1}" -le 5 ] && [ "${NOW:1}" -ge 0900 ] && echo 1 || echo 0)}"
 rm -f "$OUT/bottom_${SYM}_30m.svg" "$OUT/bottom_${SYM}_"{30,60}m{,_hist,_intraday}.json
 for TF in 30 60; do
   H="$OUT/bottom_${SYM}_${TF}m_hist.json"; I="$OUT/bottom_${SYM}_${TF}m_intraday.json"; J="$OUT/bottom_${SYM}_${TF}m.json"
@@ -43,7 +43,7 @@ for TF in 30 60; do
     || { echo "資料錯誤: ${TF} 分 K 歷史資料抓不到(原因見上一行),不使用舊資料" >&2; exit 1; }
   if ! ERR=$(fetch "intraday/candles/$SYM?timeframe=$TF" "$I" 2>&1); then
     rm -f "$I"
-    # 非交易時間(週末、開盤前、收盤後)本來就可能沒有盤中 K,只用歷史是正常的,不警告
+    # 週末、開盤前本來就沒有盤中 K,只用歷史是正常的,不警告
     [ "$IN_SESSION" = 1 ] && echo "$ERR"$'\n'"警告: ${TF} 分 K 盤中資料抓不到,只用歷史 K,結果缺今天盤中" >&2
   fi
   python3 -I "$DIR/combine.py" "$H" "$I" "$J" || exit 1

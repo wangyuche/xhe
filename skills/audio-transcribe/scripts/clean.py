@@ -18,7 +18,9 @@ FILLER = {"對", "嗯", "好", "是", "謝謝", "你好", "對對對", "對對",
 #   STRONG:這些片語本身就是頻道宣傳 / 字幕組署名
 #   PROMO:去掉標點後整行 = [客套開頭] + 一串宣傳動作 + [「我的頻道」之類結尾],
 #          而且有客套開頭(請、記得、歡迎、感謝…)或有只會出現在宣傳的動作(點贊、按讚、打賞、小鈴鐺)
-STRONG = re.compile(r"明鏡與點點|明镜与点点|字幕由.{0,20}提供|字幕提供|(請|请)不吝(點贊|点赞|點讚|点讚|按讚|按赞|訂閱|订阅)")
+# 字幕署名要整行都是署名(「字幕由Amara.org社區提供」),「平台字幕由AI即時提供,明年…」保留
+SUBTITLE = re.compile(r"(中文)?字幕(由.{0,20})?(提供|製作|制作)")
+STRONG = re.compile(r"明鏡與點點|明镜与点点|(請|请)不吝(點贊|点赞|點讚|点讚|按讚|按赞|訂閱|订阅)")
 _ITEM = r"(點贊|点赞|點讚|点讚|按讚|按赞|點個讚|點個贊|点个赞|按個讚|訂閱|订阅|轉發|转发|打賞|打赏|(開啟|开启|打開|打开)?小(鈴鐺|铃铛))"
 _PREFIX = (r"((謝謝|谢谢|感謝|感谢)(大家)?(的)?(支持|收看|觀看|观看)?)?"
            r"(請|请|記得|记得|歡迎|欢迎|麻煩|麻烦)?(大家)?(多多)?(幫忙|帮忙)?")
@@ -33,6 +35,8 @@ def is_hallucination(line):
     if STRONG.search(line):
         return True
     core = PUNCT.sub("", line)
+    if SUBTITLE.fullmatch(core):
+        return True
     m = PROMO.fullmatch(core)
     # 「訂閱我的頻道」這種有頻道結尾的也算;「頻道訂閱」(頻道在前)不會整行符合
     return bool(m) and bool(m.group("pre") or m.group("chan") or PROMO_ONLY.search(core))

@@ -14,6 +14,7 @@ if not isinstance(h, dict) or not h.get("data"):
 try:
     t = json.load(open(intra_p))
     extra = t.get("data", []) if isinstance(t, dict) else []
+    extra = [b for b in extra if isinstance(b, dict) and b.get("date")] if isinstance(extra, list) else []
 except Exception:
     extra = []
 seen = {b["date"] for b in h["data"]}
