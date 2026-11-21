@@ -55,3 +55,14 @@ func columns(t *testing.T, database *sql.DB, table string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// TestOpenRejectsPerConnectionSQLite: in-memory DSNs give every pooled connection its own
+// empty database, so concurrent tests fail with "no such table". Tests use t.TempDir() files.
+func TestOpenRejectsPerConnectionSQLite(t *testing.T) {
+	for _, dsn := range []string{":memory:", "file::memory:", "file::memory:?cache=shared", "file:x?mode=memory&cache=shared", ""} {
+		if database, err := Open(context.Background(), dsn); err == nil {
+			database.Close()
+			t.Errorf("Open(%q) succeeded, want error", dsn)
+		}
+	}
+}

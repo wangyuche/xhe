@@ -33,7 +33,7 @@ skills:
 ### 僅設計規範模式(簡報寫「模式:僅設計規範」)
 只寫 `design/DESIGN.md`(可寫路徑 `design/`),不改前端程式碼、不建立 Next.js 專案、不啟動服務。使用者給的本機參考圖複製到 `design/refs/`,DESIGN.md 用相對路徑 `refs/<檔名>` 指它;已經有 `design/DESIGN.md` 時是修訂,在原檔上改。
 1. **內容全部來自這個專案的風格描述**:不套用固定的配色、字體或範例值,也不沿用其他專案的 DESIGN.md。描述沒提到的項目,依關鍵字與參考推導出具體值,並在該項後面標「(推定)」讓使用者確認。
-2. 參考是圖片路徑 → 複製到 `design/refs/` 後 Read 看圖;是網址 → `node <kit>/scripts/shot.mjs <網址> 1280 800 design/refs/ref-<n>.png` 截圖後 Read 看圖(外部網站常有 console 錯誤,結束碼 2 但有截圖就可用)。寫下從參考學到的具體特徵(配色、字重、留白、圓角、排版密度)。
+2. 參考是圖片路徑 → 複製到 `design/refs/` 後 Read 看圖;是網址 → `node <kit>/scripts/shot.mjs <網址> 1280 800 design/refs/ref-<n>.png` 截圖後 Read 看圖(外部網站常有 console 錯誤或轉址,結束碼 2 但有截圖就可用)。寫下從參考學到的具體特徵(配色、字重、留白、圓角、排版密度)。
 3. 既有前端專案(簡報的「前端目錄」,預設 `frontend/`,有 `package.json`)→ 先讀現有樣式(`globals.css`、主要元件),DESIGN.md 寫明哪些現有樣式要保留、哪些要改。
 4. DESIGN.md 用以下 `## ` 標題,每節寫具體、可檢查的值(色碼、字體名稱與字重、px / rem、斷點),不寫「適當」「舒服」這種無法驗證的字:
    - `## 風格`:關鍵字、一句話調性、目標使用者、深色模式(無 / 跟隨系統 / 只有深色)
@@ -134,7 +134,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 2. 每個新增的使用者流程都有 E2E 測試,`node_modules/.bin/playwright test --list` 成功;接真實後端時 `test:e2e` 全部通過,接契約 mock 時失敗項目已標「待整合驗證」。
 2a. 簡報的每個驗收情境(層級屬於前端者)都有以情境編號開頭的測試,回報附「情境 → 測試 → 結果」對照表;少一個就是 ISSUES。
 2b. 有契約時,`gen:api` 已執行,API 型別來自 `schema.d.ts`,沒有手寫的 API 型別。
-3. 依「截圖範圍」應截的每頁都有桌面與手機截圖:`shot.mjs` 輸出 `http` 為 200、`consoleErrors` 為 0、`scrollWidth` ≤ `innerWidth`(無橫向捲動),而且用 Read 檢視過,寫出看到的重點。沒有頁面變更時寫「無頁面變更,未截圖」。
+3. 依「截圖範圍」應截的每頁都有桌面與手機截圖:`shot.mjs` 輸出 `http` 為 200、`redirected` 為 false(要登入的頁被導到登入頁就是 true)、`consoleErrors` 為 0、`scrollWidth` ≤ `innerWidth`(無橫向捲動),而且用 Read 檢視過,寫出看到的重點。沒有頁面變更時寫「無頁面變更,未截圖」。
 4. dev server log 沒有 `Error` 或 `⨯`。
 5. `scope.sh check` 的 `out=0`,回報附 IN 項目數。
 6. `secret-scan.sh` 的 `hits=0`。

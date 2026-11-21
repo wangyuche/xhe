@@ -21,7 +21,7 @@
 - **環境變數:** `PORT`(預設 8080)、`DATABASE_URL`(預設 `file:data/dev.db?_pragma=journal_mode(WAL)`,`postgres://` 開頭時用 pgx)、`CORS_ORIGINS`(逗號分隔,預設 `http://localhost:3000`;前端走 Next.js 轉發,所以開發時通常用不到)、應用程式自己的密鑰(例如 `SESSION_SECRET`)。全部列在 `<可寫路徑>/.env.example`,值用 `dev-` 開頭的假值。`main.go` 開啟 SQLite 前先 `os.MkdirAll` 資料庫檔所在目錄(`data/` 被 gitignore,新 worktree 裡不存在)。
 - **登入機制:** 後端發 HttpOnly session cookie(`SameSite=Lax`),前端經 Next.js 轉發屬同源,不在 JS 存 token。整合驗證與截圖都以 cookie 帶登入狀態。
 - **Migration:** `pressly/goose/v3` 搭配 `embed.FS`,伺服器啟動時自動 `goose.Up`;檔名 `NNNN_<描述>.sql`。
-- **測試資料庫:** 測試一律用 `t.TempDir()` 裡的 SQLite 或 `file::memory:`,不碰 `data/dev.db`。
+- **測試資料庫:** 測試一律用 `t.TempDir()` 裡的 SQLite 檔,不碰 `data/dev.db`。不用記憶體資料庫(`file::memory:` 在連線池下每條連線各是一個空資料庫,並發測試會 `no such table`;`db.Open` 拒絕這類 DSN)。
 - **Migration 測試:** `internal/db/migrate_test.go` 在 `t.TempDir()` 的全新 SQLite 上跑 `goose.Up`,並檢查每張表的欄位(`PRAGMA table_info`)。
 - **其他:** `log/slog`、`context` 往下傳、graceful shutdown、table-driven 測試、`httptest`。
 - **`.gitignore`(在可寫路徑內):** `data/`、`.env`、建置產物。

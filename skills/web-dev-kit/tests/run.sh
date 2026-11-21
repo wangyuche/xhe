@@ -73,6 +73,35 @@ if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=1" && echo "$out" | grep -q "lea
 ( cd "$R" && printf 'NEXT_PUBLIC_STRIPE_SECRET=1\n' > frontend/env.ts && bash "$S/scope.sh" check t-sec frontend/ >/dev/null )
 out="$(cd "$R" && bash "$S/secret-scan.sh" t-sec)"
 if echo "$out" | grep -q "env.ts" ; then ok "secret-scan:NEXT_PUBLIC_*SECRET"; else bad "secret-scan:NEXT_PUBLIC" "$out"; fi
+# Go 寫法::=、var x string =、var x =、反引號、名稱帶後綴;dev- 假值與比較式(==)不算
+( cd "$R" && rm -f frontend/env.ts frontend/leak.ts && mkdir -p backend && cat > backend/conf.go <<'GO'
+package conf
+func f() {
+	token := "realtoken123456"
+	var sessionSecret string = "s3cr3tvalue999"
+	var apiKey = `rawkey12345678`
+	const jwtSecretKey = "jwtsecret12345"
+	devToken := "dev-token-123456"
+	if password == "notasecret1" {
+	}
+}
+GO
+bash "$S/scope.sh" check t-sec frontend/ backend/ >/dev/null )
+out="$(cd "$R" && bash "$S/secret-scan.sh" t-sec)"; rc=$?
+if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=4" && echo "$out" | grep -q "conf.go:3:" && echo "$out" | grep -q "conf.go:4:" && echo "$out" | grep -q "conf.go:5:" && echo "$out" | grep -q "conf.go:6:" \
+  && ! echo "$out" | grep -qE "realtoken|s3cr3t|rawkey|jwtsecret"; then ok "secret-scan:Go 的 :=、var 帶型別、反引號、名稱後綴"; else bad "secret-scan:Go" "$out"; fi
+# TS 帶型別、JSON 鍵命中;UI 文字(含空白)、非秘密的名稱後綴(Placeholder、Cookie)不算
+( cd "$R" && rm -f backend/conf.go && cat > frontend/form.ts <<'TS'
+const apiKey: string = "live_abcdef123456";
+const cfg = {"token": "live_abcdef654321"};
+const passwordPlaceholder = "Enter your password";
+const sessionTokenCookie = "app_session";
+const passwordLabel = "Passwordlabel1";
+log("x"); const apiToken: string | undefined = "live_typed987654";
+TS
+bash "$S/scope.sh" check t-sec frontend/ backend/ >/dev/null )
+out="$(cd "$R" && bash "$S/secret-scan.sh" t-sec)"; rc=$?
+if [ $rc -eq 1 ] && echo "$out" | grep -q "hits=3" && echo "$out" | grep -q "form.ts:1:" && echo "$out" | grep -q "form.ts:2:" && echo "$out" | grep -q "form.ts:6:" && ! echo "$out" | grep -q "live_"; then ok "secret-scan:TS 型別與 JSON 鍵命中、UI 文字與非秘密後綴不算"; else bad "secret-scan:TS / 誤報" "$out"; fi
 
 # ---------- node 腳本 ----------
 if command -v node >/dev/null 2>&1; then
@@ -138,6 +167,21 @@ JS
     if [ $rc -eq 2 ] && echo "$out" | grep -q '"scrollWidth":900' && echo "$out" | grep -q '"innerWidth":390' && echo "$out" | grep -q '"consoleErrors":1'; then ok "shot:手機版抓到橫向捲動與 console 錯誤"; else bad "shot:手機" "$out"; fi
     W="$(sips -g pixelWidth "$WORK/m.png" 2>/dev/null | awk '/pixelWidth/{print $2}')"
     [ "${W:-0}" -ge 2700 ] && ok "shot:手機 PNG 含整個過寬內容(900 CSS px × 3 = $W px)" || bad "shot:手機寬度" "$W"
+    echo "$out" | grep -q '"redirected":false' && ok "shot:沒轉址時 redirected=false" || bad "shot:redirected=false" "$out"
+    # 伺服器轉址(http.server 把 /sub 301 到 /sub/,像沒登入被導到 /login):http 雖是 200 也要失敗
+    mkdir -p "$PAGE/sub"; printf '<!doctype html><body>login</body>' > "$PAGE/sub/index.html"
+    out="$(node "$S/shot.mjs" "http://localhost:$PS/sub" 1280 800 "$WORK/r.png")"; rc=$?
+    if [ $rc -eq 2 ] && echo "$out" | grep -q '"http":200' && echo "$out" | grep -q '"redirected":true' && echo "$out" | grep -q "\"finalUrl\":\"http://localhost:$PS/sub/\"" && echo "$out" | grep -q '"redirect: '; then ok "shot:伺服器轉址判失敗並回報 finalUrl"; else bad "shot:伺服器轉址" "rc=$rc $out"; fi
+    out="$(node "$S/shot.mjs" "http://localhost:$PS/sub" 1280 800 "$WORK/r.png" --allow-redirect)"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '"redirected":true' && ok "shot:--allow-redirect 時轉址不算失敗" || bad "shot:--allow-redirect" "rc=$rc $out"
+    # 頁面 JS 轉址(用戶端導向登入頁):fetch 看不到,要靠 Chrome 最後的網址
+    printf '<!doctype html><script>location.replace("/sub/")</script>' > "$PAGE/js.html"
+    out="$(node "$S/shot.mjs" "http://localhost:$PS/js.html" 1280 800 "$WORK/j.png")"; rc=$?
+    [ $rc -eq 2 ] && echo "$out" | grep -q "\"finalUrl\":\"http://localhost:$PS/sub/\"" && ok "shot:JS 轉址也判失敗" || bad "shot:JS 轉址" "rc=$rc $out"
+    # 連不上(伺服器掛了):Chrome 停在 chrome-error://,要報導覽錯誤,不是轉址
+    DEAD="$(free_port)"
+    out="$(node "$S/shot.mjs" "http://127.0.0.1:$DEAD/" 1280 800 "$WORK/x.png")"; rc=$?
+    [ $rc -eq 2 ] && echo "$out" | grep -q '"redirected":false' && echo "$out" | grep -q '"navigate: ' && ! echo "$out" | grep -q chrome-error://chromewebdata/\" && ok "shot:連不上時報導覽錯誤而不是轉址" || bad "shot:連不上" "rc=$rc $out"
     LEFT="$(ps -A -o command= | grep -c '[w]eb-dev-kit-chrome-')"
     [ "$LEFT" -eq 0 ] && ok "shot:結束後沒有殘留 Chrome" || bad "shot:殘留 Chrome" "$LEFT"
     bash "$S/stop.sh" t-serve >/dev/null
@@ -258,7 +302,14 @@ if [ "${WEB_DEV_KIT_TEST_PG:-0}" = "1" ] && docker info >/dev/null 2>&1; then
   out="$(bash "$S/pg.sh" up kittest)"
   echo "$out" | grep -q '^DATABASE_URL=postgres://dev:devpass@127.0.0.1:' && ok "pg:up" || bad "pg:up" "$out"
   bash "$S/pg.sh" down kittest >/dev/null && ok "pg:down" || bad "pg:down"
-  docker rm -f dev-kittest-pg >/dev/null 2>&1
+  [ -n "$(docker ps -a --filter name=^/dev-kittest-pg$ --format '{{.Names}}')" ] && ok "pg:down 保留容器" || bad "pg:down 保留容器"
+  VOL="$(docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' dev-kittest-pg 2>/dev/null)"
+  out="$(bash "$S/pg.sh" rm kittest)"
+  [ "$out" = "removed container=dev-kittest-pg" ] && [ -z "$(docker ps -a --filter name=^/dev-kittest-pg$ --format '{{.Names}}')" ] && ok "pg:rm 刪容器" || bad "pg:rm" "$out"
+  LEFTVOL=0; for v in $VOL; do docker volume inspect "$v" >/dev/null 2>&1 && LEFTVOL=1; done
+  [ -n "$VOL" ] && [ "$LEFTVOL" = 0 ] && ok "pg:rm 刪資料 volume" || bad "pg:rm volume" "vol=$VOL"
+  out="$(bash "$S/pg.sh" rm kittest)"; [ "$out" = "not-found container=dev-kittest-pg" ] && ok "pg:rm 不存在時不報錯" || bad "pg:rm 不存在" "$out"
+  docker rm -f -v dev-kittest-pg >/dev/null 2>&1
   [ "$HAD_IMAGE" = "0" ] && docker rmi postgres:17 >/dev/null 2>&1   # 測試才拉的映像要刪
 else
   skip "pg:未設 WEB_DEV_KIT_TEST_PG=1 或 Docker 沒開"
