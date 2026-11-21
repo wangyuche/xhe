@@ -21,7 +21,16 @@
    "ref1": "參考圖 1(upload 印出的 loadImage 名稱,例如 'x.png [temp]')",
    "ref2": "參考圖 2(upload 印出的 loadImage 名稱,例如 'x.png [temp]')",
    "ref3": "參考圖 3(upload 印出的 loadImage 名稱,例如 'x.png [temp]')"
-  }
+  },
+  "numeric": [
+   "lora_strength",
+   "shift",
+   "width",
+   "height",
+   "seed",
+   "steps",
+   "cfg"
+  ]
  },
  "1": {
   "class_type": "UNETLoader",

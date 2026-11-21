@@ -15,7 +15,14 @@
    "steps": "steps",
    "sampler": "sampler",
    "scheduler": "scheduler"
-  }
+  },
+  "numeric": [
+   "guidance",
+   "width",
+   "height",
+   "seed",
+   "steps"
+  ]
  },
  "1": {
   "class_type": "UNETLoader",

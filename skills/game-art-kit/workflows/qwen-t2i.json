@@ -18,7 +18,16 @@
    "cfg": "cfg",
    "sampler": "sampler",
    "scheduler": "scheduler"
-  }
+  },
+  "numeric": [
+   "lora_strength",
+   "shift",
+   "width",
+   "height",
+   "seed",
+   "steps",
+   "cfg"
+  ]
  },
  "1": {
   "class_type": "UNETLoader",

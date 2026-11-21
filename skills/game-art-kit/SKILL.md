@@ -35,11 +35,11 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 結束碼:0 成功;1 一般錯誤 / scrub 找到位址;2 用法或參數錯誤(缺參數、多餘參數、SaveImage);3 ComfyUI 拒絕或執行失敗(印 node_errors);4 逾時(已中斷自己的工作並刪 history);5 連不上。
 
-**不在伺服器留檔:** 上傳到 temp、輸出用 `PreviewImage`(`run` 拒絕 `SaveImage`)、下載後刪 history。
+**不在伺服器留檔:** 上傳到 temp、輸出用 `PreviewImage`(`run` 拒絕 `SaveImage`)、下載後刪 history。逾時或中途出錯(含斷線)也會收尾:佇列中的移出、執行中的用 `prompt_id` 只中斷自己的工作,等 history 出現再刪。
 
 ## workflow 骨架(`workflows/`)
 
-只放節點結構;`{{key}}` 由 `--set` 填(整格是數字就轉數字)。缺參數或多給參數都會結束碼 2。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
+只放節點結構;`{{key}}` 由 `--set` 填。只有 `_meta.numeric` 列的參數會轉成數字(seed 不可超過 2^53−1),其他(提示詞、檔名)一律是字串。缺參數或多給參數都會結束碼 2。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
 
 | 骨架 | 用途 | 實測參數(2026-11,秒數依硬體而異) |
 |---|---|---|

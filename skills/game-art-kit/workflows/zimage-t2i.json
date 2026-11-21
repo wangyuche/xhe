@@ -16,7 +16,15 @@
    "cfg": "cfg",
    "sampler": "sampler",
    "scheduler": "scheduler"
-  }
+  },
+  "numeric": [
+   "shift",
+   "width",
+   "height",
+   "seed",
+   "steps",
+   "cfg"
+  ]
  },
  "1": {
   "class_type": "UNETLoader",

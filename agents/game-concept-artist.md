@@ -69,7 +69,7 @@ skills:
 6. 寫 `manifest.json`。累計生成數(含重出、試作)達 40 張就停止,已完成的保留,回 ISSUES。
 
 ### 結束(每個模式都要;完成條件:三項都通過)
-1. `node <kit>/scripts/comfy.mjs scrub-check art/` → `hits=0`。
+1. `node <kit>/scripts/comfy.mjs scrub-check art/`(簡報有「ComfyUI:<位址>」覆寫時,加同一個 `--url`)→ `hits=0`。
 2. `git status --porcelain` 與 `<tmp>/git.base` 比對:新增或改變的路徑都在 `art/` 下。
 3. `rm -rf <tmp>`。
 

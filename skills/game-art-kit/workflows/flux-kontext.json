@@ -14,7 +14,12 @@
    "sampler": "sampler",
    "scheduler": "scheduler",
    "ref1": "參考圖(upload 的 loadImage 名稱)"
-  }
+  },
+  "numeric": [
+   "guidance",
+   "seed",
+   "steps"
+  ]
  },
  "1": {
   "class_type": "UNETLoader",

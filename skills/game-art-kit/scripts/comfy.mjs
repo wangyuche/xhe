@@ -15,7 +15,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve, dirname } from 'node:path';
 
-const die = (msg, code = 1) => { console.error(`錯誤:${msg}`); process.exit(code); };
+// die 丟例外(不直接 exit),讓 run 的 finally 能清理伺服器上的工作;最外層統一印訊息與結束碼
+class Fail extends Error { constructor(msg, code) { super(msg); this.code = code; } }
+const die = (msg, code = 1) => { throw new Fail(msg, code); };
+const report = (e) => { console.error(`錯誤:${e instanceof Fail ? e.message : e?.stack || e}`); process.exit(e instanceof Fail ? e.code : 1); };
+process.on('uncaughtException', report);
+process.on('unhandledRejection', report);
 const argv = process.argv.slice(2);
 const cmd = argv.shift();
 const flags = { set: [] };
@@ -27,7 +32,8 @@ for (let i = 0; i < argv.length; i++) {
   else pos.push(a);
 }
 
-function resolveUrl() {
+// 找不到位址時:required → 結束碼 2 附設定方式;否則回 null
+function resolveUrl(required = true) {
   let u = flags.url || process.env.COMFYUI_URL;
   if (!u) {
     const f = join(homedir(), '.config', 'game-art-kit', 'config');
@@ -36,6 +42,7 @@ function resolveUrl() {
       if (m) u = m[1];
     }
   }
+  if (!u && !required) return null;
   if (!u) die('找不到 ComfyUI 位址。設定方式:mkdir -p ~/.config/game-art-kit && echo \'COMFYUI_URL=http://<主機>:8188\' > ~/.config/game-art-kit/config(或設環境變數 COMFYUI_URL)', 2);
   return u.replace(/\/+$/, '');
 }
@@ -158,6 +165,14 @@ function fill(skel, sets) {
     if (i < 1) die(`--set 要 key=value:${s}`, 2);
     vals[s.slice(0, i)] = s.slice(i + 1);
   }
+  const { _meta, ...graph } = skel;
+  // 只有 _meta.numeric 列的參數轉數字;其他(提示詞、檔名)一律保留字串
+  const numeric = new Set(_meta?.numeric ?? []);
+  for (const k of numeric) if (k in vals) {
+    const x = Number(vals[k]);
+    if (!/^-?\d+(\.\d+)?$/.test(vals[k]) || !Number.isFinite(x)) die(`${k} 必須是數字:${vals[k]}`, 2);
+    if (Number.isInteger(x) && !Number.isSafeInteger(x)) die(`${k} 超過 ${Number.MAX_SAFE_INTEGER},精度會跑掉;seed 請用較小的整數`, 2);
+  }
   const missing = new Set(), used = new Set();
   const walk = (v) => {
     if (typeof v === 'string') {
@@ -166,8 +181,7 @@ function fill(skel, sets) {
         const k = whole[1];
         if (!(k in vals)) { missing.add(k); return v; }
         used.add(k);
-        const x = vals[k];
-        return /^-?\d+(\.\d+)?$/.test(x) ? Number(x) : x === 'true' ? true : x === 'false' ? false : x;
+        return numeric.has(k) ? Number(vals[k]) : vals[k];
       }
       return v.replace(/\{\{(\w+)\}\}/g, (m, k) => { if (!(k in vals)) { missing.add(k); return m; } used.add(k); return vals[k]; });
     }
@@ -175,7 +189,6 @@ function fill(skel, sets) {
     if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
     return v;
   };
-  const { _meta, ...graph } = skel;
   const filled = walk(graph);
   // lora=none:拿掉 LoraLoaderModelOnly,引用它的節點改接它的 model 輸入
   for (const [id, n] of Object.entries(filled)) {
@@ -200,6 +213,7 @@ async function run() {
   const name = flags.name ?? die('缺 --name', 2);
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) die('--name 只能用英數、_ . -', 2);
   const timeout = Number(flags.timeout ?? 300);
+  if (!Number.isFinite(timeout) || timeout <= 0) die(`--timeout 要是正數(秒):${flags.timeout}`, 2);
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);
@@ -217,51 +231,72 @@ async function run() {
     die('ComfyUI 拒絕這個 workflow(見上方 node_errors)', 3);
   }
   const id = sub.prompt_id;
-  let hist = null;
-  while (true) {
-    const h = await json(`/history/${id}`);
-    if (h && h[id]) { hist = h[id]; if (hist.status?.completed || hist.status?.status_str === 'error') break; }
-    if ((Date.now() - t0) / 1000 > timeout) {
-      const q = await json('/queue');
-      const running = (q.queue_running ?? []).some(x => x[1] === id);
-      if (running) await api('/interrupt', { method: 'POST' });
-      else await api('/queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ delete: [id] }) });
-      await api('/history', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ delete: [id] }) });
-      console.log(JSON.stringify({ name, status: 'timeout', seconds: timeout, prompt_id: id }));
-      process.exit(4);
+  const post = (path, obj) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(obj), timeoutMs: 10000 });
+  let finished = false;
+  // 收尾:沒完成就只取消自己的工作(佇列中 → 移出;執行中 → 指定 prompt_id 中斷),等 history 出現再刪,不留紀錄
+  const cleanup = async () => {
+    try {
+      if (!finished) {
+        const q = await json('/queue', { timeoutMs: 10000 });
+        if ((q.queue_pending ?? []).some(x => x[1] === id)) await post('/queue', { delete: [id] });
+        else if ((q.queue_running ?? []).some(x => x[1] === id)) {
+          await post('/interrupt', { prompt_id: id });
+          for (let i = 0; i < 20; i++) { const h = await json(`/history/${id}`, { timeoutMs: 5000 }); if (h && h[id]) break; await sleep(500); }
+        }
+      }
+      await post('/history', { delete: [id] });
+    } catch { console.error(`警告:清理 ComfyUI 上的工作 ${id} 失敗(連線問題),history 可能殘留`); }
+  };
+  try {
+    let hist = null;
+    while (true) {
+      const h = await json(`/history/${id}`);
+      if (h && h[id]) { hist = h[id]; if (hist.status?.completed || hist.status?.status_str === 'error') break; }
+      if ((Date.now() - t0) / 1000 > timeout) {
+        await cleanup();
+        console.log(JSON.stringify({ name, status: 'timeout', seconds: timeout, prompt_id: id }));
+        process.exit(4);
+      }
+      await sleep(1000);
     }
-    await sleep(1000);
+    finished = true;
+    if (hist.status?.status_str === 'error') {
+      const msgs = (hist.status.messages ?? []).filter(m => m[0] === 'execution_error').map(m => m[1]);
+      console.error(JSON.stringify(msgs, null, 1).slice(0, 3000));
+      die('ComfyUI 執行失敗(見上方)', 3);
+    }
+    const imgs = [];
+    for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
+    if (!imgs.length) die('workflow 沒有輸出圖片(要有 PreviewImage)', 3);
+    const files = [];
+    for (let i = 0; i < imgs.length; i++) {
+      const im = imgs[i];
+      const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
+      const r = await api(`/view?${q}`, { timeoutMs: 120000 });
+      if (!r.ok) die(`下載圖片失敗 HTTP ${r.status}`, 3);
+      const f = join(out, imgs.length === 1 ? `${name}.png` : `${name}-${i + 1}.png`);
+      writeFileSync(f, Buffer.from(await r.arrayBuffer()));
+      files.push({ file: f, ...pngSize(f) });
+    }
+    console.log(JSON.stringify({ name, status: 'ok', seconds: Math.round((Date.now() - t0) / 100) / 10, files, params: vals }));
+  } finally {
+    await cleanup();
   }
-  const delHist = () => api('/history', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ delete: [id] }) });
-  if (hist.status?.status_str === 'error') {
-    const msgs = (hist.status.messages ?? []).filter(m => m[0] === 'execution_error').map(m => m[1]);
-    console.error(JSON.stringify(msgs, null, 1).slice(0, 3000));
-    await delHist();
-    die('ComfyUI 執行失敗(見上方)', 3);
-  }
-  const imgs = [];
-  for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
-  if (!imgs.length) { await delHist(); die('workflow 沒有輸出圖片(要有 PreviewImage)', 3); }
-  const files = [];
-  for (let i = 0; i < imgs.length; i++) {
-    const im = imgs[i];
-    const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
-    const r = await api(`/view?${q}`, { timeoutMs: 120000 });
-    if (!r.ok) { await delHist(); die(`下載圖片失敗 HTTP ${r.status}`, 3); }
-    const f = join(out, imgs.length === 1 ? `${name}.png` : `${name}-${i + 1}.png`);
-    writeFileSync(f, Buffer.from(await r.arrayBuffer()));
-    files.push({ file: f, ...pngSize(f) });
-  }
-  await delHist();
-  console.log(JSON.stringify({ name, status: 'ok', seconds: Math.round((Date.now() - t0) / 100) / 10, files, params: vals }));
 }
 
 // ---------- scrub-check ----------
 function scrub() {
   const dir = pos[0] ?? die('用法:scrub-check <目錄>', 2);
   if (!existsSync(dir)) die(`找不到 ${dir}`, 2);
-  let host = null;
-  try { host = new URL(resolveUrl()).host; } catch { /* 沒設定位址時只查通用樣式 */ }
+  // 位址:和 run 一樣的優先序(--url > 環境變數 > 設定檔);沒有設定時只查通用樣式
+  let hostRe = null;
+  const u = resolveUrl(false);
+  if (u) {
+    const { host, hostname, port } = new URL(u);
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 有埠號或是 IP → 比對 host;只有主機名稱(例如 comfy)→ 只比對 //主機名稱,避免誤中一般文字
+    hostRe = port || /^[\d.]+$|:/.test(hostname) ? new RegExp(esc(host)) : new RegExp(`//${esc(hostname)}(?![\\w.-])`);
+  }
   const pats = [/\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /\b192\.168\.\d{1,3}\.\d{1,3}\b/, /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, /:8188\b/];
   const hits = [];
   const walk = (p) => {
@@ -271,7 +306,7 @@ function scrub() {
       if (!/\.(md|json|txt|ya?ml|html|csv)$/i.test(e.name)) continue;
       const lines = readFileSync(f, 'utf8').split('\n');
       lines.forEach((l, i) => {
-        if ((host && l.includes(host)) || pats.some(re => re.test(l))) hits.push(`${f}:${i + 1}`);
+        if ((hostRe && hostRe.test(l)) || pats.some(re => re.test(l))) hits.push(`${f}:${i + 1}`);
       });
     }
   };

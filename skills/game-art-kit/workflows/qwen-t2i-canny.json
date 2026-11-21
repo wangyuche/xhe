@@ -22,7 +22,18 @@
    "control_image": "構圖草圖(upload 的 loadImage 名稱)",
    "control_strength": "ControlNet 強度(0.6–1.0)",
    "control_end": "ControlNet 作用到第幾成(0–1)"
-  }
+  },
+  "numeric": [
+   "lora_strength",
+   "shift",
+   "width",
+   "height",
+   "seed",
+   "steps",
+   "cfg",
+   "control_strength",
+   "control_end"
+  ]
  },
  "1": {
   "class_type": "UNETLoader",

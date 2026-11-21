@@ -24,16 +24,26 @@ const cellW = Number(spec.cellWidth ?? 480);
 const base = dirname(resolve(specPath));
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 
+// 讀不出尺寸就報錯,不猜比例(猜錯會把圖壓扁)
 function imgSize(file, buf) {
-  if (extname(file).toLowerCase() === '.png') return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
-  if (/\.jpe?g$/i.test(file)) {
-    for (let i = 2; i < buf.length;) {
-      const m = buf[i + 1], len = buf.readUInt16BE(i + 2);
-      if (m >= 0xc0 && m <= 0xc3) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
-      i += 2 + len;
+  const ext = extname(file).toLowerCase();
+  if (ext === '.png' && buf.toString('ascii', 1, 4) === 'PNG') return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (/\.jpe?g$/.test(ext) && buf[0] === 0xff && buf[1] === 0xd8) {
+    for (let i = 2; i + 9 < buf.length;) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const m = buf[i + 1];
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+      i += 2 + buf.readUInt16BE(i + 2);
     }
   }
-  return { w: 16, h: 9 };
+  if (ext === '.webp' && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    const fmt = buf.toString('ascii', 12, 16);
+    if (fmt === 'VP8X') return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
+    if (fmt === 'VP8 ') return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
+    if (fmt === 'VP8L') { const b = buf.readUInt32LE(21); return { w: 1 + (b & 0x3fff), h: 1 + ((b >> 14) & 0x3fff) }; }
+  }
+  die(`讀不出 ${file} 的尺寸(只接受正常的 PNG / JPG / WebP)`, 2);
 }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -58,8 +68,9 @@ html,body{width:${W}px;height:${H}px;background:#f4f4f2;font-family:"PingFang TC
 .wrap{padding:${pad}px}
 h1{height:${titleH}px;font-size:30px;font-weight:700;line-height:${titleH - 16}px}
 .row{display:flex;gap:${gap}px;margin-bottom:${gap}px}
+.row:last-child{margin-bottom:0}
 .cell{width:${cellW}px}
-.cell img{width:${cellW}px;display:block;border-radius:6px;background:#ddd}
+.cell img{width:${cellW}px;display:block;border-radius:6px;background:#ddd;object-fit:contain}
 .cap{height:${capH}px;padding-top:8px;font-size:17px;line-height:1.35;overflow:hidden}
 .lb{display:inline-block;min-width:34px;padding:1px 8px;margin-right:8px;border-radius:4px;background:#1d1d1f;color:#fff;font-weight:700;text-align:center}
 .nt{display:block;font-size:14px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -80,7 +91,7 @@ try {
     '--proxy-server=127.0.0.1:9', '--proxy-bypass-list=<-loopback>', // 擋掉任何網路請求
     `--screenshot=${out}`, pathToFileURL(page).href], { encoding: 'utf8', timeout: 60000 });
   // Chrome 有時截完圖、關閉時看門狗逾時而回非 0;以截圖檔有產生為準
-  if (!existsSync(out)) die(`Chrome 截圖失敗(結束碼 ${r.status}):${(r.stderr || '').split('\n').slice(-5).join(' ')}`, 1);
+  if (!existsSync(out)) { rmSync(tmp, { recursive: true, force: true }); die(`Chrome 截圖失敗(結束碼 ${r.status}):${(r.stderr || '').split('\n').slice(-5).join(' ')}`, 1); }
   const b = readFileSync(out);
   console.log(JSON.stringify({ out, width: b.readUInt32BE(16), height: b.readUInt32BE(20), items: cells.length }));
 } finally {

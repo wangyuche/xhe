@@ -63,7 +63,14 @@ grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每�
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'width' && ok "缺參數 → 結束碼 2 並列出" || bad "缺參數" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set typo=1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'typo' && ok "多餘參數 → 結束碼 2" || bad "多餘參數" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=FAIL 2>&1)"; [ $? -eq 3 ] && ok "執行錯誤 → 結束碼 3" || bad "執行錯誤" "$o"
-o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; [ $? -eq 4 ] && grep -q '"path":"/interrupt"' "$W/req.log" && ok "逾時 → 中斷自己的工作、結束碼 4" || bad "逾時" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; [ $? -eq 4 ] && grep -q '"path":"/interrupt","query":{},"body":{"prompt_id":"fake-' "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作、結束碼 4" || bad "逾時" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --timeout 5m 2>&1)"; [ $? -eq 2 ] && ok "--timeout 不是數字 → 結束碼 2" || bad "--timeout 檢查" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]/seed=1/seed=18446744073709551615}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "seed 超過安全整數 → 結束碼 2" || bad "大 seed" "$o"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name s1 "${QS[@]/negative=n/negative=0}" --set width=64 --set height=64)" && grep -q '"text": "0"' "$W/o/workflows/s1.json" && grep -q '"seed": 1,' "$W/o/workflows/s1.json" \
+  && ok "只有 numeric 參數轉數字(negative=0 保持字串、seed 是數字)" || bad "參數型別" "$r $(grep -n '"text"\|"seed"' "$W/o/workflows/s1.json")"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]/prompt=p/prompt=DROPVIEW}" --set width=64 --set height=64 2>&1)"; rc=$?
+id="$(grep '"path":"/prompt"' "$W/req.log" | wc -l | tr -d ' ')"
+[ $rc -eq 5 ] && grep -q "\"delete\":\[\"fake-$id\"\]" "$W/req.log" && ok "下載途中斷線 → 結束碼 5,仍刪掉自己的 history" || bad "斷線清理" "$o rc=$rc id=$id"
 sed 's/"PreviewImage"/"SaveImage"/' "$K/workflows/qwen-t2i.json" > "$W/save.json"
 o="$(C run "$W/save.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && ok "拒絕 SaveImage(不在伺服器留檔)" || bad "SaveImage 沒被擋" "$o"
 node -e 'const g=require(process.argv[1]);g["99"]={class_type:"NoSuchNode",inputs:{}};require("fs").writeFileSync(process.argv[2],JSON.stringify(g))' "$K/workflows/qwen-t2i.json" "$W/badnode.json"
@@ -79,6 +86,10 @@ grep -rq "127.0.0.1:$PORT" "$W/o" && bad "workflow 產出含位址" || ok "存�
 o="$(C scrub-check "$W/o")" && ok "scrub-check:乾淨目錄通過" || bad "scrub-check 乾淨" "$o"
 echo '{"note":"from http://192.168.1.20:8188"}' > "$W/o/leak.json"
 o="$(C scrub-check "$W/o")"; [ $? -eq 1 ] && echo "$o" | grep -q 'leak.json:1' && ok "scrub-check:找到私有 IP → 結束碼 1" || bad "scrub-check 沒抓到" "$o"
+rm "$W/o/leak.json"; mkdir -p "$W/s"; echo 'uses comfy.mjs run' > "$W/s/a.md"
+o="$(env -u COMFYUI_URL HOME="$W/nohome" node "$K/scripts/comfy.mjs" scrub-check "$W/s")" && ok "scrub-check:沒有設定位址也照常檢查(不會結束碼 2)" || bad "scrub-check 沒位址" "$o"
+o="$(C scrub-check "$W/s" --url http://comfy)" && ok "scrub-check:主機名稱 comfy 不誤中 comfy.mjs" || bad "scrub-check 主機名稱誤判" "$o"
+echo 'see http://comfy/view' > "$W/s/b.md"; o="$(C scrub-check "$W/s" --url http://comfy)"; [ $? -eq 1 ] && ok "scrub-check:--url 覆寫的主機也會檢查" || bad "scrub-check --url" "$o"
 
 # 7. sheet.mjs
 if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}" ]; then
@@ -86,6 +97,15 @@ if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Ch
   echo '{"title":"測試分鏡","cols":2,"cellWidth":300,"items":[{"image":"a.png","label":"01","caption":"第一格"},{"image":"b.png","label":"02","caption":"第二格","note":"備註"},{"image":"a.png","label":"03","caption":"第三格"}]}' > "$W/o/spec.json"
   o="$(HOME="$REAL_HOME" node "$K/scripts/sheet.mjs" "$W/o/spec.json" "$W/o/sheet.png" 2>&1)" && echo "$o" | grep -q '"items":3' && [ "$(C pngsize "$W/o/sheet.png" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(d.width)')" = 668 ] \
     && ok "sheet.mjs:2 欄 3 格、寬度正確" || bad "sheet.mjs" "$o"
+  # 高度 = 上下 padding 48 + 標題 64 + 兩列(圖 200 + 說明 64)+ 一個間距 20 = 660(最後一列不加間距)
+  [ "$(C pngsize "$W/o/sheet.png" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).height)')" = 660 ] && ok "sheet.mjs:高度正確(最後一列不多算間距)" || bad "sheet 高度" "$(C pngsize "$W/o/sheet.png")"
+  printf 'RIFFxxxxWEBPVP8X' > "$W/o/bad.webp"; printf '\0\0\0\0\0\0\0\0\0\0\0\0\0\0' >> "$W/o/bad.webp"
+  node -e 'const fs=require("fs");const b=Buffer.alloc(30);b.write("RIFF",0);b.write("WEBP",8);b.write("VP8X",12);b.writeUIntLE(1023,24,3);b.writeUIntLE(511,27,3);fs.writeFileSync(process.argv[1],b)' "$W/o/x.webp"
+  echo '{"cols":1,"cellWidth":300,"items":[{"image":"x.webp","caption":"webp"}]}' > "$W/o/w.json"
+  o="$(HOME="$REAL_HOME" node "$K/scripts/sheet.mjs" "$W/o/w.json" "$W/o/w.png" 2>&1)"; h="$(C pngsize "$W/o/w.png" 2>/dev/null | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).height)' 2>/dev/null)"
+  [ "$h" = "$((48 + 150 + 64))" ] && ok "sheet.mjs:WebP 依實際比例(1024×512 → 高 150)" || bad "sheet WebP 比例" "$o h=$h"
+  echo '{"items":[{"image":"q1.png"},{"image":"nope.jpg"}]}' > "$W/o/j.json"; cp "$W/o/q1.png" "$W/o/nope.jpg"
+  o="$(node "$K/scripts/sheet.mjs" "$W/o/j.json" "$W/o/j.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '讀不出' && ok "sheet.mjs:讀不出尺寸 → 結束碼 2(不猜比例)" || bad "sheet 尺寸讀不出" "$o"
   o="$(node "$K/scripts/sheet.mjs" "$W/o/nope.json" "$W/o/x.png" 2>&1)"; [ $? -eq 2 ] && ok "sheet.mjs:spec 不存在 → 結束碼 2" || bad "sheet.mjs 錯誤處理" "$o"
 else skip "sheet.mjs(沒有 Google Chrome)"; fi
 
