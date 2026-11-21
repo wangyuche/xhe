@@ -11,26 +11,28 @@ hallucination phrases (only whole channel-promo lines, never a line that merely 
 import re, sys
 from collections import Counter
 
+PUNCT = re.compile(r"[\s,，。.、!！?？~～]+")
 FILLER = {"對", "嗯", "好", "是", "謝謝", "你好", "對對對", "對對", "OK", "ok", "那", "然後", "對啊", "好的"}
 # 幻覺句只認「整行都是頻道宣傳」的固定句型,不能只因出現「訂閱」「轉發」就刪
 # (例如「訂閱制營收年增 30%」「頻道訂閱」「訂閱和轉發」是正常內容):
 #   STRONG:這些片語本身就是頻道宣傳 / 字幕組署名
 #   PROMO:去掉標點後整行 = [客套開頭] + 一串宣傳動作 + [「我的頻道」之類結尾],
 #          而且有客套開頭(請、記得、歡迎、感謝…)或有只會出現在宣傳的動作(點贊、按讚、打賞、小鈴鐺)
-STRONG = re.compile(r"明鏡與點點|明镜与点点|字幕由.{0,20}提供|字幕提供|(請|请)不吝(點贊|点赞|按讚|按赞|訂閱|订阅)")
-_ITEM = r"(點贊|点赞|按讚|按赞|點個讚|点个赞|按個讚|訂閱|订阅|轉發|转发|打賞|打赏|(開啟|开启|打開|打开)?小(鈴鐺|铃铛))"
+STRONG = re.compile(r"明鏡與點點|明镜与点点|字幕由.{0,20}提供|字幕提供|(請|请)不吝(點贊|点赞|點讚|点讚|按讚|按赞|訂閱|订阅)")
+_ITEM = r"(點贊|点赞|點讚|点讚|按讚|按赞|點個讚|點個贊|点个赞|按個讚|訂閱|订阅|轉發|转发|打賞|打赏|(開啟|开启|打開|打开)?小(鈴鐺|铃铛))"
 _PREFIX = (r"((謝謝|谢谢|感謝|感谢)(大家)?(的)?(支持|收看|觀看|观看)?)?"
            r"(請|请|記得|记得|歡迎|欢迎|麻煩|麻烦)?(大家)?(多多)?(幫忙|帮忙)?")
-_SUFFIX = r"(?P<chan>(我的|我們的|我们的|本)?(頻道|频道|欄目|栏目))?(一起分享)?(喔|哦|吧)?"
+_SUFFIX = (r"(?P<chan>(我的|我們的|我们的|本)?(頻道|频道|欄目|栏目))?(一起分享)?(喔|哦|吧)?"
+           r"(支持|感謝觀看|感谢观看|感謝收看|感谢收看|謝謝觀看|谢谢观看|謝謝收看|谢谢收看|謝謝大家|谢谢大家|謝謝|谢谢)*")
 # 分享 / 收藏只能接在其他宣傳動作後面(「謝謝大家的分享」不是宣傳)
 PROMO = re.compile(rf"(?P<pre>{_PREFIX}){_ITEM}({_ITEM}|分享|收藏)*{_SUFFIX}")
-PROMO_ONLY = re.compile(r"點贊|点赞|按讚|按赞|點個讚|点个赞|按個讚|打賞|打赏|小鈴鐺|小铃铛")
+PROMO_ONLY = re.compile(r"點贊|点赞|點讚|点讚|按讚|按赞|點個讚|點個贊|点个赞|按個讚|打賞|打赏|小鈴鐺|小铃铛")
 
 
 def is_hallucination(line):
     if STRONG.search(line):
         return True
-    core = re.sub(r"[\s,，。.、!！?？~～]+", "", line)
+    core = PUNCT.sub("", line)
     m = PROMO.fullmatch(core)
     # 「訂閱我的頻道」這種有頻道結尾的也算;「頻道訂閱」(頻道在前)不會整行符合
     return bool(m) and bool(m.group("pre") or m.group("chan") or PROMO_ONLY.search(core))
@@ -42,7 +44,7 @@ raw = [l for l in lines if l]
 counts = Counter(raw)
 out, dropped_filler, dropped_dup, dropped_hallu = [], 0, 0, 0
 for l in raw:
-    core = re.sub(r"[\s,，。.、!！?？]+", "", l)
+    core = PUNCT.sub("", l)
     if core in FILLER or re.fullmatch(r"(對|好|嗯|謝謝)+", core or "x"):
         dropped_filler += 1; continue
     if is_hallucination(l):

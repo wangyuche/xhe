@@ -32,7 +32,7 @@ bash ~/.claude/skills/audio-transcribe/scripts/prep.sh <輸入音檔或影片> <
 
 ### 2. 轉錄（要單獨一行執行）
 
-先查模型路徑（印出絕對路徑；結束碼不是 0 就停下來，把 stderr 告訴使用者：3 = 找不到模型（附下載方式）、2 = 路徑含單引號）：
+先查模型路徑（印出絕對路徑；結束碼不是 0 就停下來，把 stderr 告訴使用者：3 = 找不到模型（附下載方式）、2 = 路徑含單引號或不是絕對路徑）：
 
 ```bash
 bash ~/.claude/skills/audio-transcribe/scripts/model.sh

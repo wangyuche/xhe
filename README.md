@@ -69,7 +69,7 @@ URL="https://api.fugle.tw/marketdata/v1.0/stock/$1"
 # 金鑰經 stdin 的 curl 設定傳入,不出現在指令列(ps 看不到)
 HDR=$(printf 'header = "X-API-KEY: %s"' "$(tr -d ' \r\n' < "$KEYF")")
 if [ -n "$2" ]; then printf '%s\n' "$HDR" | curl -s -m 20 -K - -o "$2" -w '{"http":%{http_code}}\n' "$URL"
-else printf '%s\n' "$HDR" | curl -s -m 20 -K - "$URL"; echo; fi
+else printf '%s\n' "$HDR" | curl -s -m 20 -K - "$URL"; rc=$?; echo; exit $rc; fi
 ```
 
 沒有 `fugle.sh` 時:`tw-stock-analyst` 盤中即時價改用 Yahoo Finance(報告會註明),其他分析不受影響;`tw-bottom-signal` 沒有替代來源,會報錯結束(結束碼 1)。

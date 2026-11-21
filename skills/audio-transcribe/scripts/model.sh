@@ -24,6 +24,7 @@ case "$M" in
   '${HOME}/'*) M="$HOME/${M#\$\{HOME\}/}" ;;
 esac
 [ -n "$M" ] || { M="$DEFAULT"; SRC="預設路徑"; }
+case "$M" in /*) ;; *) echo "模型路徑要是絕對路徑(或 ~/、\$HOME/ 開頭):$M" >&2; exit 2 ;; esac
 case "$M" in *"'"*) echo "模型路徑含單引號,無法安全放進 whisper-cli 指令,請改名或改放其他路徑:$M" >&2; exit 2 ;; esac
 if [ ! -f "$M" ]; then
   {
