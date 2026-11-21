@@ -124,9 +124,9 @@ ci_file_at() {
 clean_push() {
   local branch=$1 bad rc sd
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
-  # --type=path 先把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄)
+  # --type=path 先把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);空值 = 清除前面的項目(跟 git 一樣)
   local -a safe=()
-  while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
+  while IFS= read -r sd; do if [[ -n $sd ]]; then safe+=(-c "safe.directory=$sd"); else safe=(); fi; done \
     < <({ git config --system --includes --type=path --get-all safe.directory; git config --global --includes --type=path --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS
@@ -135,12 +135,16 @@ clean_push() {
     -u SSL_CERT_FILE -u SSL_CERT_DIR -u CURL_CA_BUNDLE -u GIT_EXEC_PATH -u NO_PROXY -u no_proxy
     -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy
     -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_TRACE_PACKET -u GIT_TRACE_SETUP -u GIT_TRACE_REDACT -u GIT_CURL_VERBOSE
+    -u GIT_TRACE_PERFORMANCE -u GIT_TRACE_PACK_ACCESS -u GIT_TRACE_SHALLOW -u GIT_TRACE_REFS -u GIT_SSL_VERSION -u GIT_SSL_CIPHER_LIST
     -u GIT_TRACE2 -u GIT_TRACE2_EVENT -u GIT_TRACE2_PERF -u GIT_TRACE2_CONFIG_PARAMS -u GIT_TRACE2_ENV_VARS -u SSLKEYLOGFILE
     -u XDG_CONFIG_HOME -u NETRC -u GIT_SSH -u GIT_SSH_COMMAND
     HOME="$SCRATCH/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0)
   # repo 的任何設定檔(local、worktree、include / includeIf)都不得有能改寫網址 / 認證 / TLS / proxy 的項目:
   # url.*、http.*(少數無害調校除外)、credential.*、remote.<網址>.*(推到網址時 git 會套用,例如 pushurl)、core.sshCommand。
-  # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(include 壞掉、dubious ownership)一律拒絕
+  # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(include 壞掉)一律拒絕。
+  # dubious ownership 時 git config 會略過 local 設定並回 1,所以先確認 repo 讀得到
+  "${clean[@]}" git ${safe[@]+"${safe[@]}"} rev-parse --git-dir >/dev/null 2>&1 \
+    || die "這個 repo 不受信任或讀不到(dubious ownership?),請在全域設定 safe.directory 後再推"
   bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
           --get-regexp '^((url|http|credential)\..*|remote\.[a-z+]+://.*|remote\./.*|core\.sshcommand)$' 2>&1) && rc=0 || rc=$?
   [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
@@ -262,26 +266,29 @@ case $cmd in
     sha=""
     while [[ $# -gt 0 ]]; do case $1 in --sha) need "$@"; sha=$2; shift 2 ;; *) die "不認得的參數:$1" ;; esac; done
     [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要完整 40 碼 SHA"
-    m=$(api GET "/projects/$PID_ENC/merge_requests/$iid")
-    check_mr
+    # GitLab 延遲計算可合併狀態(剛 push 完 sha / has_conflicts 也可能還是舊的):
+    # 觸發重新檢查,unchecked / checking 時最多等 60 秒,之後才檢查 sha 與衝突
+    wait_mergeable() {
+      for _ in $(seq 1 20); do
+        m=$(api GET "/projects/$PID_ENC/merge_requests/$iid?with_merge_status_recheck=true")
+        case $(jq -r '.detailed_merge_status // .merge_status' <<<"$m") in
+          unchecked|checking|preparing|approvals_syncing) sleep 3 ;;
+          *) break ;;
+        esac
+      done
+      check_mr
+      st=$(jq -r '.detailed_merge_status // .merge_status' <<<"$m")
+      case $st in mergeable|can_be_merged) ;; *) die "GitLab 回報無法合併:$st" ;; esac
+    }
+    wait_mergeable
     tgt=$(jq -r .target_branch <<<"$m")
     # 外部 CI 可能晚幾秒才登記:等 15 秒(4 次查詢,間隔 5 秒)都沒有才算沒有 CI
     for i in 1 2 3 4; do
       ci_signals "$sha" "$tgt"
       [[ $i -eq 4 ]] || sleep 5
     done
-    # GitLab 延遲計算可合併狀態:觸發重新檢查,unchecked / checking 時最多等 60 秒
-    for _ in $(seq 1 20); do
-      m=$(api GET "/projects/$PID_ENC/merge_requests/$iid?with_merge_status_recheck=true")
-      case $(jq -r '.detailed_merge_status // .merge_status' <<<"$m") in
-        unchecked|checking|preparing|approvals_syncing) sleep 3 ;;
-        *) break ;;
-      esac
-    done
-    check_mr
+    wait_mergeable   # 等待期間 MR 可能被更新
     [[ $(jq -r .target_branch <<<"$m") == "$tgt" ]] || die "MR !$iid 的目標分支改了,請重新 review"
-    st=$(jq -r '.detailed_merge_status // .merge_status' <<<"$m")
-    case $st in mergeable|can_be_merged) ;; *) die "GitLab 回報無法合併:$st" ;; esac
     ci_signals "$sha" "$tgt"   # 合併前再確認一次(等待期間才登記的也要擋)
     r=$(api PUT "/projects/$PID_ENC/merge_requests/$iid/merge" "$(jq -n --arg s "$sha" '{sha:$s, should_remove_source_branch:false}')")
     jq -r '"merged: \(.web_url)\nmerge_commit_sha: \(.merge_commit_sha // .squash_commit_sha // "(fast-forward)")"' <<<"$r" ;;

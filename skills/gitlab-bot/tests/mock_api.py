@@ -27,6 +27,7 @@ MR 情境(iid → 說明),head SHA 預設 a*40:
   14 MR 自己有 pipeline(detached,不掛在 head SHA)
   15 查詢 head(9*40)的 pipelines 回 500
   16 目標分支 gone 不存在(查分支 404)
+  17 不帶 recheck 的 GET 還是舊 sha(0*40)與 has_conflicts(剛 push 完);重新計算後才是 a*40
 分支 → commit:develop / main → 2*40,withci → 3*40(有 .gitlab-ci.yml),tgtci → 1*40;其他 404。
 專案預設回傳 Maintainer 看得到的 CI 欄位(ci_config_path "",兩個布林 false);
 情境 {"hide_fields": [...]} 拿掉欄位(模擬 Developer 權限),{<欄位>: 值} 覆寫。
@@ -71,6 +72,7 @@ MRS = {
     14: mr(14),
     15: mr(15, sha=N),
     16: mr(16, target="gone"),
+    17: mr(17),
 }
 CI_FILE_REFS = {C, T3}
 PIPELINES = {D: [{"id": 1, "status": "running"}]}
@@ -190,6 +192,8 @@ class H(BaseHTTPRequestHandler):
             if iid not in MRS:
                 return self.send(404, {"message": "404 Not found"})
             m = dict(MRS[iid])
+            if iid == 17 and q.get("with_merge_status_recheck") != ["true"]:
+                m.update(sha="0" * 40, has_conflicts=True, detailed_merge_status="checking")  # 剛 push 完:舊 sha、舊衝突狀態
             if iid == 3:
                 n = RECHECK.get(iid, 0)
                 if q.get("with_merge_status_recheck") == ["true"]:
