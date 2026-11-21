@@ -20,11 +20,11 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 任務不屬於任何一份時,先告訴使用者,不要硬套;需要時再提議新增 playbook。
 
-**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是最新版,共用倉庫更新後下個任務就會用到新規則。
+**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是最新版,xhe 的 `main` 更新後下個任務就會用到新規則。
 
 ## 檔案位置
 
-- **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 都在這裡。這個目錄在共用倉庫裡是**唯讀**的。
+- **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 都在這裡。這個目錄是 xhe repo 的連結(`~/.claude/skills/agent-forge` → xhe),**不要直接改**,改法見下方。
 - **產出**一律寫在**目前專案的根目錄**底下:`.claude/agents/`、`.claude/agent-specs/`、`.claude/skills/`。不要寫進 skill 目錄。
 - **版本指紋:** 對 skill 目錄算一次內容雜湊,用來判斷規則有沒有變:`find <skill 目錄> -type f -name '*.md' | sort | xargs shasum | shasum`。回報時可附上前 8 碼。
 
@@ -38,11 +38,11 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 ## 修改 agent-forge 本身
 
-共用倉庫是唯讀的,而且只發佈審查過的版本。要改 agent-forge 本身(playbook、角色、範本):
+skill 目錄直接連到 xhe repo,只有合併進 `main` 的版本才算數。要改 agent-forge 本身(playbook、角色、範本):
 
-1. 在其他專案裡,只**提出**改動清單,不要嘗試修改 skill 目錄。
-2. 實際修改在 xhe repo 開分支、commit、開 PR,由使用者審查合併。
-3. 合併進 `main` 後,由使用者在 host 上執行 `sbx skills update agent-forge` 發佈到共用倉庫(第一次安裝用 `sbx skills add wangyuche/xhe --skill agent-forge`)。
+1. 在其他專案裡,只**提出**改動清單,不要直接修改 skill 目錄。
+2. 實際修改在 xhe repo 開分支、commit、開 PR,審查後合併。
+3. 合併後,xhe 本機的工作目錄回到 `main` 並 `git pull`,連結就會指到新版(第一次安裝:`ln -s <xhe>/skills/agent-forge ~/.claude/skills/agent-forge`)。
 4. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
 
 ## 原則
