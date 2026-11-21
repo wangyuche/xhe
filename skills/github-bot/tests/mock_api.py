@@ -64,6 +64,25 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "pending", "total_count": 0})
         if p == f"/repos/o/r/contents/.github/workflows?ref={f40}":
             return self.send(502, {"message": "Bad Gateway"})
+        # 14:只有外部 status(無 workflow 目錄)且失敗;15:無 workflow、無任何 CI;
+        # 16:有 workflow,外部 status 已 success 但 Actions check run 還沒登記
+        s14, s15, s16 = "1" * 40, "2" * 40, "3" * 40
+        for n, sh in ((14, s14), (15, s15), (16, s16)):
+            if p == f"/repos/o/r/pulls/{n}":
+                return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": sh}})
+        if p in (f"/repos/o/r/commits/{s14}/check-runs?per_page=100", f"/repos/o/r/commits/{s15}/check-runs?per_page=100",
+                 f"/repos/o/r/commits/{s16}/check-runs?per_page=100"):
+            return self.send(200, {"total_count": 0, "check_runs": []})
+        if p == f"/repos/o/r/commits/{s14}/status":
+            return self.send(200, {"state": "failure", "total_count": 1})
+        if p == f"/repos/o/r/commits/{s15}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
+        if p == f"/repos/o/r/commits/{s16}/status":
+            return self.send(200, {"state": "success", "total_count": 1})
+        if p == f"/repos/o/r/contents/.github/workflows?ref={s16}":
+            return self.send(200, [{"name": "ci.yml"}])
+        if p.startswith("/repos/o/r/contents/.github/workflows?ref=") and not p.endswith((e40, f40, s16)):
+            return self.send(404, {"message": "Not Found"})
         if p == "/repos/o/r/pulls/13":
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": f40}})
         if p == "/repos/o/moved":

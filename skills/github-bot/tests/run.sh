@@ -96,10 +96,15 @@ D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40))
 check "merge CI 進行中拒絕" bash -c "bash '$BOT' --repo o/r merge 11 --sha $D40 2>&1 | grep -q 'CI 未完成'"
 # CI 未登記時會等 60 秒;測試把 sleep 換成空操作
 mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
-check "merge 有 workflow 但 CI 未登記拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '仍沒有任何 CI'"
+check "merge 有 workflow 但 CI 未登記拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '仍沒有 check run'"
 check "merge --allow-no-ci 放行" [ "$(PATH="$TMP/fastbin:$PATH" bash "$BOT" --repo o/r merge 12 --sha "$E40" --allow-no-ci)" = "$C40" ]
 F40=$(printf 'f%.0s' $(seq 40))
 check "workflow 查詢失敗時拒絕(fail closed)" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 13 --sha $F40 2>&1 | grep -q '查不到 repo 是否有 workflow'"
+S14=$(printf '1%.0s' $(seq 40)); S15=$(printf '2%.0s' $(seq 40)); S16=$(printf '3%.0s' $(seq 40))
+check "外部 CI status 失敗拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 14 --sha $S14 2>&1 | grep -q 'commit status 為 failure'"
+check "沒有任何 CI 時預設拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 2>&1 | grep -q '沒有任何 CI 結果'"
+check "外部 status 先到不算 Actions CI" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 16 --sha $S16 2>&1 | grep -q '仍沒有 check run'"
+check "token 失敗只報真正原因" bash -c "! bash '$BOT' --repo o/missing token 2>&1 | grep -q '缺 .token'"
 check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
 check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
 check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"

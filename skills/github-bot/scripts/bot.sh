@@ -160,10 +160,10 @@ token() {
   j=$(jwt)
   inst=$(api GET "/repos/$REPO/installation" "$j") \
     || die "取不到 $REPO 的 App installation(HTTP 404 = App 沒裝在這個 repo,到 App 設定頁 Install App;401 = APP_ID / 私鑰不對或系統時間偏差)"
-  inst=$(jfield .id "$inst")
+  inst=$(jfield .id "$inst") || exit 1
   local r
   r=$(api POST "/app/installations/$inst/access_tokens" "$j" \
-    "$(jq -nc --arg r "${REPO#*/}" '{repositories:[$r]}')")
+    "$(jq -nc --arg r "${REPO#*/}" '{repositories:[$r]}')") || exit 1
   jfield .token "$r"
 }
 
@@ -181,7 +181,8 @@ identity() {
   fi
   local slug uid j t="" u
   j=$(jwt)
-  slug=$(jfield .slug "$(api GET /app "$j")")
+  local app; app=$(api GET /app "$j") || exit 1
+  slug=$(jfield .slug "$app")
   # 有 repo(--repo 或 GitHub origin)就用 installation token 查,避免匿名 60 次 / 小時限制;
   # 新 repo 還沒有 origin 時退回匿名查詢
   if [[ -n $REPO ]] || parse_repo "$(git remote get-url origin 2>/dev/null)" >/dev/null; then
@@ -258,7 +259,8 @@ cmd_push() {
   local t user=x-access-token def
   t=$(token)
   [[ $MODE == pat ]] && { identity; user=$BOT_NAME; }
-  def=$(jfield .default_branch "$(api GET "/repos/$REPO" "$t")")
+  local info; info=$(api GET "/repos/$REPO" "$t") || exit 1
+  def=$(jfield .default_branch "$info")
   [[ $branch != "$def" ]] || die "不推預設分支 $def;請推功能分支再開 PR"
   token_file "$t"; unset t
   push_git "$TOKEN_TMP" "$user" push --no-recurse-submodules "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
@@ -278,7 +280,10 @@ cmd_pr() {
   [[ -n $head && -n $title ]] || die "用法:bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]"
   resolve_repo
   local t; t=$(token)
-  [[ -n $base ]] || base=$(jfield .default_branch "$(api GET "/repos/$REPO" "$t")")
+  if [[ -z $base ]]; then
+    local info; info=$(api GET "/repos/$REPO" "$t") || exit 1
+    base=$(jfield .default_branch "$info")
+  fi
   local r
   r=$(api POST "/repos/$REPO/pulls" "$t" \
     "$(jq -nc --arg h "$head" --arg b "$base" --arg t "$title" --arg d "$body" \
@@ -286,39 +291,39 @@ cmd_pr() {
   jfield .html_url "$r"
 }
 
-# CI 檢查:有 check run / commit status 未完成或失敗就拒絕。
-# 剛推完時 GitHub 還沒建 check suite(mergeable_state 會先顯示 clean):repo 有 workflow 但
-# 這個 commit 還沒有任何 CI 結果時,最多等 60 秒;仍然沒有就拒絕,除非呼叫端給 --allow-no-ci
-# (workflow 不在 PR 分支上觸發的 repo 用)。
+# CI 檢查。剛推完時 CI 還沒登記(mergeable_state 會先顯示 clean),所以先等 CI 出現再判斷:
+#   - repo 有 .github/workflows:等到至少一個 check run(其他服務的 status 先到也不算)
+#   - 沒有 workflow:等到任何 check run 或 commit status(CircleCI 等外部 CI)
+#   最多等 60 秒,仍沒有就拒絕;確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
+# 有任何 check run 或 commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
 check_ci() {
-  local sha=$1 t=$2 allow_no_ci=$3 runs st n bad wf rc i
+  local sha=$1 t=$2 allow_no_ci=$3 runs st nr ns wf rc has_wf=0 ready=0 bad i
+  wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
+  case $rc in
+    0) [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
+    4) ;;
+    *) die "查不到 repo 是否有 workflow,不合併" ;;
+  esac
   for i in $(seq 13); do
     runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
       || die "讀不到 check runs(App 要加 Checks: Read 權限)"
     st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
       || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
-    [[ $(jq -r '.total_count' <<<"$runs") -le $(jq -r '.check_runs | length' <<<"$runs") ]] \
-      || die "check runs 超過 100 個,無法全部確認,不合併"
-    n=$(( $(jq -r '.total_count' <<<"$runs") + $(jq -r '.total_count' <<<"$st") ))
-    [[ $n -gt 0 ]] && break
-    if [[ $i -eq 1 ]]; then
-      wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
-      case $rc in
-        0) [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -gt 0 ]] || return 0 ;;
-        4) return 0 ;;                                   # 沒有 workflow 目錄:這個 repo 沒有 Actions CI
-        *) die "查不到 repo 是否有 workflow,不合併" ;;
-      esac
-    fi
-    [[ $i -eq 13 ]] && break
+    nr=$(jq -r '.total_count' <<<"$runs"); ns=$(jq -r '.total_count' <<<"$st")
+    [[ $nr -le $(jq -r '.check_runs | length' <<<"$runs") ]] || die "check runs 超過 100 個,無法全部確認,不合併"
+    if [[ $has_wf -eq 1 ]]; then [[ $nr -gt 0 ]] && ready=1; else [[ $((nr + ns)) -gt 0 ]] && ready=1; fi
+    [[ $ready -eq 1 || $allow_no_ci -eq 1 || $i -eq 13 ]] && break
     sleep 5
   done
-  if [[ $n -eq 0 ]]; then
-    [[ $allow_no_ci == 1 ]] && return 0
-    die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有任何 CI 結果;若 workflow 本來就不在 PR 分支觸發,加 --allow-no-ci"
+  if [[ $ready -eq 0 && $allow_no_ci -ne 1 ]]; then
+    if [[ $has_wf -eq 1 ]]; then
+      die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 check run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
+    fi
+    die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
   bad=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | "\(.name)=\(.conclusion // .status)"' <<<"$runs")
   [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")"
-  [[ $(jq -r '.total_count' <<<"$st") == 0 || $(jq -r '.state' <<<"$st") == success ]] \
+  [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
     || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
 }
 

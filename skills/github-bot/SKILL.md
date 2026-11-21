@@ -33,7 +33,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
 不建 App,改用另一個 GitHub 帳號當機器人(commit 作者顯示該帳號名稱,沒有 `[bot]`):
 
 1. 用主帳號到 repo → Settings → Collaborators → 邀請機器人帳號(Write 權限),再登入機器人帳號接受邀請。
-2. 機器人帳號產生 **classic** PAT(Settings → Developer settings → Tokens (classic)),設到期日。scope:放進 gh(下面第 3 步建議做法)gh 要求 `repo` + `read:org` + `workflow`;用 token 檔則 `public_repo` 即可(private repo 要 `repo`,改 workflow 檔再加 `workflow`)。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
+2. 機器人帳號產生 **classic** PAT(Settings → Developer settings → Tokens (classic)),設到期日。scope:放進 gh(下面第 3 步建議做法)勾 `repo` + `read:org` + `gist` + `workflow`(`gh auth login --help` 列 `repo`、`read:org`、`gist`,互動式貼 token 時則要求 `repo`、`read:org`、`workflow`);用 token 檔則 `public_repo` 即可(private repo 要 `repo`,改 workflow 檔再加 `workflow`)。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
 3. **建議:token 放 gh(macOS 鑰匙圈,磁碟上沒有明文)**。gh 可同時登入多個帳號,不必切換,bot 用 `gh auth token --user` 取機器人的 token,gh 平常仍停在主帳號:
 
    ```bash
@@ -85,7 +85,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,回到第 1 步用新 SHA 重新 review。
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
-4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;repo 有 workflow 但這個 commit 還沒有 CI 結果時最多等 60 秒,仍沒有就拒絕。workflow 本來就不在 PR 分支觸發的 repo,確認後才加 `--allow-no-ci`),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
+4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;會先等 CI 出現,最多 60 秒:有 `.github/workflows` 的 repo 要等到 Actions check run,沒有的要等到任何 check run 或 commit status;仍沒有就拒絕。**確定 repo 沒有 CI**(或 workflow 不在 PR 分支觸發)才加 `--allow-no-ci`,例如 xhe 目前沒有 CI),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。
 
 `main` 的分支規則若要求 approval,作者不能核准自己的 PR,合併會被擋;要讓 bot 自己合併,規則只開「Require a pull request」、approvals 設 0。
