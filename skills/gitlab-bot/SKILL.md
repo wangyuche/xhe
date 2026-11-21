@@ -13,7 +13,7 @@ description: 在自建 GitLab(或 gitlab.com)上 commit、push 功能分支、�
    只給 `read_api` 時 push 前的查詢都會過,但開 MR 會 `403 insufficient_scope`;缺 `write_repository` 則無法 push。
    (要機器人身分:改用 Group Access Token 或專用機器人帳號的 PAT,存法相同。)
 2. 存進鑰匙圈(使用者自己在終端機輸入,不要貼進對話):
-   `security add-generic-password -s gitlab-bot -a <主機,例如 gitlab.rapidspark.dev> -w`
+   `security add-generic-password -s gitlab-bot -a <主機,例如 gitlab.example.com> -w`
 3. 驗證:在該主機任一 repo 內執行 `bash $BOT identity`、`bash $BOT project`。兩者都會印出 token 名稱、scopes、到期日;
    缺 `api` 或 `write_repository` 時印警告並以結束碼 3 結束(資訊仍會先印完)。查不到 scope(某些 token 類型不支援
    `/personal_access_tokens/self`)時只印「無法確認 scope」,不算失敗。

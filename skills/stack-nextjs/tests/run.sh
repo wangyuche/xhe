@@ -16,7 +16,7 @@ if ! node_ok; then
 fi
 
 WORK="$(mktemp -d)"; export WEB_DEV_KIT_TMP="$WORK/kit"
-cleanup() { for n in t-fe t-mock t-prod t-prod-none; do bash "$KIT/scripts/stop.sh" "$n" >/dev/null 2>&1; done; rm -rf "$WORK"; }
+cleanup() { for n in t-fe t-mock t-prod t-prod-none t-prod-big t-echo; do bash "$KIT/scripts/stop.sh" "$n" >/dev/null 2>&1; done; rm -rf "$WORK"; }
 trap cleanup EXIT
 export NEXT_TELEMETRY_DISABLED=1
 P="$WORK/shop"; mkdir -p "$P/api"

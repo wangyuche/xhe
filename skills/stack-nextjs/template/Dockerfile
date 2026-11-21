@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# 只支援 npm(package-lock.json + npm ci);pnpm / yarn / bun 專案要自行改 deps 階段。
 # Next.js standalone 映像。build context:前端目錄(docker compose 的 ./frontend)。
 # BACKEND_URL 在執行時由 src/proxy.ts / src/lib/api/server.ts 讀取,同一個映像可接任何後端:
 #   docker compose 設 environment: BACKEND_URL: http://backend:8080
