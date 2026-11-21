@@ -67,7 +67,8 @@ async function api(path, opts = {}) {
 }
 const json = async (path, opts) => {
   const r = await api(path, opts);
-  const t = await r.text();
+  let t;
+  try { t = await r.text(); } catch (e) { die(`讀取 ComfyUI 回應途中斷線或逾時(${e.cause?.code || e.name})`, 5); }
   if (!r.ok) return { __status: r.status, __body: t };
   try { return JSON.parse(t); } catch { return { __status: r.status, __body: t }; }
 };
@@ -236,30 +237,30 @@ async function run() {
 
   const t0 = Date.now();
   const client_id = randomUUID();
-  const sub = await json('/prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id }) });
-  if (sub.__status || sub.error) {
-    const body = sub.__body ? (() => { try { return JSON.parse(sub.__body); } catch { return sub.__body; } })() : sub;
-    console.error(JSON.stringify(body, null, 1).slice(0, 3000));
-    die('ComfyUI 拒絕這個 workflow(見上方 node_errors)', 3);
-  }
-  const id = sub.prompt_id;
-  const post = (path, obj) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(obj), timeoutMs: 10000 });
+  const post = (path, obj, ms = 10000) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(obj), timeoutMs: ms });
+  let id = null;
   let finished = false;
-  // 收尾:沒完成就只取消自己的工作(佇列中 → 移出;執行中 → 指定 prompt_id 中斷),等 history 出現再刪,不留紀錄
+  // 收尾:沒完成就只取消自己的工作(佇列中 → 移出;確認在執行 → 指定 prompt_id 中斷),等 history 出現再刪。
+  // 總時間上限 40 秒;/queue 查不到狀態時只做「移出佇列」(不盲目中斷,避免舊版 ComfyUI 中斷到別人的工作)。
+  const CLEANUP_BUDGET = 40000;
   const cleanup = async () => {
+    if (!id) return;
+    const end = Date.now() + CLEANUP_BUDGET;
+    const left = () => Math.max(1000, end - Date.now());
     try {
       if (!finished) {
-        const q = await json('/queue', { timeoutMs: 10000 });
-        if ((q.queue_pending ?? []).some(x => x[1] === id)) await post('/queue', { delete: [id] });
-        else if ((q.queue_running ?? []).some(x => x[1] === id)) {
-          await post('/interrupt', { prompt_id: id });
-          for (let i = 0; i < 20; i++) { const h = await json(`/history/${id}`, { timeoutMs: 5000 }); if (h && h[id]) break; await sleep(500); }
+        const q = await json('/queue', { timeoutMs: Math.min(10000, left()) });
+        const running = Array.isArray(q.queue_running) && q.queue_running.some(x => x[1] === id);
+        if (!running) await post('/queue', { delete: [id] }, Math.min(10000, left()));
+        else {
+          await post('/interrupt', { prompt_id: id }, Math.min(10000, left()));
+          while (Date.now() < end - 6000) { const h = await json(`/history/${id}`, { timeoutMs: 5000 }); if (h && h[id]) break; await sleep(500); }
         }
       }
-      await post('/history', { delete: [id] });
-    } catch { console.error(`警告:清理 ComfyUI 上的工作 ${id} 失敗(連線問題),history 可能殘留`); }
+      await post('/history', { delete: [id] }, Math.min(10000, left()));
+    } catch { console.error(`警告:清理 ComfyUI 上的工作 ${id} 失敗(連線問題或超過 40 秒),history 可能殘留`); }
   };
-  // 被外部中止(Ctrl-C、Bash 工具逾時送 SIGTERM)時也收尾,不在伺服器留下工作
+  // 被外部中止(Ctrl-C、Bash 工具逾時送 SIGTERM、終端機關閉)時也收尾;送出前就註冊,重複的訊號會被忽略
   let stage = null; // 下載暫存目錄;中止時也要刪
   let printed = false; // 已印出 ok 結果、檔案已就位
   const onSignal = async (sig) => {
@@ -272,15 +273,26 @@ async function run() {
     } catch (e) {
       console.error(`警告:中止時收尾失敗:${e?.message || e}`);
     } finally {
-      // 結果已印出就算成功(只是收尾被打斷),否則 130 / 143
+      // 結果已印出就算成功(只是收尾被打斷),否則 130 / 129 / 143
       process.exit(printed ? 0 : { SIGINT: 130, SIGHUP: 129 }[sig] ?? 143);
     }
   };
   const halt = () => new Promise(() => {}); // 中止中:停在這裡,等訊號處理結束程序
-  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal); process.once('SIGHUP', onSignal);
+  for (const sg of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sg, onSignal);
+
+  const sub = await json('/prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id }) });
+  if (sub.prompt_id) id = sub.prompt_id;
+  if (STOPPING) await halt();
+  if (sub.__status || sub.error) {
+    const body = sub.__body ? (() => { try { return JSON.parse(sub.__body); } catch { return sub.__body; } })() : sub;
+    console.error(JSON.stringify(body, null, 1).slice(0, 3000));
+    die('ComfyUI 拒絕這個 workflow(見上方 node_errors)', 3);
+  }
   try {
     let hist = null;
-    let startedAt = null; // 離開排隊、開始執行的時間;--timeout 從這裡算
+    // 時限:執行 --timeout(從離開排隊算)、排隊 --queue-timeout(只在 /queue 確認還在排隊時累計)、
+    // 總時限 = 兩者相加(/queue 一直查不到狀態時兜底)。
+    let startedAt = null, queuedMs = 0, lastPending = false, lastTick = Date.now();
     // 輪詢時的網路錯誤 / 逾時不放棄,下一輪再試;連續 5 次才當作連不上
     let fails = 0;
     const poll = async (path) => { try { const r = await json(path, { timeoutMs: 10000 }); fails = 0; return r; } catch (e) { if (!(e instanceof Fail) || e.code !== 5 || ++fails >= 5) throw e; return { __status: 'net' }; } };
@@ -288,20 +300,31 @@ async function run() {
       if (STOPPING) await halt();
       const h = await poll(`/history/${id}`);
       if (STOPPING) await halt();
-      if (h && h[id]) { hist = h[id]; if (hist.status?.completed || hist.status?.status_str === 'error') break; }
+      const now = Date.now();
+      if (lastPending) queuedMs += now - lastTick;
+      lastTick = now;
+      if (h && h[id]) {
+        hist = h[id];
+        if (hist.status?.completed || hist.status?.status_str === 'error') break;
+        if (startedAt === null) startedAt = now; // 已有 history 代表開始執行
+      }
       if (startedAt === null) {
         const q = await poll('/queue');
         if (STOPPING) await halt();
-        // /queue 回錯誤時不判斷,下一輪再查(不能當成已開始執行)
-        if (!q.__status && Array.isArray(q.queue_pending) && !q.queue_pending.some(x => x[1] === id)) startedAt = Date.now();
-      }
-      const waited = startedAt === null ? (Date.now() - t0) / 1000 : 0;
+        if (!q.__status && Array.isArray(q.queue_pending)) {
+          lastPending = q.queue_pending.some(x => x[1] === id);
+          const running = Array.isArray(q.queue_running) && q.queue_running.some(x => x[1] === id);
+          if (!lastPending || running) { startedAt = Date.now(); lastPending = false; }
+        }
+        // /queue 查不到(錯誤)時維持上一次的判斷
+      } else lastPending = false;
       const ran = startedAt === null ? 0 : (Date.now() - startedAt) / 1000;
-      if (STOPPING) await halt();
-      if (ran > timeout || waited > queueTimeout) {
+      const waited = queuedMs / 1000, total = (Date.now() - t0) / 1000;
+      const reason = ran > timeout ? 'run' : waited > queueTimeout ? 'queue' : total > timeout + queueTimeout ? 'total' : null;
+      if (reason) {
         await cleanup();
-        if (STOPPING) await halt(); // 收尾期間收到中止訊號:交給訊號處理,以 130 / 129 / 143 結束
-        console.log(JSON.stringify({ name, status: 'timeout', reason: ran > timeout ? 'run' : 'queue', seconds: ran > timeout ? timeout : queueTimeout, prompt_id: id }));
+        if (STOPPING) await halt(); // 收尾期間收到中止訊號:交給訊號處理
+        console.log(JSON.stringify({ name, status: 'timeout', reason, seconds: Math.round(reason === 'run' ? ran : reason === 'queue' ? waited : total), prompt_id: id }));
         process.exit(4);
       }
       await sleep(1000);
@@ -321,12 +344,14 @@ async function run() {
     // 先全部下載到暫存,都成功才搬進 --out(避免留下半套檔案)
     stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
     const files = [];
+    const dlEnd = Date.now() + 60000; // 下載總時間上限 60 秒
     try {
       for (let i = 0; i < imgs.length; i++) {
         if (STOPPING) await halt();
         const im = imgs[i];
         const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
-        const r = await api(`/view?${q}`, { timeoutMs: 120000 });
+        if (Date.now() > dlEnd) die('下載圖片超過 60 秒', 5);
+        const r = await api(`/view?${q}`, { timeoutMs: Math.max(1000, dlEnd - Date.now()) });
         if (!r.ok) die(`下載圖片失敗 HTTP ${r.status}`, 3);
         let buf;
         try { buf = Buffer.from(await r.arrayBuffer()); } catch (e) { die(`下載圖片途中斷線(${e.cause?.code || e.name})`, 5); }
@@ -334,8 +359,8 @@ async function run() {
         writeFileSync(join(stage, fname), buf);
         files.push({ fname, ...pngSize(join(stage, fname)) });
       }
-      mkdirSync(join(out, 'workflows'), { recursive: true });
       if (STOPPING) await halt();
+      mkdirSync(join(out, 'workflows'), { recursive: true });
       for (const f of files) { renameOrCopy(join(stage, f.fname), join(out, f.fname)); f.file = join(out, f.fname); delete f.fname; }
     } finally {
       if (!STOPPING) { rmSync(stage, { recursive: true, force: true }); stage = null; }
