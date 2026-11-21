@@ -129,11 +129,10 @@ clean_push() {
   local -a safe=()
   while IFS= read -r sd; do
     if [[ -z $sd ]]; then safe=(); continue; fi
-    if [[ $sd == '~'* || $sd == '%(prefix)/'* ]]; then
-      local raw=$sd
-      sd=$(cd / && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c "botsafe.dir=$raw" config --type=path botsafe.dir 2>/dev/null) \
-        || { echo "警告:safe.directory「${raw}」展不開,略過" >&2; continue; }
-    fi
+    # 每筆都交給 git 展開(~/、~user、%(prefix)/、:(optional));:(optional) 指向不存在的路徑時 git 回 1 且無輸出 → 靜默略過
+    local raw=$sd
+    sd=$(cd / && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c "botsafe.dir=$raw" config --type=path botsafe.dir 2>/dev/null) || {
+      [[ $raw == ':(optional)'* ]] || echo "警告:safe.directory「${raw}」展不開,略過" >&2; continue; }
     safe+=(-c "safe.directory=$sd")
   done < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
