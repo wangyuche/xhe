@@ -315,7 +315,12 @@ cmd_push() {
   fi
   # --repo 必須跟本地 origin 是同一個 repo(推的是這個目錄的 HEAD)
   if [[ -n $REPO ]]; then
-    local o; o=$(parse_repo "$(git remote get-url origin 2>/dev/null)" 2>/dev/null || true)
+    local ou o; ou=$(git remote get-url origin 2>/dev/null || true)
+    o=$(parse_repo "$ou" 2>/dev/null || true)
+    # SSH host 別名等解析不了的網址:取結尾的 owner/repo 比對
+    if [[ -z $o && -n $ou && ${ou%/} =~ ([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$ ]]; then
+      o="${BASH_REMATCH[1]#*:}/${BASH_REMATCH[2]%.git}"
+    fi
     [[ -z $o || $(tr '[:upper:]' '[:lower:]' <<<"$o") == $(tr '[:upper:]' '[:lower:]' <<<"$REPO") ]] \
       || die "--repo $REPO 跟這個目錄的 origin($o)不同;push 推的是目前目錄的 HEAD,請到對應的 repo 執行"
   fi
@@ -337,14 +342,14 @@ cmd_pr() {
       --head) need_val "$1" $# "${2-}"; head=$2; shift 2 ;;
       --base) need_val "$1" $# "${2-}"; base=$2; shift 2 ;;
       --title) need_val "$1" $# "${2-}"; title=$2; shift 2 ;;
-      --body-file) need_val "$1" $# "${2-}"; [[ -r $2 ]] || die "讀不到 $2"; body=$(cat "$2"); shift 2 ;;
+      --body-file) need_val "$1" $# "${2-}"; [[ -r $2 ]] || die "讀不到 $2"; body=$(cat "$2"; printf x); body=${body%x}; shift 2 ;;
       *) die "pr 不認得參數 $1" ;;
     esac
   done
   [[ -n $head && -n $title ]] || die "用法:bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]"
   local b
   for b in "$head" ${base:+"$base"}; do
-    [[ $b != *:* && $b != -* ]] && git check-ref-format --branch "$b" >/dev/null 2>&1 || die "分支名稱不合法:$b(--head 只寫分支名,不加 owner:)"
+    [[ $b =~ ^[A-Za-z0-9._/-]+$ && $b != -* ]] && git check-ref-format --branch "$b" >/dev/null 2>&1 || die "分支名稱不合法:$b(--head 只寫分支名,不加 owner:)"
   done
   resolve_repo
   local t; t=$(token)
@@ -377,7 +382,8 @@ ci_signals() {   # ci_signals <head SHA> <token> <base 分支>:印出偵測到�
   for ref in "$sha" "$base"; do
     wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$(jq -rn --arg v "$ref" '$v|@uri')" "$t") && rc=0 || rc=$?
     case $rc in
-      0) n=$(jq -r 'if type=="array" then length else 1 end' <<<"$wf")
+      0) n=$(jq -er 'if type=="array" then length else 1 end' <<<"$wf" 2>/dev/null) && [[ $n =~ ^[0-9]+$ ]] \
+           || die "workflow 查詢回應不是預期的 JSON,不合併"
          [[ $n -eq 0 ]] || out+=" .github/workflows@${ref:0:12}($n 個檔案)" ;;
       4) ;;
       *) die "查不到 repo 是否有 workflow,不合併" ;;
@@ -389,13 +395,14 @@ ci_signals() {   # ci_signals <head SHA> <token> <base 分支>:印出偵測到�
     label=${path##*:}; path=${path%:*}
     resp=$(api GET "/repos/$REPO/$path" "$t") \
       || die "讀不到 $label(若上面是 HTTP 403:App 要加 Checks / Commit statuses: Read 權限)"
-    n=$(jfield .total_count "$resp") || exit 1
+    n=$(jfield .total_count "$resp") && [[ $n =~ ^[0-9]+$ ]] || die "$label 查詢回應不是預期的 JSON,不合併"
     [[ $n -eq 0 ]] || out+=" $label($n)"
   done
   # Actions 在 repo 設定裡關掉時這個 API 回 404 → 視為沒有 workflow run
   resp=$(api_try GET "/repos/$REPO/actions/runs?head_sha=$sha&per_page=1" "$t") && rc=0 || rc=$?
   case $rc in
-    0) n=$(jfield .total_count "$resp") || exit 1; [[ $n -eq 0 ]] || out+=" workflow run($n)" ;;
+    0) n=$(jfield .total_count "$resp") && [[ $n =~ ^[0-9]+$ ]] || die "workflow run 查詢回應不是預期的 JSON,不合併"
+       [[ $n -eq 0 ]] || out+=" workflow run($n)" ;;
     4) ;;
     *) die "讀不到 workflow run(若上面是 HTTP 403:App 要加 Actions: Read 權限)" ;;
   esac

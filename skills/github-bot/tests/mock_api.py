@@ -22,6 +22,7 @@ PRS = {
     18: ("8" * 40, "clean", "open"),  # status 只在合併前最後一次查詢出現
     19: ("9" * 40, "clean", "open"),  # Actions 關閉:actions/runs 回 404
     20: ("c" * 40, "clean", "open"),  # head 沒有 workflow,但 base(withci)有
+    21: ("d" * 40, "clean", "open"),  # workflows 查詢回 200 但不是 JSON
 }
 BASES = {20: "withci"}
 # 每個 SHA 的 CI 計數:suites, runs, statuses, workflow runs
@@ -59,6 +60,9 @@ class H(BaseHTTPRequestHandler):
             sha = p.split("ref=")[1]
             if sha == "6" * 40:
                 return self.send(502, {"message": "Bad Gateway"})
+            if sha == "d" * 40:                     # 200 但不是 JSON(例如 proxy 頁面)
+                self.send_response(200); self.send_header("Content-Length", "15"); self.end_headers()
+                self.wfile.write(b"<html>hi</html>"); return True
             if sha in WORKFLOW_FILES:
                 return self.send(200, WORKFLOW_FILES[sha])
             return self.send(404, {"message": "Not Found"})

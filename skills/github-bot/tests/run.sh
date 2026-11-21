@@ -79,6 +79,7 @@ check "pr 回傳網址" [ "$(bash "$BOT" --repo o/r pr --head feat/x --title 'T 
 check "--repo 去掉 .git" [ "$(bash "$BOT" --repo o/r.git pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
 check "既有 PR 目標分支不同時不沿用" [ "$(bash "$BOT" --repo o/r pr --head feat/existing --base release --title T)" = https://github.com/o/r/pull/7 ]
 check "pr 拒絕 owner:branch 與不合法分支名" bash -c "bash '$BOT' --repo o/r pr --head o:feat --title T 2>&1 | grep -q 不合法 && bash '$BOT' --repo o/r pr --head 'a..b' --title T 2>&1 | grep -q 不合法"
+check "pr 拒絕 @{-1} 這類 git 縮寫" bash -c "bash '$BOT' --repo o/r pr --head '@{-1}' --title T 2>&1 | grep -q 不合法"
 check "pr 標題可以 -- 開頭" [ "$(bash "$BOT" --repo o/r pr --head feat/x --title '--dry-run support')" = https://github.com/o/r/pull/7 ]
 check "已有 open PR 時印出既有網址" [ "$(bash "$BOT" --repo o/r pr --head feat/existing --title T)" = https://github.com/o/r/pull/5 ]
 check "pr 缺 title 失敗" bash -c "! bash '$BOT' --repo o/r pr --head feat/x 2>/dev/null"
@@ -110,6 +111,7 @@ check "merge GitHub 說 unstable 拒絕" bash -c "bash '$BOT' --repo o/r merge 9
 check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
 check "只有空的 check suite 不算 CI" [ "$(bash "$BOT" --repo o/r merge 11 --sha "$(sha_of 1)")" = "$B40" ]
 check "base 分支有 workflow 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 20 --sha $(sha_of c) 2>&1 | grep -q '.github/workflows@withci'"
+check "workflow 查詢回應不是 JSON 時拒絕(fail closed)" bash -c "bash '$BOT' --repo o/r merge 21 --sha $(sha_of d) 2>&1 | grep -q '不是預期的 JSON'"
 check "Actions 關閉(runs 404)不算 CI" [ "$(bash "$BOT" --repo o/r merge 19 --sha "$(sha_of 9)")" = "$B40" ]
 check "有 check run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 12 --sha $(sha_of 2) 2>&1 | grep -q 'check run(1)'"
 check "有 commit status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 13 --sha $(sha_of 3) 2>&1 | grep -q 'commit status(1)'"
@@ -152,7 +154,8 @@ check "從子目錄推送也偵測到 LFS" bash -c "cd '$TMP/lfsrepo/src' && bas
 git init -q "$TMP/lfsinfo" && (cd "$TMP/lfsinfo" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q --allow-empty -m x && mkdir -p .git/info && echo '*.bin filter=lfs' > .git/info/attributes) >/dev/null 2>&1
 check ".git/info/attributes 的 LFS 也偵測" bash -c "cd '$TMP/lfsinfo' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 git -C "$TMP/lfsinfo" remote add origin https://github.com/o/a.git
-check "--repo 跟 origin 不同時拒絕推送" bash -c "cd '$TMP/lfsinfo' && rm .git/info/attributes && bash '$BOT' --repo o/b push feat/x 2>&1 | grep -q '跟這個目錄的 origin'"
+check "origin 是 SSH 別名時仍比對 --repo" bash -c "cd '$TMP/lfsinfo' && rm -f .git/info/attributes && git remote set-url origin gh-work:o/a.git && bash '$BOT' --repo o/b push feat/x 2>&1 | grep -q '跟這個目錄的 origin(o/a)'; r=\$?; git remote set-url origin https://github.com/o/a.git; exit \$r"
+check "--repo 跟 origin 不同時拒絕推送" bash -c "cd '$TMP/lfsinfo' && rm -f .git/info/attributes && bash '$BOT' --repo o/b push feat/x 2>&1 | grep -q '跟這個目錄的 origin'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]
 printf '[url "git@github.com:"]\n\tpushInsteadOf = https://github.com/\n' > "$TMP/prepo/.git/extra.cfg"
