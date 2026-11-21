@@ -18,6 +18,7 @@
 - **測試:** Vitest + Testing Library + jsdom,`package.json` 的 `test` script 為 `vitest run`。
 - **E2E 測試(使用者 2026-11-16 選完整版):** Playwright(`@playwright/test` devDependency),測試放 `<可寫路徑>/e2e/*.spec.ts`,`test:e2e` script 為 `playwright test`。`playwright.config.ts` 固定:`use.channel: 'chrome'`(用本機 Google Chrome,不執行 `playwright install`)、`use.baseURL` 讀環境變數 `E2E_BASE_URL`、`outputDir` 讀 `E2E_OUTPUT_DIR`(指到 `web-dev-kit` 暫存目錄,不寫進專案;**沒設就直接 throw**,不退回 `test-results/`)、`use.screenshot: 'only-on-failure'`、`use.trace: 'retain-on-failure'`、`reporter: 'list'`(不產生 `playwright-report/`)、不設 `webServer`(伺服器由 `serve.sh` 管)。`vitest.config` 的 `exclude` 必須含 `e2e/**`,避免 Vitest 去跑 Playwright 測試。前端與整合驗證都用同一個指令 `<pm> run test:e2e`。E2E 測試需要的資料由測試自己透過 UI 或 `/api` 建立(例如先註冊再登入),不依賴資料庫既有資料;每個測試用唯一值(例如時間戳)避免互撞。整合時由 integration-verifier 對真實後端執行。
 - 套件管理器依 lockfile:`package-lock.json` → npm、`pnpm-lock.yaml` → pnpm、`yarn.lock` → yarn、`bun.lock(b)` → bun;沒有 lockfile 用 npm。下文的 `<pm>` 指這個套件管理器。
+- **設計規範(使用者 2026-11-21 要求):** 每個專案的前端風格不同,風格寫在該專案的 `design/DESIGN.md`(放在前端目錄外,參考圖放 `design/refs/`;避免建立 Next.js 專案時目錄非空被擋或檔案被覆蓋,一般模式只讀不改),由「模式:僅設計規範」依使用者對這個專案的風格描述從頭寫出。**不提供共用的風格範本或預設 token**(使用者否決:範本的預設值會讓每個專案長得一樣);固定的只有 8 個 `## ` 標題(風格、色彩、字體、間距與圓角、元件、版面與響應式、禁止、參考),每節要寫具體可檢查的值,描述沒提到而自行推導的值標「(推定)」。一般模式第 0 步必讀 DESIGN.md,實作照它的值,截圖逐節對照。沒有 DESIGN.md 的既有專案照既有風格;新專案沒有 DESIGN.md 時 BLOCKED,除非簡報寫「不需要設計規範」。
 - 畫面驗證用 `web-dev-kit`(見 `agent-specs/web-dev-kit.md`)。工具鏈(Node.js 24.18 以上:`@stoplight/prism-cli` 要求)由使用者自己安裝。
 
 ## 做什麼
@@ -54,11 +55,12 @@
 - 不編造驗證結果:沒跑的步驟寫「未執行」與原因。
 
 ## 觸發時機
-主 agent 要做網站前端的工作:「做登入頁」「把商品列表改成卡片排版」「首頁在手機上跑版,修一下」「建一個新的 Next.js 前端」。多 agent 時,由協調者依 `multi-agent.md` 派工。
+主 agent 要做網站前端的工作:「先把前端風格定好」「寫設計規範」(僅設計規範模式)、「做登入頁」「把商品列表改成卡片排版」「首頁在手機上跑版,修一下」「建一個新的 Next.js 前端」。多 agent 時,由協調者依 `multi-agent.md` 派工。
 
 ## 輸入(派工簡報)
 - 必要:目標(要做什麼、怎樣算完成)。
 - 必要:**驗收情境**。由 acceptance-designer 起草、待決問題經使用者回答、狀態 READY 後,由主 agent 原樣放入簡報;每條有編號 `<FEATURE>-S<n>`(feature 前綴只能是純大寫字母 `[A-Z]+`,例如 `LOGIN-S1`、`LOGIN-S2`,避免整合分支累積多個 feature 時撞號)與 Given / When / Then,並標測試層級(E2E / 元件 / httptest);至少含一個錯誤或邊界案例。沒有驗收情境 → BLOCKED。
+- 模式:一般 / 僅設計規範(預設一般)。僅設計規範模式不需要驗收情境,改為必附「風格描述」:主 agent 派工前問使用者關鍵字、參考網站或圖片、品牌色、字體、深色模式、不要什麼,原文放進簡報;至少要有關鍵字或參考其中一項,否則 BLOCKED。
 - 選填(沒給用預設):
   - 任務名稱 `<name>`:`frontend-owner-<專案名>`(`<專案名>` = 專案根目錄 basename;平行派工時主 agent 必須給唯一名稱)。
   - 專案根目錄:目前工作目錄(必須是 git repo,否則 BLOCKED)。

@@ -59,7 +59,7 @@ node -e 'const a=JSON.parse(process.argv[1]);process.exit(a.length===2&&a.every(
 # 5. render.mjs:卡片、注入內容、安全區、縮字、路徑限制
 mkdir -p assets; ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=800x500 -frames:v 1 assets/shot.png
 cat > cards.json <<'EOF'
-{"cards":[
+{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[
  {"type":"title","file":"t.png","title":"測試標題","subtitle":"副標"},
  {"type":"point","file":"p.png","number":"1","title":"注入測試","body":"<script>fetch('https://example.com/x')</script><img src=\"https://example.com/x.png\">","image":"shot.png"},
  {"type":"code","file":"c.png","path":"a.js","code":"const a = 1;\n// x"},
@@ -76,15 +76,25 @@ node -e 'const b=JSON.parse(process.argv[1]);const s=b.find(x=>x.file==="s2.png"
   && ok "render.mjs 字幕縮字、在安全區內" || bad "render.mjs 縮字" "$b"
 echo '{"cards":[{"type":"subtitle","text":"這是一句非常非常長的字幕這是一句非常非常長的字幕這是一句非常非常長的字幕這是一句非常非常長的字幕這是一句非常非常長的字幕"}]}' > long.json
 node "$S/render.mjs" long.json r2 >/dev/null 2>&1; [ $? -eq 4 ] && ok "render.mjs 字幕放不下 → 結束碼 4" || bad "render.mjs 放不下"
-echo '{"cards":[{"type":"point","title":"x","image":"../cards.json"}]}' > esc.json
+echo '{"cards":[{"type":"cover","file":"ic.png","image":"shot.png","title":"■■■"}]}' > ic.json
+node "$S/render.mjs" ic.json r6 --asset-root assets >/dev/null 2>&1 && [ "$(ffmpeg -hide_banner -loglevel error -i r6/ic.png -vf 'crop=1:1:110:320,format=rgb24' -f rawvideo - | od -An -tu1 | awk 'NF{print ($1>200&&$2>200&&$3>200)?"white":"dark"}')" = white ] && ok "render.mjs 有圖封面不需要 theme、標題白字" || bad "render.mjs 有圖封面白字"
+echo '[{"type":"title","title":"x"}]' > arr.json
+e="$(node "$S/render.mjs" arr.json r6 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '物件格式' && ok "render.mjs 陣列格式 + 需要 theme → 結束碼 2 並提示物件格式" || bad "render.mjs 陣列格式" "$e"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"point","title":"x","image":"../cards.json"}]}' > esc.json
 node "$S/render.mjs" esc.json r3 --asset-root assets >/dev/null 2>&1; [ $? -eq 1 ] && ok "render.mjs 擋 asset-root 外的圖" || bad "render.mjs asset-root 外"
-echo '{"cards":[{"type":"point","title":"x","image":"https://example.com/a.png"}]}' > ext.json
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"point","title":"x","image":"https://example.com/a.png"}]}' > ext.json
 node "$S/render.mjs" ext.json r3 --asset-root assets >/dev/null 2>&1; [ $? -eq 1 ] && ok "render.mjs 擋遠端圖片網址" || bad "render.mjs 遠端圖片"
 ln -s /etc/hosts assets/link.png
-echo '{"cards":[{"type":"point","title":"x","image":"link.png"}]}' > lnk.json
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"point","title":"x","image":"link.png"}]}' > lnk.json
 node "$S/render.mjs" lnk.json r3 --asset-root assets >/dev/null 2>&1; [ $? -eq 1 ] && ok "render.mjs 擋指到外面的 symlink" || bad "render.mjs symlink"
 
-echo '{"cards":[{"type":"cover","file":"cv.png","tag":"repo","title":"漸層封面"}]}' > cv.json
+echo '{"cards":[{"type":"title","file":"x.png","title":"沒有配色"}]}' > nothm.json
+e="$(node "$S/render.mjs" nothm.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme 缺' && ok "render.mjs 沒有 theme → 結束碼 2(沒有預設配色)" || bad "render.mjs 沒有 theme 沒被擋" "$e"
+echo '{"cards":[{"type":"subtitle","file":"s.png","text":"只有字幕"}]}' > subonly.json
+node "$S/render.mjs" subonly.json r5 >/dev/null 2>&1 && ok "render.mjs 只有字幕卡時不需要 theme" || bad "render.mjs 字幕卡不該要求 theme"
+echo '{"theme":{"bg":"#000","extra":1},"cards":[{"type":"subtitle","file":"s.png","text":"舊格式 theme"}]}' > oldthm.json
+node "$S/render.mjs" oldthm.json r5 >/dev/null 2>&1 && ok "render.mjs 只有字幕卡時忽略 theme 格式(舊 timeline 相容)" || bad "render.mjs 字幕卡不該檢查 theme 格式"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"cover","file":"cv.png","tag":"repo","title":"漸層封面"}]}' > cv.json
 node "$S/render.mjs" cv.json r4 >/dev/null 2>&1 && [ "$(ffprobe -v error -show_entries stream=width,height -of csv=s=x:p=0 r4/cv.png)" = 1080x1920 ] && ok "render.mjs 沒有圖片的漸層封面" || bad "render.mjs 漸層封面"
 
 # 6. record-web.mjs
@@ -114,7 +124,7 @@ mkdir -p job/1 job/work/1
 cp tts/*.m4a job/work/1/ 2>/dev/null
 node -e '
 const fs=require("fs");const n=JSON.parse(process.argv[1]).map((x,i)=>({...x,file:"../work/1/"+require("path").basename(x.file)}));
-fs.writeFileSync("job/1/timeline.json",JSON.stringify({mode:"narration",work:"../work/1",narration:n,
+fs.writeFileSync("job/1/timeline.json",JSON.stringify({mode:"narration",work:"../work/1",narration:n,theme:{bg:"#203040"},
  scenes:[{image:"../../r/t.png",sentences:[0]},{video:"../../land.mp4",in:1,sentences:[1]}],music:{path:"../../land.mp4",volume:0.2}}))' "$tts"
 c="$(node "$S/compose.mjs" job/1/timeline.json)"; rc=$?
 [ $rc -eq 0 ] && [ -f job/1/final.mp4 ] && [ -f job/work/1/first-frame.png ] && ok "compose.mjs 旁白模式" || bad "compose.mjs 旁白" "$c"
@@ -138,16 +148,18 @@ v="$(bash "$S/verify.sh" job/1/final.mp4 chk4 --boxes job/work/1/subtitles/boxes
 # 7b. 置頂鏡頭:第二版的設定(1000×1400 錄影、整支 fit crop、沒有 region)要被擋;設 region 後 UI 在字幕區上方
 node -e '
 const fs=require("fs");const n=JSON.parse(process.argv[1]).map((x,i)=>({...x,file:"../work/1/"+require("path").basename(x.file)}));
-const mk=(sc,extra={})=>JSON.stringify({mode:"narration",work:"../work/1",narration:n,fit:"crop",...extra,scenes:sc});
+const mk=(sc,extra={})=>JSON.stringify({mode:"narration",work:"../work/1",narration:n,fit:"crop",theme:{bg:"#203040"},...extra,scenes:sc});
 fs.writeFileSync("job/1/v2.json",mk([{video:"../../app.mp4",sentences:[0]},{video:"../../app.mp4",in:1,sentences:[1]}]));
-fs.writeFileSync("job/1/v3.json",mk([{video:"../../app.mp4",region:[250,40,745,830],sentences:[0]},{video:"../../app.mp4",in:1,region:[335,40,665,700],sentences:[1]}],{out:"v3"}));
+fs.writeFileSync("job/1/v3.json",mk([{video:"../../app.mp4",region:[250,40,745,830],sentences:[0]},{video:"../../app.mp4",in:1,region:[335,40,665,700],sentences:[1]}],{out:"v3",theme:{bg:"#203040"}}));
+fs.writeFileSync("job/1/v3-nothm.json",mk([{video:"../../app.mp4",region:[250,40,745,830],sentences:[0,1]}],{out:"v3n",theme:undefined}));
 fs.writeFileSync("job/1/bad-region.json",mk([{video:"../../app.mp4",region:[500,0,600,700],sentences:[0,1]}]));' "$tts"
 e="$(node "$S/compose.mjs" job/1/v2.json --dry-run 2>&1)"; [ $? -eq 6 ] && echo "$e" | grep -q 'region' && ok "第二版設定(高錄影、沒有 region)→ 結束碼 6,提示設 region" || bad "第二版設定沒被擋" "$e"
 node "$S/compose.mjs" job/1/bad-region.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "region 超出來源 → 結束碼 2" || bad "region 超出來源"
+e="$(node "$S/compose.mjs" job/1/v3-nothm.json --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme.bg' && ok "置頂鏡頭沒有 theme.bg → 結束碼 2(沒有預設底色)" || bad "置頂沒有 theme.bg 沒被擋" "$e"
 c3="$(node "$S/compose.mjs" job/1/v3.json)"; rc=$?
 px() { ffmpeg -hide_banner -loglevel error -i "$1" -vf "crop=1:1:$2:$3,format=rgb24" -f rawvideo - | od -An -tu1 | tr -s ' ' | sed 's/^ //'; }
-[ $rc -eq 0 ] && [ "$(jget "$c3" scenes.0.uiBottom)" -le 1280 ] && [ "$(jget "$c3" scenes.1.uiBottom)" -le 1280 ] && node -e 'const p=process.argv[1].trim().split(" ").map(Number);process.exit([11,18,32].every((v,i)=>Math.abs(p[i]-v)<=4)?0:1)' "$(px job/work/1/first-frame.png 540 1500)" \
-  && ok "設 region 後置頂:UI 下緣 ≤ 1280、字幕區是底色" || bad "置頂鏡頭" "$c3 px=$(px job/work/1/first-frame.png 540 1500)"
+[ $rc -eq 0 ] && [ "$(jget "$c3" scenes.0.uiBottom)" -le 1280 ] && [ "$(jget "$c3" scenes.1.uiBottom)" -le 1280 ] && node -e 'const p=process.argv[1].trim().split(" ").map(Number);process.exit([32,48,64].every((v,i)=>Math.abs(p[i]-v)<=4)?0:1)' "$(px job/work/1/first-frame.png 540 1500)" \
+  && ok "設 region 後置頂:UI 下緣 ≤ 1280、字幕區是 theme.bg" || bad "置頂鏡頭" "$c3 px=$(px job/work/1/first-frame.png 540 1500)"
 
 # 8. compose.mjs 原聲精簡(cut 用 silence.sh 輸出)+ 拆句比例
 mkdir -p job/2
@@ -155,6 +167,10 @@ cat > job/2/timeline.json <<EOF
 {"mode":"original","work":"../work/2","source":"../../land.mp4","cut":$sil,
  "segments":[{"start":0.5,"end":2.9,"text":"第一段"},{"start":5.2,"end":9.5,"texts":["後面七個字吧","所以拆成兩句字幕"]}]}
 EOF
+node -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync("job/2/timeline.json","utf8"));fs.writeFileSync("job/2/hl.json",JSON.stringify({...t,headline:"標題"}))'
+e="$(node "$S/compose.mjs" job/2/hl.json --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'headline' && ok "原聲 headline 沒有 theme → dry-run 就結束碼 2" || bad "原聲 headline 沒有 theme" "$e"
+node -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync("job/2/hl.json","utf8"));fs.writeFileSync("job/2/hl2.json",JSON.stringify({...t,theme:{bg:"#111111",bg2:"#222222",fg:"#ffffff",accent:"#ff8800",muted:"#999999",font:"x"}}))'
+e="$(node "$S/compose.mjs" job/2/hl2.json --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'font' && ok "原聲 headline theme 多了欄位 → dry-run 就結束碼 2" || bad "theme 多餘欄位沒在 dry-run 擋" "$e"
 c="$(node "$S/compose.mjs" job/2/timeline.json)"; rc=$?
 node -e 'const c=JSON.parse(process.argv[1]);process.exit(Math.abs(c.sourceDuration-c.totalCut-c.actualDuration)<=0.5&&Math.abs(c.totalCut-1.8)<0.05?0:1)' "$c" 2>/dev/null \
   && ok "compose.mjs 精簡:來源 − 剪掉 = 成品長度(剪點各留 0.1 秒)" || bad "compose.mjs 精簡長度" "$c"

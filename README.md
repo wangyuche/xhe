@@ -23,7 +23,7 @@
 | `tw-stock-analyst` | 台股個股分析:基本面、合理價、時事、技術面、1–2 週價位預測(只讀、不寫檔) |
 | `mac-widget-builder` | Mac 桌面 / 選單列 widget:SwiftUI + AppKit,只用 Command Line Tools 編譯,實際取資料與預覽驗證 |
 | `acceptance-designer` | 網站 feature 的驗收情境設計(只讀):編號情境、測試層級、待決產品問題 |
-| `frontend-owner` | 網站前端(React / Next.js):依驗收情境實作與測試、截圖驗證 |
+| `frontend-owner` | 網站前端(React / Next.js):依驗收情境實作與測試、截圖驗證;有「僅設計規範」模式,為每個專案寫專屬 DESIGN.md |
 | `backend-owner` | 網站後端(Go):實作、維護 OpenAPI 契約、httptest 與 curl 驗證;有「僅契約」模式 |
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
 | `short-video-maker` | 短影音:GitHub repo 或影片 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓),旁白與字幕,實際驗證規格與響度 |
@@ -48,7 +48,7 @@ for a in acceptance-designer frontend-owner backend-owner integration-verifier; 
 for k in web-dev-kit stack-react stack-nextjs stack-go; do ln -s "$(pwd)/skills/$k" ~/.claude/skills/$k; done
 ```
 
-需要 Node.js ≥ 24.18、Go ≥ 1.26(`brew install node go`)、Google Chrome;PostgreSQL 選用 Docker。流程:acceptance-designer 起草情境 → 使用者回答待決問題 → (平行時先 backend-owner「模式:僅契約」)→ frontend-owner / backend-owner 各在獨立 worktree 實作 → 主 agent commit 到 `agent/<agent>/<task>` 分支 → 單位 verifier → 合併到整合分支 → integration-verifier PASS → 主 agent 開 MR / PR 並以驗證過的 SHA 合併(GitLab:`glab mr merge <MR> --sha <SHA>`,SHA 不符會被拒絕;沒有遠端時本地合併);刪分支、force-push、部署仍先問使用者。GitLab:建一個專用機器人使用者(例如 `claude-bot`,Regular、非 admin),以 Developer 加入網站專案或 group,用它的 Personal Access Token(scopes 只有 `api` + `write_repository`)執行 `glab auth login`;一個 glab 登入即可跨專案。各專案 `main` 設為 No one 可 push、Developers + Maintainers 可 merge。自我測試:`bash skills/web-dev-kit/tests/run.sh`、`bash skills/stack-go/tests/run.sh`、`bash skills/stack-nextjs/tests/run.sh`。
+需要 Node.js ≥ 24.18、Go ≥ 1.26(`brew install node go`)、Google Chrome;PostgreSQL 選用 Docker。流程:(新前端先由主 agent 問使用者風格,派 frontend-owner「模式:僅設計規範」寫 `design/DESIGN.md` 並 commit;不需要時派工寫「不需要設計規範」)→ acceptance-designer 起草情境 → 使用者回答待決問題 → (平行時先 backend-owner「模式:僅契約」)→ frontend-owner / backend-owner 各在獨立 worktree 實作 → 主 agent commit 到 `agent/<agent>/<task>` 分支 → 單位 verifier → 合併到整合分支 → integration-verifier PASS → 主 agent 開 MR / PR 並以驗證過的 SHA 合併(GitLab:`glab mr merge <MR> --sha <SHA>`,SHA 不符會被拒絕;沒有遠端時本地合併);刪分支、force-push、部署仍先問使用者。GitLab:建一個專用機器人使用者(例如 `claude-bot`,Regular、非 admin),以 Developer 加入網站專案或 group,用它的 Personal Access Token(scopes 只有 `api` + `write_repository`)執行 `glab auth login`;一個 glab 登入即可跨專案。各專案 `main` 設為 No one 可 push、Developers + Maintainers 可 merge。自我測試:`bash skills/web-dev-kit/tests/run.sh`、`bash skills/stack-go/tests/run.sh`、`bash skills/stack-nextjs/tests/run.sh`。
 
 `mac-widget-builder` 預設把 widget 寫到 `~/Widgets/<名稱>/`(倉庫外),需要在 host 核准寫入;各 widget 的資料來源網域也要核准。骨架自我測試:`bash skills/mac-widget-kit/tests/run.sh`。
 

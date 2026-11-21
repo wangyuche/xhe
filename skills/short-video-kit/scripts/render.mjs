@@ -36,9 +36,20 @@ let spec;
 try { spec = JSON.parse(readFileSync(specPath, 'utf8')); } catch (e) { usage(`讀不到卡片 JSON:${e.message}`); }
 const cards = Array.isArray(spec) ? spec : spec.cards;
 if (!Array.isArray(cards) || cards.length === 0) usage('卡片 JSON 要有 cards 陣列');
-const theme = { bg: '#0b1220', bg2: '#1e293b', fg: '#f8fafc', accent: '#38bdf8', muted: '#94a3b8', ...(spec.theme ?? {}) };
-for (const [k, v] of Object.entries(theme)) {
-  if (!/^#[0-9a-fA-F]{3,8}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);
+// 沒有預設配色:每支影片依來源(repo 的 logo / 網站 / 文件配色,或影片畫面)自己選 theme。
+// 只有字幕卡、有 image 的封面不用 theme。
+const THEME_KEYS = ['bg', 'bg2', 'fg', 'accent', 'muted'];
+const needsTheme = cards.some(c => c && (['title', 'point', 'code', 'end', 'headline'].includes(c.type) || (c.type === 'cover' && !c.image)));
+// 不需要 theme 時(只有字幕卡、有圖封面)忽略 theme,不檢查格式。
+const theme = needsTheme ? ((Array.isArray(spec) ? undefined : spec.theme) ?? {}) : {};
+if (needsTheme && Array.isArray(spec)) usage('有 title / point / code / end / headline 卡或漸層封面時,要用 {"theme":{…},"cards":[…]} 物件格式(陣列格式放不了 theme)');
+if (needsTheme) {
+  const missing = THEME_KEYS.filter(k => theme[k] === undefined);
+  if (missing.length) usage(`theme 缺 ${missing.join('、')}:沒有預設配色,依這支影片的來源選(見 SKILL.md「配色」)`);
+  for (const [k, v] of Object.entries(theme)) {
+    if (!THEME_KEYS.includes(k)) usage(`theme.${k} 不是可用欄位(${THEME_KEYS.join(', ')})`);
+    if (!/^#[0-9a-fA-F]{6}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);
+  }
 }
 
 const TYPES = new Set(['title', 'point', 'code', 'end', 'subtitle', 'headline', 'cover']);
@@ -106,6 +117,7 @@ pre{font:30px/1.45 Menlo,monospace;padding:24px 28px;white-space:pre-wrap;word-b
 .cover img{width:100%;height:100%;object-fit:cover}
 .cover.plain{background:linear-gradient(160deg,var(--bg) 0%,var(--bg2) 60%,var(--accent) 140%)}
 .cover .shade{position:absolute;inset:0;background:linear-gradient(180deg,#000c 0%,#0000 45%,#0000 70%,#000a 100%)}
+.cover:not(.plain) .ct,.cover:not(.plain) .tag{color:#fff}
 .cover .ct{position:absolute;left:72px;right:170px;top:260px;font-size:104px;font-weight:900;line-height:1.2;text-shadow:0 4px 18px #000;word-break:break-word}
 </style></head><body><div id="stage"></div><script>
 const KW=new Set('const let var function return if else for while do switch case break continue new class extends import from export default async await try catch finally throw typeof instanceof in of func package type struct interface go defer select chan map range def self lambda yield with as pass raise None True False null undefined true false public private static void int string bool fn pub mut impl use mod match enum'.split(' '));
