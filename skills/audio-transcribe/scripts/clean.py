@@ -13,18 +13,23 @@ from collections import Counter
 
 FILLER = {"對", "嗯", "好", "是", "謝謝", "你好", "對對對", "對對", "OK", "ok", "那", "然後", "對啊", "好的"}
 # 幻覺句只認「整句都是頻道宣傳」的樣子,不能只因出現「訂閱」「轉發」就刪(例如「訂閱制營收年增 30%」是正常內容):
-#   STRONG:這些片語本身就是頻道宣傳 / 字幕組署名;CTA:一行短句裡出現 2 種以上宣傳動作才算
+#   STRONG:這些片語本身就是頻道宣傳 / 字幕組署名
+#   PROMO:把宣傳動作與客套字拿掉後幾乎不剩東西(「請訂閱」「記得按讚訂閱」「感謝打賞」)才算;
+#          「直播打賞與訂閱收入占比 20%」拿掉後還剩「直播收入占比20%」,保留
 STRONG = re.compile(r"明鏡與點點|明镜与点点|字幕由.{0,20}提供|字幕提供|請不吝|请不吝"
                     r"|(訂閱|订阅)(我的|我們的|我们的|本)?(頻道|频道)|(開啟|开启|打開|打开)小(鈴鐺|铃铛)")
-CTA = [re.compile(p) for p in (r"點贊|点赞|按讚|按赞", r"訂閱|订阅", r"轉發|转发|分享", r"打賞|打赏", r"小鈴鐺|小铃铛")]
-CTA_MAX_LEN = 30
+CTA = re.compile(r"點贊|点赞|按讚|按赞|按個讚|點個讚|訂閱|订阅|轉發|转发|分享|打賞|打赏|小鈴鐺|小铃铛|收藏|關注|关注")
+POLITE = re.compile(r"請|请|記得|记得|歡迎|欢迎|感謝|感谢|謝謝|谢谢|支持|多多|大家|幫忙|帮忙|一下|開啟|开启|打開|打开"
+                    r"|我的|我們的|我们的|本|頻道|频道|欄目|栏目|和|與|与|及|並|并|加|按|喔|哦|吧|啊|呀|哈|的|一起|喜歡|喜欢")
 
 
 def is_hallucination(line):
     if STRONG.search(line):
         return True
-    core = re.sub(r"[\s,，。.、!！?？]+", "", line)
-    return len(core) <= CTA_MAX_LEN and sum(1 for c in CTA if c.search(core)) >= 2
+    core = re.sub(r"[\s,，。.、!！?？~～]+", "", line)
+    if not CTA.search(core):
+        return False
+    return len(POLITE.sub("", CTA.sub("", core))) <= 1
 
 
 src, dst = sys.argv[1], sys.argv[2]

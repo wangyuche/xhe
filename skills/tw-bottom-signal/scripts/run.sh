@@ -11,24 +11,27 @@ FUGLE="${FUGLE_SH:-$HOME/.claude/tg/fugle.sh}"
 mkdir -p "$OUT" || exit 1
 FROM=$(python3 -I -c 'import datetime as d; print((d.date.today()-d.timedelta(days=45)).isoformat())')
 TO=$(python3 -I -c 'import datetime as d; print(d.date.today().isoformat())')
-# fugle.sh <endpoint> <檔案> 印 {"http":<狀態碼>};回傳 0 = HTTP 200 且檔案非空
+# fugle.sh <endpoint> <檔案> 通常印 {"http":<狀態碼>}。成功 = 有寫出非空檔案,且沒有印出非 200 的狀態碼
+# (檔案事先刪掉,所以非空一定是這次寫的;內容是否為有效 K 線由 combine.py 檢查)
 fetch() {
   local st
   st=$(bash "$FUGLE" "$1" "$2" 2>/dev/null)
-  case "$st" in *'"http":200'*) [ -s "$2" ] ;; *) echo "${st:-無輸出}" >&2; return 1 ;; esac
+  if printf '%s' "$st" | grep -q '"http"' && ! printf '%s' "$st" | grep -Eq '"http" *: *200([^0-9]|$)'; then
+    echo "Fugle 回應: $st" >&2; return 1
+  fi
+  [ -s "$2" ] || { echo "Fugle 沒有寫出資料(${st:-無輸出})" >&2; return 1; }
 }
 # 圖標題:指數用中文名;個股用「代號 公司名」(名稱取自 Fugle 報價,抓不到就只放代號)
 if [ "$SYM" = "IX0001" ]; then NAME="加權指數"; else
   CNAME=$(bash "$FUGLE" "intraday/quote/$SYM" | jq -r '.name // empty' 2>/dev/null)
   NAME="$SYM${CNAME:+ $CNAME}"
 fi
-rm -f "$OUT/bottom_${SYM}_30m.svg"
+rm -f "$OUT/bottom_${SYM}_30m.svg" "$OUT/bottom_${SYM}_"{30,60}m{,_hist,_intraday}.json
 for TF in 30 60; do
   H="$OUT/bottom_${SYM}_${TF}m_hist.json"; I="$OUT/bottom_${SYM}_${TF}m_intraday.json"; J="$OUT/bottom_${SYM}_${TF}m.json"
-  rm -f "$H" "$I" "$J"
   # 歷史 K 不含今天盤中,另外抓 intraday 接在後面
   fetch "historical/candles/$SYM?timeframe=$TF&from=$FROM&to=$TO" "$H" \
-    || { echo "資料錯誤: ${TF} 分 K 歷史資料抓不到(Fugle 回應見上一行),不使用舊資料" >&2; exit 1; }
+    || { echo "資料錯誤: ${TF} 分 K 歷史資料抓不到(原因見上一行),不使用舊資料" >&2; exit 1; }
   fetch "intraday/candles/$SYM?timeframe=$TF" "$I" \
     || { echo "警告: ${TF} 分 K 盤中資料抓不到,只用歷史 K(交易時間內結果會缺今天)" >&2; rm -f "$I"; }
   python3 -I "$DIR/combine.py" "$H" "$I" "$J" || exit 1

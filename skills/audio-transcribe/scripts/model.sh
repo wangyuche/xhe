@@ -8,8 +8,12 @@ M="$WHISPER_MODEL"; SRC="環境變數 WHISPER_MODEL"
 if [ -z "$M" ] && [ -f "$CONF" ]; then
   # 只取 WHISPER_MODEL=(可有 export、引號、行尾註解),不 source 設定檔
   M=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?WHISPER_MODEL=//p' "$CONF" | tail -1 \
-      | sed -E 's/[[:space:]]+#.*$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
-  case "$M" in "~/"*) M="$HOME/${M#\~/}" ;; esac
+      | tr -d '\r' | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
+  case "$M" in
+    "~/"*) M="$HOME/${M#\~/}" ;;
+    '$HOME/'*) M="$HOME/${M#\$HOME/}" ;;
+    '${HOME}/'*) M="$HOME/${M#\$\{HOME\}/}" ;;
+  esac
   SRC="$CONF"
 fi
 [ -n "$M" ] || { M="$DEFAULT"; SRC="預設路徑"; }

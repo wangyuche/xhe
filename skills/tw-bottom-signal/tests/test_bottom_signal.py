@@ -127,7 +127,7 @@ esac
 if [ "$FAKE_MODE" = histfail ] && [[ "$1" == historical/* ]]; then echo '{"http":000}'; exit 0; fi
 if [ "$FAKE_MODE" = intrafail ] && [[ "$1" == intraday/* ]]; then echo '{"http":000}'; exit 0; fi
 if [[ "$1" == historical/* ]]; then cat "$SRC" > "$2"; else echo '{"data":[]}' > "$2"; fi
-echo '{"http":200}'
+[ "$FAKE_MODE" = quiet ] || echo '{"http": 200}'
 """ % (F30, F60))
 RUN = os.path.join(SCRIPTS, "run.sh")
 def runsh(mode):
@@ -136,9 +136,11 @@ def runsh(mode):
 try:
     r = runsh("ok")
     check("run.sh 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
+    r = runsh("quiet")
+    check("run.sh fugle.sh 不印狀態碼但有寫檔 → 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
     r = runsh("histfail")
     check("run.sh 歷史抓不到 → 報錯、不沿用舊檔", r.returncode != 0 and "資料錯誤" in r.stderr and "STAGE" not in r.stdout
-          and not os.path.exists(os.path.join(work, "bottom_IX0001_30m.json")))
+          and not any(os.path.exists(os.path.join(work, f"bottom_IX0001_{tf}m.json")) for tf in (30, 60)))
     r = runsh("intrafail")
     check("run.sh 盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
     env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))

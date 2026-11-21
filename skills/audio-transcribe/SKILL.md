@@ -10,7 +10,7 @@ description: 錄音／影片轉中文逐字稿（whisper.cpp + Apple GPU）。�
 ## 前置
 
 - whisper.cpp：`brew install whisper-cpp`（指令 `/opt/homebrew/bin/whisper-cli`）
-- 模型：`ggml-large-v3-turbo.bin`（1.6GB，中文好、速度快）。路徑是本機環境設定，不寫在 repo：優先序 環境變數 `WHISPER_MODEL` > `~/.config/audio-transcribe/config` 的 `WHISPER_MODEL=` > 預設 `~/.cache/whisper/ggml-large-v3-turbo.bin`。
+- 模型：`ggml-large-v3-turbo.bin`（1.6GB，中文好、速度快）。路徑是本機環境設定，不寫在 repo：優先序 環境變數 `WHISPER_MODEL` > `~/.config/audio-transcribe/config` 的 `WHISPER_MODEL=` > 預設 `~/.cache/whisper/ggml-large-v3-turbo.bin`。設定檔的值寫絕對路徑，或 `~/`、`$HOME/` 開頭（不執行 shell 展開）。
 
   ```bash
   mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
@@ -38,10 +38,10 @@ bash ~/.claude/skills/audio-transcribe/scripts/prep.sh <輸入音檔或影片> <
 bash ~/.claude/skills/audio-transcribe/scripts/model.sh
 ```
 
-把印出的路徑**直接寫進**下面的 `-m`（不要用 `$(...)` 或變數，否則不是單獨一行的 whisper-cli，會進沙盒）：
+把印出的路徑**直接寫進**下面的 `-m`，用單引號包住（路徑可能有空白；不要用 `$(...)` 或變數，否則不是單獨一行的 whisper-cli，會進沙盒）：
 
 ```bash
-/opt/homebrew/bin/whisper-cli -np -mc 0 -m <model.sh 印出的路徑> -l zh --prompt 以下是繁體中文的<公司名>法說會內容。 -otxt -of <輸出路徑不含副檔名> -f <步驟1的.wav>
+/opt/homebrew/bin/whisper-cli -np -mc 0 -m '<model.sh 印出的路徑>' -l zh --prompt 以下是繁體中文的<公司名>法說會內容。 -otxt -of <輸出路徑不含副檔名> -f <步驟1的.wav>
 ```
 
 - **`-mc 0` 一定要加**：沒加時上下文會一直帶到下一段，Q&A、雜音或冷場的地方容易卡在同一句。實例：同一句重複 743 次、161 次，整段問答消失。
