@@ -10,7 +10,14 @@ description: 錄音／影片轉中文逐字稿（whisper.cpp + Apple GPU）。�
 ## 前置
 
 - whisper.cpp：`brew install whisper-cpp`（指令 `/opt/homebrew/bin/whisper-cli`）
-- 模型：`/Volumes/ariesdisk/Data/git/stock/whisper-models/ggml-large-v3-turbo.bin`（1.6GB，中文好、速度快）
+- 模型：`ggml-large-v3-turbo.bin`（1.6GB，中文好、速度快）。路徑是本機環境設定，不寫在 repo：優先序 環境變數 `WHISPER_MODEL` > `~/.config/audio-transcribe/config` 的 `WHISPER_MODEL=` > 預設 `~/.cache/whisper/ggml-large-v3-turbo.bin`。設定檔的值寫絕對路徑，或 `~/`、`$HOME/` 開頭（不執行 shell 展開）。
+
+  ```bash
+  mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
+    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+  # 模型放在別處時:
+  # mkdir -p ~/.config/audio-transcribe && echo 'WHISPER_MODEL=<模型路徑>' > ~/.config/audio-transcribe/config
+  ```
 - ffmpeg
 
 ## 步驟
@@ -25,8 +32,16 @@ bash ~/.claude/skills/audio-transcribe/scripts/prep.sh <輸入音檔或影片> <
 
 ### 2. 轉錄（要單獨一行執行）
 
+先查模型路徑（印出絕對路徑；結束碼不是 0 就停下來，把 stderr 告訴使用者：3 = 找不到模型（附下載方式）、2 = 路徑含單引號或不是絕對路徑）：
+
 ```bash
-/opt/homebrew/bin/whisper-cli -np -mc 0 -m /Volumes/ariesdisk/Data/git/stock/whisper-models/ggml-large-v3-turbo.bin -l zh --prompt 以下是繁體中文的<公司名>法說會內容。 -otxt -of <輸出路徑不含副檔名> -f <步驟1的.wav>
+bash ~/.claude/skills/audio-transcribe/scripts/model.sh
+```
+
+把印出的路徑**直接寫進**下面的 `-m`，用單引號包住（路徑可能有空白；不要用 `$(...)` 或變數，否則不是單獨一行的 whisper-cli，會進沙盒）：
+
+```bash
+/opt/homebrew/bin/whisper-cli -np -mc 0 -m '<model.sh 印出的路徑>' -l zh --prompt 以下是繁體中文的<公司名>法說會內容。 -otxt -of <輸出路徑不含副檔名> -f <步驟1的.wav>
 ```
 
 - **`-mc 0` 一定要加**：沒加時上下文會一直帶到下一段，Q&A、雜音或冷場的地方容易卡在同一句。實例：同一句重複 743 次、161 次，整段問答消失。
@@ -41,7 +56,7 @@ bash ~/.claude/skills/audio-transcribe/scripts/prep.sh <輸入音檔或影片> <
 python3 -I ~/.claude/skills/audio-transcribe/scripts/clean.py <步驟2的.txt> <清理後.txt>
 ```
 
-刪掉只有填充字的行（對、嗯、謝謝…）、連續重複的行、whisper 常見幻覺句（「請不吝點贊 訂閱…」），單字重複（法法法法…）壓成 3 個。印出統計；`LOOP` 表示某句重複很多次，`WARN` 表示可能有段落沒辨識出來。
+刪掉只有填充字的行（對、嗯、謝謝…）、連續重複的行、whisper 常見幻覺句（整行都是頻道宣傳，例如「請不吝點贊 訂閱…」「字幕由…提供」、一句短句裡同時有按讚和訂閱；只提到「訂閱」「轉發」的正常內容，例如「訂閱制營收年增 30%」，會保留），單字重複（法法法法…）壓成 3 個。印出統計；`LOOP` 表示某句重複很多次，`WARN` 表示可能有段落沒辨識出來。
 
 清完刪掉步驟 1 的 wav（只是中間產物，61 分鐘約 117MB）。
 
@@ -57,4 +72,4 @@ python3 -I ~/.claude/skills/audio-transcribe/scripts/clean.py <步驟2的.txt> <
 python3 -I tests/test_audio_transcribe.py
 ```
 
-測 `prep.sh` 轉檔與 `clean.py` 清理（合成資料，不含任何真實錄音內容）。whisper 本身需要模型與真實語音，不在測試內。
+測 `prep.sh` 轉檔、`model.sh` 模型路徑與 `clean.py` 清理（合成資料，不含任何真實錄音內容）。whisper 本身需要模型與真實語音，不在測試內。
