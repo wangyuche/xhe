@@ -55,6 +55,8 @@ printf 'APP_ID=123456\nKEY_FILE="%s"\n' "$TMP/k #1.pem" > "$TMP/config-hash"; cp
 check "引號內的 # 不當註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-hash' bash '$BOT' _jwt >/dev/null"
 printf 'APP_ID=123456\nKEY_FILE="%s" # app key\n' "$TMP/key.pem" > "$TMP/config-qc"
 check "引號值加行尾註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-qc' bash '$BOT' _jwt >/dev/null"
+cp "$TMP/key.pem" "$TMP/keyeq="; printf 'APP_ID=123456\nKEY_FILE=%s\n' "$TMP/keyeq=" > "$TMP/config-eq"
+check "值結尾的 = 保留(bash 3.2)" bash -c "GITHUB_BOT_CONFIG='$TMP/config-eq' /bin/bash '$BOT' _jwt >/dev/null"
 check "設定行尾註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-comment' bash '$BOT' _jwt >/dev/null"
 check "--repo 缺值不 crash" bash -c "bash '$BOT' --repo 2>&1 | grep -q '後面要接值'"
 check "--repo 格式錯誤拒絕" bash -c "! bash '$BOT' --repo 'bad repo' token 2>/dev/null"
@@ -190,6 +192,9 @@ git -C "$TMP/prepo" config push.recurseSubmodules on-demand
 check "push.recurseSubmodules 被覆蓋成 no" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config push.recurseSubmodules)" = no ]
 git -C "$TMP/prepo" config --unset push.recurseSubmodules
 git -C "$TMP/prepo" config submodule.lib.url https://github.com/o/lib.git; git -C "$TMP/prepo" config submodule.lib.active true
+git -C "$TMP/prepo" config http.postBuffer 524288000
+check "http.postBuffer 不擋推送" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status >/dev/null 2>&1"
+git -C "$TMP/prepo" config --unset http.postBuffer
 check "已初始化的 submodule 不擋推送" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status >/dev/null 2>&1"
 git -C "$TMP/prepo" config --remove-section submodule.lib
 git -C "$TMP/prepo" config include.path "$TMP/unreadable.cfg"; printf '[url "x"]\n\tinsteadOf = y\n' > "$TMP/unreadable.cfg"; chmod 000 "$TMP/unreadable.cfg"
@@ -248,6 +253,9 @@ GH_RUN="env PATH=$TMP/bin:$PATH GITHUB_BOT_CONFIG=$TMP/config-gh"
 check "gh token" [ "$($GH_RUN bash "$BOT" --repo o/r token)" = ghp_testpat ]
 check "gh identity" grep -qx 'name=xhe-bot' <<<"$($GH_RUN bash "$BOT" identity)"
 mkdir -p "$TMP/oldgh"; printf '#!/bin/sh\necho "usage: gh auth token [--hostname]"\n' > "$TMP/oldgh/gh"; chmod +x "$TMP/oldgh/gh"
+mkdir -p "$TMP/biggh"; printf '#!/bin/bash\nif [ "$*" = "auth token --help" ]; then echo "  -u, --user string"; for i in $(seq 5000); do echo "padding line $i"; done; exit 0; fi\n[ "$*" = "auth token --hostname github.com --user xhe-bot" ] && { echo ghp_testpat; exit 0; }\nexit 1\n' > "$TMP/biggh/gh"; chmod +x "$TMP/biggh/gh"
+ok_all=1; for _ in 1 2 3 4 5; do [ "$(PATH="$TMP/biggh:$PATH" GITHUB_BOT_GH_USER=xhe-bot GITHUB_BOT_CONFIG=/nonexistent bash "$BOT" --repo o/r token 2>/dev/null)" = ghp_testpat ] || ok_all=0; done
+check "gh --help 很長也不會 SIGPIPE 誤判" [ $ok_all -eq 1 ]
 check "舊版 gh 明確提示升級" bash -c "PATH='$TMP/oldgh:$PATH' GITHUB_BOT_GH_USER=xhe-bot GITHUB_BOT_CONFIG=/nonexistent bash '$BOT' --repo o/r token 2>&1 | grep -q '版本太舊'"
 check "gh 帳號未登入失敗" bash -c "! env PATH='$TMP/bin:$PATH' GITHUB_BOT_GH_USER=nobody GITHUB_BOT_CONFIG=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
 check "gh 優先於 TOKEN_FILE" [ "$(env PATH="$TMP/bin:$PATH" GITHUB_BOT_CONFIG="$TMP/config-pat" GITHUB_BOT_GH_USER=xhe-bot bash "$BOT" --repo o/r token)" = ghp_testpat ]

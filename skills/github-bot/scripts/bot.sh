@@ -55,7 +55,9 @@ expand_home() {
 load_conf() {
   local c_app="" c_key="" c_tok="" c_gh="" k v quoted
   if [[ -f $CONF ]]; then
-    while IFS='=' read -r k v; do
+    local line
+    while IFS= read -r line; do
+      k=${line%%=*}; v=${line#*=}      # 自己切:bash 3.2 的 IFS='=' read 會吃掉值結尾的 =
       # 行尾註解:加引號的值取到對應的結尾引號為止;未加引號的值砍掉「 # ...」
       if [[ $v =~ ^[[:space:]]*\"([^\"]*)\" ]] || [[ $v =~ ^[[:space:]]*\'([^\']*)\' ]]; then
         v=${BASH_REMATCH[1]}; quoted=1          # 引號內的空白保留
@@ -113,7 +115,11 @@ api() {
   local method=$1 path=$2 bearer=$3 body=${4:-} resp code
   [[ -n $bearer ]] || die "內部錯誤:$method $path 沒有 token"
   local -a data=()
-  [[ -z $body ]] || data=(-H 'Content-Type: application/json' --data-binary "$body")
+  if [[ -n $body ]]; then                        # 內文寫檔再給 curl:不出現在 ps,也不受 ARG_MAX 限制
+    local bf; bf=$(umask 077; mktemp "$SCRATCH/body.XXXXXX")
+    printf '%s' "$body" > "$bf"
+    data=(-H 'Content-Type: application/json' --data-binary "@$bf")
+  fi
   resp=$(
     {
       printf 'header = "Authorization: Bearer %s"\n' "$bearer"
@@ -169,12 +175,13 @@ resolve_repo() {
 pat() {
   local t
   if [[ -n $GH_USER ]]; then
-    gh auth token --help 2>/dev/null | grep -q -- '--user' \
+    local help; help=$(gh auth token --help 2>/dev/null || true)   # 不用管線:grep -q 提早結束會讓 gh 收到 SIGPIPE
+    grep -q -- '--user' <<<"$help" \
       || die "gh 版本太舊,不支援 gh auth token --user(多帳號);請升級 gh"
     t=$(gh auth token --hostname github.com --user "$GH_USER" 2>"$SCRATCH/gh.err") \
       || die "gh 取不到 $GH_USER 的 token(沒登入就執行 gh auth login 加入該帳號):$(cat "$SCRATCH/gh.err")"
   else
-    t=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$TOKEN_FILE" | head -n1 | awk '{print $1}' | tr -d '\r' || true)
+    t=$(awk '{ sub(/\r$/, "") } !/^[[:space:]]*(#|$)/ { print $1; exit }' "$TOKEN_FILE")
   fi
   [[ -n $t ]] || die "取不到機器人帳號的 token"
   printf '%s' "$t"
@@ -275,7 +282,9 @@ push_git() {
   bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
           --get-regexp '^(url|http|credential)\..*$' 2>&1) && rc=0 || rc=$?
   [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
-  [[ $rc -eq 1 ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
+  # 無害、常見的 http 調校設定允許(不能改網址、proxy、TLS、認證)
+  [[ $rc -eq 0 ]] && bad=$(grep -viE '[[:space:]]http\.(postbuffer|version|lowspeedlimit|lowspeedtime|maxrequests|minsessions)$' <<<"$bad" || true)
+  [[ $rc -eq 1 || -z $bad ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
   "${clean[@]}" \
   git ${safe[@]+"${safe[@]}"} -c credential.helper= \
       -c "credential.https://github.com.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
