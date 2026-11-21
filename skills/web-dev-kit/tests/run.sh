@@ -221,6 +221,9 @@ if [ $rc -eq 0 ] && echo "$out" | grep -q "^url=http://localhost:3999 port=3999 
    && grep -q -- "-p kit-x -f $CP/compose.yaml up -d$" "$FD/calls"; then ok "compose:up -d、等到 healthy、印 url/port"; else bad "compose:up" "rc=$rc $out"; fi
 fc down -p kit-x >/dev/null 2>&1
 grep -E -- "-p kit-x .*down$" "$FD/calls" >/dev/null && ok "compose:down 預設不刪 volume" || bad "compose:down" "$(tail -1 "$FD/calls")"
+printf 'services: {}\n' > "$CP/compose.override.yaml"; fake_reset
+out="$(fc ps -p kit-x 2>&1)"; grep -q -- "-f $CP/compose.yaml -f $CP/compose.override.yaml" "$FD/calls" && ok "compose:自動找到的檔案也帶上 compose.override.yaml" || bad "compose:override" "$(cat "$FD/calls")"
+rm -f "$CP/compose.override.yaml"
 out="$(fc down -p kit-x --volumes --images 2>&1)"
 grep -E -- "down --volumes --rmi local$" "$FD/calls" >/dev/null && echo "$out" | grep -q "volumes=removed" && ok "compose:down --volumes --images" || bad "compose:down --volumes" "$out"
 

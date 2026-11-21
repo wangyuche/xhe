@@ -154,6 +154,11 @@ done
 
 : > "$TMP/req.log"; echo '{"ci_config_path": "ci/pipeline.yml"}' > "$TMP/scenario.json"
 check "merge !1(專案設自訂 ci_config_path)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF 'ci/pipeline.yml' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+for kv in "auto_devops_enabled Auto DevOps" "only_allow_merge_if_pipeline_succeeds pipeline 成功"; do
+  set -- $kv; key=$1; shift; msg="$*"
+  echo "{\"$key\": true}" > "$TMP/scenario.json"; : > "$TMP/req.log"
+  check "merge !1($key)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+done
 echo '{}' > "$TMP/scenario.json"
 : > "$TMP/req.log"
 check "merge !10(查詢 .gitlab-ci.yml 回 500)拒絕且不送合併" bash -c "! bash '$BOT' merge 10 --sha $F40 2>'$TMP/err' && grep -q '無法確認' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"

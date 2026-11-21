@@ -134,8 +134,9 @@ class H(BaseHTTPRequestHandler):
         if p in (PROJ, "/projects/42"):
             proj = {"id": 42, "path_with_namespace": "grp/proj", "default_branch": "develop",
                     "web_url": WEB, "permissions": {"project_access": {"access_level": 30}}}
-            if "ci_config_path" in scenario():
-                proj["ci_config_path"] = scenario()["ci_config_path"]
+            for k in ("ci_config_path", "auto_devops_enabled", "only_allow_merge_if_pipeline_succeeds"):
+                if k in scenario():
+                    proj[k] = scenario()[k]
             return self.send(200, proj)
         if not p.startswith(PROJ + "/"):
             return self.send(404, {"message": "404 Not Found " + p})

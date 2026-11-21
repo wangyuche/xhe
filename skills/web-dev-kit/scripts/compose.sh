@@ -15,7 +15,7 @@ USAGE="用法:compose.sh build|up|down|ps|logs -p <專案名> [-f <compose 檔>]
 CMD="$1"; shift
 case "$CMD" in build|up|down|ps|logs) ;; *) die "未知子命令:${CMD}。$USAGE" ;; esac
 
-PROJ=""; FILE=""; ALLOW_DEFAULT=0; BUILD=0; TIMEOUT=180; VOLUMES=0; IMAGES=0; TAIL=200; SERVICES=()
+PROJ=""; FILE=""; OVERRIDE=""; ALLOW_DEFAULT=0; BUILD=0; TIMEOUT=180; VOLUMES=0; IMAGES=0; TAIL=200; SERVICES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -p|--project) [ $# -ge 2 ] || die "$1 需要專案名"; PROJ="$2"; shift 2 ;;
@@ -47,6 +47,12 @@ else
   for f in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
     [ -f "$f" ] && { FILE="$f"; break; }
   done
+  # 自動找到的檔案:docker compose 預設也會合併同名的 override 檔,帶 -f 時要自己加上
+  if [ -n "$FILE" ]; then
+    for o in "${FILE%.*}.override.yaml" "${FILE%.*}.override.yml"; do
+      [ -f "$o" ] && { OVERRIDE="$(cd "$(dirname "$o")" && pwd)/$(basename "$o")"; break; }
+    done
+  fi
 fi
 if [ -n "$FILE" ]; then
   FILE="$(cd "$(dirname "$FILE")" && pwd)/$(basename "$FILE")"
@@ -77,7 +83,7 @@ docker info >/dev/null 2>&1 || die "Docker 沒有在執行" 3
 docker compose version >/dev/null 2>&1 || die "沒有 docker compose(v2 外掛)" 3
 
 dc() {
-  if [ -n "$FILE" ]; then docker compose -p "$PROJ" -f "$FILE" "$@"; else docker compose -p "$PROJ" "$@"; fi
+  if [ -n "$FILE" ]; then docker compose -p "$PROJ" -f "$FILE" ${OVERRIDE:+-f "$OVERRIDE"} "$@"; else docker compose -p "$PROJ" "$@"; fi
 }
 
 # compose 檔裡的對外埠:每行「服務 容器埠 主機埠 主機IP」

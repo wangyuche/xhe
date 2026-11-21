@@ -138,7 +138,8 @@ $bad"
     git -c credential.helper= -c credential.helper="$helper" -c core.hooksPath=/dev/null \
       push "$PUSH_URL" "HEAD:refs/heads/$branch"
   rm -f "$SCRATCH/t"
-  git update-ref "refs/remotes/origin/$branch" HEAD 2>/dev/null || true
+  # 只有推到 origin 時才更新本機的 origin 追蹤分支(GITLAB_BOT_PUSH_URL 指到別處時不更新)
+  [[ -n ${GITLAB_BOT_PUSH_URL:-} ]] || git update-ref "refs/remotes/origin/$branch" HEAD 2>/dev/null || true
 }
 
 need() { [[ $# -ge 2 && -n $2 && $2 != --* ]] || die "$1 後面要接值"; }
@@ -206,8 +207,12 @@ case $cmd in
     src=$(jq -r .source_branch <<<"$m"); tgt=$(jq -r .target_branch <<<"$m")
     found=()
     # 專案設了自訂 CI 設定路徑(ci_config_path,含遠端設定)→ 視為有 CI;pipeline 可能還沒建立,不能靠 pipelines 查詢
-    cip=$(project_json | jq -r '.ci_config_path // empty')
+    pj=$(project_json)
+    cip=$(jq -r '.ci_config_path // empty' <<<"$pj")
     [[ -z $cip || $cip == .gitlab-ci.yml ]] || found+=("專案設定自訂 CI 設定路徑:$cip")
+    # Auto DevOps / 規定 pipeline 成功才能合併:沒有 CI 檔也會跑 CI(pipeline 可能還沒建立)
+    [[ $(jq -r '.auto_devops_enabled // false' <<<"$pj") != true ]] || found+=("專案開啟 Auto DevOps")
+    [[ $(jq -r '.only_allow_merge_if_pipeline_succeeds // false' <<<"$pj") != true ]] || found+=("專案規定 pipeline 成功才能合併")
     for r in "$sha" "$tgt"; do
       case $(ci_file_at "$r") in
         no) ;;
