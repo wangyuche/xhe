@@ -75,6 +75,9 @@ check "identity email" grep -qx 'email=12345+xhe-bot\[bot\]@users.noreply.github
 printf 'PR 內容\n第二行\n' > "$TMP/body.md"
 check "pr 回傳網址" [ "$(bash "$BOT" --repo o/r pr --head feat/x --title 'T "q"' --body-file "$TMP/body.md")" = https://github.com/o/r/pull/7 ]
 check "--repo 去掉 .git" [ "$(bash "$BOT" --repo o/r.git pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
+check "既有 PR 目標分支不同時不沿用" [ "$(bash "$BOT" --repo o/r pr --head feat/existing --base release --title T)" = https://github.com/o/r/pull/7 ]
+check "pr 拒絕 owner:branch 與不合法分支名" bash -c "bash '$BOT' --repo o/r pr --head o:feat --title T 2>&1 | grep -q 不合法 && bash '$BOT' --repo o/r pr --head 'a..b' --title T 2>&1 | grep -q 不合法"
+check "pr 標題可以 -- 開頭" [ "$(bash "$BOT" --repo o/r pr --head feat/x --title '--dry-run support')" = https://github.com/o/r/pull/7 ]
 check "已有 open PR 時印出既有網址" [ "$(bash "$BOT" --repo o/r pr --head feat/existing --title T)" = https://github.com/o/r/pull/5 ]
 check "pr 缺 title 失敗" bash -c "! bash '$BOT' --repo o/r pr --head feat/x 2>/dev/null"
 
@@ -92,7 +95,6 @@ A40=$(printf 'a%.0s' $(seq 40)); B40=$(printf 'b%.0s' $(seq 40)); C40=$(printf '
 mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
 mkdir -p "$TMP/slbin"; printf '#!/bin/sh\necho called >> "%s"\n' "$TMP/sleep.log" > "$TMP/slbin/sleep"; chmod +x "$TMP/slbin/sleep"
 REAL_PATH=$PATH; export PATH="$TMP/fastbin:$PATH"
-A40=$(printf 'a%.0s' $(seq 40)); B40=$(printf 'b%.0s' $(seq 40)); C40=$(printf 'c%.0s' $(seq 40))
 sha_of() { printf "$1%.0s" $(seq 40); }
 check "沒有 CI 時合併,回傳 merge commit" [ "$(bash "$BOT" --repo o/r merge 7 --sha "$A40")" = "$B40" ]
 check "merge SHA 不符拒絕" bash -c "bash '$BOT' --repo o/r merge 7 --sha $C40 2>&1 | grep -q '重新 review'"
@@ -104,7 +106,8 @@ check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40
 check "merge GitHub 說 unstable 拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
 : > "$TMP/sleep.log"
 check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
-check "有空的 check suite 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 11 --sha $(sha_of 1) 2>&1 | grep -q 'check suite(1)'"
+check "只有空的 check suite 不算 CI" [ "$(bash "$BOT" --repo o/r merge 11 --sha "$(sha_of 1)")" = "$B40" ]
+check "Actions 關閉(runs 404)不算 CI" [ "$(bash "$BOT" --repo o/r merge 19 --sha "$(sha_of 9)")" = "$B40" ]
 check "有 check run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 12 --sha $(sha_of 2) 2>&1 | grep -q 'check run(1)'"
 check "有 commit status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 13 --sha $(sha_of 3) 2>&1 | grep -q 'commit status(1)'"
 check "有 workflow run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 14 --sha $(sha_of 4) 2>&1 | grep -q 'workflow run(1)'"

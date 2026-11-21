@@ -20,6 +20,7 @@ PRS = {
     16: ("6" * 40, "clean", "open"),  # workflows 查詢 502
     17: ("7" * 40, "clean", "open"),  # status 第 3 次查詢才出現(等待期間)
     18: ("8" * 40, "clean", "open"),  # status 只在合併前最後一次查詢出現
+    19: ("9" * 40, "clean", "open"),  # Actions 關閉:actions/runs 回 404
 }
 # 每個 SHA 的 CI 計數:suites, runs, statuses, workflow runs
 CI = {"1" * 40: (1, 0, 0, 0), "2" * 40: (0, 1, 0, 0), "3" * 40: (0, 0, 1, 0), "4" * 40: (0, 0, 0, 1)}
@@ -61,6 +62,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(404, {"message": "Not Found"})
         if p.startswith("/repos/o/r/actions/runs?head_sha="):
             sha = p.split("head_sha=")[1].split("&")[0]
+            if sha == "9" * 40:
+                return self.send(404, {"message": "Not Found"})
             return self.send(200, {"total_count": CI.get(sha, (0, 0, 0, 0))[3], "workflow_runs": []})
         if p.startswith("/repos/o/r/commits/"):
             sha, rest = p[len("/repos/o/r/commits/"):].split("/", 1)
@@ -95,8 +98,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"id": 12345})
         if p == "/user" and self.auth() == PAT:
             return self.send(200, {"login": "xhe-bot", "id": 777})
-        if p.startswith("/repos/o/r/pulls?state=open&head=o:") and self.authed():
-            if p.split("head=o:")[1].split("&")[0] == "feat/existing":
+        if p.startswith("/repos/o/r/pulls?state=open&head=") and self.authed():
+            from urllib.parse import parse_qs, urlsplit
+            q = parse_qs(urlsplit(p).query)
+            if q.get("head") == ["o:feat/existing"] and q.get("base") == ["develop"]:
                 return self.send(200, [{"html_url": "https://github.com/o/r/pull/5"}])
             return self.send(200, [])
         if p.startswith("/repos/o/r/pulls/") and self.authed():
@@ -127,6 +132,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         body = self.body()
+        for n in (11, 19):
+            if self.path == f"/repos/o/r/pulls/{n}/merge" and self.authed() and body.get("sha") == PRS[n][0]:
+                return self.send(200, {"merged": True, "sha": "b" * 40})
         if self.path == "/repos/o/r/pulls/7/merge" and self.authed():
             if body != {"sha": A, "merge_method": "merge"}:
                 return self.send(422, {"message": "bad merge body"})

@@ -34,7 +34,11 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 trap 'cleanup; exit 129' HUP
-need_val() { [[ $2 -ge 2 && ${3-} != --* ]] || die "$1 後面要接值"; }   # need_val <旗標> <剩餘參數數> <值>
+# need_val <旗標> <剩餘參數數> <值>:缺值、或值剛好是本工具的旗標名(漏寫值)時報錯;其他 -- 開頭的值照收
+need_val() {
+  [[ $2 -ge 2 ]] || die "$1 後面要接值"
+  case ${3-} in --repo|--head|--base|--title|--body-file|--sha|--method) die "$1 後面要接值" ;; esac
+}
 
 # 去掉前後空白與成對引號:  "~/x"  →  ~/x
 trim_val() {
@@ -328,6 +332,10 @@ cmd_pr() {
     esac
   done
   [[ -n $head && -n $title ]] || die "用法:bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]"
+  local b
+  for b in "$head" ${base:+"$base"}; do
+    [[ $b != *:* && $b != -* ]] && git check-ref-format --branch "$b" >/dev/null 2>&1 || die "分支名稱不合法:$b(--head 只寫分支名,不加 owner:)"
+  done
   resolve_repo
   local t; t=$(token)
   if [[ -z $base ]]; then
@@ -336,7 +344,8 @@ cmd_pr() {
   fi
   # 同一個 head 已經有 open PR 就直接印出它(修完重推後再跑 pr 不會 422)
   local existing
-  existing=$(api GET "/repos/$REPO/pulls?state=open&head=${REPO%%/*}:$head&per_page=1" "$t") || exit 1
+  local q; q=$(jq -rn --arg h "${REPO%%/*}:$head" --arg b "$base" '"head=\($h|@uri)&base=\($b|@uri)"')
+  existing=$(api GET "/repos/$REPO/pulls?state=open&$q&per_page=1" "$t") || exit 1
   if [[ $(jq -r 'length' <<<"$existing") -gt 0 ]]; then
     jq -r '.[0].html_url' <<<"$existing"; return
   fi
@@ -347,15 +356,10 @@ cmd_pr() {
   jfield .html_url "$r"
 }
 
-# CI 檢查。剛推完時 CI 還沒登記(mergeable_state 會先顯示 clean),所以先等 CI 出現再判斷:
-#   - repo 有 .github/workflows:等到至少一個 GitHub Actions workflow run
-#   - 沒有 workflow:等到任何 check run 或 commit status(CircleCI 等外部 CI)
-#   出現後再觀察 15 秒(3 次輪詢數量不變)才判斷,避免晚幾秒才登記的 workflow 被漏掉。
-#   最多等約 2 分鐘;沒有 CI 就拒絕,確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
-# 有任何 check suite / check run / commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
 # bot 只自動合併「沒有任何 CI」的 repo / commit。偵測到任何 CI 跡象就拒絕,交給使用者處理:
-#   .github/workflows 有任何檔案、這個 commit 有任何 check suite(含空的)、check run、
-#   commit status 或 GitHub Actions workflow run。
+#   .github/workflows 有任何檔案、這個 commit 有任何 check run、commit status 或 GitHub Actions
+#   workflow run。check suite 不看:GitHub / 已安裝的 App 會建立沒有任何 run 的空 suite,
+#   真正跑過的 CI 一定會留下 check run / status / workflow run。
 # 外部 CI 可能晚幾秒才登記,所以等 15 秒(4 次輪詢)都沒有才算沒有 CI;合併前再確認一次。
 ci_signals() {   # 印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 die
   local sha=$1 t=$2 wf rc n out=""
@@ -367,13 +371,21 @@ ci_signals() {   # 印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 di
     *) die "查不到 repo 是否有 workflow,不合併" ;;
   esac
   local path label
-  for path in "commits/$sha/check-suites?per_page=1:check suite" "commits/$sha/check-runs?filter=all&per_page=1:check run" \
-              "commits/$sha/status:commit status" "actions/runs?head_sha=$sha&per_page=1:workflow run"; do
+  local resp
+  for path in "commits/$sha/check-runs?filter=all&per_page=1:check run" "commits/$sha/status:commit status"; do
     label=${path##*:}; path=${path%:*}
-    n=$(jfield .total_count "$(api GET "/repos/$REPO/$path" "$t")") \
-      || die "讀不到 $label(若上面是 HTTP 403 / 404:App 要加 Checks / Commit statuses / Actions: Read 權限)"
+    resp=$(api GET "/repos/$REPO/$path" "$t") \
+      || die "讀不到 $label(若上面是 HTTP 403:App 要加 Checks / Commit statuses: Read 權限)"
+    n=$(jfield .total_count "$resp") || exit 1
     [[ $n -eq 0 ]] || out+=" $label($n)"
   done
+  # Actions 在 repo 設定裡關掉時這個 API 回 404 → 視為沒有 workflow run
+  resp=$(api_try GET "/repos/$REPO/actions/runs?head_sha=$sha&per_page=1" "$t") && rc=0 || rc=$?
+  case $rc in
+    0) n=$(jfield .total_count "$resp") || exit 1; [[ $n -eq 0 ]] || out+=" workflow run($n)" ;;
+    4) ;;
+    *) die "讀不到 workflow run(若上面是 HTTP 403:App 要加 Actions: Read 權限)" ;;
+  esac
   printf '%s' "$out"
 }
 
