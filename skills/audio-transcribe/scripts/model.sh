@@ -8,7 +8,13 @@ M="$WHISPER_MODEL"; SRC="環境變數 WHISPER_MODEL"
 if [ -z "$M" ] && [ -f "$CONF" ]; then
   # 只取 WHISPER_MODEL=(可有 export、引號、行尾註解),不 source 設定檔
   M=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?WHISPER_MODEL=//p' "$CONF" | tail -1 \
-      | tr -d '\r' | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
+      | tr -d '\r' | sed -E 's/[[:space:]]+$//')
+  # 有引號:取引號內的值(引號內的 # 不是註解);沒引號:去掉行尾「 #…」註解
+  case "$M" in
+    \"*) M="${M#\"}"; M="${M%%\"*}" ;;
+    \'*) M="${M#\'}"; M="${M%%\'*}" ;;
+    *) M=$(printf '%s' "$M" | sed -E 's/[[:space:]]+#.*$//') ;;
+  esac
   case "$M" in
     "~/"*) M="$HOME/${M#\~/}" ;;
     '$HOME/'*) M="$HOME/${M#\$HOME/}" ;;
@@ -17,6 +23,7 @@ if [ -z "$M" ] && [ -f "$CONF" ]; then
   SRC="$CONF"
 fi
 [ -n "$M" ] || { M="$DEFAULT"; SRC="預設路徑"; }
+case "$M" in *"'"*) echo "模型路徑含單引號,無法安全放進 whisper-cli 指令,請改名或改放其他路徑:$M" >&2; exit 2 ;; esac
 if [ ! -f "$M" ]; then
   {
     echo "找不到 whisper 模型:$M(來源:$SRC)"

@@ -130,8 +130,8 @@ if [[ "$1" == historical/* ]]; then cat "$SRC" > "$2"; else echo '{"data":[]}' >
 [ "$FAKE_MODE" = quiet ] || echo '{"http": 200}'
 """ % (F30, F60))
 RUN = os.path.join(SCRIPTS, "run.sh")
-def runsh(mode):
-    env = dict(os.environ, FUGLE_SH=fake, FAKE_MODE=mode)
+def runsh(mode, session="0"):
+    env = dict(os.environ, FUGLE_SH=fake, FAKE_MODE=mode, TW_IN_SESSION=session)
     return subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
 try:
     r = runsh("ok")
@@ -141,8 +141,10 @@ try:
     r = runsh("histfail")
     check("run.sh 歷史抓不到 → 報錯、不沿用舊檔", r.returncode != 0 and "資料錯誤" in r.stderr and "STAGE" not in r.stdout
           and not any(os.path.exists(os.path.join(work, f"bottom_IX0001_{tf}m.json")) for tf in (30, 60)))
-    r = runsh("intrafail")
-    check("run.sh 盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    r = runsh("intrafail", "1")
+    check("run.sh 交易時間盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    r = runsh("intrafail", "0")
+    check("run.sh 非交易時間盤中抓不到 → 不警告", r.returncode == 0 and "警告" not in r.stderr and "STAGE 1/6" in r.stdout)
     env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))
     r = subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
     check("run.sh 沒有 fugle.sh → 報錯", r.returncode != 0 and "找不到" in r.stderr)

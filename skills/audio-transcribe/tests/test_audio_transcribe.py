@@ -29,9 +29,10 @@ for p in (src, dst): os.remove(p)
 
 # 1b. 幻覺句只刪整句頻道宣傳;只提到訂閱 / 轉發 / 分享 / 打賞的正常內容要保留
 keep = ["訂閱制營收年增 30%", "我們的轉發服務明年擴大到東南亞", "直播打賞收入占比 12%", "分享一下第四季的展望",
-        "直播打賞與訂閱收入占比 20%", "分享訂閱制成長", "訂閱與打賞收入都成長"]
+        "直播打賞與訂閱收入占比 20%", "分享訂閱制成長", "訂閱與打賞收入都成長", "謝謝大家的分享", "歡迎大家關注",
+        "分享會", "還請各位不吝指教，請不吝提問", "訂閱數", "訂閱頻道數成長三成", "加訂閱"]
 drop = ["請不吝點贊 訂閱 轉發 打賞支持明鏡與點點欄目", "字幕由Amara.org社區提供", "歡迎訂閱我的頻道",
-        "記得按讚訂閱", "點贊、分享、開啟小鈴鐺", "請訂閱", "點贊", "感謝打賞", "謝謝大家的支持 請訂閱"]
+        "記得按讚訂閱", "點贊、分享、開啟小鈴鐺", "歡迎訂閱我的頻道 一起分享", "請訂閱", "點贊", "感謝打賞", "謝謝大家的支持 請訂閱"]
 open(src, "w", encoding="utf-8").write("\n".join(keep + drop) + "\n")
 r = subprocess.run([sys.executable, "-I", os.path.join(S, "clean.py"), src, dst], capture_output=True, text=True, check=True)
 out = open(dst, encoding="utf-8").read().splitlines()
@@ -56,6 +57,12 @@ try:
     open(os.path.join(home, ".config", "audio-transcribe", "config"), "w").write("WHISPER_MODEL=$HOME/m1.bin  \r\n")
     r = subprocess.run(["bash", ms], capture_output=True, text=True, env=env)
     check("model.sh 設定檔 $HOME 開頭、CRLF", r.returncode == 0 and r.stdout.strip() == m1)
+    m3 = os.path.join(home, "models #2", "g.bin"); os.makedirs(os.path.dirname(m3)); open(m3, "w").write("x")
+    open(os.path.join(home, ".config", "audio-transcribe", "config"), "w").write(f'WHISPER_MODEL="{m3}" # 註解\n')
+    r = subprocess.run(["bash", ms], capture_output=True, text=True, env=env)
+    check("model.sh 引號內的 # 不當註解", r.returncode == 0 and r.stdout.strip() == m3)
+    r = subprocess.run(["bash", ms], capture_output=True, text=True, env=dict(env, WHISPER_MODEL=home + "/Bob's.bin"))
+    check("model.sh 路徑含單引號 → 結束碼 2", r.returncode == 2)
     r = subprocess.run(["bash", ms], capture_output=True, text=True, env=dict(env, WHISPER_MODEL=m1))
     check("model.sh 環境變數優先", r.returncode == 0 and r.stdout.strip() == m1)
     r = subprocess.run(["bash", ms], capture_output=True, text=True, env=dict(env, WHISPER_MODEL=m1 + ".no"))
