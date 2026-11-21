@@ -146,8 +146,8 @@ clean_push() {
   "${clean[@]}" git ${safe[@]+"${safe[@]}"} rev-parse --git-dir >/dev/null 2>&1 \
     || die "這個 repo 不受信任或讀不到(dubious ownership?),請在全域設定 safe.directory 後再推"
   bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
-          --get-regexp '^((url|http|credential)\..*|remote\.[a-z+]+://.*|remote\./.*|core\.sshcommand)$' 2>&1) && rc=0 || rc=$?
-  [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
+          --get-regexp '^((url|http|credential)\..*|remote\.[a-z+]+://.*|remote\./.*|core\.sshcommand)$' 2>"$SCRATCH/cfgerr") && rc=0 || rc=$?
+  [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$(head -c 500 "$SCRATCH/cfgerr")"
   [[ $rc -eq 0 ]] && bad=$(grep -viE '[[:space:]]http\.(postbuffer|version|lowspeedlimit|lowspeedtime|maxrequests|minsessions)$' <<<"$bad" || true)
   [[ $rc -eq 1 || -z $bad ]] || die "repo 設定含會影響推送的項目,拒絕推送:
 $bad"
@@ -277,8 +277,13 @@ case $cmd in
         esac
       done
       check_mr
+      [[ ${1-} == strict ]] || return 0   # 第一次只確認 sha / 衝突;狀態留到 CI 檢查之後(CI 造成的不可合併要 exit 2)
       st=$(jq -r '.detailed_merge_status // .merge_status' <<<"$m")
-      case $st in mergeable|can_be_merged) ;; *) die "GitLab 回報無法合併:$st" ;; esac
+      case $st in
+        mergeable|can_be_merged) ;;
+        ci_must_pass|ci_still_running) echo "bot.sh: 偵測到 CI(GitLab 狀態 $st),不自動合併,請使用者確認 CI 後自行合併" >&2; exit 2 ;;
+        *) die "GitLab 回報無法合併:$st" ;;
+      esac
     }
     wait_mergeable
     tgt=$(jq -r .target_branch <<<"$m")
@@ -287,7 +292,7 @@ case $cmd in
       ci_signals "$sha" "$tgt"
       [[ $i -eq 4 ]] || sleep 5
     done
-    wait_mergeable   # 等待期間 MR 可能被更新
+    wait_mergeable strict   # 等待期間 MR 可能被更新
     [[ $(jq -r .target_branch <<<"$m") == "$tgt" ]] || die "MR !$iid 的目標分支改了,請重新 review"
     ci_signals "$sha" "$tgt"   # 合併前再確認一次(等待期間才登記的也要擋)
     r=$(api PUT "/projects/$PID_ENC/merge_requests/$iid/merge" "$(jq -n --arg s "$sha" '{sha:$s, should_remove_source_branch:false}')")

@@ -173,7 +173,9 @@ check "已 mergeable 時不等待合併狀態" [ "$(grep -cx 3 "$TMP/sleep.log")
 check "等晚登記的 CI:查 4 次、間隔 5 秒共 3 次" [ "$(grep -cx 5 "$TMP/sleep.log")" -eq 3 ]
 check "合併前再確認一次 CI(head statuses 共查 5 次)" [ "$(grep -c "^GET .*/repository/commits/$A40/statuses" "$TMP/req.log")" -eq 5 ]
 check "目標分支的 commit 也查 pipeline 與 commit status" bash -c "grep -q 'pipelines?sha=2222222222222222222222222222222222222222' '$TMP/req.log' && grep -q 'commits/2222222222222222222222222222222222222222/statuses' '$TMP/req.log'"
+reset_mock
 check "剛 push 完(第一次 GET 是舊 sha / 衝突)仍等重新計算後合併" bash -c "bash '$BOT' merge 17 --sha $A40 2>&1 | grep -q '^merged: .*/merge_requests/17$'"
+check "GitLab 狀態 ci_still_running 時以結束碼 2 拒絕" bash -c "bash '$BOT' merge 18 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -q 'ci_still_running' '$TMP/err'"
 check "merge SHA 不符拒絕" bash -c "bash '$BOT' merge 1 --sha $C40 2>&1 | grep -q '不是 review 過的'"
 check "merge 短 SHA 拒絕" bash -c "! bash '$BOT' merge 1 --sha abc1234 2>/dev/null"
 check "merge 缺 --sha 拒絕" bash -c "! bash '$BOT' merge 1 2>/dev/null"
