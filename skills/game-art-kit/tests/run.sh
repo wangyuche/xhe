@@ -1,0 +1,94 @@
+#!/bin/bash
+# game-art-kit 自我測試(離線):假 ComfyUI + 所有 workflow 骨架 + sheet.mjs + scrub-check。
+# 需要 Node ≥ 22;sheet 需要 Google Chrome(沒有時 SKIP)。測完刪除暫存目錄、停掉假伺服器。
+# 實機測試:另外設 COMFYUI_URL 後跑 `bash tests/run.sh --live`(只送 1 張 4 步小圖,上傳與輸出都在 temp,跑完刪 history)。
+set -uo pipefail
+K="$(cd "$(dirname "$0")/.." && pwd)"
+C() { node "$K/scripts/comfy.mjs" "$@"; }
+PASS=0; FAIL=0; SKIP=0
+ok()   { echo "PASS  $1"; PASS=$((PASS + 1)); }
+bad()  { echo "FAIL  $1"; [ -n "${2:-}" ] && echo "$2" | sed 's/^/      /' | tail -15; FAIL=$((FAIL + 1)); }
+skip() { echo "SKIP  $1"; SKIP=$((SKIP + 1)); }
+W="$(mktemp -d)"; PID=""; REAL_HOME="$HOME"
+cleanup() { [ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -rf "$W"; }
+trap cleanup EXIT
+
+if [ "${1:-}" = "--live" ]; then
+  c="$(C check 2>&1)" && ok "live check" || { bad "live check" "$c"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; exit 1; }
+  d() { echo "$c" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')).defaults;console.log(d['$1']??'')"; }
+  if [ -n "$(d qwen_unet)" ]; then
+    r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/live" --name live --set unet="$(d qwen_unet)" --set clip="$(d qwen_clip)" --set vae="$(d qwen_vae)" \
+      --set lora="$( [ -n "$(d qwen_lightning)" ] && d qwen_lightning || echo none)" --set lora_strength=1 --set shift=3.1 --set "prompt=a red apple on a table" --set negative= \
+      --set width=512 --set height=512 --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple 2>&1)" \
+      && [ "$(C pngsize "$W/live/live.png")" = '{"width":512,"height":512}' ] && ok "live qwen-t2i 512×512" || bad "live qwen-t2i" "$r"
+  else skip "live qwen-t2i(這台沒有 Qwen-Image)"; fi
+  echo "---"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; [ "$FAIL" -eq 0 ]; exit
+fi
+
+PORT=$((20000 + RANDOM % 20000))
+node "$K/tests/fake-comfy.mjs" "$PORT" "$W/req.log" > "$W/fake.out" 2>&1 & PID=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake.out" 2>/dev/null && break; sleep 0.1; done
+export COMFYUI_URL="http://127.0.0.1:$PORT"
+export HOME="$W/home"; mkdir -p "$HOME"   # 不讀使用者的 ~/.config
+
+# 1. 位址解析
+o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '找不到 ComfyUI 位址' && ok "沒有位址 → 結束碼 2 並附設定方式" || bad "沒有位址" "$o"
+mkdir -p "$HOME/.config/game-art-kit"; echo "COMFYUI_URL=http://127.0.0.1:$PORT" > "$HOME/.config/game-art-kit/config"
+o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)" && ok "從 ~/.config/game-art-kit/config 讀位址" || bad "讀設定檔" "$o"
+o="$(C check --url http://127.0.0.1:1 2>&1)"; [ $? -eq 5 ] && ok "--url 覆寫優先、連不上 → 結束碼 5" || bad "--url 覆寫" "$o"
+
+# 2. check
+c="$(C check)"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const m=d.consistency_methods.map(x=>x.method);process.exit(m.includes("qwen-image-edit")&&!m.includes("flux-kontext")&&d.workflows_available["qwen-t2i"]&&!d.workflows_available["flux-t2i"]===false?0:1)' \
+  && ok "check:依節點與模型判斷一致性方法(有 Qwen-Edit、沒有 Kontext)" || bad "check 方法判斷" "$c"
+echo "$c" | grep -q '"family": "qwen-image-edit"' && ! echo "$c" | grep -q '"family": "sdxl"' && echo "$c" | grep -q '"name": "t5xxl_fp8_e4m3fn.safetensors",' && ok "check:依檔名推斷模型家族(t5xxl 不誤判成 SDXL)" || bad "check 家族" "$c"
+
+# 3. 骨架:每個都能填、送出、拿回正確尺寸
+QS=(--set unet=u --set clip=c --set vae=v --set lora=none --set lora_strength=1 --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple)
+FS=(--set unet=u --set clip_l=a --set t5=b --set vae=v --set guidance=3 --set prompt=p --set seed=1 --set steps=4 --set sampler=euler --set scheduler=simple)
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name q1 "${QS[@]}" --set width=96 --set height=64)" && [ "$(C pngsize "$W/o/q1.png")" = '{"width":96,"height":64}' ] \
+  && ok "qwen-t2i:輸出尺寸等於設定" || bad "qwen-t2i" "$r"
+grep -q '"LoraLoaderModelOnly"' "$W/o/workflows/q1.json" && bad "lora=none 應拿掉 LoRA 節點" || ok "lora=none 拿掉 LoRA 節點並重接 model"
+for n in 1 2 3; do
+  refs=(); for i in $(seq 1 $n); do refs+=(--set "ref$i=r$i.png [temp]"); done
+  r="$(C run "$K/workflows/qwen-edit-${n}ref.json" --out "$W/o" --name e$n "${QS[@]}" --set width=64 --set height=64 "${refs[@]}")" && ok "qwen-edit-${n}ref 送出成功" || bad "qwen-edit-${n}ref" "$r"
+done
+r="$(C run "$K/workflows/flux-t2i.json" --out "$W/o" --name f1 "${FS[@]}" --set width=64 --set height=64)" && ok "flux-t2i 送出成功" || bad "flux-t2i" "$r"
+r="$(C run "$K/workflows/flux-kontext.json" --out "$W/o" --name k1 "${FS[@]}" --set 'ref1=r.png [temp]')" && ok "flux-kontext 送出成功" || bad "flux-kontext" "$r"
+r="$(C run "$K/workflows/zimage-t2i.json" --out "$W/o" --name z1 --set unet=u --set clip=c --set vae=v --set shift=3 --set prompt=p --set negative=n --set seed=1 --set steps=4 --set cfg=1 --set sampler=euler --set scheduler=simple --set width=64 --set height=64)" && ok "zimage-t2i 送出成功" || bad "zimage-t2i" "$r"
+r="$(C run "$K/workflows/qwen-t2i-canny.json" --out "$W/o" --name c1 "${QS[@]}" --set width=64 --set height=64 --set controlnet=x --set 'control_image=s.png [temp]' --set control_strength=0.8 --set control_end=0.8)" && ok "qwen-t2i-canny 送出成功" || bad "qwen-t2i-canny" "$r"
+grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每張完成後刪除 history" || bad "沒刪 history" "$(tail -3 "$W/req.log")"
+
+# 4. 參數檢查與錯誤
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'width' && ok "缺參數 → 結束碼 2 並列出" || bad "缺參數" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set typo=1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'typo' && ok "多餘參數 → 結束碼 2" || bad "多餘參數" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=FAIL 2>&1)"; [ $? -eq 3 ] && ok "執行錯誤 → 結束碼 3" || bad "執行錯誤" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; [ $? -eq 4 ] && grep -q '"path":"/interrupt"' "$W/req.log" && ok "逾時 → 中斷自己的工作、結束碼 4" || bad "逾時" "$o"
+sed 's/"PreviewImage"/"SaveImage"/' "$K/workflows/qwen-t2i.json" > "$W/save.json"
+o="$(C run "$W/save.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && ok "拒絕 SaveImage(不在伺服器留檔)" || bad "SaveImage 沒被擋" "$o"
+node -e 'const g=require(process.argv[1]);g["99"]={class_type:"NoSuchNode",inputs:{}};require("fs").writeFileSync(process.argv[2],JSON.stringify(g))' "$K/workflows/qwen-t2i.json" "$W/badnode.json"
+o="$(C run "$W/badnode.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 2>&1)"; [ $? -eq 3 ] && echo "$o" | grep -q NoSuchNode && ok "未知節點 → 結束碼 3 並印出 node_errors" || bad "未知節點" "$o"
+
+# 5. upload:放 temp、檔名含雜湊
+printf 'fakepng' > "$W/ref.png"
+o="$(C upload "$W/ref.png" --prefix 'my game/hero')" && echo "$o" | grep -q '"loadImage":"my-game-hero-[0-9a-f]\{8\}.png \[temp\]"' && grep -q '"type":"temp"' "$W/req.log" \
+  && ok "upload:上傳到 temp、檔名 <prefix>-<雜湊>" || bad "upload" "$o $(grep upload "$W/req.log")"
+
+# 6. 產出不含位址
+grep -rq "127.0.0.1:$PORT" "$W/o" && bad "workflow 產出含位址" || ok "存下的 workflow 不含 ComfyUI 位址"
+o="$(C scrub-check "$W/o")" && ok "scrub-check:乾淨目錄通過" || bad "scrub-check 乾淨" "$o"
+echo '{"note":"from http://192.168.1.20:8188"}' > "$W/o/leak.json"
+o="$(C scrub-check "$W/o")"; [ $? -eq 1 ] && echo "$o" | grep -q 'leak.json:1' && ok "scrub-check:找到私有 IP → 結束碼 1" || bad "scrub-check 沒抓到" "$o"
+
+# 7. sheet.mjs
+if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}" ]; then
+  cp "$W/o/q1.png" "$W/o/a.png"; cp "$W/o/q1.png" "$W/o/b.png"
+  echo '{"title":"測試分鏡","cols":2,"cellWidth":300,"items":[{"image":"a.png","label":"01","caption":"第一格"},{"image":"b.png","label":"02","caption":"第二格","note":"備註"},{"image":"a.png","label":"03","caption":"第三格"}]}' > "$W/o/spec.json"
+  o="$(HOME="$REAL_HOME" node "$K/scripts/sheet.mjs" "$W/o/spec.json" "$W/o/sheet.png" 2>&1)" && echo "$o" | grep -q '"items":3' && [ "$(C pngsize "$W/o/sheet.png" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(d.width)')" = 668 ] \
+    && ok "sheet.mjs:2 欄 3 格、寬度正確" || bad "sheet.mjs" "$o"
+  o="$(node "$K/scripts/sheet.mjs" "$W/o/nope.json" "$W/o/x.png" 2>&1)"; [ $? -eq 2 ] && ok "sheet.mjs:spec 不存在 → 結束碼 2" || bad "sheet.mjs 錯誤處理" "$o"
+else skip "sheet.mjs(沒有 Google Chrome)"; fi
+
+echo "---"
+echo "pass=$PASS fail=$FAIL skip=$SKIP"
+[ "$FAIL" -eq 0 ]

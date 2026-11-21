@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+// game-art-kit:拼分鏡表 / 標註表。用本機 Google Chrome headless 截一張 HTML 版面(中文字正確)。
+// 用法:node sheet.mjs <spec.json> <輸出.png>
+// spec.json:
+//   {"title":"開場過場","cols":3,"cellWidth":480,
+//    "items":[{"image":"01.png","label":"01","caption":"村莊遠景","note":"(選填,第二行小字)"}]}
+// image 路徑相對 spec.json 所在目錄;只接受本機 PNG / JPG / WebP。頁面不載入任何網路資源。
+// stdout 一行 JSON:{"out":…,"width":…,"height":…,"items":N}。結束碼:0 成功;1 失敗;2 用法錯誤。
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname, extname } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const die = (m, c = 1) => { console.error(`錯誤:${m}`); process.exit(c); };
+const [specPath, outArg] = process.argv.slice(2);
+if (!specPath || !outArg) die('用法:node sheet.mjs <spec.json> <輸出.png>', 2);
+let spec;
+try { spec = JSON.parse(readFileSync(specPath, 'utf8')); } catch (e) { die(`讀不到 spec:${e.message}`, 2); }
+const items = spec.items ?? [];
+if (!items.length) die('spec.items 不能是空的', 2);
+const cols = Math.max(1, Math.min(Number(spec.cols ?? 3), items.length));
+const cellW = Number(spec.cellWidth ?? 480);
+const base = dirname(resolve(specPath));
+const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+
+function imgSize(file, buf) {
+  if (extname(file).toLowerCase() === '.png') return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (/\.jpe?g$/i.test(file)) {
+    for (let i = 2; i < buf.length;) {
+      const m = buf[i + 1], len = buf.readUInt16BE(i + 2);
+      if (m >= 0xc0 && m <= 0xc3) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+      i += 2 + len;
+    }
+  }
+  return { w: 16, h: 9 };
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const cells = items.map((it, i) => {
+  const f = resolve(base, it.image ?? die(`items[${i}] 缺 image`, 2));
+  if (!existsSync(f)) die(`找不到圖片 ${f}`, 2);
+  const mime = MIME[extname(f).toLowerCase()] ?? die(`items[${i}] 只接受 png / jpg / webp`, 2);
+  const buf = readFileSync(f);
+  const { w, h } = imgSize(f, buf);
+  return { ...it, src: `data:${mime};base64,${buf.toString('base64')}`, imgH: Math.round(cellW * h / w) };
+});
+const pad = 24, gap = 20, titleH = spec.title ? 64 : 0, capH = 64;
+const rows = [];
+for (let i = 0; i < cells.length; i += cols) rows.push(cells.slice(i, i + cols));
+const rowH = rows.map(r => Math.max(...r.map(c => c.imgH)) + capH);
+const W = pad * 2 + cols * cellW + (cols - 1) * gap;
+const H = pad * 2 + titleH + rowH.reduce((a, b) => a + b, 0) + (rows.length - 1) * gap;
+
+const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:${W}px;height:${H}px;background:#f4f4f2;font-family:"PingFang TC","Heiti TC","Hiragino Sans",sans-serif;color:#1d1d1f;overflow:hidden}
+.wrap{padding:${pad}px}
+h1{height:${titleH}px;font-size:30px;font-weight:700;line-height:${titleH - 16}px}
+.row{display:flex;gap:${gap}px;margin-bottom:${gap}px}
+.cell{width:${cellW}px}
+.cell img{width:${cellW}px;display:block;border-radius:6px;background:#ddd}
+.cap{height:${capH}px;padding-top:8px;font-size:17px;line-height:1.35;overflow:hidden}
+.lb{display:inline-block;min-width:34px;padding:1px 8px;margin-right:8px;border-radius:4px;background:#1d1d1f;color:#fff;font-weight:700;text-align:center}
+.nt{display:block;font-size:14px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style></head><body><div class="wrap">${spec.title ? `<h1>${esc(spec.title)}</h1>` : ''}
+${rows.map(r => `<div class="row">${r.map(c => `<div class="cell"><img src="${c.src}" style="height:${c.imgH}px"><div class="cap">${c.label != null ? `<span class="lb">${esc(c.label)}</span>` : ''}${esc(c.caption)}${c.note ? `<span class="nt">${esc(c.note)}</span>` : ''}</div></div>`).join('')}</div>`).join('')}
+</div></body></html>`;
+
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+if (!existsSync(CHROME)) die(`找不到 Google Chrome(${CHROME});設 CHROME_PATH`, 1);
+const tmp = mkdtempSync(join(tmpdir(), 'gak-sheet-'));
+try {
+  const page = join(tmp, 'sheet.html');
+  writeFileSync(page, html);
+  const out = resolve(outArg);
+  rmSync(out, { force: true });
+  const r = spawnSync(CHROME, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+    `--user-data-dir=${join(tmp, 'profile')}`, '--force-device-scale-factor=1', `--window-size=${W},${H}`,
+    '--proxy-server=127.0.0.1:9', '--proxy-bypass-list=<-loopback>', // 擋掉任何網路請求
+    `--screenshot=${out}`, pathToFileURL(page).href], { encoding: 'utf8', timeout: 60000 });
+  // Chrome 有時截完圖、關閉時看門狗逾時而回非 0;以截圖檔有產生為準
+  if (!existsSync(out)) die(`Chrome 截圖失敗(結束碼 ${r.status}):${(r.stderr || '').split('\n').slice(-5).join(' ')}`, 1);
+  const b = readFileSync(out);
+  console.log(JSON.stringify({ out, width: b.readUInt32BE(16), height: b.readUInt32BE(20), items: cells.length }));
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
