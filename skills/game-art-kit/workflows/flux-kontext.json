@@ -1,0 +1,165 @@
+{
+ "_meta": {
+  "title": "Flux Kontext 參考圖編輯(角色一致,1 張參考,輸出尺寸依參考圖)",
+  "family": "flux-kontext",
+  "params": {
+   "unet": "Flux Kontext 檔名",
+   "clip_l": "clip_l",
+   "t5": "t5xxl",
+   "vae": "ae",
+   "guidance": "FluxGuidance",
+   "prompt": "正向提示詞",
+   "seed": "seed",
+   "steps": "steps",
+   "sampler": "sampler",
+   "scheduler": "scheduler",
+   "ref1": "參考圖(upload 的 loadImage 名稱)"
+  },
+  "numeric": [
+   "guidance",
+   "seed",
+   "steps"
+  ]
+ },
+ "1": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "{{unet}}",
+   "weight_dtype": "default"
+  }
+ },
+ "2": {
+  "class_type": "DualCLIPLoader",
+  "inputs": {
+   "clip_name1": "{{clip_l}}",
+   "clip_name2": "{{t5}}",
+   "type": "flux",
+   "device": "default"
+  }
+ },
+ "3": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "{{vae}}"
+  }
+ },
+ "4": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "{{ref1}}"
+  }
+ },
+ "5": {
+  "class_type": "FluxKontextImageScale",
+  "inputs": {
+   "image": [
+    "4",
+    0
+   ]
+  }
+ },
+ "13": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "5",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  }
+ },
+ "6": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "{{prompt}}"
+  }
+ },
+ "14": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "6",
+    0
+   ],
+   "latent": [
+    "13",
+    0
+   ]
+  }
+ },
+ "7": {
+  "class_type": "FluxGuidance",
+  "inputs": {
+   "conditioning": [
+    "14",
+    0
+   ],
+   "guidance": "{{guidance}}"
+  }
+ },
+ "8": {
+  "class_type": "ConditioningZeroOut",
+  "inputs": {
+   "conditioning": [
+    "6",
+    0
+   ]
+  }
+ },
+ "10": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "seed": "{{seed}}",
+   "steps": "{{steps}}",
+   "cfg": 1.0,
+   "sampler_name": "{{sampler}}",
+   "scheduler": "{{scheduler}}",
+   "positive": [
+    "7",
+    0
+   ],
+   "negative": [
+    "8",
+    0
+   ],
+   "latent_image": [
+    "13",
+    0
+   ],
+   "denoise": 1.0
+  }
+ },
+ "11": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "10",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  }
+ },
+ "12": {
+  "class_type": "PreviewImage",
+  "inputs": {
+   "images": [
+    "11",
+    0
+   ]
+  }
+ }
+}
