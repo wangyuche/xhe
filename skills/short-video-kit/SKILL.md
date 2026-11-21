@@ -48,7 +48,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 - 派工有指定 → 照做。
 - repo → 依序找 logo / icon 圖、README 用的本機圖、網站或文件的主色(`theme-color`、`--primary`、`--brand`、tailwind 設定);都沒有就依專案性質推定並標明。
 - 影片 → compose 前先從來源抽一格(`mkdir -p <job>/work/<n> && ffmpeg -y -ss <起點> -i <影片> -frames:v 1 <job>/work/<n>/palette.png`,放在 work/ 內,收尾一起刪),主色取 `accent`、暗部取 `bg`。
-- 五個欄位都用 `#RRGGBB`。render.mjs 會檢查對比:`fg` 對 `bg`、`bg2` ≥ 4.5:1,`muted` 對 `bg`、`bg2` ≥ 3:1,不足結束碼 2。
+- 五個欄位都用 `#RRGGBB`。render.mjs(與 compose.mjs 的 headline 預檢)依實際用到的版型檢查對比,不足結束碼 2,通過時 stdout JSON 附 `contrast`:全版卡 / 漸層封面查 `fg` 對 `bg`、`bg2` ≥ 4.5,`muted`、`accent` 對 `bg`、`bg2` ≥ 3(tag、url、編號徽章);只有 headline 時只查 `accent` 對 `bg` ≥ 3。
 
 ## actions.json(record-web.mjs)
 

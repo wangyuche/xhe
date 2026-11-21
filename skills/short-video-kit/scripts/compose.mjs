@@ -24,6 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkTheme } from './_theme.mjs';
 
 const KIT = dirname(fileURLToPath(import.meta.url));
 const MAX = 60, FPS = 30;
@@ -63,11 +64,11 @@ function fitChain(inLabel, outLabel, tag) {
 const TOP_MAX_H = 1240, TOP_BOTTOM = 1280;
 const topBg = tl.theme?.bg; // 置頂鏡頭的底色;沒有預設,用到置頂時檢查
 // 原聲模式的 headline 用完整 theme;在 dry-run 前就檢查(render.mjs 也會擋,但那時已開始產生中間檔)
+let headlineContrast = null;
 if (tl.mode === 'original' && tl.headline) {
-  const miss = ['bg', 'bg2', 'fg', 'accent', 'muted'].filter(k => !/^#[0-9a-fA-F]{6}$/.test(String(tl.theme?.[k] ?? '')));
-  if (miss.length) fail(`有 headline 時 theme 五個欄位都要是 #RRGGBB,缺或格式錯:${miss.join('、')};沒有預設配色,依這支影片的來源選`, 2);
-  const extra = Object.keys(tl.theme).filter(k => !['bg', 'bg2', 'fg', 'accent', 'muted'].includes(k));
-  if (extra.length) fail(`theme 只能有 bg、bg2、fg、accent、muted,多了:${extra.join('、')}`, 2);
+  const t = checkTheme(tl.theme, ['headline']);
+  if (t.error) fail(`有 headline 時:${t.error}`, 2);
+  headlineContrast = t.contrast;
 }
 const probeSize = (f) => run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', f], 'ffprobe').stdout.trim().split('x').map(Number);
 function topLayout(j, [x, y, w, h]) {
@@ -82,7 +83,7 @@ const imageChain =(inLabel, outLabel) => `${inLabel}scale=1080:1920:force_origin
 
 const subs = []; // {start,end,text,text2}
 let total = 0;
-const summary = { mode: tl.mode };
+const summary = { mode: tl.mode, ...(headlineContrast ? { contrast: headlineContrast } : {}) };
 const inputs = []; // ffmpeg 輸入參數(final 用)
 const vfilters = [];
 let firstFrameArgs;

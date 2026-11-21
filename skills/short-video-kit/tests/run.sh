@@ -92,6 +92,12 @@ echo '{"cards":[{"type":"title","file":"x.png","title":"沒有配色"}]}' > noth
 e="$(node "$S/render.mjs" nothm.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme 缺' && ok "render.mjs 沒有 theme → 結束碼 2(沒有預設配色)" || bad "render.mjs 沒有 theme 沒被擋" "$e"
 echo '{"theme":{"bg":"#888888","bg2":"#888888","fg":"#777777","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"title","file":"x.png","title":"低對比"}]}' > lowc.json
 e="$(node "$S/render.mjs" lowc.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '對比' && ok "render.mjs fg 對比不足 → 結束碼 2" || bad "render.mjs 低對比沒被擋" "$e"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#3a4a5a"},"cards":[{"type":"point","file":"x.png","title":"muted 太暗"}]}' > lowm.json
+e="$(node "$S/render.mjs" lowm.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme.muted 對 theme.bg' && ok "render.mjs muted 對比不足 → 結束碼 2" || bad "render.mjs muted 低對比沒被擋" "$e"
+echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#304860","muted":"#a0a0a0"},"cards":[{"type":"point","file":"x.png","number":"1","title":"徽章看不到"}]}' > lowa.json
+e="$(node "$S/render.mjs" lowa.json r5 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'theme.accent' && ok "render.mjs accent 與 bg 對比不足(徽章 / tag)→ 結束碼 2" || bad "render.mjs accent 低對比沒被擋" "$e"
+echo '{"theme":{"bg":"#101010","bg2":"#101010","fg":"#181818","accent":"#ffcc00","muted":"#181818"},"cards":[{"type":"headline","file":"h.png","text":"只有標題"}]}' > hlonly.json
+o="$(node "$S/render.mjs" hlonly.json r5 2>&1)"; [ $? -eq 0 ] && echo "$o" | grep -q '"accent/bg"' && ! echo "$o" | grep -q '"fg/bg"' && ok "render.mjs 只有 headline 時只檢查 accent/bg,輸出 contrast" || bad "render.mjs headline 對比檢查" "$o"
 echo '{"cards":[{"type":"subtitle","file":"s.png","text":"只有字幕"}]}' > subonly.json
 node "$S/render.mjs" subonly.json r5 >/dev/null 2>&1 && ok "render.mjs 只有字幕卡時不需要 theme" || bad "render.mjs 字幕卡不該要求 theme"
 echo '{"theme":{"bg":"#000","extra":1},"cards":[{"type":"subtitle","file":"s.png","text":"舊格式 theme"}]}' > oldthm.json

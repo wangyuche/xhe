@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, mkdirSync, realpathSync, existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, isAbsolute, sep, basename } from 'node:path';
 import { launchChrome, guardNetwork } from './_chrome.mjs';
+import { checkTheme, THEMED_TYPES } from './_theme.mjs';
 
 const W = 1080, H = 1920;
 export const SAFE = { x0: 60, x1: 930, y0: 1300, y1: 1620 };
@@ -38,27 +39,16 @@ const cards = Array.isArray(spec) ? spec : spec.cards;
 if (!Array.isArray(cards) || cards.length === 0) usage('卡片 JSON 要有 cards 陣列');
 // 沒有預設配色:每支影片依來源(repo 的 logo / 網站 / 文件配色,或影片畫面)自己選 theme。
 // 只有字幕卡、有 image 的封面不用 theme。
-const THEME_KEYS = ['bg', 'bg2', 'fg', 'accent', 'muted'];
-const needsTheme = cards.some(c => c && (['title', 'point', 'code', 'end', 'headline'].includes(c.type) || (c.type === 'cover' && !c.image)));
+const themedTypes = [...new Set(cards.filter(Boolean).map(c => (c.type === 'cover' ? (c.image ? null : 'cover-plain') : c.type)).filter(t => THEMED_TYPES.includes(t)))];
+const needsTheme = themedTypes.length > 0;
 // 不需要 theme 時(只有字幕卡、有圖封面)忽略 theme,不檢查格式。
 const theme = needsTheme ? ((Array.isArray(spec) ? undefined : spec.theme) ?? {}) : {};
 if (needsTheme && Array.isArray(spec)) usage('有 title / point / code / end / headline 卡或漸層封面時,要用 {"theme":{…},"cards":[…]} 物件格式(陣列格式放不了 theme)');
+let contrast = null;
 if (needsTheme) {
-  const missing = THEME_KEYS.filter(k => theme[k] === undefined);
-  if (missing.length) usage(`theme 缺 ${missing.join('、')}:沒有預設配色,依這支影片的來源選(見 SKILL.md「## 配色」)`);
-  for (const [k, v] of Object.entries(theme)) {
-    if (!THEME_KEYS.includes(k)) usage(`theme.${k} 不是可用欄位(${THEME_KEYS.join(', ')})`);
-    if (!/^#[0-9a-fA-F]{6}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);
-  }
-  // WCAG 對比:fg 對 bg、bg2 ≥ 4.5;muted 對 bg、bg2 ≥ 3
-  const lum = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
-    .map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
-    .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0);
-  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
-  for (const [fgk, min] of [['fg', 4.5], ['muted', 3]]) for (const bgk of ['bg', 'bg2']) {
-    const r = ratio(theme[fgk], theme[bgk]);
-    if (r < min) usage(`theme.${fgk} 對 theme.${bgk} 對比 ${r.toFixed(2)}:1 < ${min}:1,換更深或更淺的顏色`);
-  }
+  const t = checkTheme(theme, themedTypes);
+  if (t.error) usage(t.error);
+  contrast = t.contrast;
 }
 
 const TYPES = new Set(['title', 'point', 'code', 'end', 'subtitle', 'headline', 'cover']);
@@ -205,7 +195,7 @@ async function render(type,d,safe){
 </script></body></html>`;
 
 let cdp;
-const result = { files: [], subtitles: 0, blockedRequests: [] };
+const result = { files: [], subtitles: 0, blockedRequests: [], ...(contrast ? { contrast } : {}) };
 let exitCode = 0;
 try {
   cdp = await launchChrome();
