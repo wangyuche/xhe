@@ -47,12 +47,13 @@ load_conf() {
   fi
   GH_USER="" TOKEN_FILE="" APP_ID="" KEY_FILE=""
   if   [[ -n ${GITHUB_BOT_GH_USER:-} ]];    then GH_USER=$GITHUB_BOT_GH_USER
-  elif [[ -n ${GITHUB_BOT_TOKEN_FILE:-} ]]; then TOKEN_FILE=$GITHUB_BOT_TOKEN_FILE
+  elif [[ -n ${GITHUB_BOT_TOKEN_FILE:-} ]]; then TOKEN_FILE=${GITHUB_BOT_TOKEN_FILE/#\~/$HOME}
   elif [[ -n ${GITHUB_BOT_APP_ID:-} ]];     then APP_ID=$GITHUB_BOT_APP_ID; KEY_FILE=${GITHUB_BOT_KEY_FILE:-$c_key}
   elif [[ -n $c_gh ]];  then GH_USER=$c_gh
   elif [[ -n $c_tok ]]; then TOKEN_FILE=$c_tok
   else APP_ID=$c_app; KEY_FILE=${GITHUB_BOT_KEY_FILE:-$c_key}
   fi
+  KEY_FILE=${KEY_FILE/#\~/$HOME}
   if [[ -n $GH_USER ]]; then
     [[ $GH_USER =~ ^[A-Za-z0-9-]+$ ]] || die "GH_USER 格式錯誤:$GH_USER"
     command -v gh >/dev/null || die "找不到 gh"
@@ -90,7 +91,7 @@ api() {
       printf 'header = "Authorization: Bearer %s"\n' "$bearer"
       printf 'header = "Accept: application/vnd.github+json"\n'
       printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
-    } | curl -sS -K - -X "$method" -w '\n%{http_code}' \
+    } | curl -q -sS -K - -X "$method" -w '\n%{http_code}' \
           ${data[@]+"${data[@]}"} "$API$path"
   ) || die "連不到 $API$path"
   code=${resp##*$'\n'}; resp=${resp%$'\n'*}
@@ -139,7 +140,7 @@ token() {
   local j inst
   j=$(jwt)
   inst=$(api GET "/repos/$REPO/installation" "$j") \
-    || die "App 沒有安裝在 $REPO(到 App 設定頁 Install App)"
+    || die "取不到 $REPO 的 App installation(HTTP 404 = App 沒裝在這個 repo,到 App 設定頁 Install App;401 = APP_ID / 私鑰不對或系統時間偏差)"
   inst=$(jfield .id "$inst")
   local r
   r=$(api POST "/app/installations/$inst/access_tokens" "$j" \
@@ -159,10 +160,19 @@ identity() {
     BOT_EMAIL="${uid}+${login}@users.noreply.github.com"
     return
   fi
-  local slug uid j t
-  j=$(jwt); t=$(token)
+  local slug uid j t="" u
+  j=$(jwt)
   slug=$(jfield .slug "$(api GET /app "$j")")
-  uid=$(jfield .id "$(api GET "/users/${slug}%5Bbot%5D" "$t")")
+  # 有 repo(--repo 或 GitHub origin)就用 installation token 查,避免匿名 60 次 / 小時限制;
+  # 新 repo 還沒有 origin 時退回匿名查詢
+  if [[ -n $REPO ]] || parse_repo "$(git remote get-url origin 2>/dev/null)" >/dev/null; then t=$(token); fi
+  if [[ -n $t ]]; then
+    u=$(api GET "/users/${slug}%5Bbot%5D" "$t")
+  else
+    u=$(curl -q -sS -f -H 'Accept: application/vnd.github+json' "$API/users/${slug}%5Bbot%5D") \
+      || die "查不到 ${slug}[bot] 的 user id(匿名查詢失敗,可能是次數限制;加 --repo owner/repo 改用認證查詢)"
+  fi
+  uid=$(jfield .id "$u")
   [[ $uid =~ ^[0-9]+$ ]] || die "查不到 ${slug}[bot] 的 user id"
   BOT_NAME="${slug}[bot]"
   BOT_EMAIL="${uid}+${slug}[bot]@users.noreply.github.com"
@@ -189,15 +199,22 @@ token_file() {
 # 用法:push_git <token 檔> <使用者> <git 子指令...>
 push_git() {
   local tf=$1 user=$2 bad; shift 2
-  # 跟真正推送同一組環境檢查(含 include / includeIf、GIT_CONFIG_COUNT 等環境注入)
-  bad=$(env -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        git config --includes --name-only --get-regexp '^(url\..*|http\..*extraheader)$' 2>/dev/null || true)
-  [[ -z $bad ]] || die "repo 設定有會改寫推送網址或附加認證的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
-  env -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  # 推送用乾淨環境:不讀全域 / 系統設定,移除會注入設定、改 TLS / proxy / 除錯輸出的環境變數
+  local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT
+    -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY
+    -u GIT_HTTP_PROXY_AUTHMETHOD -u GIT_PROXY_SSL_CERT -u GIT_PROXY_SSL_KEY -u GIT_PROXY_SSL_CAINFO
+    -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_CURL_VERBOSE -u GIT_TRACE_PACKET -u GIT_ASKPASS -u SSH_ASKPASS
+    -u http_proxy -u https_proxy -u HTTPS_PROXY -u all_proxy -u ALL_PROXY
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0)
+  # repo 自己(含 include / includeIf)不得有任何 url.* / http.* / credential.* 設定:
+  # 這些能改寫推送網址、走 proxy、關 TLS 驗證、附加別的認證或 helper
+  bad=$("${clean[@]}" git config --local --includes --name-only --get-regexp '^(url|http|credential)\..*$' 2>/dev/null || true)
+  [[ -z $bad ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
+  "${clean[@]}" \
   git -c credential.helper= \
       -c "credential.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat '$tf')\"; }; f" \
       -c core.hooksPath=/dev/null \
-      -c http.extraHeader= \
+      -c http.extraHeader= -c http.sslVerify=true -c http.proxy= -c http.cookieFile= \
       -c user.name=bot -c user.email=bot@invalid \
       "$@"
 }
@@ -277,7 +294,7 @@ cmd_merge() {
   jfield .sha "$r"
 }
 
-[[ ${1:-} == --repo ]] && { need_val --repo $#; REPO=$2; shift 2; }
+[[ ${1:-} == --repo ]] && { need_val --repo $#; REPO=${2%.git}; shift 2; }
 [[ -z $REPO || $REPO =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo 格式錯誤:$REPO"
 
 case ${1:-} in

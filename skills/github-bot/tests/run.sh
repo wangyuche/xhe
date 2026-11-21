@@ -63,6 +63,7 @@ check "identity email" grep -qx 'email=12345+xhe-bot\[bot\]@users.noreply.github
 
 printf 'PR 內容\n第二行\n' > "$TMP/body.md"
 check "pr 回傳網址" [ "$(bash "$BOT" --repo o/r pr --head feat/x --title 'T "q"' --body-file "$TMP/body.md")" = https://github.com/o/r/pull/7 ]
+check "--repo 去掉 .git" [ "$(bash "$BOT" --repo o/r.git pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
 check "pr 缺 title 失敗" bash -c "! bash '$BOT' --repo o/r pr --head feat/x 2>/dev/null"
 
 check "push main 拒絕"   bash -c "! bash '$BOT' --repo o/r push main 2>/dev/null"
@@ -110,6 +111,15 @@ git -C "$TMP/prepo" config --unset http.https://github.com/.extraheader
 check "GIT_CONFIG_COUNT 注入無效" bash -c "cd '$TMP/prepo' && [ \"\$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.git@github.com:.insteadOf GIT_CONFIG_VALUE_0=https://github.com/ bash '$BOT' _pushgit t u ls-remote --get-url https://github.com/o/r.git)\" = https://github.com/o/r.git ]"
 git -C "$TMP/prepo" config url."git@github.com:".insteadOf https://github.com/
 check "repo 有 url.* 設定拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u ls-remote --get-url x 2>&1 | grep -q insteadof"
+check "GIT_CONFIG 繞不過檢查" bash -c "cd '$TMP/prepo' && : > '$TMP/empty.cfg' && GIT_CONFIG='$TMP/empty.cfg' bash '$BOT' _pushgit t u status 2>&1 | grep -q insteadof"
+git -C "$TMP/prepo" config --unset url."git@github.com:".insteadOf
+for kv in http.proxy=http://evil:8080 http.sslVerify=false http.https://github.com/.proxy=http://evil credential.https://github.com.helper=evil; do
+  git -C "$TMP/prepo" config "${kv%%=*}" "${kv#*=}"
+  check "拒絕 ${kv%%=*}" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
+  git -C "$TMP/prepo" config --unset "${kv%%=*}"
+done
+check "GIT_SSL_NO_VERIFY 被移除" [ -z "$(cd "$TMP/prepo" && GIT_SSL_NO_VERIFY=1 bash "$BOT" _pushgit t u -c alias.e='!printenv GIT_SSL_NO_VERIFY' e)" ]
+check "強制 sslVerify" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config http.sslVerify)" = true ]
 
 # --- 模式選擇:環境變數蓋過設定檔 ---
 check "env TOKEN_FILE 蓋過設定檔 GH_USER" [ "$(env GITHUB_BOT_CONFIG="$TMP/config-gh0" GITHUB_BOT_TOKEN_FILE="$TMP/pat0" bash "$BOT" --repo o/r token)" = ghp_testpat ]
@@ -133,6 +143,7 @@ check "pat identity name"  grep -qx 'name=xhe-bot' <<<"$ID"
 check "pat identity email" grep -qx 'email=777+xhe-bot@users.noreply.github.com' <<<"$ID"
 check "pat pr 回傳網址" [ "$(env "$PAT_ENV" bash "$BOT" --repo o/r pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
 check "pat push 預設分支拒絕" bash -c "env '$PAT_ENV' bash '$BOT' --repo o/r push develop 2>&1 | grep -q '不推預設分支'"
+check "env TOKEN_FILE 展開 ~" bash -c "HOME='$TMP' GITHUB_BOT_TOKEN_FILE='~/pat0' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
 check "pat 讀不到檔案失敗" bash -c "! GITHUB_BOT_TOKEN_FILE=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
 git init -q "$TMP/repo2" && (
   cd "$TMP/repo2" && echo hi > a && git add a &&

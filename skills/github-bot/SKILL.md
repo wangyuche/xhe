@@ -33,7 +33,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
 不建 App,改用另一個 GitHub 帳號當機器人(commit 作者顯示該帳號名稱,沒有 `[bot]`):
 
 1. 用主帳號到 repo → Settings → Collaborators → 邀請機器人帳號(Write 權限),再登入機器人帳號接受邀請。
-2. 機器人帳號產生 **classic** PAT(放進 gh 的話 gh 要求至少 `repo`、`read:org`、`workflow`)(Settings → Developer settings → Tokens (classic)),scope 勾 `public_repo`(private repo 要勾 `repo`),設到期日。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
+2. 機器人帳號產生 **classic** PAT(Settings → Developer settings → Tokens (classic)),設到期日。scope:放進 gh(下面第 3 步建議做法)gh 要求 `repo` + `read:org` + `workflow`;用 token 檔則 `public_repo` 即可(private repo 要 `repo`,改 workflow 檔再加 `workflow`)。fine-grained PAT 無法存取「別人個人帳號底下」的 repo,所以要用 classic。
 3. **建議:token 放 gh(macOS 鑰匙圈,磁碟上沒有明文)**。gh 可同時登入多個帳號,不必切換,bot 用 `gh auth token --user` 取機器人的 token,gh 平常仍停在主帳號:
 
    ```bash
@@ -72,7 +72,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 ```
 
 - push 拒絕 `main`、`master`、repo 預設分支,也不支援 force;要改歷史先問使用者。
-- token 經 stdin 給 curl;push 時放在 0600 暫存檔只給 credential helper 讀,不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、停用 hooks;repo 本身的 `.git/config` 有 `url.*` 設定會拒絕推送。
+- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0600 暫存檔只給 credential helper 讀,不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、proxy、trace 類環境變數;repo 本身(含 include)有任何 `url.*`、`http.*`、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
 - 合併前置條件見下方「自己 review 後合併」;bot 的權限(App 的 Contents: write、機器人帳號的 Write)本來就能合併,把關靠這個流程與 `--sha`。
 - 錯誤 `App 沒有安裝在 ...`:到 App 設定頁的 Install App 把該 repo 加進去。
 - 換 App / 換電腦:只要重做第 4 步。私鑰外洩時到 App 設定頁刪掉該 key 並重新產生。
