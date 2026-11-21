@@ -6,6 +6,7 @@
 #   bot.sh push <分支>                      把 HEAD 推到遠端 <分支>(拒絕預設分支、main、master,不 force)
 #   bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]
 #   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase] [--allow-no-ci]
+#                [--ignore-suite <id>]...     略過確定永遠不會跑的 check suite
 #                                           SHA 不符(review 後又有新 commit)GitHub 會拒絕
 # 共用選項(放在子指令前):--repo owner/repo(預設取 origin)
 # 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),三擇一,優先序 GH_USER > TOKEN_FILE > App:
@@ -43,34 +44,42 @@ trim_val() {
   printf '%s' "$v"
 }
 
+# 只展開開頭的 ~/(不支援 ~user)
+expand_home() {
+  local v=$1
+  [[ $v == '~/'* ]] && v=$HOME/${v#'~/'}
+  [[ $v == '~' ]] && v=$HOME
+  printf '%s' "$v"
+}
+
 load_conf() {
-  local c_app="" c_key="" c_tok="" c_gh="" k v
+  local c_app="" c_key="" c_tok="" c_gh="" k v quoted
   if [[ -f $CONF ]]; then
     while IFS='=' read -r k v; do
       # 行尾註解:加引號的值取到對應的結尾引號為止;未加引號的值砍掉「 # ...」
       if [[ $v =~ ^[[:space:]]*\"([^\"]*)\" ]] || [[ $v =~ ^[[:space:]]*\'([^\']*)\' ]]; then
-        v=${BASH_REMATCH[1]}
+        v=${BASH_REMATCH[1]}; quoted=1          # 引號內的空白保留
       else
-        v=${v%%[[:space:]]#*}
+        v=${v%%[[:space:]]#*}; quoted=0
       fi
-      k=$(trim_val "$k"); v=$(trim_val "$v")
+      k=$(trim_val "$k"); [[ $quoted -eq 1 ]] || v=$(trim_val "$v")
       case $k in
         APP_ID)     c_app=$v ;;
-        KEY_FILE)   c_key=${v/#\~/$HOME} ;;
-        TOKEN_FILE) c_tok=${v/#\~/$HOME} ;;
+        KEY_FILE)   c_key=$(expand_home "$v") ;;
+        TOKEN_FILE) c_tok=$(expand_home "$v") ;;
         GH_USER)    c_gh=$v ;;
       esac
     done < <(grep -E '^[[:space:]]*(APP_ID|KEY_FILE|TOKEN_FILE|GH_USER)[[:space:]]*=' "$CONF" || true)
   fi
   GH_USER="" TOKEN_FILE="" APP_ID="" KEY_FILE=""
   if   [[ -n ${GITHUB_BOT_GH_USER:-} ]];    then GH_USER=$GITHUB_BOT_GH_USER
-  elif [[ -n ${GITHUB_BOT_TOKEN_FILE:-} ]]; then TOKEN_FILE=${GITHUB_BOT_TOKEN_FILE/#\~/$HOME}
+  elif [[ -n ${GITHUB_BOT_TOKEN_FILE:-} ]]; then TOKEN_FILE=$(expand_home "$GITHUB_BOT_TOKEN_FILE")
   elif [[ -n ${GITHUB_BOT_APP_ID:-} ]];     then APP_ID=$GITHUB_BOT_APP_ID; KEY_FILE=${GITHUB_BOT_KEY_FILE:-$c_key}
   elif [[ -n $c_gh ]];  then GH_USER=$c_gh
   elif [[ -n $c_tok ]]; then TOKEN_FILE=$c_tok
   else APP_ID=$c_app; KEY_FILE=${GITHUB_BOT_KEY_FILE:-$c_key}
   fi
-  KEY_FILE=${KEY_FILE/#\~/$HOME}
+  KEY_FILE=$(expand_home "$KEY_FILE")
   if [[ -n $GH_USER ]]; then
     [[ $GH_USER =~ ^[A-Za-z0-9-]+$ ]] || die "GH_USER 格式錯誤:$GH_USER"
     command -v gh >/dev/null || die "找不到 gh"
@@ -121,16 +130,6 @@ api() {
     exit 1
   fi
   printf '%s\n' "$resp"
-}
-
-# GitHub 伺服器的現在時間(epoch 秒),取自回應的 Date header;避免本機時鐘偏差影響判斷
-gh_now() {
-  local d
-  d=$(curl -q -sS --connect-timeout 10 --max-time 30 -o /dev/null -D - "$API/" 2>/dev/null \
-        | tr -d '\r' | awk 'tolower($1)=="date:" { $1=""; sub(/^ /,""); print; exit }')
-  [[ -n $d ]] || die "取不到 GitHub 伺服器時間"
-  jq -nr --arg d "$d" '$d | strptime("%a, %d %b %Y %H:%M:%S GMT") | mktime' 2>/dev/null \
-    || die "看不懂 GitHub 伺服器時間:$d"
 }
 
 # api_try:同 api,但 HTTP 404 回傳 4(給「可能不存在」的查詢用);其他錯誤回傳 2 並印出原因。
@@ -346,7 +345,7 @@ ci_snapshot() {   # 設定 runs st suites nr ns
 }
 
 check_ci() {
-  local sha=$1 t=$2 allow_no_ci=$3 runs st suites nr ns wf rc has_wf=0 ready=0 stable=0 last=-1 bad i
+  local sha=$1 t=$2 allow_no_ci=$3 ignore_suites=${4:-} runs st suites nr ns wf rc has_wf=0 ready=0 stable=0 last=-1 bad i
   wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
   case $rc in
     0) [[ $(jq -r 'if type=="array" then map(select(.name | test("\\.ya?ml$"))) | length else 0 end' <<<"$wf") -gt 0 ]] && has_wf=1 ;;
@@ -368,38 +367,38 @@ check_ci() {
     [[ $ready -eq 0 && $i -ge 13 ]] && break       # 60 秒內都沒出現就放棄等待
     sleep 5
   done
-  if [[ $ready -eq 0 ]]; then
-    [[ $allow_no_ci -eq 1 ]] && return 0
+  if [[ $ready -eq 0 && $allow_no_ci -ne 1 ]]; then
     if [[ $has_wf -eq 1 ]]; then
       die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有 GitHub Actions 的 check run;若 workflow 不在 PR 分支觸發,確認後加 --allow-no-ci"
     fi
     die "等了 60 秒這個 commit 沒有任何 CI 結果;確定這個 repo 沒有 CI 才加 --allow-no-ci"
   fi
-  [[ $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
-  # 有 check run 的 suite 必須全部完成且成功。GitHub Actions 的 suite 還沒有 run 時:
-  # 建立不到 2 分鐘視為「還在登記」→ 拒絕(稍後再合併);更久仍是 0 個 run 的(例如被 paths / branches
-  # 過濾掉、GitHub 留下的空 suite)不算,否則會永遠擋住。
-  local now; now=$(gh_now) || exit 1
-  bad=$(jq -r --argjson now "$now" '.check_suites[]
-          | select(((.latest_check_runs_count // 0) > 0)
-                   or (.app.slug == "github-actions" and $now - ((.created_at // "1970-01-01T00:00:00Z") | fromdateiso8601) < 120))
+  [[ $ready -eq 0 || $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
+  # 以下對「目前已有的」check suite / run / status 一律檢查(--allow-no-ci 也一樣)
+  # 有 check run 的 suite、以及 GitHub Actions 的 suite(不論新舊、有沒有 run)都必須完成且成功;
+  # 排隊中(例如 concurrency 等待)或需要核准(action_required)一律拒絕。
+  # 確定永遠不會跑的 suite,由呼叫端以 --ignore-suite <id> 明確略過(錯誤訊息會列出 id)。
+  bad=$(jq -r --arg ign " $ignore_suites " '.check_suites[]
+          | select(((.latest_check_runs_count // 0) > 0) or .app.slug == "github-actions")
+          | . as $su | select(($ign | contains(" \($su.id) ")) | not)
           | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not))
-          | "suite:\(.app.slug)=\(.conclusion // .status)"' <<<"$suites")
+          | "suite:\(.app.slug)#\(.id)=\(.conclusion // .status)"' <<<"$suites")
   bad+=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | " \(.name)=\(.conclusion // .status)"' <<<"$runs")
-  [[ -z ${bad// /} ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")"
+  [[ -z ${bad// /} ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(確定某個 suite 永遠不會跑,才用 --ignore-suite <id> 略過)"
   [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
     || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
 }
 
 cmd_merge() {
-  local num=${1:-} sha="" method=merge allow_no_ci=0
-  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase] [--allow-no-ci]"
+  local num=${1:-} sha="" method=merge allow_no_ci=0 ignore_suites=""
+  [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase] [--allow-no-ci] [--ignore-suite <id>]..."
   shift
   while [[ $# -gt 0 ]]; do
     case $1 in
       --sha) need_val "$1" $#; sha=$2; shift 2 ;;
       --method) need_val "$1" $#; method=$2; shift 2 ;;
       --allow-no-ci) allow_no_ci=1; shift ;;
+      --ignore-suite) need_val "$1" $#; [[ $2 =~ ^[0-9]+$ ]] || die "--ignore-suite 要數字 id"; ignore_suites+=" $2"; shift 2 ;;
       *) die "merge 不認得參數 $1" ;;
     esac
   done
@@ -413,7 +412,7 @@ cmd_merge() {
   [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
   [[ $(jq -r '.mergeable_state // ""' <<<"$pr") != dirty ]] || die "PR #$num 有衝突,無法合併"
   # 先看 CI:CI 進行中時 mergeable_state 會是 unstable / blocked,由 check_ci 給出準確的原因
-  check_ci "$sha" "$t" "$allow_no_ci"
+  check_ci "$sha" "$t" "$allow_no_ci" "$ignore_suites"
   for i in 1 2 3 4 5 6 7 8 9 10; do        # GitHub 還在算時 mergeable_state 為 unknown
     pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
     [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
@@ -437,6 +436,10 @@ cmd_merge() {
 
 [[ ${1:-} == --repo ]] && { need_val --repo $#; [[ -n $2 ]] || die "--repo 不能是空的"; REPO=${2%.git}; shift 2; }
 [[ -z $REPO ]] || valid_repo "$REPO" || die "--repo 格式錯誤:$REPO"
+
+if [[ ${1:-} == _* && ${GITHUB_BOT_TEST:-} != 1 ]]; then
+  die "_ 開頭的指令只給測試用(需 GITHUB_BOT_TEST=1)"
+fi
 
 case ${1:-} in
   identity) identity; printf 'name=%s\nemail=%s\n' "$BOT_NAME" "$BOT_EMAIL" ;;

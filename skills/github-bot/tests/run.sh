@@ -17,6 +17,7 @@ openssl genrsa -traditional -out "$TMP/key.pem" 2048 2>/dev/null || openssl genr
 openssl rsa -in "$TMP/key.pem" -pubout -out "$TMP/pub.pem" 2>/dev/null
 printf 'APP_ID=123456\nKEY_FILE=%s\n' "$TMP/key.pem" > "$TMP/config"
 export GITHUB_BOT_CONFIG="$TMP/config"
+export GITHUB_BOT_TEST=1   # 允許 _ 開頭的測試用子指令
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1   # 不受開發者個人 git 設定(gpgsign 等)影響
 unset GITHUB_BOT_APP_ID GITHUB_BOT_KEY_FILE GITHUB_BOT_GH_USER GITHUB_BOT_TOKEN_FILE GITHUB_BOT_API_URL \
       GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
@@ -94,7 +95,8 @@ check "merge 短 SHA 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha abc
 check "merge 缺值不 crash" bash -c "bash '$BOT' --repo o/r merge 7 --sha 2>&1 | grep -q '後面要接值'"
 check "pr 缺值不 crash" bash -c "bash '$BOT' --repo o/r pr --head 2>&1 | grep -q '後面要接值'"
 check "merge 檢查失敗拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
-check "merge closed 立即拒絕" bash -c "s=\$(date +%s); bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ \$(( \$(date +%s) - s )) -lt 3 ]"
+mkdir -p "$TMP/slbin"; printf '#!/bin/sh\necho called >> "%s"\n' "$TMP/sleep.log" > "$TMP/slbin/sleep"; chmod +x "$TMP/slbin/sleep"
+check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
 D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40))
 check "merge CI 進行中拒絕" bash -c "bash '$BOT' --repo o/r merge 11 --sha $D40 2>&1 | grep -q 'CI 未完成'"
 # CI 未登記時會等 60 秒;測試把 sleep 換成空操作
@@ -109,9 +111,12 @@ check "外部 status 先到不算 Actions CI" bash -c "PATH='$TMP/fastbin:$PATH'
 check "token 失敗只報真正原因" bash -c "! bash '$BOT' --repo o/missing token 2>&1 | grep -q '缺 .token'"
 check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
 S17=$(printf '4%.0s' $(seq 40))
-check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'suite:github-actions=queued'"
+check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'suite:github-actions#172=queued'"
 S18=$(printf '5%.0s' $(seq 40))
-check "舊的空 queued suite(被過濾的 workflow)不擋 merge" [ "$(bash "$BOT" --repo o/r merge 18 --sha "$S18")" = "$C40" ]
+check "排隊中的 Actions suite 不論新舊都擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $S18 2>&1 | grep -q 'suite:github-actions#182=queued'"
+check "--ignore-suite 明確略過後放行" [ "$(bash "$BOT" --repo o/r merge 18 --sha "$S18" --ignore-suite 182)" = "$C40" ]
+S21=$(printf '8%.0s' $(seq 40))
+check "--allow-no-ci 仍檢查外部 CI 失敗" bash -c "bash '$BOT' --repo o/r merge 21 --sha $S21 --allow-no-ci 2>&1 | grep -q 'commit status 為 failure'"
 S19=$(printf '6%.0s' $(seq 40)); S20=$(printf '7%.0s' $(seq 40))
 check "其他 App 的 check run 不算 Actions CI" bash -c "bash '$BOT' --repo o/r merge 19 --sha $S19 2>&1 | grep -q '仍沒有 GitHub Actions 的 check run'"
 check "workflows 只有 README 不算有 Actions" [ "$(bash "$BOT" --repo o/r merge 20 --sha "$S20")" = "$C40" ]
@@ -119,6 +124,11 @@ check "--repo 拒絕 .. 片段" bash -c "bash '$BOT' --repo ../x token 2>&1 | gr
 check "parse 拒絕 .. 片段" bash -c "! bash '$BOT' _parse https://github.com/../x.git"
 printf 'ghp_testpat  # expires 2027\n' > "$TMP/pat-comment"
 check "token 行尾註解" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-comment' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
+check "_ 指令需 GITHUB_BOT_TEST=1" bash -c "GITHUB_BOT_TEST= bash '$BOT' _parse https://github.com/a/b 2>&1 | grep -q '只給測試用'"
+printf 'APP_ID=123456\nKEY_FILE=~svc/key.pem\n' > "$TMP/config-tilde"
+check "~user 不展開成 \$HOMEuser" bash -c "GITHUB_BOT_CONFIG='$TMP/config-tilde' bash '$BOT' _jwt 2>&1 | grep -q \"KEY_FILE='~svc/key.pem'\""
+cp "$TMP/key.pem" "$TMP/key sp.pem "; printf 'APP_ID=123456\nKEY_FILE="%s"\n' "$TMP/key sp.pem " > "$TMP/config-sp"
+check "引號內結尾空白保留" bash -c "GITHUB_BOT_CONFIG='$TMP/config-sp' bash '$BOT' _jwt >/dev/null"
 check "--repo 空值拒絕" bash -c "bash '$BOT' --repo '' token 2>&1 | grep -q '不能是空的'"
 check "merge 用法列出 --allow-no-ci" bash -c "bash '$BOT' merge abc 2>&1 | grep -q -- --allow-no-ci"
 check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
