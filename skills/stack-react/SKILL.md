@@ -11,7 +11,7 @@ paths: ["**/*.tsx", "**/*.jsx"]
 2. **衍生資料不放 state**:能從 props / state 算出來的就在 render 時算;不用 `useEffect` 同步兩個 state。`useEffect` 只用於和外部系統同步(訂閱、計時器、DOM API)。
 3. hooks 只在元件頂層呼叫;依賴陣列寫完整,不靠關閉 lint 規則。
 4. 列表的 `key` 用穩定 id,不用 index(除非列表不會變動)。
-5. 表單:受控元件或 `<form action>`;送出中停用按鈕並避免重複送出;後端錯誤(`{"error":{"code","message"}}`)顯示在表單附近。
+5. 表單:受控元件或 `<form action>`;長度檢查和後端一致(code point / UTF-8 bytes,見 references);送出中停用按鈕並避免重複送出;後端錯誤(`{"error":{"code","message"}}`)顯示在表單附近。
 6. 樣式:CSS Modules(`*.module.css`),不加樣式框架(Tailwind 未採用)。版面在 390 px 寬不可橫向捲動(用 `max-width: 100%`、`flex-wrap`、避免固定寬度)。
 
 ## 無障礙(最低要求)
@@ -38,3 +38,6 @@ describe("LoginForm", () => {
 - 互動用 `userEvent`,不用 `fireEvent`。
 - 驗收情境的測試名稱以「情境編號 + 冒號」開頭(`LOGIN-S3: …`);其他測試自由命名。
 - 新增的元件(不含 `page.tsx`、`layout.tsx`)至少一個測試。元件測試不打真實 API:把呼叫 API 的函式當 props 傳入,或用 `vi.mock` 換掉 `@/lib/api/client`。
+
+## 需要時才讀
+- `references/optimistic-updates.md`:列表上直接修改資料(改角色、停用、切換)、樂觀更新、`並發` 類型的元件情境。

@@ -33,6 +33,8 @@
 - **契約:** 讀 API 契約(預設 `api/openapi.yaml`,OpenAPI 3.0.3,由 backend-owner 維護),有契約就先跑 `<pm> run gen:api`。不自行猜介面;缺端點依上方第 3 種情況處理。
 - **依賴:** 可以 `<pm> add <套件>`(只在可寫路徑內),每個新依賴回報名稱、版本、理由。
 - **驗收情境 → 測試:** 簡報的每個驗收情境至少一個測試,放在情境標的層級(E2E 或元件),測試名稱以情境編號加冒號開頭(例如 `test('LOGIN-S3: 密碼錯誤顯示錯誤訊息', …)`)。可以自己多加測試,不能少。情境標的層級不屬於前端(例如只標 httptest)就不寫,回報註明「後端負責」。
+- **沒有編號的需求 → BLOCKED**(2026-11-21 新增):簡報要實作但沒有 `<PREFIX>-S<n>` 的需求,請主 agent 先交 acceptance-designer 編號,不自己編號。
+- **列表修改操作**(2026-11-21 新增):先讀 `stack-react/references/optimistic-updates.md`,5 條各有測試。
 - **E2E:** 每個新增的使用者流程(新頁面、表單送出、登入等互動)至少一個 E2E 測試;修改既有流程時更新對應測試。既有專案沒有 Playwright 時:簡報中有 E2E 層級的情境,就視為要求補上 Playwright(依「E2E 測試」段的固定設定);沒有 E2E 層級情境時不要求,回報寫「未執行:專案沒有 E2E」。自己驗證時:`node_modules/.bin/playwright test --list` 必須成功(測試能載入);接著用目前的 `API_PROXY_TARGET` 跑 `test:e2e`。接真實後端時必須全部通過;接契約 mock 時(Prism 只回範例,不保存狀態)照實回報通過 / 失敗數,失敗的測試標「待整合驗證」,不影響 PASS。
 - **測試:** 新增的元件(不含 `page.tsx`、`layout.tsx`)至少一個測試;修改元件時,既有測試要通過,行為有改就更新或補測試。既有專案沒有測試框架時,不要求新元件測試,回報寫「未執行:專案沒有測試框架」;要補框架需簡報要求。
 - **驗證順序:** `<pm> run lint` → `<pm> run build` → `npx tsc --noEmit`(build 之後跑,路由型別才已產生)→ `node_modules/.bin/vitest run --reporter=verbose`(印出每個測試名稱,供情境對照)→ (需要時)啟動契約 mock → `serve.sh` 啟動 `next dev -p {port}`(帶 `--env API_PROXY_TARGET=…`)→ 截圖 → `node_modules/.bin/playwright test --list` → `E2E_BASE_URL=<url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e` → 檢查 server.log → `stop.sh`(dev server 與 mock 都停)→ `scope.sh check` → `secret-scan.sh`。沒有 lint / test script 的既有專案,該步寫「未執行:沒有 script」。
