@@ -22,18 +22,24 @@ while IFS= read -r f; do
   [ -f "$ROOT/$f" ] || continue
   out="$(perl -ne '
     BEGIN { $n = 0 }
-    my $line = $_; my $hit = 0;
+    my $line = $_; my $hit = 0; my @vals;
     # 排除:dev / test / example / changeme 開頭的值
     my $fake = qr/^(dev|test|example|changeme)/i;
     if ($line =~ /NEXT_PUBLIC_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)/) { $hit = 1 }
-    while ($line =~ /(?i:secret|password|passwd|api[_-]?key|token|private[_-]?key)\s*[:=]\s*["\x27]([^"\x27]{8,})["\x27]/g) {
-      $hit = 1 unless $1 =~ $fake;
+    # 名稱後綴只允許 Key / Value / Str / String(secretKey、tokenValue;passwordLabel、tokenizer 不算)
+    # 名稱可被引號包住(JSON、物件鍵);指定方式 = 、 : 、Go 的 := 與 var x string = 、TS 的 x: string =
+    # 字串用雙引號、單引號或 Go 的反引號;值含空白的(UI 文字)不算
+    while ($line =~ /(?i:secret|password|passwd|api[_-]?key|token|private[_-]?key)(?i:[_-]?(?:key|value|str|string))?["\x27]?\s*(?::=|:\s*[A-Za-z_][\w.<>\[\]| ]*?\s*=|[:=]|\s+[A-Za-z_][\w.*\[\]]*\s*=)\s*(["\x27\x60])([^"\x27\x60\s]{8,})\1/g) {
+      unless ($2 =~ $fake) { $hit = 1; push @vals, $2 }
     }
     $hit = 1 if $line =~ /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
     $hit = 1 if $line =~ /sk-[A-Za-z0-9]{20,}/ && $line !~ /sk-(dev|test|example)/;
     $hit = 1 if $line =~ /AKIA[0-9A-Z]{16}/;
     if ($hit) {
-      (my $m = $line) =~ s/(["\x27])[^"\x27]{4,}(["\x27])/$1***$2/g;
+      # 遮蔽:命中的值逐一換掉(引號配對會被同一行的其他字串打亂);其他規則命中的行才用引號配對遮蔽
+      my $m = $line;
+      if (@vals) { for my $v (@vals) { $m =~ s/\Q$v\E/***/g } }
+      else { $m =~ s/(["\x27\x60])[^"\x27\x60]{4,}(["\x27\x60])/$1***$2/g }
       $m =~ s/(sk-|AKIA)[A-Za-z0-9]+/$1***/g;
       chomp $m; print "$ARGV:$.: $m\n";
     }

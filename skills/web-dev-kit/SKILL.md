@@ -17,10 +17,12 @@ bash <kit>/scripts/serve.sh <name> <dir> <起始埠> [--health /healthz] [--time
 #   指令中的 {port} 會被換成實際埠,也會設 PORT。同名服務在跑時拒絕。
 bash <kit>/scripts/stop.sh <name>                # → stopped port=<埠>(或 not-running)
 
-# 整頁截圖(Node 22 內建模組 + 本機 Google Chrome)→ 一行 JSON;HTTP≠200 或有 console 錯誤時結束碼 2
+# 整頁截圖(Node 22 內建模組 + 本機 Google Chrome)→ 一行 JSON;HTTP≠200、有 console 錯誤或被轉址時結束碼 2
 node <kit>/scripts/shot.mjs <url> 1280 800 <out.png>
-node <kit>/scripts/shot.mjs <url> 390 844 <out.png> --mobile [--cookie k=v] [--cookie-jar <curl -c 檔>] [--header 'K: V']
-#   檢查:http == 200、consoleErrors == 0、scrollWidth <= innerWidth(無橫向捲動);再用 Read 看圖
+node <kit>/scripts/shot.mjs <url> 390 844 <out.png> --mobile [--cookie k=v] [--cookie-jar <curl -c 檔>] [--header 'K: V'] [--allow-redirect]
+#   檢查:http == 200、redirected == false(finalUrl 等於請求網址;要登入的頁被導到 /login 時 http 仍是 200,
+#   只有這項會抓到)、consoleErrors == 0、scrollWidth <= innerWidth(無橫向捲動);再用 Read 看圖。
+#   --allow-redirect 只用在本來就該轉址的網址(例如測「沒登入會導到登入頁」)
 
 # 前端轉發 vs 後端直連 → 一行 JSON,不一致結束碼 1
 node <kit>/scripts/proxy-diff.mjs <前端url> <後端url> <方法> <路徑> [--data '{"email":"u{uniq}@x"}'] [--cookie-jar <檔>] [--ignore id]... [--structure]
@@ -37,7 +39,8 @@ bash <kit>/scripts/secret-scan.sh <name>                    # 掃最近一次 ch
 # 本機 PostgreSQL(容器 dev-<專案名>-pg,postgres:17,dev/devpass,資料庫 app)
 bash <kit>/scripts/pg.sh up <專案名>      # → DATABASE_URL=postgres://…
 bash <kit>/scripts/pg.sh schema <專案名> <表>
-bash <kit>/scripts/pg.sh down <專案名>    # 只 stop,不刪資料。Docker 沒開:結束碼 3
+bash <kit>/scripts/pg.sh down <專案名>    # 只 stop,不刪資料(開發資料庫用)。Docker 沒開:結束碼 3
+bash <kit>/scripts/pg.sh rm <專案名>      # 刪容器與資料 volume → removed / not-found。只用在暫存 / 驗證用的專案名
 
 # docker compose 整站(在 compose 檔所在目錄執行,或 -f 指定)。-p <專案名> 必填
 bash <kit>/scripts/compose.sh build -p <專案名> [<服務>...]

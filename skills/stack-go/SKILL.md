@@ -41,7 +41,7 @@ api/openapi.yaml                # OpenAPI 3.0.3(不用 3.1)
 3. **錯誤格式**:一律 `httpx.WriteError(w, status, "snake_case_code", "訊息")` → `{"error":{"code","message"}}`,契約裡 4xx / 5xx 都 `$ref: '#/components/schemas/Error'`。
 4. **端點測試**:放在 `internal/httpapi/<領域>_test.go`,`h := NewHandler(httpx.Deps{DB: testDB})`。請求符合契約的案例(成功、密碼錯 401、404…)用 `Do(t, h, req)`:請求或回應不符契約就失敗。刻意送不合法請求(缺欄位、型別錯 → 400)用 `DoBadRequest(t, h, req)`:請求必須不符契約,回應仍要符合。service / store 的單元測試放在各自的領域套件。驗收情境的子測試名稱以情境編號加冒號開頭:`t.Run("LOGIN-S2: wrong password returns 401", …)`。
 5. **Migration**:goose,檔名 `NNNN_<描述>.sql`,含 `-- +goose Up` / `-- +goose Down`;伺服器啟動時自動 `goose.Up`。新表要在 `migrate_test.go` 的 `want` 加欄位清單。SQL 寫成 SQLite 與 PostgreSQL 都能跑的子集(`INTEGER PRIMARY KEY`、`TEXT`、`TIMESTAMP`;避免 `SERIAL`、`AUTOINCREMENT`)。
-6. **測試資料庫**:測試只用 `t.TempDir()` 的 SQLite 或 `file::memory:`,不碰 `data/dev.db`。
+6. **測試資料庫**:測試只用 `t.TempDir()` 裡的 SQLite 檔,不碰 `data/dev.db`。不用 `:memory:` / `file::memory:`(連線池的每條連線各是一個空資料庫,並發測試會 `no such table`),`db.Open` 會直接回錯誤。
 6b. **SQLite 並發**:`db.Open` 會對 SQLite DSN 自動補 `_pragma=busy_timeout(5000)` 與 `_txlock=immediate`,不要拿掉;寫入都放在 transaction 裡。`concurrency_test.go` 是回歸測試(2026-11-16 整合驗證發現兩個同時登入其中一個回 500 `SQLITE_BUSY`)。
 7. **環境變數**:`PORT`(8080)、`DATABASE_URL`(預設 SQLite `file:data/dev.db?...`;`postgres://` 開頭用 pgx)、`CORS_ORIGINS`(預設 `http://localhost:3000`)、應用程式密鑰(`SESSION_SECRET` 等)。全部列在 `.env.example`,值用 `dev-` 開頭的假值。程式不寫死任何秘密。
 8. **登入機制**:後端發 HttpOnly session cookie(`SameSite=Lax`,開發時不設 `Secure`),前端經 Next.js 轉發屬同源。不在 body 回 token 給前端存。

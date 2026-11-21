@@ -1,10 +1,11 @@
 #!/bin/bash
-# 用法:pg.sh up <專案名> | pg.sh down <專案名> | pg.sh schema <專案名> <表>
+# 用法:pg.sh up <專案名> | pg.sh down <專案名> | pg.sh rm <專案名> | pg.sh schema <專案名> <表>
 # 本機開發用 PostgreSQL 容器 dev-<專案名>-pg(postgres:17,帳密 dev/devpass,資料庫 app)。
-# down 只 stop,不刪容器與資料。Docker 沒開:結束碼 3。
+# down 只 stop,不刪容器與資料。rm 刪容器與它的資料 volume(資料不可復原;暫存 / 驗證用的專案名才用)。
+# Docker 沒開:結束碼 3。
 source "$(dirname "$0")/_common.sh"
 
-[ $# -ge 2 ] || die "用法:pg.sh up|down <專案名> | pg.sh schema <專案名> <表>"
+[ $# -ge 2 ] || die "用法:pg.sh up|down|rm <專案名> | pg.sh schema <專案名> <表>"
 CMD="$1"; PROJ="$2"
 check_name "$PROJ"
 C="dev-$PROJ-pg"
@@ -36,6 +37,11 @@ case "$CMD" in
   down)
     if running; then docker stop "$C" >/dev/null; fi
     echo "stopped container=$C"
+    ;;
+  rm)
+    # -v:一併刪除映像宣告的匿名資料 volume(/var/lib/postgresql/data),不留舊資料
+    if exists; then docker rm -f -v "$C" >/dev/null || die "刪除容器 $C 失敗"; echo "removed container=$C"
+    else echo "not-found container=$C"; fi
     ;;
   schema)
     [ $# -eq 3 ] || die "用法:pg.sh schema <專案名> <表>"
