@@ -73,6 +73,7 @@ o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set w
 tid="fake-$(grep -c '"path":"/prompt"' "$W/req.log")"
 [ $rc -eq 4 ] && grep -q "\"path\":\"/interrupt\",\"query\":{},\"body\":{\"prompt_id\":\"$tid\"" "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作($tid)、結束碼 4" || bad "逾時" "$o rc=$rc tid=$tid"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qd "${QS[@]/prompt=p/prompt=QUEUED}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qd.png" ] && ok "排隊時間不算 --timeout(排隊 2.5 秒、--timeout 1 仍成功)" || bad "排隊計時" "$r"
+r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qe "${QS[@]/prompt=p/prompt=QUEUED_QUEUEERR}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qe.png" ] && ok "/queue 暫時回 500 不當成已開始執行" || bad "/queue 錯誤誤判" "$r"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qx "${QS[@]/prompt=p/prompt=QUEUED}" --set width=64 --set height=64 --queue-timeout 1 2>&1)"; [ $? -eq 4 ] && echo "$o" | grep -q '"reason":"queue"' && ok "排隊超過 --queue-timeout → 移出佇列、結束碼 4" || bad "--queue-timeout" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --timeout 5m 2>&1)"; [ $? -eq 2 ] && ok "--timeout 不是數字 → 結束碼 2" || bad "--timeout 檢查" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]/seed=1/seed=18446744073709551615}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "seed 超過安全整數 → 結束碼 2" || bad "大 seed" "$o"

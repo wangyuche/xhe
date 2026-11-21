@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // game-art-kit:ComfyUI HTTP API 客戶端(只用 Node 內建模組)。
-// 用法(run 的 --timeout 只算開始執行後的時間;排隊等待另有 --queue-timeout,預設 1800 秒):
+// 用法(run 的 --timeout 只算開始執行後的時間;排隊等待另有 --queue-timeout,預設 240 秒):
 //   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、建議的 workflow 預設值(JSON)
 //   node comfy.mjs upload <圖檔> --prefix <專案-角色>       → 上傳到 ComfyUI 的 temp 區,印出 LoadImage 用的名稱
-//   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 300]
+//   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 300] [--queue-timeout 240]
 //                                                           → 填參數、送出、輪詢、下載 PNG、刪除 history,印出結果 JSON
 //   node comfy.mjs pngsize <圖檔>                           → {"width":…,"height":…}
 //   node comfy.mjs scrub-check <目錄>                       → 產出不含 ComfyUI 位址 / 私有 IP;找到就結束碼 1
@@ -227,7 +227,7 @@ async function run() {
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) die('--name 只能用英數、_ . -', 2);
   const timeout = Number(flags.timeout ?? 300);
   if (!Number.isFinite(timeout) || timeout <= 0) die(`--timeout 要是正數(秒):${flags.timeout}`, 2);
-  const queueTimeout = Number(flags['queue-timeout'] ?? 1800);
+  const queueTimeout = Number(flags['queue-timeout'] ?? 240);
   if (!Number.isFinite(queueTimeout) || queueTimeout <= 0) die(`--queue-timeout 要是正數(秒):${flags['queue-timeout']}`, 2);
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
@@ -260,7 +260,14 @@ async function run() {
     } catch { console.error(`警告:清理 ComfyUI 上的工作 ${id} 失敗(連線問題),history 可能殘留`); }
   };
   // 被外部中止(Ctrl-C、Bash 工具逾時送 SIGTERM)時也收尾,不在伺服器留下工作
-  const onSignal = async (sig) => { STOPPING = true; console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`); await cleanup(); process.exit(sig === 'SIGINT' ? 130 : 143); };
+  let stage = null; // 下載暫存目錄;中止時也要刪
+  const onSignal = async (sig) => {
+    STOPPING = true;
+    console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`);
+    await cleanup();
+    if (stage) rmSync(stage, { recursive: true, force: true });
+    process.exit(sig === 'SIGINT' ? 130 : 143);
+  };
   const halt = () => new Promise(() => {}); // 中止中:停在這裡,等訊號處理結束程序
   process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal); process.once('SIGHUP', onSignal);
   try {
@@ -273,10 +280,13 @@ async function run() {
       if (h && h[id]) { hist = h[id]; if (hist.status?.completed || hist.status?.status_str === 'error') break; }
       if (startedAt === null) {
         const q = await json('/queue', { timeoutMs: 10000 });
-        if (!(q.queue_pending ?? []).some(x => x[1] === id)) startedAt = Date.now();
+        if (STOPPING) await halt();
+        // /queue 回錯誤時不判斷,下一輪再查(不能當成已開始執行)
+        if (!q.__status && Array.isArray(q.queue_pending) && !q.queue_pending.some(x => x[1] === id)) startedAt = Date.now();
       }
       const waited = startedAt === null ? (Date.now() - t0) / 1000 : 0;
       const ran = startedAt === null ? 0 : (Date.now() - startedAt) / 1000;
+      if (STOPPING) await halt();
       if (ran > timeout || waited > queueTimeout) {
         await cleanup();
         console.log(JSON.stringify({ name, status: 'timeout', reason: ran > timeout ? 'run' : 'queue', seconds: ran > timeout ? timeout : queueTimeout, prompt_id: id }));
@@ -297,10 +307,11 @@ async function run() {
     for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
     if (!imgs.length) die('workflow 沒有輸出圖片(要有 PreviewImage)', 3);
     // 先全部下載到暫存,都成功才搬進 --out(避免留下半套檔案)
-    const stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
+    stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
     const files = [];
     try {
       for (let i = 0; i < imgs.length; i++) {
+        if (STOPPING) await halt();
         const im = imgs[i];
         const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
         const r = await api(`/view?${q}`, { timeoutMs: 120000 });
@@ -312,9 +323,10 @@ async function run() {
         files.push({ fname, ...pngSize(join(stage, fname)) });
       }
       mkdirSync(join(out, 'workflows'), { recursive: true });
+      if (STOPPING) await halt();
       for (const f of files) { renameOrCopy(join(stage, f.fname), join(out, f.fname)); f.file = join(out, f.fname); delete f.fname; }
     } finally {
-      rmSync(stage, { recursive: true, force: true });
+      if (!STOPPING) { rmSync(stage, { recursive: true, force: true }); stage = null; }
     }
     // 成功才存實際送出的 workflow(不含位址),避免留下沒有對應圖片的檔案
     writeFileSync(join(out, 'workflows', `${name}.json`), JSON.stringify({ _meta: { ...meta, skeleton: basename(skelPath), params: vals }, ...graph }, null, 1));

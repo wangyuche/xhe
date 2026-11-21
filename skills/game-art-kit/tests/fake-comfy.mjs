@@ -53,7 +53,7 @@ createServer(async (req, res) => {
     const id = `fake-${++n}`;
     const lat = Object.values(g).find(v => v.class_type === 'EmptySD3LatentImage')?.inputs ?? {};
     const text = JSON.stringify(g);
-    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text) };
+    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEERR/.test(text) ? 3 : 0 };
     jobs.set(id, job);
     // QUEUED:先排隊 2.5 秒(queue_pending),再執行 0.3 秒
     if (job.pending) setTimeout(() => { job.pending = false; setTimeout(() => { job.done = true; }, 300); }, 2500);
@@ -73,6 +73,7 @@ createServer(async (req, res) => {
     if (j.dropview) return req.socket.destroy();
     return send(res, 200, png(j.w, j.h), 'image/png');
   }
+  if (p === '/queue' && req.method === 'GET' && [...jobs.values()].some(j => j.queueErr > 0)) { for (const j of jobs.values()) if (j.queueErr > 0) j.queueErr--; return send(res, 500, { error: 'busy' }); }
   if (p === '/queue' && req.method === 'GET') return send(res, 200, { queue_running: [...jobs].filter(([, j]) => j.slow).map(([id]) => [0, id]), queue_pending: [...jobs].filter(([, j]) => j.pending).map(([id]) => [0, id]) });
   if (p === '/interrupt') { const j = jobs.get(entry.body?.prompt_id); if (j) { j.slow = false; j.done = true; j.error = true; } return send(res, 200, {}); }
   if (p === '/queue') return send(res, 200, {});
