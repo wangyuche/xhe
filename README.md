@@ -13,6 +13,7 @@
 | `stack-go` | Go 後端規則與骨架(路由表、OpenAPI 3.0.3 契約測試、goose migration) |
 | `github-bot` | 以機器人身分(GitHub App 或機器人帳號)commit、push 功能分支、開 PR,自己 code review 沒問題就以 review 過的 SHA 合併(只限沒有 CI 的 repo;不直接推 main) |
 | `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成、規格驗證(short-video-maker 使用) |
+| `game-art-kit` | 區網 ComfyUI 出圖腳本:check、上傳參考圖、送 workflow 輪詢下載(不在伺服器留檔)、workflow 骨架、拼分鏡表(game-concept-artist 使用);位址放 `~/.config/game-art-kit/config` |
 
 ## Agents
 
@@ -27,6 +28,7 @@
 | `backend-owner` | 網站後端(Go):實作、維護 OpenAPI 契約、httptest 與 curl 驗證;有「僅契約」模式 |
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
 | `short-video-maker` | 短影音:GitHub repo 或影片 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓),旁白與字幕,實際驗證規格與響度 |
+| `game-concept-artist` | 遊戲示意圖與分鏡:ComfyUI 出圖,照各遊戲 `art/STYLE.md`,角色多張一致(參考圖編輯模型),逐張看圖;風格試作 / 定稿 / 角色定裝 / 一般 |
 
 安裝(全域連結,在倉庫根目錄執行):
 
@@ -65,6 +67,16 @@ brew install yt-dlp                       # 選用:影片網址輸入
 ```
 
 成品預設寫到 `~/Movies/Shorts/<日期>-<名稱>/`(倉庫外),需要在 host 核准寫入。自我測試:`bash skills/short-video-kit/tests/run.sh`(SKIP 不算通過)。
+
+遊戲美術(game-concept-artist + game-art-kit,另需 web-dev-kit 截參考網址):
+
+```bash
+ln -s "$(pwd)/agents/game-concept-artist.md" ~/.claude/agents/game-concept-artist.md
+ln -s "$(pwd)/skills/game-art-kit" ~/.claude/skills/game-art-kit
+mkdir -p ~/.config/game-art-kit && echo 'COMFYUI_URL=http://<ComfyUI 主機>:8188' > ~/.config/game-art-kit/config   # 本機設定,不進 git
+```
+
+ComfyUI 要用 `--listen` 啟動;macOS 要允許終端機 app 的「本機網路」權限。自我測試:`bash skills/game-art-kit/tests/run.sh`(離線)、`bash skills/game-art-kit/tests/run.sh --live`(實機 1 張小圖)。
 
 ## 安裝 skill(全域連結)
 
