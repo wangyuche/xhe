@@ -81,6 +81,17 @@ css="$(curl -s "$PURL/" | grep -o '/_next/static/[^"]*\.css' | head -1)"
 [ -n "$css" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' "$PURL$css")" = 200 ] && ok "standalone:/_next/static 可取得" || bad "standalone static" "css=$css"
 ! grep -qi "standalone" "$PLOG" && ok "standalone:沒有 next start 的 standalone 警告" || bad "standalone 警告" "$(cat "$PLOG")"
 bash "$KIT/scripts/stop.sh" t-prod >/dev/null
+# 大於 Next 預設 10MB 的請求內容要完整轉發(proxyClientMaxBodySize)
+cat > "$WORK/echo.mjs" <<'EOF'
+import { createServer } from 'node:http';
+createServer((req, res) => { let n = 0; req.on('data', c => { n += c.length; }); req.on('end', () => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ bytes: n })); }); }).listen(Number(process.env.PORT), '127.0.0.1');
+EOF
+E="$(bash "$KIT/scripts/serve.sh" t-echo "$WORK" 4300 -- node "$WORK/echo.mjs" 2>&1)"; EURL="$(echo "$E" | sed -n 's/^url=\([^ ]*\).*/\1/p')"
+D="$(bash "$KIT/scripts/serve.sh" t-prod-big "$P/frontend" 3100 --timeout 60 --env BACKEND_URL="$EURL" -- npm run -s start 2>&1)"; BURL="$(echo "$D" | sed -n 's/^url=\([^ ]*\).*/\1/p')"
+head -c 12582912 /dev/zero > "$WORK/big.bin"
+out="$(curl -s -X POST --data-binary @"$WORK/big.bin" -H 'content-type: application/octet-stream' "$BURL/api/upload")"
+echo "$out" | grep -q '"bytes":12582912' && ok "proxy.ts:12MB 請求內容完整轉發(超過 Next 預設 10MB)" || bad "proxy 大檔轉發" "$out"
+bash "$KIT/scripts/stop.sh" t-prod-big >/dev/null; bash "$KIT/scripts/stop.sh" t-echo >/dev/null
 D="$(env -u BACKEND_URL -u API_PROXY_TARGET bash "$KIT/scripts/serve.sh" t-prod-none "$P/frontend" 3100 --timeout 60 -- npm run -s start 2>&1)" || bad "npm start(無後端)" "$D"
 NURL="$(echo "$D" | sed -n 's/^url=\([^ ]*\).*/\1/p')"
 out="$(curl -s -w ' %{http_code}' "$NURL/api/items")"

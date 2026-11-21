@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: root,
   turbopack: { root },
+  // proxy.ts 轉發時,Next 16 會把請求內容緩衝到 proxyClientMaxBodySize(預設 10MB),超過只轉發前 10MB(上傳被截斷)。
+  // 調到 50MB;專案要接更大的上傳時改這裡(build 時生效),後端也要有對應上限。
+  experimental: { proxyClientMaxBodySize: "50mb" },
 };
 
 export default nextConfig;

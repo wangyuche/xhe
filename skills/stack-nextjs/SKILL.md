@@ -32,7 +32,7 @@ bash <skill>/scripts/new-frontend.sh <專案根目錄> [--frontend frontend] [--
 5. **E2E**(`e2e/*.spec.ts`):每個測試自己建資料(UI 或 `/api`),用唯一值(`Date.now()`)避免互撞;驗收情境測試名稱以「編號 + 冒號」開頭。`playwright.config.ts` 沒設 `E2E_BASE_URL` / `E2E_OUTPUT_DIR` 會直接報錯(`--list` 除外)。
 6. **登入**:後端發 HttpOnly session cookie,前端不在 JS 存 token。截圖要登入的頁面用 `shot.mjs --cookie session=test-…` 或 `--cookie-jar`。
 
-7. **正式建置**:`output: "standalone"`。`<pm> run build` 後由 `postbuild` 把 `.next/static`、`public` 複製進 `.next/standalone`;`<pm> start` = `node .next/standalone/server.js`(讀 `PORT`、`HOSTNAME`)。不要用 `next start`(standalone 下會警告且不保證可用)。`postbuild` 是 npm 的 post-hook;用 pnpm 時要開 `enable-pre-post-scripts` 或 build 後自己跑一次。
+7. **正式建置**:`output: "standalone"`。`<pm> run build` 後由 `postbuild` 把 `.next/static`、`public` 複製進 `.next/standalone`;`<pm> start` = `node .next/standalone/server.js`(讀 `PORT`、`HOSTNAME`)。經 `src/proxy.ts` 轉發的請求內容上限是 `next.config.ts` 的 `experimental.proxyClientMaxBodySize`(骨架設 50MB;Next 預設 10MB,超過會被截斷而不是拒絕),要接更大的上傳時調高。不要用 `next start`(standalone 下會警告且不保證可用)。`postbuild` 是 npm 的 post-hook;用 pnpm 時要開 `enable-pre-post-scripts` 或 build 後自己跑一次。
 
 ## Docker(本機開發一律用 Docker 跑整個網站時)
 - `Dockerfile`:`node:24-alpine` 三階段(`npm ci` → `npm run build` → 只複製 `.next/standalone`),以 `node` 使用者執行,`PORT=3000`、`HOSTNAME=0.0.0.0`,`HEALTHCHECK` 用 `node -e fetch(...)` 打 `/`(狀態 < 500 算健康)。

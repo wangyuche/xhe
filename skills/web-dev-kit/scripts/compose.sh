@@ -119,8 +119,8 @@ case "$CMD" in
     busy=0
     while read -r svc target pub hip; do
       [ -n "$svc" ] || continue
+      [ "$pub" != "-" ] || { echo "警告:$svc 的容器埠 $target 沒指定主機埠(會隨機分配、綁所有介面),建議寫成 \"127.0.0.1:\${$(printf '%s' "$svc" | tr 'a-z-' 'A-Z_')_PORT:-$target}:$target\"" >&2; continue; }
       case "$hip" in -|0.0.0.0|::) echo "警告:$svc 的埠 $pub 綁在所有網路介面(區網可連),建議寫成 \"127.0.0.1:$pub:$target\"" >&2 ;; esac
-      [ "$pub" != "-" ] || continue
       case "$pub" in *[!0-9]*) continue ;; esac            # 範圍埠不檢查
       [ "$(own_port "$svc" "$target")" = "$pub" ] && continue
       if port_busy "$pub"; then

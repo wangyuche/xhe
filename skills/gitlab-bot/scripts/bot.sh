@@ -34,7 +34,7 @@ elif [[ $ORIGIN =~ ^ssh://git@([A-Za-z0-9.-]+)(:[0-9]+)?/(.+)$ ]]; then
 elif [[ $ORIGIN =~ ^git@([A-Za-z0-9.-]+):(.+)$ ]]; then   # scp 格式沒有埠號,冒號後面就是路徑(群組可以是數字)
   HOST=${BASH_REMATCH[1]}; PORT=""; PPATH=${BASH_REMATCH[2]}
 else
-  die "看不懂 origin 網址:$ORIGIN"
+  die "看不懂 origin 網址:$(sed -E 's#//[^/@]*@#//***@#' <<<"$ORIGIN")"
 fi
 [[ $ORIGIN != https://*@* ]] || die "origin 網址內含帳號或憑證,請改成 https://$HOST/$PPATH"
 PPATH=${PPATH%.git}; PPATH=${PPATH%/}
@@ -132,7 +132,7 @@ $bad"
   mkdir -p "$SCRATCH/home"
   (umask 077; printf '%s' "$TOKEN" > "$SCRATCH/t")
   local helper="!f(){ test \"\$1\" = get && printf 'username=oauth2\\npassword=%s\\n' \"\$(cat $SCRATCH/t)\"; }; f"
-  env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u SSL_CERT_FILE -u CURL_CA_BUNDLE \
+  env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u SSL_CERT_FILE -u SSL_CERT_DIR -u CURL_CA_BUNDLE -u GIT_EXEC_PATH -u NO_PROXY -u no_proxy \
       -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u GIT_TRACE -u GIT_CURL_VERBOSE \
       HOME="$SCRATCH/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     git -c credential.helper= -c credential.helper="$helper" -c core.hooksPath=/dev/null \
