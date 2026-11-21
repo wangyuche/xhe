@@ -19,8 +19,10 @@ let spec;
 try { spec = JSON.parse(readFileSync(specPath, 'utf8')); } catch (e) { die(`讀不到 spec:${e.message}`, 2); }
 const items = spec.items ?? [];
 if (!items.length) die('spec.items 不能是空的', 2);
-const cols = Math.max(1, Math.min(Number(spec.cols ?? 3), items.length));
-const cellW = Number(spec.cellWidth ?? 480);
+const colsIn = Number(spec.cols ?? 3), cellW = Number(spec.cellWidth ?? 480);
+if (!Number.isInteger(colsIn) || colsIn < 1) die(`cols 要是正整數:${spec.cols}`, 2);
+if (!Number.isInteger(cellW) || cellW < 50 || cellW > 2000) die(`cellWidth 要是 50–2000 的整數:${spec.cellWidth}`, 2);
+const cols = Math.min(colsIn, items.length);
 const base = dirname(resolve(specPath));
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 

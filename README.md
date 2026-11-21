@@ -68,6 +68,16 @@ brew install yt-dlp                       # 選用:影片網址輸入
 
 成品預設寫到 `~/Movies/Shorts/<日期>-<名稱>/`(倉庫外),需要在 host 核准寫入。自我測試:`bash skills/short-video-kit/tests/run.sh`(SKIP 不算通過)。
 
+遊戲美術(game-concept-artist + game-art-kit,另需 web-dev-kit 截參考網址):
+
+```bash
+ln -s "$(pwd)/agents/game-concept-artist.md" ~/.claude/agents/game-concept-artist.md
+ln -s "$(pwd)/skills/game-art-kit" ~/.claude/skills/game-art-kit
+mkdir -p ~/.config/game-art-kit && echo 'COMFYUI_URL=http://<ComfyUI 主機>:8188' > ~/.config/game-art-kit/config   # 本機設定,不進 git
+```
+
+ComfyUI 要用 `--listen` 啟動;macOS 要允許終端機 app 的「本機網路」權限。自我測試:`bash skills/game-art-kit/tests/run.sh`(離線)、`bash skills/game-art-kit/tests/run.sh --live`(實機 1 張小圖)。
+
 ## 安裝 skill(全域連結)
 
 把 skill 連到全域的 `~/.claude/skills`,所有專案都能用。連結要用絕對路徑:

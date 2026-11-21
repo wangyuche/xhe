@@ -36,11 +36,15 @@ o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)"; [ $? -eq 2 ] &
 mkdir -p "$HOME/.config/game-art-kit"; echo "COMFYUI_URL=http://127.0.0.1:$PORT" > "$HOME/.config/game-art-kit/config"
 o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)" && ok "從 ~/.config/game-art-kit/config 讀位址" || bad "讀設定檔" "$o"
 o="$(C check --url http://127.0.0.1:1 2>&1)"; [ $? -eq 5 ] && ok "--url 覆寫優先、連不上 → 結束碼 5" || bad "--url 覆寫" "$o"
+for bu in 192.168.1.20:8188 comfy:8188 ftp://x:1; do
+  o="$(C check --url "$bu" 2>&1)"; rc=$?; [ $rc -eq 2 ] && echo "$o" | grep -q '格式錯誤' && ok "位址 $bu 格式錯誤 → 結束碼 2" || bad "位址格式 $bu" "rc=$rc $o"
+  o="$(C scrub-check "$K" --url "$bu" 2>&1)"; [ $? -eq 2 ] || bad "scrub-check 位址格式 $bu" "$o"
+done
 
 # 2. check
 c="$(C check)"
-echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const m=d.consistency_methods.map(x=>x.method);process.exit(m.includes("qwen-image-edit")&&!m.includes("flux-kontext")&&d.workflows_available["qwen-t2i"]&&!d.workflows_available["flux-t2i"]===false?0:1)' \
-  && ok "check:依節點與模型判斷一致性方法(有 Qwen-Edit、沒有 Kontext)" || bad "check 方法判斷" "$c"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const m=d.consistency_methods.map(x=>x.method);process.exit(m.includes("qwen-image-edit")&&!m.includes("flux-kontext")&&d.workflows_available["qwen-t2i"]&&d.workflows_available["qwen-edit-3ref"]===true&&d.workflows_available["flux-t2i"]===true?0:1)' \
+  && ok "check:依節點與模型判斷一致性方法(有 Qwen-Edit 1–3 參考、沒有 Kontext;flux-t2i 可用)" || bad "check 方法判斷" "$c"
 echo "$c" | grep -q '"family": "qwen-image-edit"' && ! echo "$c" | grep -q '"family": "sdxl"' && echo "$c" | grep -q '"name": "t5xxl_fp8_e4m3fn.safetensors",' && ok "check:依檔名推斷模型家族(t5xxl 不誤判成 SDXL)" || bad "check 家族" "$c"
 
 # 3. 骨架:每個都能填、送出、拿回正確尺寸
@@ -62,7 +66,7 @@ grep -q '"path":"/history","query":{},"body":{"delete"' "$W/req.log" && ok "每�
 # 4. 參數檢查與錯誤
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'width' && ok "缺參數 → 結束碼 2 並列出" || bad "缺參數" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set typo=1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'typo' && ok "多餘參數 → 結束碼 2" || bad "多餘參數" "$o"
-o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=FAIL 2>&1)"; [ $? -eq 3 ] && ok "執行錯誤 → 結束碼 3" || bad "執行錯誤" "$o"
+o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name failx "${QS[@]}" --set width=64 --set height=64 --set prompt=FAIL 2>&1)"; [ $? -eq 3 ] && [ ! -e "$W/o/workflows/failx.json" ] && ok "執行錯誤 → 結束碼 3,不留 workflow 檔" || bad "執行錯誤" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --set prompt=SLOW --timeout 2 2>&1)"; [ $? -eq 4 ] && grep -q '"path":"/interrupt","query":{},"body":{"prompt_id":"fake-' "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作、結束碼 4" || bad "逾時" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set width=64 --set height=64 --timeout 5m 2>&1)"; [ $? -eq 2 ] && ok "--timeout 不是數字 → 結束碼 2" || bad "--timeout 檢查" "$o"
 o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]/seed=1/seed=18446744073709551615}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "seed 超過安全整數 → 結束碼 2" || bad "大 seed" "$o"
@@ -106,6 +110,7 @@ if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Ch
   [ "$h" = "$((48 + 150 + 64))" ] && ok "sheet.mjs:WebP 依實際比例(1024×512 → 高 150)" || bad "sheet WebP 比例" "$o h=$h"
   echo '{"items":[{"image":"q1.png"},{"image":"nope.jpg"}]}' > "$W/o/j.json"; cp "$W/o/q1.png" "$W/o/nope.jpg"
   o="$(node "$K/scripts/sheet.mjs" "$W/o/j.json" "$W/o/j.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '讀不出' && ok "sheet.mjs:讀不出尺寸 → 結束碼 2(不猜比例)" || bad "sheet 尺寸讀不出" "$o"
+  echo '{"cols":2.5,"items":[{"image":"a.png"}]}' > "$W/o/c.json"; o="$(node "$K/scripts/sheet.mjs" "$W/o/c.json" "$W/o/c.png" 2>&1)"; [ $? -eq 2 ] && ok "sheet.mjs:cols 不是正整數 → 結束碼 2" || bad "sheet cols" "$o"
   o="$(node "$K/scripts/sheet.mjs" "$W/o/nope.json" "$W/o/x.png" 2>&1)"; [ $? -eq 2 ] && ok "sheet.mjs:spec 不存在 → 結束碼 2" || bad "sheet.mjs 錯誤處理" "$o"
 else skip "sheet.mjs(沒有 Google Chrome)"; fi
 

@@ -44,6 +44,10 @@ function resolveUrl(required = true) {
   }
   if (!u && !required) return null;
   if (!u) die('找不到 ComfyUI 位址。設定方式:mkdir -p ~/.config/game-art-kit && echo \'COMFYUI_URL=http://<主機>:8188\' > ~/.config/game-art-kit/config(或設環境變數 COMFYUI_URL)', 2);
+  // 必須是 http(s)://主機[:埠];少了 scheme 時,fetch 會連不上、scrub-check 的位址比對會失效
+  let parsed;
+  try { parsed = new URL(u); } catch { parsed = null; }
+  if (!parsed || !/^https?:$/.test(parsed.protocol) || !parsed.hostname) die(`ComfyUI 位址格式錯誤:要寫成 http://<主機>:<埠>(例如 http://comfy.local:8188),目前是「${u}」`, 2);
   return u.replace(/\/+$/, '');
 }
 
@@ -121,12 +125,14 @@ async function check() {
     methods.push({ method: 'ipadapter', maxRefs: 1, workflows: [], note: '本 kit 沒有 IP-Adapter 骨架,需自行組 workflow' });
   const workflows = {
     'qwen-t2i': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae),
-    'qwen-edit-1ref': !!methods.find(m => m.method === 'qwen-image-edit'),
+    'qwen-edit-1ref': !!methods.find(m => m.method === 'qwen-image-edit') && has('CFGNorm') && has('ImageScaleToTotalPixels') && has('EmptySD3LatentImage'),
+    'qwen-edit-2ref': null, 'qwen-edit-3ref': null, // 同 qwen-edit-1ref,下面補
     'flux-t2i': !!(d.flux_unet && d.clip_l && d.t5 && d.flux_vae),
     'flux-kontext': !!methods.find(m => m.method === 'flux-kontext'),
     'zimage-t2i': !!(d.zimage_unet && d.zimage_clip && d.flux_vae && has('ModelSamplingAuraFlow')),
     'qwen-t2i-canny': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae && d.qwen_controlnet_union && has('Canny') && has('SetUnionControlNetType')),
   };
+  workflows['qwen-edit-2ref'] = workflows['qwen-edit-3ref'] = workflows['qwen-edit-1ref'];
   const out = {
     ok: true,
     comfyui_version: stats.system?.comfyui_version ?? null,
@@ -218,9 +224,6 @@ async function run() {
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);
   if (Object.values(graph).some(n => n?.class_type === 'SaveImage')) die('workflow 不可用 SaveImage(會寫進伺服器 output/);用 PreviewImage', 2);
-  mkdirSync(join(out, 'workflows'), { recursive: true });
-  // 存實際送出的 workflow(不含位址)
-  writeFileSync(join(out, 'workflows', `${name}.json`), JSON.stringify({ _meta: { ...meta, skeleton: basename(skelPath), params: vals }, ...graph }, null, 1));
 
   const t0 = Date.now();
   const client_id = randomUUID();
@@ -268,6 +271,7 @@ async function run() {
     const imgs = [];
     for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
     if (!imgs.length) die('workflow 沒有輸出圖片(要有 PreviewImage)', 3);
+    mkdirSync(out, { recursive: true });
     const files = [];
     for (let i = 0; i < imgs.length; i++) {
       const im = imgs[i];
@@ -278,6 +282,9 @@ async function run() {
       writeFileSync(f, Buffer.from(await r.arrayBuffer()));
       files.push({ file: f, ...pngSize(f) });
     }
+    // 成功才存實際送出的 workflow(不含位址),避免留下沒有對應圖片的檔案
+    mkdirSync(join(out, 'workflows'), { recursive: true });
+    writeFileSync(join(out, 'workflows', `${name}.json`), JSON.stringify({ _meta: { ...meta, skeleton: basename(skelPath), params: vals }, ...graph }, null, 1));
     console.log(JSON.stringify({ name, status: 'ok', seconds: Math.round((Date.now() - t0) / 100) / 10, files, params: vals }));
   } finally {
     await cleanup();

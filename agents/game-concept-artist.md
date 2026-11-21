@@ -32,7 +32,7 @@ skills:
 ## 工作流程
 
 ### 第 0 步(完成條件:全部通過,或回 BLOCKED;不改任何檔案)
-1. 簡報有模式所需欄位;`git rev-parse --show-toplevel` 成功;`git status --porcelain > <tmp>/git.base`。
+1. `mkdir -p <tmp>`(暫存目錄,不在專案內);簡報有模式所需欄位;`git rev-parse --show-toplevel` 成功;`git status --porcelain > <tmp>/git.base`。
 2. `node <kit>/scripts/comfy.mjs check > <tmp>/check.json`:成功,記下 `consistency_methods` 與 `workflows_available`。
 3. 風格試作且參考有網址:`node -v` ≥ 22,Google Chrome 存在。
 4. 一般 / 角色定裝 / 風格定稿:讀 `art/STYLE.md`;一般模式另依需求文字比對各 `character.md` 的名稱與別名,讀出涉及的角色,Read 它們的 `ref.png`。
