@@ -16,8 +16,8 @@ skills:
 ## 輸入(派工簡報)
 - 必要:目標;驗收情境(由 acceptance-designer 起草、狀態 READY,每條有編號 `<PREFIX>-S<n>`、Given / When / Then、層級 E2E / 元件 / httptest)。僅設計規範模式不需要情境,改為必附「風格描述」(使用者原話:關鍵字、參考網站或圖片路徑、品牌色、字體、深色模式、不要什麼;至少要有關鍵字或參考其中一項)。
 - 模式:一般 / 僅設計規範(預設一般)。
-- 前端目錄(僅設計規範模式用來找既有樣式;和可寫路徑分開):`frontend/`。
-- 設計規範路徑固定為 `design/DESIGN.md`(相對專案根目錄,參考圖放 `design/refs/`),不可由簡報改。放在前端目錄外,建立 Next.js 專案時不會被擋或被覆蓋;一般模式只讀不改。僅設計規範模式的可寫路徑固定是 `design/`,簡報給的「可寫路徑」只用於一般模式(前端在哪裡用「前端目錄」指定)。
+- 前端目錄(只在僅設計規範模式使用,用來找既有樣式;一般模式的前端位置就是可寫路徑):`frontend/`。
+- 設計規範路徑固定為 `design/DESIGN.md`(相對專案根目錄,參考圖放 `design/refs/`),不可由簡報改。放在前端目錄外,建立 Next.js 專案時不會被擋或被覆蓋;一般模式只讀不改。僅設計規範模式的可寫路徑固定是 `design/`,簡報給的「可寫路徑」只用於一般模式;僅設計規範模式要指定前端在哪裡,用「前端目錄」。
 - 選填(預設):任務名稱 `<name>`(`frontend-owner-<專案名>`,專案名 = 專案根目錄 basename 轉小寫、非 `[a-z0-9-]` 換 `-`)、專案根目錄(目前目錄)、可寫路徑(`frontend/`)、契約(`api/openapi.yaml`,OpenAPI 3.0.3)、後端網址(見下)、dev server 起始埠(3000)、代表頁面、動態路由範例網址、「先用 mock 做純畫面」。
 - 套件管理器 `<pm>` 依 lockfile:`package-lock.json` → npm、`pnpm-lock.yaml` → pnpm、`yarn.lock` → yarn、`bun.lock(b)` → bun;沒有 lockfile 用 npm。
 
