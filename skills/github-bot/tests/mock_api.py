@@ -27,9 +27,11 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path
         # GitHub Actions workflow runs(依 head SHA)
-        def wr(wid, name, status, concl, csid, created):
-            return {"workflow_id": wid, "name": name, "status": status, "conclusion": concl,
+        def wr(wid, name, status, concl, csid, created, event="pull_request"):
+            return {"workflow_id": wid, "name": name, "status": status, "conclusion": concl, "event": event,
                     "check_suite_id": csid, "created_at": created, "run_attempt": 1}
+        def cr(name, status, concl, csid, app="github-actions"):
+            return {"name": name, "status": status, "conclusion": concl, "app": {"slug": app}, "check_suite": {"id": csid}}
         WRUNS = {
             "4" * 40: [wr(1, "lint", "completed", "skipped", 171, "2026-01-01T00:00:00Z"),
                        wr(2, "test", "queued", None, 172, "2026-01-01T00:00:01Z")],
@@ -39,7 +41,34 @@ class H(BaseHTTPRequestHandler):
                        wr(1, "ci", "completed", "success", 222, "2026-01-01T00:00:05Z")],
             "0" * 40: [wr(1, "lint", "completed", "success", 231, "2026-01-01T00:00:00Z"),
                        wr(2, "test", "completed", "cancelled", 232, "2026-01-01T00:00:01Z")],
+            "a1" * 20: [wr(1, "ci", "completed", "failure", 241, "2026-01-01T00:00:00Z", "pull_request"),
+                        wr(1, "ci", "completed", "success", 242, "2026-01-01T00:00:05Z", "push")],
+            "a2" * 20: [wr(1, "ci", "completed", "success", 251, "2026-01-01T00:00:00Z")],
         }
+        CRUNS = {
+            "4" * 40: [cr("lint", "completed", "skipped", 171)],
+            "5" * 40: [cr("ci", "completed", "success", 181)],
+            "9" * 40: [cr("ci", "completed", "cancelled", 221), cr("ci", "completed", "success", 222)],
+            "0" * 40: [cr("lint", "completed", "success", 231)],
+            "a1" * 20: [cr("ci", "completed", "failure", 241), cr("ci", "completed", "success", 242)],
+            "a2" * 20: [cr("ci", "completed", "success", 251), cr("Test Report", "completed", "failure", 251)],
+            "a3" * 20: [cr("ci", "completed", "success", 261, "some-ci"), cr("lint", "queued", None, 555, "foo")],
+        }
+        for sha, runs in CRUNS.items():
+            if p == f"/repos/o/r/commits/{sha}/check-runs?filter=all&per_page=100":
+                return self.send(200, {"total_count": len(runs), "check_runs": runs})
+        for n, sha, st in ((24, "a1" * 20, "clean"), (25, "a2" * 20, "clean"), (26, "a3" * 20, "unstable")):
+            if p == f"/repos/o/r/pulls/{n}":
+                return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": st, "head": {"sha": sha}})
+            if p == f"/repos/o/r/commits/{sha}/status":
+                return self.send(200, {"state": "pending", "total_count": 0})
+            if p == f"/repos/o/r/contents/.github/workflows?ref={sha}" and n != 26:
+                return self.send(200, [{"name": "ci.yml"}])
+        a3 = "a3" * 20
+        if p == f"/repos/o/r/commits/{a3}/check-suites?per_page=100":
+            return self.send(200, {"total_count": 2, "check_suites": [
+                {"id": 261, "app": {"slug": "some-ci"}, "status": "completed", "conclusion": "success", "latest_check_runs_count": 1},
+                {"id": 555, "app": {"slug": "foo"}, "status": "queued", "conclusion": None, "latest_check_runs_count": 1}]})
         if p.startswith("/repos/o/r/actions/runs?head_sha=") and self.auth() in (TOKEN, PAT):
             sha = p.split("head_sha=")[1].split("&")[0]
             runs = WRUNS.get(sha, [])
@@ -49,7 +78,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s23}})
         if p == f"/repos/o/r/contents/.github/workflows?ref={s23}":
             return self.send(200, [{"name": "lint.yml"}, {"name": "test.yml"}])
-        if p == f"/repos/o/r/commits/{s23}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s23}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "lint", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}}]})
         if p == f"/repos/o/r/commits/{s23}/status":
             return self.send(200, {"state": "pending", "total_count": 0})
@@ -72,22 +101,22 @@ class H(BaseHTTPRequestHandler):
         if p == "/repos/o/r/pulls/10" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"state": "closed", "mergeable": None, "mergeable_state": "unknown", "head": {"sha": "a" * 40}})
         a40, d40, e40 = "a" * 40, "d" * 40, "e" * 40
-        if p == f"/repos/o/r/commits/{a40}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{a40}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "completed", "conclusion": "success"}]})
         if p == f"/repos/o/r/commits/{a40}/status":
             return self.send(200, {"state": "pending", "total_count": 0})
-        if p == f"/repos/o/r/commits/{d40}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{d40}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "in_progress", "conclusion": None}]})
         if p == f"/repos/o/r/commits/{d40}/status" or p == f"/repos/o/r/commits/{e40}/status":
             return self.send(200, {"state": "pending", "total_count": 0})
-        if p == f"/repos/o/r/commits/{e40}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{e40}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/contents/.github/workflows?ref={e40}":
             return self.send(200, [{"name": "ci.yml"}])
         s17 = "4" * 40
         if p == "/repos/o/r/pulls/17":
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s17}})
-        if p == f"/repos/o/r/commits/{s17}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s17}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "lint", "status": "completed", "conclusion": "skipped", "app": {"slug": "github-actions"}}]})
         if p == f"/repos/o/r/commits/{s17}/check-suites?per_page=100":
             return self.send(200, {"total_count": 2, "check_suites": [
@@ -96,12 +125,12 @@ class H(BaseHTTPRequestHandler):
         s18 = "5" * 40
         if p == "/repos/o/r/pulls/18":
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s18}})
-        if p == f"/repos/o/r/commits/{s18}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s18}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}}]})
         s19 = "6" * 40
         if p == "/repos/o/r/pulls/19":
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s19}})
-        if p == f"/repos/o/r/commits/{s19}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s19}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "lint-app", "status": "completed", "conclusion": "success", "app": {"slug": "some-linter"}}]})
         if p == f"/repos/o/r/commits/{s19}/status":
             return self.send(200, {"state": "pending", "total_count": 0})
@@ -112,7 +141,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s21}})
         if p == f"/repos/o/r/contents/.github/workflows?ref={s21}":
             return self.send(200, [{"name": "deploy.yml"}])
-        if p == f"/repos/o/r/commits/{s21}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s21}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/commits/{s21}/status":
             return self.send(200, {"state": "failure", "total_count": 1})
@@ -121,7 +150,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s22}})
         if p == f"/repos/o/r/contents/.github/workflows?ref={s22}":
             return self.send(200, [{"name": "ci.yml"}])
-        if p == f"/repos/o/r/commits/{s22}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s22}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}}]})
         if p == f"/repos/o/r/commits/{s22}/check-suites?per_page=100":
             return self.send(200, {"total_count": 2, "check_suites": [
@@ -134,7 +163,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s20}})
         if p == f"/repos/o/r/contents/.github/workflows?ref={s20}":
             return self.send(200, [{"name": "README.md"}])
-        if p == f"/repos/o/r/commits/{s20}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{s20}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/commits/{s20}/status":
             return self.send(200, {"state": "success", "total_count": 1})
@@ -152,7 +181,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"total_count": 0, "check_suites": [
                 {"id": 99, "app": {"slug": "some-app"}, "status": "queued", "conclusion": None, "latest_check_runs_count": 0}]})
         f40 = "f" * 40
-        if p == f"/repos/o/r/commits/{f40}/check-runs?per_page=100":
+        if p == f"/repos/o/r/commits/{f40}/check-runs?filter=all&per_page=100":
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/commits/{f40}/status":
             return self.send(200, {"state": "pending", "total_count": 0})
@@ -164,8 +193,8 @@ class H(BaseHTTPRequestHandler):
         for n, sh in ((14, s14), (15, s15), (16, s16)):
             if p == f"/repos/o/r/pulls/{n}":
                 return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": sh}})
-        if p in (f"/repos/o/r/commits/{s14}/check-runs?per_page=100", f"/repos/o/r/commits/{s15}/check-runs?per_page=100",
-                 f"/repos/o/r/commits/{s16}/check-runs?per_page=100"):
+        if p in (f"/repos/o/r/commits/{s14}/check-runs?filter=all&per_page=100", f"/repos/o/r/commits/{s15}/check-runs?filter=all&per_page=100",
+                 f"/repos/o/r/commits/{s16}/check-runs?filter=all&per_page=100"):
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/commits/{s14}/status":
             return self.send(200, {"state": "failure", "total_count": 1})
@@ -205,6 +234,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/repos/o/r/pulls/26/merge" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/22/merge" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/20/merge" and self.auth() in (TOKEN, PAT):

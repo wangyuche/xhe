@@ -113,16 +113,20 @@ check "外部 status 先到不算 Actions CI" bash -c "PATH='$TMP/fastbin:$PATH'
 check "token 失敗只報真正原因" bash -c "o=\$(bash '$BOT' --repo o/missing token 2>&1); grep -q 'App installation' <<<\"\$o\" && ! grep -q '缺 .token' <<<\"\$o\""
 check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
 S17=$(printf '4%.0s' $(seq 40))
-check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'workflow:test#172=queued'"
+check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'workflow:test(pull_request)#172=queued'"
 S18=$(printf '5%.0s' $(seq 40))
-check "排隊中的 Actions suite 不論新舊都擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $S18 2>&1 | grep -q 'workflow:docs#182=queued'"
+check "排隊中的 Actions suite 不論新舊都擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $S18 2>&1 | grep -q 'workflow:docs(pull_request)#182=queued'"
 check "--ignore-suite 明確略過後放行" [ "$(bash "$BOT" --repo o/r merge 18 --sha "$S18" --ignore-suite 182)" = "$C40" ]
 S21=$(printf '8%.0s' $(seq 40))
 S22=$(printf '9%.0s' $(seq 40))
 check "同一 workflow 被新 run 取代的 cancelled 不擋" [ "$(bash "$BOT" --repo o/r merge 22 --sha "$S22")" = "$C40" ]
 : > "$TMP/sleep.log"
 S23=$(printf '0%.0s' $(seq 40))
-check "沒開始就被取消的 workflow 擋 merge" bash -c "bash '$BOT' --repo o/r merge 23 --sha $S23 2>&1 | grep -q 'workflow:test#232=cancelled'"
+check "沒開始就被取消的 workflow 擋 merge" bash -c "bash '$BOT' --repo o/r merge 23 --sha $S23 2>&1 | grep -q 'workflow:test(pull_request)#232=cancelled'"
+check "同 workflow 不同事件:失敗的不被成功的蓋掉" bash -c "bash '$BOT' --repo o/r merge 24 --sha $(printf 'a1%.0s' $(seq 20)) 2>&1 | grep -q 'workflow:ci(pull_request)#241=failure'"
+check "workflow 自建的測試報告失敗擋 merge" bash -c "bash '$BOT' --repo o/r merge 25 --sha $(printf 'a2%.0s' $(seq 20)) 2>&1 | grep -q 'run:Test Report#251=failure'"
+check "其他 App 的 suite 卡住:未略過時擋" bash -c "bash '$BOT' --repo o/r merge 26 --sha $(printf 'a3%.0s' $(seq 20)) 2>&1 | grep -q 'suite:foo#555=queued'"
+check "--ignore-suite 連同 run 略過且接受 unstable" [ "$(bash "$BOT" --repo o/r merge 26 --sha "$(printf 'a3%.0s' $(seq 20))" --ignore-suite 555)" = "$C40" ]
 check "--allow-no-ci 無 workflow 仍等外部 CI 登記" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 --allow-no-ci >/dev/null 2>&1; [ \$(wc -l < '$TMP/sleep.log') -ge 3 ]"
 check "--allow-no-ci 仍檢查外部 CI 失敗" bash -c "bash '$BOT' --repo o/r merge 21 --sha $S21 --allow-no-ci 2>&1 | grep -q 'commit status 為 failure'"
 S19=$(printf '6%.0s' $(seq 40)); S20=$(printf '7%.0s' $(seq 40))
@@ -160,8 +164,9 @@ check "失敗時也刪除 token 暫存檔" [ -z "$(ls -A "$TMP/tt")" ]
 printf 'machine github.com login me password ghp_personal\n' > "$TMP/.netrc"
 check "推送時 HOME 不是使用者的(不讀 ~/.netrc)" bash -c "cd '$TMP/prepo' && h=\$(HOME='$TMP' bash '$BOT' _pushgit t u -c alias.h='!printf %s \"\$HOME\"' h) && [ \"\$h\" != '$TMP' ] && [ ! -e \"\$h/.netrc\" ]"
 mkdir -p "$TMP/sigterm"
-( bash "$BOT" _scratch hang > "$TMP/sigterm/dir" & p=$!; /bin/sleep 0.5; kill -TERM $p; wait $p 2>/dev/null ) || true
-check "中斷後不留下子程序" bash -c "! pgrep -f '^/bin/sleep 30$' >/dev/null"
+( bash "$BOT" _scratch hang > "$TMP/sigterm/out" & p=$!; /bin/sleep 0.5; kill -TERM $p; wait $p 2>/dev/null ) || true
+sed -n 1p "$TMP/sigterm/out" > "$TMP/sigterm/dir"; CHILD=$(sed -n 2p "$TMP/sigterm/out")
+check "中斷後不留下子程序" bash -c "[ -n '$CHILD' ] && ! kill -0 '$CHILD' 2>/dev/null"
 check "被 SIGTERM 中斷也刪除暫存目錄" bash -c "d=\$(cat '$TMP/sigterm/dir'); [ -n \"\$d\" ] && [ ! -e \"\$d\" ]"
 printf 'not a key\n' > "$TMP/badkey.pem"
 check "私鑰壞掉時明確報錯" bash -c "GITHUB_BOT_APP_ID=1 GITHUB_BOT_KEY_FILE='$TMP/badkey.pem' bash '$BOT' _jwt 2>&1 | grep -q '私鑰簽章失敗'"

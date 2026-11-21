@@ -142,10 +142,10 @@ api() {
 # api_try:同 api,但 HTTP 404 回傳 4(給「可能不存在」的查詢用);其他錯誤回傳 2 並印出原因。
 # 呼叫端必須明確檢查回傳碼(在 $(...) 裡 exit 只會結束子 shell)
 api_try() {
-  local out
-  out=$(api "$@" 2>&1) && { printf '%s\n' "$out"; return 0; }
-  grep -q '→ HTTP 404' <<<"$out" && return 4
-  printf '%s\n' "$out" >&2; return 2
+  local out err="$SCRATCH/api_try.err"
+  out=$(api "$@" 2>"$err") && { printf '%s\n' "$out"; return 0; }
+  grep -q '→ HTTP 404' "$err" && return 4
+  cat "$err" >&2; return 2
 }
 
 # jfield <欄位> <json>:欄位缺或為 null 就失敗(避免 "null" 字串混過檢查)
@@ -342,13 +342,13 @@ cmd_pr() {
 }
 
 # CI 檢查。剛推完時 CI 還沒登記(mergeable_state 會先顯示 clean),所以先等 CI 出現再判斷:
-#   - repo 有 .github/workflows:等到至少一個 check run(其他服務的 status 先到也不算)
+#   - repo 有 .github/workflows:等到至少一個 GitHub Actions workflow run
 #   - 沒有 workflow:等到任何 check run 或 commit status(CircleCI 等外部 CI)
 #   出現後再觀察 15 秒(3 次輪詢數量不變)才判斷,避免晚幾秒才登記的 workflow 被漏掉。
 #   最多等約 2 分鐘;沒有 CI 就拒絕,確定這個 repo / commit 沒有 CI 才加 --allow-no-ci(不等待)。
 # 有任何 check suite / check run / commit status 未完成或失敗一律拒絕(未完成就稍後再跑 merge)。
 ci_snapshot() {   # 設定 runs st suites wruns nr ns nw
-  runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
+  runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?filter=all&per_page=100" "$t") \
     || die "讀不到 check runs(若上面是 HTTP 403 / 404:App 要加 Checks: Read 權限)"
   suites=$(api GET "/repos/$REPO/commits/$sha/check-suites?per_page=100" "$t") \
     || die "讀不到 check suites(若上面是 HTTP 403 / 404:App 要加 Checks: Read 權限)"
@@ -364,11 +364,14 @@ ci_snapshot() {   # 設定 runs st suites wruns nr ns nw
 }
 
 # CI 判斷:
-#   - GitHub Actions:以 workflow runs API 為準。每個 workflow 取這個 commit 上最新的一次 run
-#     (重跑會更新同一個 run),必須 completed 且 success / neutral / skipped;排隊中、需要核准、
-#     被取消(例如 concurrency)、失敗一律拒絕。被取消就重跑那個 workflow 再合併。
-#   - 其他 App 的 check suite(有 run 的)與 check run、commit status:必須完成且成功。
-#   - 確定永遠不會跑的項目,用 --ignore-suite <check suite id> 明確略過(錯誤訊息會列出 id)。
+#   - GitHub Actions workflow:以 workflow runs API 為準。每個 (workflow, 觸發事件) 取這個 commit 上
+#     最新一次 run(重跑會更新同一個 run),必須 completed 且 success / neutral / skipped;排隊中、
+#     需要核准、被取消(例如 concurrency)、失敗一律拒絕。被取消就重跑那個 workflow 再合併。
+#   - check run:抓這個 commit 的全部 run(filter=all),排除「被同 workflow + 同事件的新 run 取代」的
+#     舊 suite 與 --ignore-suite 指定的 suite,其餘(含 workflow 自己建立的測試報告等)都必須成功。
+#   - 其他 App 的 check suite(有 run 的)、commit status:必須完成且成功。
+#   - 確定永遠不會跑的項目,用 --ignore-suite <check suite id> 明確略過(錯誤訊息會列出 id);
+#     有略過時 GitHub 的 mergeable_state 會是 unstable,merge 會接受(仍尊重分支規則 blocked)。
 # 等待:先等 CI 登記(有 workflow 的 repo 要等到 Actions 的 workflow run;沒有就等任何 CI),
 # 登記後觀察 15 秒數量不變才判斷;60 秒都沒有就拒絕,除非 --allow-no-ci。不會等 CI 跑完。
 check_ci() {
@@ -400,20 +403,24 @@ check_ci() {
   fi
   [[ $ready -eq 0 || $stable -ge 3 ]] || die "CI 數量一直在變動(還在陸續登記),稍後再合併"
   # 以下對「目前已有的」CI 一律檢查(--allow-no-ci 也一樣)
-  local ok='IN("success","neutral","skipped")'
+  local ok='IN("success","neutral","skipped")' skip
+  # 被取代的 workflow run(同 workflow + 同事件的較舊 run)所屬 suite id,加上使用者指定略過的
+  skip=" $ignore_suites $(jq -r '.workflow_runs | group_by([.workflow_id, .event])
+          | map(sort_by(.created_at, (.run_attempt // 1)) | .[:-1][] | .check_suite_id) | map(tostring) | join(" ")' <<<"$wruns") "
   bad=$(jq -r --arg ign " $ignore_suites " ".workflow_runs
-          | group_by(.workflow_id) | map(sort_by(.created_at, (.run_attempt // 1)) | last) | .[]
+          | group_by([.workflow_id, .event]) | map(sort_by(.created_at, (.run_attempt // 1)) | last) | .[]
           | . as \$w | select((\$ign | contains(\" \(\$w.check_suite_id) \")) | not)
           | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"workflow:\(.name)#\(.check_suite_id)=\(.conclusion // .status)\"" <<<"$wruns")
+          | \"workflow:\(.name)(\(.event))#\(.check_suite_id)=\(.conclusion // .status)\"" <<<"$wruns")
   bad+=$'\n'$(jq -r --arg ign " $ignore_suites " ".check_suites[]
           | select(.app.slug != \"github-actions\" and (.latest_check_runs_count // 0) > 0)
           | . as \$su | select((\$ign | contains(\" \(\$su.id) \")) | not)
           | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
           | \"suite:\(.app.slug)#\(.id)=\(.conclusion // .status)\"" <<<"$suites")
-  bad+=$'\n'$(jq -r ".check_runs[] | select((.app.slug // \"\") != \"github-actions\")
+  bad+=$'\n'$(jq -r --arg skip "$skip" ".check_runs[]
+          | . as \$r | select((\$skip | contains(\" \((\$r.check_suite.id // 0)) \")) | not)
           | select(.status != \"completed\" or ((.conclusion // \"\") | $ok | not))
-          | \"run:\(.name)=\(.conclusion // .status)\"" <<<"$runs")
+          | \"run:\(.name)#\(.check_suite.id // 0)=\(.conclusion // .status)\"" <<<"$runs")
   bad=$(grep -v '^[[:space:]]*$' <<<"$bad" || true)
   [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")(被取消就重跑;確定某項永遠不會跑才用 --ignore-suite <id> 略過)"
   [[ $ns -eq 0 || $(jq -r '.state' <<<"$st") == success ]] \
@@ -454,7 +461,8 @@ cmd_merge() {
   case $st in
     clean|has_hooks) ;;
     dirty)    die "PR #$num 有衝突,無法合併" ;;
-    unstable) die "PR #$num 有失敗或未完成的檢查,不合併" ;;
+    unstable) [[ -n $ignore_suites ]] \
+                || die "PR #$num 有失敗或未完成的檢查,不合併" ;;   # --ignore-suite 略過的項目會讓 GitHub 顯示 unstable;CI 已由 check_ci 判斷
     blocked)  die "PR #$num 被分支規則擋住(需要 approval 或必要檢查),不合併" ;;
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
@@ -483,6 +491,6 @@ case ${1:-} in
   _parse)   parse_repo "$2" ;;                         # 測試用
   _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
             token_file "$2"; u=$3; shift 3; push_git "$TOKEN_TMP" "$u" "$@" ;;
-  _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & CHILD_PID=$!; wait $CHILD_PID; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
+  _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & CHILD_PID=$!; echo "$CHILD_PID"; wait $CHILD_PID; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
