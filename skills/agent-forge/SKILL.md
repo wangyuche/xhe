@@ -30,7 +30,7 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
   ```bash
   (cd <skill 目錄> && [ "$(find -L . -type f -name '*.md' | wc -l)" -gt 0 ] && find -L . -type f -name '*.md' -print0 | LC_ALL=C sort -z | xargs -0 shasum | shasum | cut -c1-8)
   ```
-  回報時附前 8 碼,並附 `git -C <skill 目錄> branch --show-current`;不是 `main` 時註明「規則來自未合併的分支」。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。
+  回報時附前 8 碼,並附來源狀態:`git -C <skill 目錄> rev-parse --short HEAD`、與 `origin/main` 是否相同(`git -C <skill 目錄> rev-parse HEAD origin/main`)、`git -C <skill 目錄> status --porcelain -- .` 是否為空。HEAD 不等於 `origin/main` 或有未 commit 的修改時,註明「規則含未審查的修改」。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。
 
 ## 派出審查角色
 
@@ -46,12 +46,12 @@ skill 目錄是 xhe 本機工作目錄的連結(使用者 2026-11-21 決定不�
 
 1. 在其他專案裡,只**提出**改動清單,不要直接修改 skill 目錄。
 2. 實際修改在 xhe repo 開分支、commit、開 PR。**在 xhe 裡要用獨立的 worktree 改**(`git fetch origin && git worktree add --no-track <暫存路徑> -b <分支> origin/main`),不要在連結指向的那個工作目錄切分支或改檔:那裡的任何修改、切換都會立刻影響所有專案。PR 由使用者審查合併,或由 bot 依 `github-bot` 的規則自我審查後合併。
-3. 合併後,`git -C <xhe> branch --show-current` 是 `main` 或剛合併的分支、且 `git status` 乾淨,才切回 `main` 並 `git pull --ff-only`(失敗就停下來問使用者);是其他分支(即使乾淨,也可能是別的 session 的工作)或有未 commit 的修改時,停下來問使用者,不要硬切。最後 `git worktree remove <暫存路徑>` 並刪掉功能分支。
+3. 合併後,`git -C <xhe> branch --show-current` 是 `main`、且 `git status` 乾淨,才切回 `main` 並 `git pull --ff-only`(失敗就停下來問使用者);是其他分支(即使乾淨,也可能是別的 session 的工作)或有未 commit 的修改時,停下來問使用者,不要硬切。不論有沒有切回 `main`,都要 `git worktree remove <暫存路徑>`;確認 PR 狀態是 MERGED 後再 `git branch -D <分支>`(squash 合併時 `-d` 會拒絕),遠端分支用 `github-bot` 刪。
 4. 第一次安裝:先 `ls -la ~/.claude/skills/agent-forge` 看目標。
    - 已經是指到 xhe 的連結:不用做。
    - 指錯的連結:`rm ~/.claude/skills/agent-forge`(不要 `rm -rf` 穿過連結)。
    - 實體目錄(舊的 sbx 安裝):問過使用者後移到 skills 目錄**外面** `mv ~/.claude/skills/agent-forge ~/.claude/agent-forge.old-$(date +%Y%m%d%H%M%S)`(留在 skills 裡會被當成第二個 agent-forge 載入)。
-   - `mkdir -p ~/.claude/skills`,確認 `test ! -e ~/.claude/skills/agent-forge` 後,用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。
+   - `mkdir -p ~/.claude/skills`,確認 `test ! -e ~/.claude/skills/agent-forge && test ! -L ~/.claude/skills/agent-forge`(斷掉的連結 `-e` 判斷不到)後,用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。
 5. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
 
 ## 原則
