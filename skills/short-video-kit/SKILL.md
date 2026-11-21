@@ -35,7 +35,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
  ]}
 ```
 
-- **`theme` 沒有預設值**:有 title / point / code / end / headline 卡或沒有 image 的 cover 時,五個欄位都必填(缺了結束碼 2)。每支影片依來源自己選(repo 的 logo / 網站主色、影片畫面主色),不要沿用別支的色碼。只有字幕卡、有 image 的封面時可以省略(沒有 theme 時有圖封面的標題與 tag 用白字;有 theme 時照 theme)。色碼一律 `#RRGGBB`(舊版接受的 `#RGB`、`#RRGGBBAA` 現在會結束碼 2,舊檔要改寫);要給 theme 時用物件格式 `{"theme":…,"cards":[…]}`。
+- **`theme` 沒有預設值**:有 title / point / code / end / headline 卡或沒有 image 的 cover 時,五個欄位都必填(缺了結束碼 2)。每支影片依來源自己選(repo 的 logo / 網站主色、影片畫面主色),不要沿用別支的色碼。只有字幕卡、有 image 的封面時可以省略(有圖封面的標題與 tag 一律白字,疊在照片上才看得清楚;theme 只影響漸層封面)。色碼一律 `#RRGGBB`(舊版接受的 `#RGB`、`#RRGGBBAA` 現在會結束碼 2,舊檔要改寫);要給 theme 時用物件格式 `{"theme":…,"cards":[…]}`。
 - 全版卡(title / point / code / end)內容避開右側 170 px 與底部 340 px(平台按鈕區)。
 - 文字一律以純文字放入,不解析 HTML;不要自己寫 HTML。
 - `image` 只接受 `--asset-root` 內的相對路徑(symlink 解析後再檢查),沒給 `--asset-root` 就不接受圖片。所有網路請求都被擋掉,`blockedRequests` 會列出。

@@ -47,7 +47,7 @@
 派工提示:repo-cards,沒有配色要求。
 預期:cards.json 的 `theme` 五個欄位齊全,`accent` 或 `bg` 取自 logo 的綠色系,不是 SKILL.md 舊預設 `#0b1220` / `#38bdf8`;`script.md` 有「配色」行附來源 `assets/logo.svg`;`fg` 與 `bg` 對比 ≥ 4.5:1。kit 層面由 `tests/run.sh` 檢查:沒有 theme 時 render.mjs 結束碼 2、置頂鏡頭沒有 `theme.bg` 時 compose.mjs 結束碼 2。
 
-2026-11-21 結果:情境 7 PASS。theme 取自 logo(bg #0D2E10、bg2 #1B5E20、accent #C8E6C9),script.md 有配色行與來源,verify.sh ok:true;kit `tests/run.sh` 36 通過、0 失敗、1 略過(缺 whisper)。
+2026-11-21 結果:情境 7 PASS。theme 取自 logo(bg #0D2E10、bg2 #1B5E20、fg #FFFFFF、accent #C8E6C9、muted #9CC29F;fg 對 bg 14.8:1、對 bg2 7.9:1),script.md 有配色行與來源,verify.sh ok:true;kit `tests/run.sh` 36 通過、0 失敗、1 略過(缺 whisper)。
 
 ## 結果(2026-11-17,實際執行)
 
