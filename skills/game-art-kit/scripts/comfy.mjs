@@ -241,10 +241,13 @@ async function run() {
   let id = null;
   let finished = false;
   let submitting = null; // 送出中的 /prompt;中止時等它回來才知道要取消哪個工作
+  const SUBMIT_MS = 15000; // 送出逾時;中止時等待送出的時間比它長,一定等得到結果
   // 收尾:沒完成就只取消自己的工作(佇列中 → 移出;確認在執行 → 指定 prompt_id 中斷),等 history 出現再刪。
   // 總時間上限 40 秒;/queue 查不到狀態時只做「移出佇列」(不盲目中斷,避免舊版 ComfyUI 中斷到別人的工作)。
   const CLEANUP_BUDGET = 40000;
-  const cleanup = async () => {
+  let cleaning = null; // 同一時間只跑一次收尾(逾時路徑與訊號處理共用)
+  const cleanup = () => (cleaning ??= doCleanup());
+  const doCleanup = async () => {
     if (!id) return;
     const end = Date.now() + CLEANUP_BUDGET;
     const left = () => Math.max(1000, end - Date.now());
@@ -274,12 +277,12 @@ async function run() {
   let stage = null; // 下載暫存目錄;中止時也要刪
   let printed = false; // 已印出 ok 結果、檔案已就位
   const onSignal = async (sig) => {
-    if (STOPPING) return; // 只收尾一次
+    if (STOPPING) process.exit({ SIGINT: 130, SIGHUP: 129 }[sig] ?? 143); // 第二次中止:立刻結束
     STOPPING = true;
     try {
       if (!printed) console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`);
       if (!id && submitting) {
-        const r = await Promise.race([submitting.catch(() => null), sleep(15000).then(() => null)]);
+        const r = await Promise.race([submitting.catch(() => null), sleep(SUBMIT_MS + 1000).then(() => null)]);
         if (r?.prompt_id) id = r.prompt_id;
         else if (!r) console.error('警告:送出中被中止且等不到 prompt_id,ComfyUI 上可能留下這個工作');
       }
@@ -295,7 +298,7 @@ async function run() {
   const halt = () => new Promise(() => {}); // 中止中:停在這裡,等訊號處理結束程序
   for (const sg of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sg, onSignal);
 
-  submitting = json('/prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id }) });
+  submitting = json('/prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id }), timeoutMs: SUBMIT_MS });
   const sub = await submitting;
   if (sub.prompt_id) id = sub.prompt_id;
   if (STOPPING) await halt();
@@ -339,7 +342,8 @@ async function run() {
       if (reason) {
         await cleanup();
         if (STOPPING) await halt(); // 收尾期間收到中止訊號:交給訊號處理
-        console.log(JSON.stringify({ name, status: 'timeout', reason, seconds: Math.round(reason === 'run' ? ran : reason === 'queue' ? waited : total), prompt_id: id }));
+        const limit = reason === 'run' ? timeout : reason === 'queue' ? queueTimeout : timeout + queueTimeout;
+        console.log(JSON.stringify({ name, status: 'timeout', reason, seconds: limit, elapsed: Math.round(reason === 'run' ? ran : reason === 'queue' ? waited : total), prompt_id: id }));
         process.exit(4);
       }
       await sleep(1000);

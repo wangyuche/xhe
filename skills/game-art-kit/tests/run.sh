@@ -73,10 +73,11 @@ o="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name x "${QS[@]}" --set w
 tid="$(echo "$o" | sed -n 's/.*"prompt_id":"\([^"]*\)".*/\1/p')"
 [ $rc -eq 4 ] && grep -q "\"path\":\"/interrupt\",\"query\":{},\"body\":{\"prompt_id\":\"$tid\"" "$W/req.log" && ok "逾時 → 指定 prompt_id 中斷自己的工作($tid)、結束碼 4" || bad "逾時" "$o rc=$rc tid=$tid"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qd "${QS[@]/prompt=p/prompt=QUEUED}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qd.png" ] && ok "排隊時間不算 --timeout(排隊 2.5 秒、--timeout 1 仍成功)" || bad "排隊計時" "$r"
+L0="$(wc -l < "$W/req.log" | tr -d ' ')"
 r="$( (exec node "$K/scripts/comfy.mjs" run "$K/workflows/qwen-t2i.json" --out "$W/sig2" --name ss "${QS[@]/prompt=p/prompt=SLOW_SLOWSUBMIT}" --set width=64 --set height=64 --timeout 30 2>&1) & p=$!; sleep 0.5; kill -TERM $p; wait $p; echo "rc=$?")"
-sid="$(grep '"path":"/prompt"' "$W/req.log" | wc -l | tr -d ' ')"
-echo "$r" | grep -q 'rc=143' && grep -q "\"path\":\"/interrupt\",\"query\":{},\"body\":{\"prompt_id\":\"fake-" "$W/req.log" && tail -2 "$W/req.log" | grep -q '"path":"/history","query":{},"body":{"delete"' \
-  && ok "送出途中收到 SIGTERM → 等到 prompt_id 再取消、刪 history(143)" || bad "送出途中中止" "$r $(tail -4 "$W/req.log")"
+NEW="$(tail -n +"$((L0 + 1))" "$W/req.log")"
+echo "$r" | grep -q 'rc=143' && echo "$NEW" | grep -q '"path":"/interrupt","query":{},"body":{"prompt_id":"fake-' && echo "$NEW" | tail -2 | grep -q '"path":"/history","query":{},"body":{"delete"' \
+  && ok "送出途中收到 SIGTERM → 等到 prompt_id 再取消、刪 history(143)" || bad "送出途中中止" "$r $NEW"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name fh "${QS[@]/prompt=p/prompt=FLAKYHIST}" --set width=64 --set height=64 2>&1)" && [ -e "$W/o/fh.png" ] && ok "輪詢 /history 暫時斷線 → 重試後成功" || bad "輪詢斷線重試" "$r"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qdn "${QS[@]/prompt=p/prompt=QUEUED_QUEUEDOWN}" --set width=64 --set height=64 --timeout 5 --queue-timeout 1 2>&1)" && [ -e "$W/o/qdn.png" ] && ok "/queue 一直回 500:不套排隊逾時、靠總時限兜底,工作完成" || bad "/queue 持續錯誤" "$r"
 r="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name qe "${QS[@]/prompt=p/prompt=QUEUED_QUEUEERR}" --set width=64 --set height=64 --timeout 1 2>&1)" && [ -e "$W/o/qe.png" ] && ok "/queue 暫時回 500 不當成已開始執行" || bad "/queue 錯誤誤判" "$r"

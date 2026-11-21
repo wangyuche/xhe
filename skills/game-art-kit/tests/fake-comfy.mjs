@@ -75,7 +75,7 @@ createServer(async (req, res) => {
     if (j.dropview) return req.socket.destroy();
     return send(res, 200, png(j.w, j.h), 'image/png');
   }
-  if (p === '/queue' && req.method === 'GET' && [...jobs.values()].some(j => j.queueErr > 0)) { for (const j of jobs.values()) if (j.queueErr > 0) j.queueErr--; return send(res, 500, { error: 'busy' }); }
+  if (p === '/queue' && req.method === 'GET' && [...jobs.values()].some(j => j.queueErr > 0 && !j.done)) { for (const j of jobs.values()) if (j.queueErr > 0) j.queueErr--; return send(res, 500, { error: 'busy' }); }
   if (p === '/queue' && req.method === 'GET') return send(res, 200, { queue_running: [...jobs].filter(([, j]) => j.slow).map(([id]) => [0, id]), queue_pending: [...jobs].filter(([, j]) => j.pending).map(([id]) => [0, id]) });
   if (p === '/interrupt') { const j = jobs.get(entry.body?.prompt_id); if (j) { j.slow = false; j.done = true; j.error = true; } return send(res, 200, {}); }
   if (p === '/queue') return send(res, 200, {});
