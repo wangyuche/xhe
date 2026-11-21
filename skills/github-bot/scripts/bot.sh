@@ -334,10 +334,16 @@ cmd_pr() {
     local info; info=$(api GET "/repos/$REPO" "$t") || exit 1
     base=$(jfield .default_branch "$info")
   fi
+  # 同一個 head 已經有 open PR 就直接印出它(修完重推後再跑 pr 不會 422)
+  local existing
+  existing=$(api GET "/repos/$REPO/pulls?state=open&head=${REPO%%/*}:$head&per_page=1" "$t") || exit 1
+  if [[ $(jq -r 'length' <<<"$existing") -gt 0 ]]; then
+    jq -r '.[0].html_url' <<<"$existing"; return
+  fi
   local r
   r=$(api POST "/repos/$REPO/pulls" "$t" \
     "$(jq -nc --arg h "$head" --arg b "$base" --arg t "$title" --arg d "$body" \
-        '{head:$h, base:$b, title:$t, body:$d}')")
+        '{head:$h, base:$b, title:$t, body:$d}')") || exit 1
   jfield .html_url "$r"
 }
 

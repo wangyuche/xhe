@@ -105,6 +105,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"id": 12345})
         if p == "/user" and self.auth() == PAT:
             return self.send(200, {"login": "xhe-bot", "id": 777})
+        if p.startswith("/repos/o/r/pulls?state=open&head=o:") and self.auth() in (TOKEN, PAT):
+            if p.split("head=o:")[1].split("&")[0] == "feat/existing":
+                return self.send(200, [{"html_url": "https://github.com/o/r/pull/5"}])
+            return self.send(200, [])
         if p == "/repos/o/r/pulls/7" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": "a" * 40}})
         if p == "/repos/o/r/pulls/8" and self.auth() in (TOKEN, PAT):

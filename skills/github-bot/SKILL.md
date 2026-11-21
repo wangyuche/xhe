@@ -82,7 +82,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 1. `bash $BOT pr ...` 開 PR,記下 `HEAD_SHA=$(git rev-parse HEAD)`(必須等於 PR head)。
 2. 用 `code-review` skill 審這個 PR(目標給 PR 號碼;等級用使用者上次指定的,沒有就用預設)。
 3. 判定:
-   - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,回到第 1 步用新 SHA 重新 review。
+   - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,更新 `HEAD_SHA=$(git rev-parse HEAD)` 後回到第 2 步重新 review(PR 不用重開;`bot.sh pr` 對已有 open PR 的分支也只會印出既有網址)。
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
 4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;會先等 CI **登記**(最多 60 秒;有 workflow 的 repo 要等到 GitHub Actions 的 workflow run),登記後再觀察 15 秒數量不變才判斷,整體最多約 2 分鐘,期間不要中斷。**不會等 CI 跑完**:還在跑就拒絕(訊息「CI 未完成」),等 CI 結束再執行一次 merge。GitHub Actions 以 workflow runs 為準:這個 commit 上每個 run(看目前這次 attempt)都必須完成且成功;排隊中、等待核准、被取消、失敗一律拒絕。唯一例外是同 workflow + 同事件、較舊且被**取消**的 run(被新 run 取代)。失敗的 run 不會被其他 run 蓋掉——要重跑它本身,重跑成功後舊 attempt 的結果就不算。Actions 的 check run(含 workflow 自建的測試報告)只看目前 attempt;其他 App 的 check run 每個名稱看最新一次;其他 App 有 run 的 suite 與 commit status 也必須成功。合併前會用最新狀態再判斷一次。錯誤會列出 `workflow:<名稱>#<id>` 或 `suite:<app>#<id>`,**確定那一項永遠不會跑**才加 `--ignore-suite <id>`(連同該 suite 底下的 check run 一起略過;此時 GitHub 顯示的 unstable 會被接受),並在回報裡寫明略過了哪個。`--allow-no-ci` 只是不要求 CI 出現(沒有 workflow 時仍先等 15 秒給外部 CI 登記),已有的 CI 結果失敗照樣拒絕。有 `.github/workflows` 的 repo 要等到 Actions workflow run,沒有的要等到任何 check run、commit status 或 workflow run;仍沒有就拒絕。**確定 repo 沒有 CI**(或 workflow 不在 PR 分支觸發)才加 `--allow-no-ci`,例如 xhe 目前沒有 CI;repo 有 workflow 時加了 `--allow-no-ci` 仍會先等滿 60 秒),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。

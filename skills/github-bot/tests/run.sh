@@ -75,6 +75,7 @@ check "identity email" grep -qx 'email=12345+xhe-bot\[bot\]@users.noreply.github
 printf 'PR 內容\n第二行\n' > "$TMP/body.md"
 check "pr 回傳網址" [ "$(bash "$BOT" --repo o/r pr --head feat/x --title 'T "q"' --body-file "$TMP/body.md")" = https://github.com/o/r/pull/7 ]
 check "--repo 去掉 .git" [ "$(bash "$BOT" --repo o/r.git pr --head feat/x --title T)" = https://github.com/o/r/pull/7 ]
+check "已有 open PR 時印出既有網址" [ "$(bash "$BOT" --repo o/r pr --head feat/existing --title T)" = https://github.com/o/r/pull/5 ]
 check "pr 缺 title 失敗" bash -c "! bash '$BOT' --repo o/r pr --head feat/x 2>/dev/null"
 
 check "push main 拒絕"   bash -c "! bash '$BOT' --repo o/r push main 2>/dev/null"
