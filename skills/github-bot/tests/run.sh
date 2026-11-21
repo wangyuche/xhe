@@ -109,7 +109,8 @@ check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40
 check "merge GitHub 說 unstable 拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
 : > "$TMP/sleep.log"
 check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
-check "只有空的 check suite 不算 CI" [ "$(bash "$BOT" --repo o/r merge 11 --sha "$(sha_of 1)")" = "$B40" ]
+check "外部 CI App 的 check suite(還沒 run)算 CI" bash -c "bash '$BOT' --repo o/r merge 22 --sha $(sha_of e) 2>&1 | grep -q '外部 App 的 check suite(1)'"
+check "只有 GitHub Actions 的空 check suite 不算 CI" [ "$(bash "$BOT" --repo o/r merge 11 --sha "$(sha_of 1)")" = "$B40" ]
 check "base 分支有 workflow 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 20 --sha $(sha_of c) 2>&1 | grep -q '.github/workflows@withci'"
 check "workflow 查詢回應不是 JSON 時拒絕(fail closed)" bash -c "bash '$BOT' --repo o/r merge 21 --sha $(sha_of d) 2>&1 | grep -q '不是預期的 JSON'"
 check "Actions 關閉(runs 404)不算 CI" [ "$(bash "$BOT" --repo o/r merge 19 --sha "$(sha_of 9)")" = "$B40" ]
@@ -150,12 +151,21 @@ check "私鑰壞掉時明確報錯" bash -c "GITHUB_BOT_APP_ID=1 GITHUB_BOT_KEY_
 git init -q "$TMP/lfsrepo" && (cd "$TMP/lfsrepo" && printf '*.png filter=lfs diff=lfs merge=lfs -text\n' > .gitattributes && git add .gitattributes && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q -m lfs) >/dev/null 2>&1
 check "Git LFS repo 拒絕推送" bash -c "cd '$TMP/lfsrepo' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 mkdir -p "$TMP/lfsrepo/src"
+git init -q "$TMP/lfsuser" && (cd "$TMP/lfsuser" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q --allow-empty -m x) >/dev/null 2>&1
+mkdir -p "$TMP/xdg/git"; echo '*.psd filter=lfs' > "$TMP/xdg/git/attributes"
+check "使用者層級 attributes 的 LFS 也偵測" bash -c "cd '$TMP/lfsuser' && XDG_CONFIG_HOME='$TMP/xdg' bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 check "從子目錄推送也偵測到 LFS" bash -c "cd '$TMP/lfsrepo/src' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 git init -q "$TMP/lfsinfo" && (cd "$TMP/lfsinfo" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q --allow-empty -m x && mkdir -p .git/info && echo '*.bin filter=lfs' > .git/info/attributes) >/dev/null 2>&1
 check ".git/info/attributes 的 LFS 也偵測" bash -c "cd '$TMP/lfsinfo' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 git -C "$TMP/lfsinfo" remote add origin https://github.com/o/a.git
 check "origin 是 SSH 別名時仍比對 --repo" bash -c "cd '$TMP/lfsinfo' && rm -f .git/info/attributes && git remote set-url origin gh-work:o/a.git && bash '$BOT' --repo o/b push feat/x 2>&1 | grep -q '跟這個目錄的 origin(o/a)'; r=\$?; git remote set-url origin https://github.com/o/a.git; exit \$r"
 check "--repo 跟 origin 不同時拒絕推送" bash -c "cd '$TMP/lfsinfo' && rm -f .git/info/attributes && bash '$BOT' --repo o/b push feat/x 2>&1 | grep -q '跟這個目錄的 origin'"
+git -C "$TMP/prepo" config 'remote.https://github.com/o/r.git.pushurl' git@github.com:o/r.git
+check "remote.<網址>.pushurl 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
+git -C "$TMP/prepo" config --remove-section 'remote.https://github.com/o/r.git'
+printf '[include]\n\tpath = %s\n' "$TMP/gc-inc" > "$TMP/gc-main"; printf '[safe]\n\tdirectory = /some/trusted/dir\n' > "$TMP/gc-inc"
+check "include 進來的 safe.directory 也帶入" bash -c "cd '$TMP/prepo' && GIT_CONFIG_GLOBAL='$TMP/gc-main' bash '$BOT' _pushgit t u config --get-all safe.directory | grep -qx /some/trusted/dir"
+check "暫存路徑含特殊字元時拒絕" bash -c "mkdir -p \"$TMP/o'q\" && TMPDIR=\"$TMP/o'q\" bash '$BOT' _scratch 2>&1 | grep -q '特殊字元'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]
 printf '[url "git@github.com:"]\n\tpushInsteadOf = https://github.com/\n' > "$TMP/prepo/.git/extra.cfg"
@@ -221,6 +231,8 @@ check "pat pr 回傳網址" [ "$(env "$PAT_ENV" bash "$BOT" --repo o/r pr --head
 check "pat push 預設分支拒絕" bash -c "env '$PAT_ENV' bash '$BOT' --repo o/r push develop 2>&1 | grep -q '不推預設分支'"
 check "env TOKEN_FILE 展開 ~" bash -c "HOME='$TMP' GITHUB_BOT_TOKEN_FILE='~/pat0' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
 printf '# 2027 到期\nghp_testpat\n# note\n' > "$TMP/pat-multi"
+printf 'GH_TOKEN=ghp_testpat\n' > "$TMP/pat-kv"
+check "token 檔 KEY=值 寫法" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-kv' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
 check "token 檔多行只取第一個 token" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-multi' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
 check "pat 讀不到檔案失敗" bash -c "! GITHUB_BOT_TOKEN_FILE=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
 git init -q "$TMP/repo2" && (

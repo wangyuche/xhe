@@ -12,7 +12,7 @@ PRS = {
     8: (A, "dirty", "open"),          # 衝突
     9: (A, "unstable", "open"),       # GitHub 說有檢查未過
     10: (A, "unknown", "closed"),     # 已關閉
-    11: ("1" * 40, "clean", "open"),  # 有空的 check suite
+    11: ("1" * 40, "clean", "open"),  # 只有 GitHub Actions 的空 check suite
     12: ("2" * 40, "clean", "open"),  # 有 check run
     13: ("3" * 40, "clean", "open"),  # 有 commit status
     14: ("4" * 40, "clean", "open"),  # 有 workflow run
@@ -23,6 +23,7 @@ PRS = {
     19: ("9" * 40, "clean", "open"),  # Actions 關閉:actions/runs 回 404
     20: ("c" * 40, "clean", "open"),  # head 沒有 workflow,但 base(withci)有
     21: ("d" * 40, "clean", "open"),  # workflows 查詢回 200 但不是 JSON
+    22: ("e" * 40, "clean", "open"),  # 外部 CI App 的 check suite(還沒有 run)
 }
 BASES = {20: "withci"}
 # 每個 SHA 的 CI 計數:suites, runs, statuses, workflow runs
@@ -75,7 +76,10 @@ class H(BaseHTTPRequestHandler):
             sha, rest = p[len("/repos/o/r/commits/"):].split("/", 1)
             suites, runs, statuses, _ = CI.get(sha, (0, 0, 0, 0))
             if rest.startswith("check-suites"):
-                return self.send(200, {"total_count": suites, "check_suites": []})
+                if sha == "e" * 40:
+                    return self.send(200, {"total_count": 1, "check_suites": [{"app": {"slug": "buildkite"}, "status": "queued"}]})
+                lst = [{"app": {"slug": "github-actions"}, "status": "queued"}] * suites
+                return self.send(200, {"total_count": suites, "check_suites": lst})
             if rest.startswith("check-runs"):
                 return self.send(200, {"total_count": runs, "check_runs": []})
             if rest == "status":

@@ -27,7 +27,9 @@ REPO=""
 die() { echo "bot.sh: $*" >&2; exit 1; }
 
 # 所有暫存(token 檔、推送用的空 HOME)都在 SCRATCH 底下,結束或被中斷時整個刪掉
-SCRATCH=$(umask 077; mktemp -d)
+SCRATCH=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/github-bot.XXXXXX")
+# 路徑會原樣寫進 credential helper 的 shell 片段,只允許安全字元
+[[ $SCRATCH =~ ^[A-Za-z0-9/._-]+$ ]] || { rm -rf "$SCRATCH"; echo "bot.sh: 暫存目錄路徑含特殊字元($SCRATCH),請把 TMPDIR 設成一般路徑" >&2; exit 1; }
 CHILD_PID=""
 cleanup() { [[ -z $CHILD_PID ]] || kill "$CHILD_PID" 2>/dev/null; rm -rf "$SCRATCH"; }
 trap cleanup EXIT
@@ -187,6 +189,7 @@ pat() {
       || die "gh 取不到 $GH_USER 的 token(沒登入就執行 gh auth login 加入該帳號):$(cat "$SCRATCH/gh.err")"
   else
     t=$(awk '{ sub(/\r$/, "") } !/^[[:space:]]*(#|$)/ { print $1; exit }' "$TOKEN_FILE")
+    t=${t#*=}                                   # 容許 GH_TOKEN=ghp_... 這種寫法
   fi
   [[ -n $t ]] || die "取不到機器人帳號的 token"
   printf '%s' "$t"
@@ -269,7 +272,7 @@ push_git() {
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄)
   local -a safe=()
   while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
-    < <({ git config --system --get-all safe.directory; git config --global --get-all safe.directory; } 2>/dev/null || true)
+    < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
   # HOME 換成空目錄:git 的 libcurl 會讀 ~/.netrc,裡面若有 github.com 會用個人憑證推送
   mkdir -p "$SCRATCH/home"
   # 推送用乾淨環境:不讀全域 / 系統設定,移除會注入設定、改 TLS / proxy / 除錯輸出的環境變數
@@ -279,20 +282,20 @@ push_git() {
     -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_CURL_VERBOSE -u GIT_TRACE_PACKET -u GIT_ASKPASS -u SSH_ASKPASS
     -u http_proxy -u https_proxy -u HTTPS_PROXY -u all_proxy -u ALL_PROXY -u no_proxy -u NO_PROXY
     -u CURL_CA_BUNDLE -u SSL_CERT_FILE -u SSL_CERT_DIR -u GIT_SSL_CERT_PASSWORD_PROTECTED
-    -u XDG_CONFIG_HOME -u NETRC
+    -u XDG_CONFIG_HOME -u NETRC -u GIT_SSH -u GIT_SSH_COMMAND
     HOME="$SCRATCH/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0)
   # repo 的任何設定檔(local、worktree、include / includeIf)都不得有 url.* / http.* / credential.*:
   # 這些能改寫推送網址、走 proxy、關 TLS 驗證、附加別的認證或 helper
   # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(git 太舊、include 壞掉、dubious ownership)一律拒絕
   bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
-          --get-regexp '^(url|http|credential)\..*$' 2>&1) && rc=0 || rc=$?
+          --get-regexp '^((url|http|credential)\..*|remote\.[a-z+]+://.*|core\.sshcommand)$' 2>&1) && rc=0 || rc=$?
   [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
   # 無害、常見的 http 調校設定允許(不能改網址、proxy、TLS、認證)
   [[ $rc -eq 0 ]] && bad=$(grep -viE '[[:space:]]http\.(postbuffer|version|lowspeedlimit|lowspeedtime|maxrequests|minsessions)$' <<<"$bad" || true)
   [[ $rc -eq 1 || -z $bad ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
-  "${clean[@]}" BOT_TOKEN_FILE="$tf" \
+  "${clean[@]}" \
   git ${safe[@]+"${safe[@]}"} -c credential.helper= \
-      -c "credential.https://github.com.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat \"\$BOT_TOKEN_FILE\")\"; }; f" \
+      -c "credential.https://github.com.helper=!f() { echo username=$user; printf 'password=%s\n' \"\$(cat $tf)\"; }; f" \
       -c push.recurseSubmodules=no -c submodule.recurse=false \
       -c core.hooksPath=/dev/null \
       -c http.extraHeader= -c http.sslVerify=true -c http.proxy= -c http.cookieFile= \
@@ -311,6 +314,12 @@ cmd_push() {
   info=$(git rev-parse --git-path info/attributes)
   if git -C "$top" grep -q 'filter=lfs' HEAD -- ':(top).gitattributes' ':(top,glob)**/.gitattributes' 2>/dev/null \
      || { [[ -f $info ]] && grep -q 'filter=lfs' "$info"; }; then
+    die "這個 repo 使用 Git LFS,bot.sh push 不支援(LFS 物件不會上傳);請改用一般 git push"
+  fi
+  # 使用者層級的 attributes(core.attributesFile 或 ~/.config/git/attributes)也可能把檔案設成 LFS
+  local ua; ua=$(git config --includes core.attributesFile 2>/dev/null || true)
+  ua=$(expand_home "${ua:-${XDG_CONFIG_HOME:-$HOME/.config}/git/attributes}")
+  if [[ -f $ua ]] && grep -q 'filter=lfs' "$ua"; then
     die "這個 repo 使用 Git LFS,bot.sh push 不支援(LFS 物件不會上傳);請改用一般 git push"
   fi
   # --repo 必須跟本地 origin 是同一個 repo(推的是這個目錄的 HEAD)
@@ -373,8 +382,7 @@ cmd_pr() {
 
 # bot 只自動合併「沒有任何 CI」的 repo / commit。偵測到任何 CI 跡象就拒絕,交給使用者處理:
 #   .github/workflows 有任何檔案、這個 commit 有任何 check run、commit status 或 GitHub Actions
-#   workflow run。check suite 不看:GitHub / 已安裝的 App 會建立沒有任何 run 的空 suite,
-#   真正跑過的 CI 一定會留下 check run / status / workflow run。
+#   workflow run,以及其他 App(非 GitHub Actions)的 check suite。GitHub Actions 的空 suite 不算。
 # 外部 CI 可能晚幾秒才登記,所以等 15 秒(4 次輪詢)都沒有才算沒有 CI;合併前再確認一次。
 ci_signals() {   # ci_signals <head SHA> <token> <base 分支>:印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 die
   local sha=$1 t=$2 base=$3 wf rc n out="" ref
@@ -391,6 +399,15 @@ ci_signals() {   # ci_signals <head SHA> <token> <base 分支>:印出偵測到�
   done
   local path label
   local resp
+  # 其他 App(非 GitHub Actions)的 check suite,不論有沒有 run 都算 CI(外部 CI 可能先建 suite、晚點才跑)。
+  # GitHub Actions 的空 suite 不算:沒有 workflow 檔時 Actions 不會跑(head / base 的 workflow 已在上面檢查)。
+  resp=$(api GET "/repos/$REPO/commits/$sha/check-suites?per_page=100" "$t") \
+    || die "讀不到 check suite(若上面是 HTTP 403:App 要加 Checks: Read 權限)"
+  n=$(jq -er '[.check_suites[] | select(.app.slug != "github-actions")] | length' <<<"$resp" 2>/dev/null) \
+    && [[ $n =~ ^[0-9]+$ ]] || die "check suite 查詢回應不是預期的 JSON,不合併"
+  [[ $(jq -r '.total_count' <<<"$resp") -le $(jq -r '.check_suites | length' <<<"$resp") ]] \
+    || die "check suite 超過 100 個,無法全部確認,不合併"
+  [[ $n -eq 0 ]] || out+=" 外部 App 的 check suite($n)"
   for path in "commits/$sha/check-runs?filter=all&per_page=1:check run" "commits/$sha/status:commit status"; do
     label=${path##*:}; path=${path%:*}
     resp=$(api GET "/repos/$REPO/$path" "$t") \
@@ -482,6 +499,6 @@ case ${1:-} in
   _parse)   parse_repo "$2" ;;                         # 測試用
   _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
             token_file "$2"; u=$3; shift 3; push_git "$TOKEN_TMP" "$u" "$@" ;;
-  _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & CHILD_PID=$!; echo "$CHILD_PID"; wait $CHILD_PID; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
+  _scratch) echo "$SCRATCH"; if [[ ${2:-} == hang ]]; then /bin/sleep 30 & CHILD_PID=$!; echo "$CHILD_PID"; wait $CHILD_PID; fi ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

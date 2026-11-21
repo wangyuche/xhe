@@ -72,7 +72,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
 ```
 
 - push 拒絕 `main`、`master`、repo 預設分支,也不支援 force;使用 Git LFS 的 repo 不支援(推送時停用 hooks,LFS 物件不會上傳);要改歷史先問使用者。
-- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0700 暫存目錄裡的 0600 檔只給 credential helper 讀(結束、Ctrl-C、TERM、HUP 都會刪除),不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、HOME 換成空目錄(不讀 `~/.netrc` 的個人憑證)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、`SSL_CERT_*`、`CURL_CA_BUNDLE`、proxy、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有任何 `url.*`、`http.*`(`postBuffer`、`version`、`lowSpeedLimit`、`lowSpeedTime`、`maxRequests`、`minSessions` 除外)、`credential.*` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
+- curl 不讀 `~/.curlrc`(`-q`);token 經 stdin 給 curl;push 時放在 0700 暫存目錄裡的 0600 檔只給 credential helper 讀(結束、Ctrl-C、TERM、HUP 都會刪除),不進子程序環境變數、remote URL 或 `.git/config`。push 不讀全域 / 系統 git 設定(避免 `insteadOf` 改走 SSH 與個人金鑰)、HOME 換成空目錄(不讀 `~/.netrc` 的個人憑證)、停用 hooks;另外移除 `GIT_CONFIG`、`GIT_SSL_*`、`SSL_CERT_*`、`CURL_CA_BUNDLE`、proxy、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有任何 `url.*`、`http.*`(`postBuffer`、`version`、`lowSpeedLimit`、`lowSpeedTime`、`maxRequests`、`minSessions` 除外)、`credential.*`、`remote.<網址>.*`(例如 pushurl)、`core.sshCommand` 設定會拒絕推送(這些能改寫網址、走 proxy、關 TLS 驗證或附加別的認證)。
 - 合併前置條件見下方「自己 review 後合併」;bot 的權限(App 的 Contents: write、機器人帳號的 Write)本來就能合併,把關靠這個流程與 `--sha`。
 - 錯誤 `取不到 <repo> 的 App installation(HTTP 404 ...)`:到 App 設定頁的 Install App 把該 repo 加進去。
 - 換 App / 換電腦:只要重做第 4 步。私鑰外洩時到 App 設定頁刪掉該 key 並重新產生。
@@ -86,7 +86,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
 4. `bash $BOT merge <號碼> --sha $HEAD_SHA`,預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
-   - **bot 只自動合併沒有任何 CI 的 repo / commit**:PR head 或 base 分支的 `.github/workflows` 有任何檔案,或這個 commit 有任何 check run、commit status、GitHub Actions workflow run(沒有 run 的空 check suite 不算;repo 關掉 Actions 也不算),就拒絕並列出偵測到的項目——這時**不合併,回報使用者**,由使用者看過 CI 後自己合併。
+   - **bot 只自動合併沒有任何 CI 的 repo / commit**:PR head 或 base 分支的 `.github/workflows` 有任何檔案,或這個 commit 有任何 check run、commit status、GitHub Actions workflow run、其他 App(非 GitHub Actions)的 check suite(還沒有 run 也算;GitHub Actions 的空 suite 不算,repo 關掉 Actions 也不算),就拒絕並列出偵測到的項目——這時**不合併,回報使用者**,由使用者看過 CI 後自己合併。
    - 會等 15 秒(4 次查詢)確認沒有晚登記的外部 CI,合併前再確認一次;查詢失敗一律拒絕。
    - PR 非 open、head 不是該 SHA、有衝突、GitHub 回報 unstable / blocked / behind 也拒絕。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。
