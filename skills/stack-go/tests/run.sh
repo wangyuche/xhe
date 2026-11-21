@@ -74,6 +74,15 @@ out="$(go test ./... -run '/^[A-Z]+-S[0-9]+:' -v 2>&1)"
 echo "$out" | grep -q -- "--- PASS: TestScenarioNaming/LOGIN-S2:_wrong_password_returns_401" && ok "-run '/^[A-Z]+-S[0-9]+:' 抓得到情境子測試" || bad "情境 -run" "$out"
 rm internal/httpapi/scenario_test.go
 
+# 在 git worktree 裡建骨架:模組名要取主 repo 目錄名,不是 worktree 目錄名(2026-11-21 得到 example.com/backend/backend)
+M="$WORK/myshop"; mkdir -p "$M"
+git -C "$M" init -q && git -C "$M" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$M" worktree add -q -b wt-test "$WORK/wt/backend" 2>/dev/null
+out="$(bash "$SKILL/scripts/new-backend.sh" "$WORK/wt/backend" 2>&1)"
+mod="$(head -1 "$WORK/wt/backend/backend/go.mod" 2>/dev/null)"
+[ "$mod" = "module example.com/myshop/backend" ] && ok "new-backend:worktree 內模組名取主 repo 名" || bad "new-backend:worktree 模組名" "$mod / $out"
+git -C "$M" worktree remove --force "$WORK/wt/backend" 2>/dev/null
+
 echo "---"
 echo "pass=$PASS fail=$FAIL skip=$SKIP"
 [ "$FAIL" -eq 0 ]

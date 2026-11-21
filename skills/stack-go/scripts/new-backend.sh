@@ -18,7 +18,13 @@ while [ $# -gt 0 ]; do
     *) echo "未知參數:$1" >&2; exit 2 ;;
   esac
 done
-PROJ="$(basename "$ROOT" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g')"
+# 專案名取主 repo 目錄名:在 git worktree 裡 basename "$ROOT" 會是 worktree 目錄名(例如 backend),
+# 得到 example.com/backend/backend(2026-11-21 fortest)。git common dir 的上層才是主 repo。
+PROJ_DIR="$ROOT"
+if COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  case "$COMMON" in */.git) PROJ_DIR="$(dirname "$COMMON")" ;; esac
+fi
+PROJ="$(basename "$PROJ_DIR" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g')"
 [ -n "$MODULE" ] || MODULE="example.com/$PROJ/backend"
 go_ok || { echo "錯誤:需要 Go >= $GO_MIN(brew install go 或 brew upgrade go,由使用者執行)" >&2; exit 3; }
 
