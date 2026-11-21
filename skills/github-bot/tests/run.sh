@@ -170,9 +170,11 @@ git -C "$TMP/prepo" config --remove-section 'remote.https://github.com/o/r.git'
 printf '[include]\n\tpath = %s\n' "$TMP/gc-inc" > "$TMP/gc-main"; printf '[safe]\n\tdirectory = /some/trusted/dir\n' > "$TMP/gc-inc"
 check "include 進來的 safe.directory 也帶入" bash -c "cd '$TMP/prepo' && GIT_CONFIG_GLOBAL='$TMP/gc-main' bash '$BOT' _pushgit t u config --get-all safe.directory | grep -qx /some/trusted/dir"
 printf '[safe]\n\tdirectory = ~/trusted\n' > "$TMP/gc-tilde"
-check "safe.directory 的 ~/ 先展開(HOME 換掉後才不會失效)" bash -c "cd '$TMP/prepo' && HOME='$TMP/fh' GIT_CONFIG_GLOBAL='$TMP/gc-tilde' bash '$BOT' _pushgit t u config --get-all safe.directory | grep -qx '$TMP/fh/trusted'"
+check "safe.directory 的 ~/ 先展開(HOME 換掉後才不會失效)" bash -c "cd '$TMP/prepo' && HOME='$TMP/fh' GIT_CONFIG_GLOBAL='$TMP/gc-tilde' bash '$BOT' _pushgit t u config --get-all safe.directory | grep -qxF '$TMP/fh/trusted'"
 printf '[safe]\n\tdirectory = /a\n\tdirectory =\n\tdirectory = /b\n' > "$TMP/gc-reset"
 check "safe.directory 空值清除前面的項目" [ "$(cd "$TMP/prepo" && GIT_CONFIG_GLOBAL="$TMP/gc-reset" bash "$BOT" _pushgit t u config --get-all safe.directory | tr '\n' ' ')" = "/b " ]
+printf '[safe]\n\tdirectory = /a\n\tdirectory = ~nosuchuser-xhe/x\n\tdirectory = /b\n' > "$TMP/gc-baduser"
+check "safe.directory 有展不開的 ~user 時其他項目仍保留" [ "$(cd "$TMP/prepo" && GIT_CONFIG_GLOBAL="$TMP/gc-baduser" bash "$BOT" _pushgit t u config --get-all safe.directory | tr '\n' ' ')" = "/a ~nosuchuser-xhe/x /b " ]
 check "暫存路徑含特殊字元時拒絕" bash -c "mkdir -p \"$TMP/o'q\" && TMPDIR=\"$TMP/o'q\" bash '$BOT' _scratch 2>&1 | grep -q '特殊字元'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]

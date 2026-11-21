@@ -124,10 +124,14 @@ ci_file_at() {
 clean_push() {
   local branch=$1 bad rc sd
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
-  # --type=path 先把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);空值 = 清除前面的項目(跟 git 一樣)
+  # 逐筆用 git 的 --type=path 把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);展不開的(例如不存在的 ~user)
+  # 保留原值、不影響其他項目;空值 = 清除前面的項目(跟 git 一樣)
   local -a safe=()
-  while IFS= read -r sd; do if [[ -n $sd ]]; then safe+=(-c "safe.directory=$sd"); else safe=(); fi; done \
-    < <({ git config --system --includes --type=path --get-all safe.directory; git config --global --includes --type=path --get-all safe.directory; } 2>/dev/null || true)
+  while IFS= read -r sd; do
+    if [[ -z $sd ]]; then safe=(); continue; fi
+    [[ $sd == '~'* || $sd == '%(prefix)/'* ]] && sd=$(git -c "botsafe.dir=$sd" config --type=path botsafe.dir 2>/dev/null || printf '%s' "$sd")
+    safe+=(-c "safe.directory=$sd")
+  done < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u GIT_SSL_CERT_PASSWORD_PROTECTED
