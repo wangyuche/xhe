@@ -25,6 +25,7 @@ services:
         condition: service_healthy
     environment:
       PORT: "8080"
+      # POSTGRES_USER / POSTGRES_PASSWORD 直接放進 URL:用 .env 覆寫時只用 URL 安全字元(英數、- _ .)
       DATABASE_URL: postgres://${POSTGRES_USER:-dev}:${POSTGRES_PASSWORD:-devpass}@db:5432/${POSTGRES_DB:-app}?sslmode=disable
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}

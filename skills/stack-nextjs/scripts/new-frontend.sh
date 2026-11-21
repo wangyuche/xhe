@@ -50,7 +50,8 @@ const assets =
 p.scripts = {
   ...p.scripts,
   postbuild: assets,
-  start: "node .next/standalone/server.js",
+  // standalone server.js 會綁 HOSTNAME;很多 Linux / CI 會匯出機器名稱,本機一律綁 127.0.0.1(可用 HOSTNAME_BIND 覆寫)
+  start: "HOSTNAME=${HOSTNAME_BIND:-127.0.0.1} node .next/standalone/server.js",
   test: "vitest run",
   "test:e2e": "playwright test",
   "gen:api": `openapi-typescript ${c} -o src/lib/api/schema.d.ts`,

@@ -62,6 +62,9 @@ if [ "$ALLOW_DEFAULT" = 0 ]; then
   defaults="$(printf '%s\n' "$base" | sed 's/[^a-z0-9_-]//g')
 $(printf '%s\n' "$base" | sed 's/[^a-z0-9-]/-/g')
 ${COMPOSE_PROJECT_NAME:-}"
+  # 專案目錄的 .env 也能設 COMPOSE_PROJECT_NAME(docker compose 會自動讀)
+  [ -f "$PROJ_DIR/.env" ] && defaults="$defaults
+$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}COMPOSE_PROJECT_NAME[[:space:]]*=[[:space:]]*["'\'']\{0,1\}\([^"'\'' #]*\).*/\2/p' "$PROJ_DIR/.env" | tail -1)"
   [ -n "$FILE" ] && defaults="$defaults
 $(sed -n 's/^name:[[:space:]]*["'\'']\{0,1\}\([^"'\'' #]*\).*/\1/p' "$FILE" | head -1)"
   if printf '%s\n' "$defaults" | grep -qxF -- "$PROJ"; then
@@ -89,7 +92,8 @@ for name, svc in sorted((cfg.get("services") or {}).items()):
 }
 
 # 這個專案已經占用的主機埠(重複 up 時不算衝突)
-own_port() { dc port "$1" "$2" </dev/null 2>/dev/null | head -1 | sed 's/.*://'; }
+# 服務沒在跑(例如一次性服務已結束)時 docker compose port 會失敗:回空字串,不讓 pipefail 中斷
+own_port() { dc port "$1" "$2" </dev/null 2>/dev/null | head -1 | sed 's/.*://' || true; }
 
 dump_failure() {
   echo "--- docker compose ps -a(專案 $PROJ)" >&2
@@ -116,7 +120,7 @@ case "$CMD" in
       if port_busy "$pub"; then
         busy=$((busy + 1))
         alt="$(find_free_port $((pub + 1)) || true)"
-        var="$(grep -oE "\\\$\\{[A-Za-z_][A-Za-z0-9_]*:-$pub\\}" "$FILE" | head -1 | sed 's/^\${\([^:]*\):-.*/\1/')"
+        var="$(grep -oE "\\\$\\{[A-Za-z_][A-Za-z0-9_]*:-$pub\\}" "$FILE" | head -1 | sed 's/^\${\([^:]*\):-.*/\1/' || true)"
         echo "錯誤:服務 $svc 要用的主機埠 $pub 已被占用(不會停掉占用它的程式或容器):" >&2
         lsof -nP -iTCP:"$pub" -sTCP:LISTEN 2>/dev/null | sed 's/^/  /' >&2 || true
         if [ -n "$var" ]; then

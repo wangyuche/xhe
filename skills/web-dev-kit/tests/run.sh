@@ -197,6 +197,10 @@ out="$(fc up -p myshop 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$out" | grep -q "預設專案名" && [ ! -f "$FD/calls" ] && ok "compose:拒絕目錄預設專案名" || bad "compose:預設名" "rc=$rc $out"
 out="$(cd "$CP" && COMPOSE_PROJECT_NAME=other-proj PATH="$FAKE:$PATH" bash "$C" down -p other-proj 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$out" | grep -q "預設專案名" && ok "compose:拒絕 COMPOSE_PROJECT_NAME" || bad "compose:COMPOSE_PROJECT_NAME" "rc=$rc $out"
+printf 'export COMPOSE_PROJECT_NAME="envproj"  # 使用者的\n' > "$CP/.env"
+out="$(cd "$CP" && PATH="$FAKE:$PATH" bash "$C" down -p envproj --volumes 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "預設專案名" && ok "compose:拒絕 .env 裡的 COMPOSE_PROJECT_NAME" || bad "compose:.env 專案名" "rc=$rc $out"
+rm -f "$CP/.env"
 out="$(fc down -p myshop --allow-default 2>&1)"; rc=$?
 [ $rc -eq 0 ] && grep -q -- "-p myshop" "$FD/calls" && ok "compose:--allow-default 放行" || bad "compose:--allow-default" "rc=$rc $out"
 
@@ -237,6 +241,12 @@ printf 'services:\n  frontend:\n    ports: ["127.0.0.1:${WEB_PORT:-%s}:3000"]\n'
 fake_reset "$PB"
 out="$(fc up -p kit-x 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$out" | grep -q "$PB 已被占用" && echo "$out" | grep -q "WEB_PORT=" && ! grep -q " up " "$FD/calls" && ok "compose:埠被占用結束碼 4、建議 WEB_PORT、不 up" || bad "compose:埠被占用" "rc=$rc $out"
+# 寫死主機埠(沒有 ${VAR:-埠})被占用:仍結束碼 4 並說明,不能因 pipefail 無訊息結束
+printf 'services:\n  frontend:\n    ports: ["127.0.0.1:%s:3000"]\n' "$PB" > "$CP/compose.yaml"
+fake_reset "$PB"
+out="$(fc up -p kit-x 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$out" | grep -q "$PB 已被占用" && ! grep -q " up " "$FD/calls" && ok "compose:寫死的埠被占用也結束碼 4 並說明" || bad "compose:寫死埠被占用" "rc=$rc $out"
+printf 'services:\n  frontend:\n    ports: ["127.0.0.1:${WEB_PORT:-%s}:3000"]\n' 3999 > "$CP/compose.yaml"
 bash "$S/stop.sh" t-busy >/dev/null
 
 # ---------- pg ----------

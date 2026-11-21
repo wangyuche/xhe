@@ -29,8 +29,10 @@ trap 'cleanup; exit 143' TERM
 ORIGIN=$(git remote get-url origin 2>/dev/null) || die "目前目錄不是有 origin 的 git repo"
 if [[ $ORIGIN =~ ^https://([^/@]+@)?([A-Za-z0-9.-]+)(:[0-9]+)?/(.+)$ ]]; then
   HOST=${BASH_REMATCH[2]}; PORT=${BASH_REMATCH[3]}; PPATH=${BASH_REMATCH[4]}
-elif [[ $ORIGIN =~ ^(ssh://)?git@([A-Za-z0-9.-]+)(:[0-9]+)?[:/](.+)$ ]]; then
-  HOST=${BASH_REMATCH[2]}; PORT=""; PPATH=${BASH_REMATCH[4]}
+elif [[ $ORIGIN =~ ^ssh://git@([A-Za-z0-9.-]+)(:[0-9]+)?/(.+)$ ]]; then
+  HOST=${BASH_REMATCH[1]}; PORT=""; PPATH=${BASH_REMATCH[3]}
+elif [[ $ORIGIN =~ ^git@([A-Za-z0-9.-]+):(.+)$ ]]; then   # scp 格式沒有埠號,冒號後面就是路徑(群組可以是數字)
+  HOST=${BASH_REMATCH[1]}; PORT=""; PPATH=${BASH_REMATCH[2]}
 else
   die "看不懂 origin 網址:$ORIGIN"
 fi

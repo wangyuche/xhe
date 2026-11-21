@@ -13,7 +13,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
  && mkdir -p /out/app/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
-# 沒設 DATABASE_URL 時用相對路徑 SQLite data/dev.db:WORKDIR /app/data 必須是 nonroot 可寫
+# 沒設 DATABASE_URL 時用相對路徑 SQLite data/dev.db:WORKDIR 是 /app,其下的 /app/data 必須是 nonroot 可寫
 # (distroless 沒有 shell,用 COPY --chown 建目錄)。容器刪掉資料就沒了;要保留請掛 volume 到 /app/data 或用 PostgreSQL。
 COPY --from=build --chown=nonroot:nonroot /out/app /app
 COPY --from=build /out/server /server
