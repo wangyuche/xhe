@@ -26,7 +26,11 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 - **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 都在這裡。這個目錄是 xhe repo 的連結(`~/.claude/skills/agent-forge` → xhe):在其他專案裡**不要直接改**;在 xhe 的分支上改會立刻對所有專案生效。改法見下方。
 - **產出**一律寫在**目前專案的根目錄**底下:`.claude/agents/`、`.claude/agent-specs/`、`.claude/skills/`。不要寫進 skill 目錄。
-- **版本指紋:** 對 skill 目錄算一次內容雜湊,用來判斷規則有沒有變:`cd <skill 目錄> && find -L . -type f -name '*.md' | sort | xargs shasum | shasum`(skill 目錄是連結,要 `-L`;用相對路徑,連結路徑和實際路徑算出來才一樣)。先確認 `find -L . -type f -name '*.md' | wc -l` 大於 0,否則指紋無效。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。回報時可附上前 8 碼。
+- **版本指紋:** 對 skill 目錄算內容雜湊,用來判斷規則有沒有變。用 subshell 一次做完(不改目前目錄;skill 目錄是連結要 `-L`;相對路徑讓連結路徑和實際路徑算出一樣;沒有檔案就失敗):
+  ```bash
+  (cd <skill 目錄> && [ "$(find -L . -type f -name '*.md' | wc -l)" -gt 0 ] && find -L . -type f -name '*.md' -print0 | LC_ALL=C sort -z | xargs -0 shasum | shasum | cut -c1-8)
+  ```
+  回報時附前 8 碼,並附 `git -C <skill 目錄> branch --show-current`;不是 `main` 時註明「規則來自未合併的分支」。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。
 
 ## 派出審查角色
 
@@ -46,7 +50,7 @@ skill 目錄是 xhe 本機工作目錄的連結(使用者 2026-11-21 決定不�
 4. 第一次安裝:先 `ls -la ~/.claude/skills/agent-forge` 看目標。
    - 已經是指到 xhe 的連結:不用做。
    - 指錯的連結:`rm ~/.claude/skills/agent-forge`(不要 `rm -rf` 穿過連結)。
-   - 實體目錄(舊的 sbx 安裝):問過使用者後移到 skills 目錄**外面** `mv ~/.claude/skills/agent-forge ~/.claude/agent-forge.old`(留在 skills 裡會被當成第二個 agent-forge 載入)。
+   - 實體目錄(舊的 sbx 安裝):問過使用者後移到 skills 目錄**外面** `mv ~/.claude/skills/agent-forge ~/.claude/agent-forge.old-$(date +%Y%m%d%H%M%S)`(留在 skills 裡會被當成第二個 agent-forge 載入)。
    - `mkdir -p ~/.claude/skills`,確認 `test ! -e ~/.claude/skills/agent-forge` 後,用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。
 5. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
 
