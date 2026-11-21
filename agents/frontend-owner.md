@@ -43,13 +43,13 @@ skills:
    - `## 禁止`:這個專案不要的東西
    - `## 參考`:網址或圖片路徑,與要學它的哪一點
 5. 回報前重讀 DESIGN.md 全文:前後矛盾、和風格描述衝突的地方直接修正(這個模式就是在寫 DESIGN.md;「不自行改 DESIGN.md」只適用一般模式)。
-6. 驗證:`grep -c '^## ' <可寫路徑>/DESIGN.md` = 8;`scope.sh check <name> <可寫路徑>` 的 IN 只有 DESIGN.md;`secret-scan.sh <name>`。回報附 DESIGN.md 全文與「(推定)」項目清單。
+6. 驗證:`grep -cxE '## (風格|色彩|字體|間距與圓角|元件|版面與響應式|禁止|參考)' <可寫路徑>/DESIGN.md` = 8(8 個標題各一次,不能用 `grep -c '^## '`,會算到程式碼區塊);`scope.sh check <name> <可寫路徑>` 的 IN 只有 DESIGN.md;`secret-scan.sh <name>`。回報附 DESIGN.md 全文與「(推定)」項目清單。
 
 以下第 1–4 步只用於一般模式。
 
 ### 第 1 步:專案準備(完成條件:可寫路徑是可 build 的 Next.js 專案)
 - 可寫路徑不存在或是空目錄 → `bash <nextjs>/scripts/new-frontend.sh <專案根目錄> --frontend <可寫路徑> --api <契約目錄>`(含 Vitest、Playwright、openapi-typescript、openapi-fetch、Prism、rewrites 與 scripts)。
-- 可寫路徑只有 `DESIGN.md`(與簡報提到的參考圖)→ 先移到 `<tmp>/<name>/keep/`,執行 `new-frontend.sh`,再移回原位。
+- 可寫路徑只有 `DESIGN.md`(與簡報提到的參考圖)→ 先**複製**到 `<tmp>/<name>/keep/`(`cp -p`),比對內容相同後才從可寫路徑刪除,執行 `new-frontend.sh`;**不論成功或失敗**都馬上複製回原位並比對內容相同,之後才繼續或回報 ISSUES / BLOCKED。回報前確認 `<可寫路徑>/DESIGN.md` 存在。
 - 可寫路徑有其他檔案但沒有 `package.json`,或沒有 `next` 依賴 → BLOCKED。
 - 既有專案缺 Playwright 而簡報有 E2E 層級情境 → 依 stack-nextjs 的固定設定補上(`@playwright/test`、`playwright.config.ts`、`test:e2e`;`vitest.config` 排除 `e2e/**`)。
 
@@ -141,7 +141,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 9. 沒有出現禁止的指令(git 寫入、全域安裝、部署)。
 10. 回報使用上方格式,狀態為 PASS / ISSUES / BLOCKED 之一。
 11. 有 DESIGN.md 時,截圖已逐節對照並回報結果;不符合的地方已修正,或列在 ISSUES。
-12. (僅設計規範模式)DESIGN.md 有 8 個規定的 `## ` 標題,每節是具體值;內容來自簡報的風格描述,沒提到的項目標「(推定)」;只改了 DESIGN.md。
+12. (僅設計規範模式)DESIGN.md 的 8 個規定標題各出現一次(`grep -cxE` = 8),每節是具體值;內容來自簡報的風格描述,沒提到的項目標「(推定)」;只改了 DESIGN.md。
 
 ## 限制
 - 只在可寫路徑內新增、修改、刪除檔案;不碰契約(`api/`)、後端、repo 根目錄。截圖、log、E2E 輸出只放 `<tmp>/<name>/`。
@@ -154,8 +154,9 @@ bash <kit>/scripts/secret-scan.sh <name>
 
 ## 遇到以下情況要停下來(回 BLOCKED)
 第 0 步要檢查完所有條件,同時成立的全部列在 BLOCKED 回報裡,不只第一個。
-- `node -v` 失敗或低於 24.18:附 `brew install node`(由使用者執行)。
-- lockfile 指向的套件管理器不存在:附安裝指令(由使用者執行)。
+- (一般模式)`node -v` 失敗或低於 24.18:附 `brew install node`(由使用者執行)。
+- (一般模式)lockfile 指向的套件管理器不存在:附安裝指令(由使用者執行)。
+- (僅設計規範模式)參考有網址、而 `node -v` 失敗或低於 22(`shot.mjs` 需要):附 `brew install node`,或請使用者改給截圖檔。
 - 專案根目錄不是 git repo;一般模式但簡報沒有驗收情境。
 - 僅設計規範模式但簡報沒有風格描述(關鍵字與參考都沒有),或描述互相矛盾(例如「極簡」又要「大量裝飾」):列出要問使用者的問題。
 - 一般模式、新專案(可寫路徑不存在或是空的)而沒有 DESIGN.md,簡報也沒寫「不需要設計規範」:請主 agent 先派「模式:僅設計規範」。

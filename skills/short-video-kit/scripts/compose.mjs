@@ -62,6 +62,11 @@ function fitChain(inLabel, outLabel, tag) {
 // 置頂:裁出 region、放大到寬 1080、放在字幕區(y ≥ 1300)上方,底色用 theme.bg
 const TOP_MAX_H = 1240, TOP_BOTTOM = 1280;
 const topBg = tl.theme?.bg; // 置頂鏡頭的底色;沒有預設,用到置頂時檢查
+// 原聲模式的 headline 用完整 theme;在 dry-run 前就檢查(render.mjs 也會擋,但那時已開始產生中間檔)
+if (tl.mode === 'original' && tl.headline) {
+  const miss = ['bg', 'bg2', 'fg', 'accent', 'muted'].filter(k => !/^#[0-9a-fA-F]{6}$/.test(String(tl.theme?.[k] ?? '')));
+  if (miss.length) fail(`有 headline 時 theme 五個欄位都要是 #RRGGBB,缺或格式錯:${miss.join('、')};沒有預設配色,依這支影片的來源選`, 2);
+}
 const probeSize = (f) => run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', f], 'ffprobe').stdout.trim().split('x').map(Number);
 function topLayout(j, [x, y, w, h]) {
   if (!/^#[0-9a-fA-F]{6}$/.test(String(topBg ?? ''))) fail(`scenes[${j}] 是置頂鏡頭,需要 theme.bg(#RRGGBB)當底色;沒有預設配色,依這支影片的來源選`, 2);
@@ -213,7 +218,7 @@ if (cards.length) {
   writeFileSync(join(subDir, 'cards.json'), JSON.stringify({ theme: tl.theme ?? {}, cards }, null, 1));
   const r = spawnSync('node', [join(KIT, 'render.mjs'), join(subDir, 'cards.json'), subDir], { encoding: 'utf8' });
   if (r.status === 4) { process.stderr.write(r.stderr); fail('字幕放不下,請在 timeline 拆句後重跑', 4); }
-  if (r.status !== 0) { process.stderr.write(r.stderr); fail('render.mjs 失敗'); }
+  if (r.status !== 0) { process.stderr.write(r.stderr); fail('render.mjs 失敗', r.status === 2 ? 2 : 1); }
 }
 if (!subs.length) writeFileSync(join(subDir, 'boxes.json'), '[]');
 

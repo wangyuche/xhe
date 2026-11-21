@@ -76,6 +76,10 @@ node -e 'const b=JSON.parse(process.argv[1]);const s=b.find(x=>x.file==="s2.png"
   && ok "render.mjs 字幕縮字、在安全區內" || bad "render.mjs 縮字" "$b"
 echo '{"cards":[{"type":"subtitle","text":"這是一句非常非常長的字幕這是一句非常非常長的字幕這是一句非常非常長的字幕這是一句非常非常長的字幕這是一句非常非常長的字幕"}]}' > long.json
 node "$S/render.mjs" long.json r2 >/dev/null 2>&1; [ $? -eq 4 ] && ok "render.mjs 字幕放不下 → 結束碼 4" || bad "render.mjs 放不下"
+echo '{"cards":[{"type":"cover","file":"ic.png","image":"shot.png","title":"■■■"}]}' > ic.json
+node "$S/render.mjs" ic.json r6 --asset-root assets >/dev/null 2>&1 && [ "$(ffmpeg -hide_banner -loglevel error -i r6/ic.png -vf 'crop=1:1:110:320,format=rgb24' -f rawvideo - | od -An -tu1 | awk 'NF{print ($1>200&&$2>200&&$3>200)?"white":"dark"}')" = white ] && ok "render.mjs 有圖封面不需要 theme、標題白字" || bad "render.mjs 有圖封面白字"
+echo '[{"type":"title","title":"x"}]' > arr.json
+e="$(node "$S/render.mjs" arr.json r6 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '物件格式' && ok "render.mjs 陣列格式 + 需要 theme → 結束碼 2 並提示物件格式" || bad "render.mjs 陣列格式" "$e"
 echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"point","title":"x","image":"../cards.json"}]}' > esc.json
 node "$S/render.mjs" esc.json r3 --asset-root assets >/dev/null 2>&1; [ $? -eq 1 ] && ok "render.mjs 擋 asset-root 外的圖" || bad "render.mjs asset-root 外"
 echo '{"theme":{"bg":"#203040","bg2":"#304050","fg":"#ffffff","accent":"#ff8800","muted":"#a0a0a0"},"cards":[{"type":"point","title":"x","image":"https://example.com/a.png"}]}' > ext.json
@@ -161,6 +165,8 @@ cat > job/2/timeline.json <<EOF
 {"mode":"original","work":"../work/2","source":"../../land.mp4","cut":$sil,
  "segments":[{"start":0.5,"end":2.9,"text":"第一段"},{"start":5.2,"end":9.5,"texts":["後面七個字吧","所以拆成兩句字幕"]}]}
 EOF
+node -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync("job/2/timeline.json","utf8"));fs.writeFileSync("job/2/hl.json",JSON.stringify({...t,headline:"標題"}))'
+e="$(node "$S/compose.mjs" job/2/hl.json --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'headline' && ok "原聲 headline 沒有 theme → dry-run 就結束碼 2" || bad "原聲 headline 沒有 theme" "$e"
 c="$(node "$S/compose.mjs" job/2/timeline.json)"; rc=$?
 node -e 'const c=JSON.parse(process.argv[1]);process.exit(Math.abs(c.sourceDuration-c.totalCut-c.actualDuration)<=0.5&&Math.abs(c.totalCut-1.8)<0.05?0:1)' "$c" 2>/dev/null \
   && ok "compose.mjs 精簡:來源 − 剪掉 = 成品長度(剪點各留 0.1 秒)" || bad "compose.mjs 精簡長度" "$c"

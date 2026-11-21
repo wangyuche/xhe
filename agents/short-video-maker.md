@@ -48,7 +48,7 @@ skills:
 
    **第 0 步之後才發生的 BLOCKED**(clone 失敗、文字稿空白、condense 超過 60 秒、沒有音軌):先 `stop.sh <slug>`(有啟動時),再 `rm -rf <job>`(本次自己建立的),然後回報。
 
-**配色(每支都要選，沒有預設)**:render.mjs 與 compose.mjs 沒有預設配色，用到標題 / 亮點 / 程式碼 / 結尾卡、漸層封面、`headline` 或置頂鏡頭時必須給 `theme` 五個欄位(`bg`、`bg2`、`fg`、`accent`、`muted`),否則結束碼 2。
+**配色(每支都要選，沒有預設)**:render.mjs 與 compose.mjs 沒有預設配色，用到標題 / 亮點 / 程式碼 / 結尾卡、漸層封面或 `headline` 時必須給 `theme` 五個欄位(`bg`、`bg2`、`fg`、`accent`、`muted`,都是 `#RRGGBB`),置頂鏡頭至少要 `theme.bg`,否則結束碼 2。
 - 派工有配色要求 → 照做。
 - repo → 從 repo 自己的視覺識別取色，依序找:logo / icon 圖(Read 看圖)、README 用的本機圖、網站或文件的主色(`grep -rE 'theme-color|--primary|--brand|primary:'` 在 css / html / tailwind 設定 / docs 設定)。都沒有 → 依專案性質與語言生態推定(例如 Rust 專案用鏽橘、資料視覺化用冷靜藍綠),標「推定」。
 - 影片 → 從 `first-frame.png` 或來源畫面的主色取 `accent`,`bg` 取畫面暗部色。
