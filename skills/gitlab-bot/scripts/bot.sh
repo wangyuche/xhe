@@ -123,17 +123,19 @@ ci_file_at() {
 # token 只在 0600 暫存檔給 credential helper,helper 只綁 origin 的主機($BASE),送不到別的主機
 clean_push() {
   local branch=$1 bad rc sd
-  # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄)
+  # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
+  # --type=path 先把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄)
   local -a safe=()
   while IFS= read -r sd; do [[ -n $sd ]] && safe+=(-c "safe.directory=$sd"); done \
-    < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
+    < <({ git config --system --includes --type=path --get-all safe.directory; git config --global --includes --type=path --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u GIT_SSL_CERT_PASSWORD_PROTECTED
     -u GIT_HTTP_PROXY_AUTHMETHOD -u GIT_PROXY_SSL_CERT -u GIT_PROXY_SSL_KEY -u GIT_PROXY_SSL_CAINFO
     -u SSL_CERT_FILE -u SSL_CERT_DIR -u CURL_CA_BUNDLE -u GIT_EXEC_PATH -u NO_PROXY -u no_proxy
     -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy
-    -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_TRACE_PACKET -u GIT_CURL_VERBOSE
+    -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_TRACE_PACKET -u GIT_TRACE_SETUP -u GIT_TRACE_REDACT -u GIT_CURL_VERBOSE
+    -u GIT_TRACE2 -u GIT_TRACE2_EVENT -u GIT_TRACE2_PERF -u GIT_TRACE2_CONFIG_PARAMS -u GIT_TRACE2_ENV_VARS -u SSLKEYLOGFILE
     -u XDG_CONFIG_HOME -u NETRC -u GIT_SSH -u GIT_SSH_COMMAND
     HOME="$SCRATCH/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0)
   # repo 的任何設定檔(local、worktree、include / includeIf)都不得有能改寫網址 / 認證 / TLS / proxy 的項目:
@@ -163,6 +165,7 @@ nonneg() { [[ ${1-} =~ ^[0-9]+$ ]] || die "$2 查詢回應不是預期的 JSON,�
 ci_signals() {
   local sha=$1 tgt=$2 found=() pj cip k v r tsha n c tq
   pj=$(project_json) || die "查不到專案設定,不合併"
+  jq -e 'type=="object"' >/dev/null 2>&1 <<<"$pj" || die "專案設定的回應不是預期的 JSON,不合併"
   # Developer 權限的 token 看不到這些欄位;缺欄位 = 無法確認,不能當成沒有 CI
   for k in ci_config_path auto_devops_enabled only_allow_merge_if_pipeline_succeeds; do
     jq -e --arg k "$k" 'has($k)' >/dev/null <<<"$pj" || found+=("專案回應沒有 $k 欄位(token 權限可能不足,需要 Maintainer),無法確認沒有 CI")

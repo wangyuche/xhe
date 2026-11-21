@@ -135,6 +135,9 @@ PUSHLINE=$(grep ' push ' "$TMP/git.log" | tail -1)
 check "push 的 credential helper 只綁 origin 主機" bash -c "grep -q -- '-c credential.https://gitlab.example.test.helper=!f' <<<\"\$1\" && ! grep -q -- '-c credential.helper=!' <<<\"\$1\"" _ "$PUSHLINE"
 check "push 停用 submodule 遞迴" bash -c "grep -q -- 'push.recurseSubmodules=no' <<<\"\$1\" && grep -q -- 'submodule.recurse=false' <<<\"\$1\" && grep -q -- 'push --no-recurse-submodules' <<<\"\$1\"" _ "$PUSHLINE"
 check "push 仍推成功(feat/v)" [ "$(git -C "$TMP/remote.git" rev-parse feat/v 2>/dev/null)" = "$(git rev-parse HEAD)" ]
+check "push 傳給 git 的 safe.directory 已展開 ~(HOME 換掉後才不會失效)" bash -c "H='$TMP/fakehome'; mkdir -p \$H; printf '[safe]\\n\\tdirectory = ~/repo\\n' > \$H/gc; : > '$TMP/git.log'
+  HOME=\$H GIT_CONFIG_GLOBAL=\$H/gc PATH='$TMP/gitwrap:$PATH' TMPDIR='$TMP/tt' bash '$BOT' push feat/sd >/dev/null 2>&1
+  grep ' push ' '$TMP/git.log' | tail -1 | grep -qF -- \"-c safe.directory=\$H/repo \""
 unset GITLAB_BOT_PUSH_URL
 
 # --- mr ---

@@ -35,7 +35,7 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
 ```
 
 - push 拒絕 `main`、`master`、預設分支,不支援 force;改歷史先問使用者。
-- token 不進指令列、環境變數、remote URL 或 `.git/config`:API 經 stdin 給 curl,push 時只在 0700 暫存目錄的 0600 檔給 credential helper 讀,結束即刪;helper 只綁 origin 的主機(`credential.https://<主機>.helper`),不會送給別的主機。push 不讀全域/系統 git 設定(保留 safe.directory)、HOME 換成空目錄、停用 hooks、不遞迴推 submodule(`--no-recurse-submodules`),並移除 proxy、TLS、SSH、trace 類環境變數;repo 的任何設定檔(local、worktree、include)有 `url.*`、`credential.*`、`http.*`(`postBuffer`、`version`、`lowSpeedLimit`、`lowSpeedTime`、`maxRequests`、`minSessions` 除外)、`remote.<網址>.*`(例如 pushurl)、`core.sshCommand` 就拒絕。
+- token 不進指令列、環境變數、remote URL 或 `.git/config`:API 經 stdin 給 curl,push 時只在 0700 暫存目錄的 0600 檔給 credential helper 讀,結束即刪;helper 只綁 origin 的主機(`credential.https://<主機>.helper`),不會送給別的主機。push 不讀全域/系統 git 設定(保留 safe.directory)、HOME 換成空目錄、停用 hooks、不遞迴推 submodule(`--no-recurse-submodules`),並移除 proxy、TLS(含 `SSLKEYLOGFILE`)、SSH、trace(含 trace2)類環境變數;repo 的任何設定檔(local、worktree、include)有 `url.*`、`credential.*`、`http.*`(`postBuffer`、`version`、`lowSpeedLimit`、`lowSpeedTime`、`maxRequests`、`minSessions` 除外)、`remote.<網址>.*`(例如 pushurl)、`core.sshCommand` 就拒絕。
 - 平行任務在各自 worktree 執行即可(worktree 共用 origin)。
 
 ## 自己 review 後合併
@@ -48,6 +48,7 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
    - 專案設了自訂 `ci_config_path`、開了 Auto DevOps、規定 pipeline 成功才能合併;
    - 專案回應沒有這三個欄位(Developer 權限的 token 看不到)→ 視為無法確認。要讓 bot 自己合併,token 擁有者需要 Maintainer。
    - 外部 CI 可能晚登記:等 15 秒(4 次查詢)都沒有才算沒有 CI,合併前再確認一次。任何查詢失敗都不合併(exit 1)。
+   - 已知限制:最後一次確認到送出合併之間(約 1 秒)目標分支若被推入 CI 設定,不會發現;合併只鎖 head SHA。
 5. 回報:MR 網址、review 結論、merge commit SHA。使用者沒授權自動合併時,停在第 3 步回報即可。
 
 ## 自我測試
