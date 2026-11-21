@@ -6,8 +6,9 @@
 SYM="${1:-IX0001}"
 OUT="${2:-$HOME/.claude/tg/work}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
+[[ "$SYM" =~ ^[A-Za-z0-9]+$ ]] || { echo "用法錯誤: 代號只能是英數字($SYM)" >&2; exit 2; }
 FUGLE="${FUGLE_SH:-$HOME/.claude/tg/fugle.sh}"
-[ -f "$FUGLE" ] || { echo "資料錯誤: 找不到 $FUGLE(Fugle 包裝腳本,見 xhe README「台股」)" >&2; exit 1; }
+[ -f "$FUGLE" ] || { echo "資料錯誤: 找不到 $FUGLE(Fugle 包裝腳本,見 xhe README「台股」一節)" >&2; exit 1; }
 mkdir -p "$OUT" || exit 1
 FROM=$(python3 -I -c 'import datetime as d; print((d.date.today()-d.timedelta(days=45)).isoformat())')
 TO=$(python3 -I -c 'import datetime as d; print(d.date.today().isoformat())')

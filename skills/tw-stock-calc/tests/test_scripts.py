@@ -217,6 +217,8 @@ class TestValuation(unittest.TestCase):
         code, out, _ = run("valuation.py", '{"msg":"token is invalid","status":401}', "--eps4q", "40")
         self.assertEqual(code, 1)
         self.assertIn("status 401", json.loads(out)["error"])
+        code, out, _ = run("valuation.py", '{"msg":"rate limited"}', "--eps4q", "40")
+        self.assertEqual(code, 1)
         # 正常但沒資料(status 200、data 空)仍是不適用,結束碼 0
         code, out, _ = run("valuation.py", '{"msg":"success","status":200,"data":[]}', "--eps4q", "40")
         self.assertEqual(code, 0)

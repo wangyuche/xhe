@@ -15,7 +15,7 @@ bash ~/.claude/skills/tw-bottom-signal/scripts/run.sh [代號] [輸出目錄]
 ```
 
 - 代號預設 `IX0001`（加權指數）；個股直接給代號，例如 `2330`。輸出目錄預設 `~/.claude/tg/work`。
-- 資料：`~/.claude/tg/fugle.sh`。Fugle **歷史 K 不含今天盤中**，所以 run.sh 另外抓 `intraday/candles` 接在後面（`scripts/combine.py`）；非交易日或還沒開盤時只用歷史。每次執行先刪掉上次的資料檔:**歷史 K 抓不到就報錯結束(結束碼 1、stderr「資料錯誤」),不沿用舊資料**;盤中 K 抓不到時只用歷史;交易時間內(台北週一到週五 09:00–13:59)stderr 另印「警告」,這時回覆要註明結果缺今天盤中。找不到 `fugle.sh` 也報錯(格式見 xhe README「台股」)。
+- 資料：`~/.claude/tg/fugle.sh`。Fugle **歷史 K 不含今天盤中**，所以 run.sh 另外抓 `intraday/candles` 接在後面（`scripts/combine.py`）；非交易日或還沒開盤時只用歷史。每次執行先刪掉上次的資料檔:**歷史 K 抓不到就報錯結束(結束碼 1、stderr「資料錯誤」),不沿用舊資料**;盤中 K 抓不到時只用歷史;交易時間內(台北週一到週五 09:00–13:59)stderr 另印「警告」,這時回覆要註明結果缺今天盤中(平日的國定假日也會出現這個警告,先確認當天有沒有開盤)。找不到 `fugle.sh` 也報錯(格式見 xhe README「台股」一節)。
 - 輸出 30 分 K 的 ①～⑥、`STAGE n/6`，接著 ⑦ 60 分 K 確認。30 分 K 走到 ② 以上時另輸出 `bottom_<代號>_30m.svg`。
 - 圖標題：指數為「加權指數」，個股為「代號 公司名」（名稱取自 Fugle 報價，抓不到就只放代號）。
 

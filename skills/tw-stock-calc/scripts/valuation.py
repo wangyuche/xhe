@@ -83,7 +83,9 @@ def main():
         print(json.dumps({"error": "TaiwanStockPER 回應格式不符"}, ensure_ascii=False))
         sys.exit(1)
     status = obj.get("status")
-    if "error" in obj or status not in (None, 200):
+    # 沒有 status 也沒有 data、msg 又不是 success(例如代理回的 {"msg":"rate limited"})也算錯誤
+    no_data_msg = status is None and "data" not in obj and obj.get("msg") not in (None, "success")
+    if "error" in obj or status not in (None, 200) or no_data_msg:
         # FinMind 錯誤(402 = 額度用完、400 參數錯、401/403 token 問題):是資料缺口,不是「不適用」
         msg = obj.get("msg") or obj.get("error") or ""
         err = {"error": ("FinMind 額度用完(402),估值資料缺口;設定 FINMIND_TOKEN 或稍後重試"

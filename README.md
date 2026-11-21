@@ -46,7 +46,8 @@ ln -s "$(pwd)/skills/mac-widget-kit" ~/.claude/skills/mac-widget-kit  # widget �
 
 `tw-stock-analyst` 需要在 host 核准規格中列出的網域;可選擇設定環境變數 `FINMIND_TOKEN` 提高 FinMind 額度(免 token 額度用完時 FinMind 回 402,報告會標「無資料(FinMind 額度用完)」)。
 
-台股其他 skill:
+### 台股(tw-bottom-signal、audio-transcribe、fugle.sh)
+
 
 ```bash
 ln -s "$(pwd)/skills/tw-bottom-signal" ~/.claude/skills/tw-bottom-signal   # 底部訊號(需要下面的 fugle.sh)
@@ -66,7 +67,7 @@ KEYF="$HOME/.claude/tg/fugle_key"
 [ -s "$KEYF" ] || { echo '{"error":"no fugle_key file"}'; exit 1; }
 URL="https://api.fugle.tw/marketdata/v1.0/stock/$1"
 # 金鑰經 stdin 的 curl 設定傳入,不出現在指令列(ps 看不到)
-HDR=$(printf 'header = "X-API-KEY: %s"' "$(tr -d ' \n' < "$KEYF")")
+HDR=$(printf 'header = "X-API-KEY: %s"' "$(tr -d ' \r\n' < "$KEYF")")
 if [ -n "$2" ]; then printf '%s\n' "$HDR" | curl -s -m 20 -K - -o "$2" -w '{"http":%{http_code}}\n' "$URL"
 else printf '%s\n' "$HDR" | curl -s -m 20 -K - "$URL"; echo; fi
 ```
