@@ -109,17 +109,18 @@ check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40
 check "merge GitHub 說 unstable 拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $A40 2>&1 | grep -q '失敗或未完成的檢查'"
 : > "$TMP/sleep.log"
 check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
-check "外部 CI App 的 check suite(還沒 run)算 CI" bash -c "bash '$BOT' --repo o/r merge 22 --sha $(sha_of e) 2>&1 | grep -q '外部 App 的 check suite(1)'"
+check "外部 CI App 的 check suite(還沒 run)算 CI" bash -c "bash '$BOT' --repo o/r merge 22 --sha $(sha_of e) 2>&1 | grep -q '外部 App 的 check suite@eeeeeeeeeeee(1)'"
 check "只有 GitHub Actions 的空 check suite 不算 CI" [ "$(bash "$BOT" --repo o/r merge 11 --sha "$(sha_of 1)")" = "$B40" ]
-check "base 分支有 workflow 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 20 --sha $(sha_of c) 2>&1 | grep -q '.github/workflows@withci'"
+check "base 分支有 workflow 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 20 --sha $(sha_of c) 2>&1 | grep -q '.github/workflows@abababababab'"
 check "workflow 查詢回應不是 JSON 時拒絕(fail closed)" bash -c "bash '$BOT' --repo o/r merge 21 --sha $(sha_of d) 2>&1 | grep -q '不是預期的 JSON'"
+check "base 分支 commit 有外部 CI status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 23 --sha $(sha_of 0) 2>&1 | grep -q 'commit status@acacacacacac(1)'"
 check "Actions 關閉(runs 404)不算 CI" [ "$(bash "$BOT" --repo o/r merge 19 --sha "$(sha_of 9)")" = "$B40" ]
-check "有 check run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 12 --sha $(sha_of 2) 2>&1 | grep -q 'check run(1)'"
-check "有 commit status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 13 --sha $(sha_of 3) 2>&1 | grep -q 'commit status(1)'"
-check "有 workflow run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 14 --sha $(sha_of 4) 2>&1 | grep -q 'workflow run(1)'"
+check "有 check run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 12 --sha $(sha_of 2) 2>&1 | grep -q 'check run@222222222222(1)'"
+check "有 commit status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 13 --sha $(sha_of 3) 2>&1 | grep -q 'commit status@333333333333(1)'"
+check "有 workflow run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 14 --sha $(sha_of 4) 2>&1 | grep -q 'workflow run@444444444444(1)'"
 check "有 .github/workflows 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 15 --sha $(sha_of 5) 2>&1 | grep -q '.github/workflows@555555555555(1 個檔案)'"
 check "workflows 查詢失敗時拒絕(fail closed)" bash -c "bash '$BOT' --repo o/r merge 16 --sha $(sha_of 6) 2>&1 | grep -q '查不到 repo 是否有 workflow'"
-check "等待期間才登記的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 17 --sha $(sha_of 7) 2>&1 | grep -q '有 CI(.*commit status(1)'"
+check "等待期間才登記的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 17 --sha $(sha_of 7) 2>&1 | grep -q '有 CI(.*commit status@777777777777(1)'"
 check "合併前最後一次才出現的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $(sha_of 8) 2>&1 | grep -q '合併前偵測到 CI'"
 : > "$TMP/sleep.log"
 (PATH="$TMP/slbin:$PATH" bash "$BOT" --repo o/r merge 7 --sha "$A40" >/dev/null 2>&1)
@@ -154,6 +155,9 @@ mkdir -p "$TMP/lfsrepo/src"
 git init -q "$TMP/lfsuser" && (cd "$TMP/lfsuser" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q --allow-empty -m x) >/dev/null 2>&1
 mkdir -p "$TMP/xdg/git"; echo '*.psd filter=lfs' > "$TMP/xdg/git/attributes"
 check "使用者層級 attributes 的 LFS 也偵測" bash -c "cd '$TMP/lfsuser' && XDG_CONFIG_HOME='$TMP/xdg' bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
+git init -q "$TMP/lfshist" && (cd "$TMP/lfshist" && export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  echo '*.png filter=lfs' > .gitattributes && git add . && git commit -q -m a && : > .gitattributes && git add . && git commit -q -m b) >/dev/null 2>&1
+check "中途拿掉 LFS 設定的 commit 也偵測" bash -c "cd '$TMP/lfshist' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 check "從子目錄推送也偵測到 LFS" bash -c "cd '$TMP/lfsrepo/src' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
 git init -q "$TMP/lfsinfo" && (cd "$TMP/lfsinfo" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q --allow-empty -m x && mkdir -p .git/info && echo '*.bin filter=lfs' > .git/info/attributes) >/dev/null 2>&1
 check ".git/info/attributes 的 LFS 也偵測" bash -c "cd '$TMP/lfsinfo' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
@@ -233,6 +237,10 @@ check "env TOKEN_FILE 展開 ~" bash -c "HOME='$TMP' GITHUB_BOT_TOKEN_FILE='~/pa
 printf '# 2027 到期\nghp_testpat\n# note\n' > "$TMP/pat-multi"
 printf 'GH_TOKEN=ghp_testpat\n' > "$TMP/pat-kv"
 check "token 檔 KEY=值 寫法" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-kv' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
+for line in 'export GH_TOKEN=ghp_testpat' 'GH_TOKEN = "ghp_testpat"' 'ghp_testpat  # note'; do
+  printf '%s\n' "$line" > "$TMP/pat-fmt"
+  check "token 檔格式:$line" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-fmt' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
+done
 check "token 檔多行只取第一個 token" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-multi' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
 check "pat 讀不到檔案失敗" bash -c "! GITHUB_BOT_TOKEN_FILE=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
 git init -q "$TMP/repo2" && (

@@ -123,8 +123,8 @@ api() {
   [[ -n $bearer ]] || die "內部錯誤:$method $path 沒有 token"
   local -a data=()
   if [[ -n $body ]]; then                        # 內文寫檔再給 curl:不出現在 ps,也不受 ARG_MAX 限制
-    local bf; bf=$(umask 077; mktemp "$SCRATCH/body.XXXXXX")
-    printf '%s' "$body" > "$bf"
+    local bf; bf=$(umask 077; mktemp "$SCRATCH/body.XXXXXX") || die "無法建立暫存檔"
+    printf '%s' "$body" > "$bf" || die "無法寫入暫存檔"
     data=(-H 'Content-Type: application/json' --data-binary "@$bf")
   fi
   resp=$(
@@ -188,8 +188,12 @@ pat() {
     t=$(gh auth token --hostname github.com --user "$GH_USER" 2>"$SCRATCH/gh.err") \
       || die "gh 取不到 $GH_USER 的 token(沒登入就執行 gh auth login 加入該帳號):$(cat "$SCRATCH/gh.err")"
   else
-    t=$(awk '{ sub(/\r$/, "") } !/^[[:space:]]*(#|$)/ { print $1; exit }' "$TOKEN_FILE")
-    t=${t#*=}                                   # 容許 GH_TOKEN=ghp_... 這種寫法
+    # 第一個非註解行;容許 `export GH_TOKEN=...`、`KEY = "..."`、行尾註解
+    t=$(awk '{ sub(/\r$/, "") } !/^[[:space:]]*(#|$)/ { print; exit }' "$TOKEN_FILE")
+    t=${t%%[[:space:]]#*}
+    t=$(trim_val "$t"); t=${t#export }
+    [[ $t == *=* ]] && t=${t#*=}
+    t=$(trim_val "$t")
   fi
   [[ -n $t ]] || die "取不到機器人帳號的 token"
   printf '%s' "$t"
@@ -312,7 +316,12 @@ cmd_push() {
   local top info
   top=$(git rev-parse --show-toplevel) || die "不在 git repo 裡"
   info=$(git rev-parse --git-path info/attributes)
-  if git -C "$top" grep -q 'filter=lfs' HEAD -- ':(top).gitattributes' ':(top,glob)**/.gitattributes' 2>/dev/null \
+  local c lfs=0
+  # HEAD 以及還沒在任何遠端分支上的 commit(中途加過 LFS 再拿掉的也要抓到),最多 500 個
+  for c in HEAD $(git rev-list HEAD --not --remotes 2>/dev/null | head -n 500); do
+    git -C "$top" grep -q 'filter=lfs' "$c" -- ':(top).gitattributes' ':(top,glob)**/.gitattributes' 2>/dev/null && { lfs=1; break; }
+  done
+  if [[ $lfs -eq 1 ]] \
      || { [[ -f $info ]] && grep -q 'filter=lfs' "$info"; }; then
     die "這個 repo 使用 Git LFS,bot.sh push 不支援(LFS 物件不會上傳);請改用一般 git push"
   fi
@@ -384,45 +393,52 @@ cmd_pr() {
 #   .github/workflows 有任何檔案、這個 commit 有任何 check run、commit status 或 GitHub Actions
 #   workflow run,以及其他 App(非 GitHub Actions)的 check suite。GitHub Actions 的空 suite 不算。
 # 外部 CI 可能晚幾秒才登記,所以等 15 秒(4 次輪詢)都沒有才算沒有 CI;合併前再確認一次。
+num_or_die() {   # num_or_die <jq 運算式> <json> <說明>:取出非負整數,否則 die
+  local n; n=$(jq -er "$1" <<<"$2" 2>/dev/null) && [[ $n =~ ^[0-9]+$ ]] || die "$3 查詢回應不是預期的 JSON,不合併"
+  printf '%s' "$n"
+}
+
 ci_signals() {   # ci_signals <head SHA> <token> <base 分支>:印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 die
-  local sha=$1 t=$2 base=$3 wf rc n out="" ref
-  # head 與 base 兩邊都看:base 上才有的 workflow(例如只在 push 到 main 時跑)合併後就會觸發
-  for ref in "$sha" "$base"; do
-    wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$(jq -rn --arg v "$ref" '$v|@uri')" "$t") && rc=0 || rc=$?
+  local sha=$1 t=$2 base=$3 wf rc n out="" ref c resp base_sha
+  # base 分支目前的 commit:先確認 ref 存在(之後 contents 的 404 才能當「沒有 workflow」)
+  resp=$(api GET "/repos/$REPO/commits/$(jq -rn --arg v "$base" '$v|@uri')" "$t") || die "查不到 base 分支 $base,不合併"
+  base_sha=$(jfield .sha "$resp") && [[ $base_sha =~ ^[0-9a-f]{40}$ ]] || die "base 分支 $base 的回應不是預期的 JSON,不合併"
+  # head 與 base 兩個 commit 都看:base 上才有的 CI(只在 push 到 main 時跑的 workflow 或外部 CI)合併後就會觸發
+  for c in "$sha" "$base_sha"; do
+    wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$c" "$t") && rc=0 || rc=$?
     case $rc in
-      0) n=$(jq -er 'if type=="array" then length else 1 end' <<<"$wf" 2>/dev/null) && [[ $n =~ ^[0-9]+$ ]] \
-           || die "workflow 查詢回應不是預期的 JSON,不合併"
-         [[ $n -eq 0 ]] || out+=" .github/workflows@${ref:0:12}($n 個檔案)" ;;
-      4) ;;
+      0) n=$(num_or_die 'if type=="array" then length else 1 end' "$wf" workflow) || exit 1
+         [[ $n -eq 0 ]] || out+=" .github/workflows@${c:0:12}($n 個檔案)" ;;
+      4) ;;                                    # ref 已確認存在(head 由 PR 提供、base 剛查過),404 = 沒有這個目錄
       *) die "查不到 repo 是否有 workflow,不合併" ;;
     esac
+    # 其他 App(非 GitHub Actions)的 check suite,不論有沒有 run 都算 CI(外部 CI 可能先建 suite、晚點才跑)。
+    # GitHub Actions 的空 suite 不算:沒有 workflow 檔時 Actions 不會跑(workflow 檔已在上面檢查)。
+    resp=$(api GET "/repos/$REPO/commits/$c/check-suites?per_page=100" "$t") \
+      || die "讀不到 check suite(若上面是 HTTP 403:App 要加 Checks: Read 權限)"
+    n=$(num_or_die '[.check_suites[] | select(.app.slug != "github-actions")] | length' "$resp" "check suite") || exit 1
+    local total listed
+    total=$(num_or_die '.total_count' "$resp" "check suite") || exit 1
+    listed=$(num_or_die '.check_suites | length' "$resp" "check suite") || exit 1
+    [[ $total -le $listed ]] || die "check suite 超過 100 個,無法全部確認,不合併"
+    [[ $n -eq 0 ]] || out+=" 外部 App 的 check suite@${c:0:12}($n)"
+    local path label
+    for path in "commits/$c/check-runs?filter=all&per_page=1:check run" "commits/$c/status:commit status"; do
+      label=${path##*:}; path=${path%:*}
+      resp=$(api GET "/repos/$REPO/$path" "$t") \
+        || die "讀不到 $label(若上面是 HTTP 403:App 要加 Checks / Commit statuses: Read 權限)"
+      n=$(num_or_die '.total_count' "$resp" "$label") || exit 1
+      [[ $n -eq 0 ]] || out+=" $label@${c:0:12}($n)"
+    done
+    # Actions 在 repo 設定裡關掉時這個 API 回 404 → 視為沒有 workflow run
+    resp=$(api_try GET "/repos/$REPO/actions/runs?head_sha=$c&per_page=1" "$t") && rc=0 || rc=$?
+    case $rc in
+      0) n=$(num_or_die '.total_count' "$resp" "workflow run") || exit 1
+         [[ $n -eq 0 ]] || out+=" workflow run@${c:0:12}($n)" ;;
+      4) ;;
+      *) die "讀不到 workflow run(若上面是 HTTP 403:App 要加 Actions: Read 權限)" ;;
+    esac
   done
-  local path label
-  local resp
-  # 其他 App(非 GitHub Actions)的 check suite,不論有沒有 run 都算 CI(外部 CI 可能先建 suite、晚點才跑)。
-  # GitHub Actions 的空 suite 不算:沒有 workflow 檔時 Actions 不會跑(head / base 的 workflow 已在上面檢查)。
-  resp=$(api GET "/repos/$REPO/commits/$sha/check-suites?per_page=100" "$t") \
-    || die "讀不到 check suite(若上面是 HTTP 403:App 要加 Checks: Read 權限)"
-  n=$(jq -er '[.check_suites[] | select(.app.slug != "github-actions")] | length' <<<"$resp" 2>/dev/null) \
-    && [[ $n =~ ^[0-9]+$ ]] || die "check suite 查詢回應不是預期的 JSON,不合併"
-  [[ $(jq -r '.total_count' <<<"$resp") -le $(jq -r '.check_suites | length' <<<"$resp") ]] \
-    || die "check suite 超過 100 個,無法全部確認,不合併"
-  [[ $n -eq 0 ]] || out+=" 外部 App 的 check suite($n)"
-  for path in "commits/$sha/check-runs?filter=all&per_page=1:check run" "commits/$sha/status:commit status"; do
-    label=${path##*:}; path=${path%:*}
-    resp=$(api GET "/repos/$REPO/$path" "$t") \
-      || die "讀不到 $label(若上面是 HTTP 403:App 要加 Checks / Commit statuses: Read 權限)"
-    n=$(jfield .total_count "$resp") && [[ $n =~ ^[0-9]+$ ]] || die "$label 查詢回應不是預期的 JSON,不合併"
-    [[ $n -eq 0 ]] || out+=" $label($n)"
-  done
-  # Actions 在 repo 設定裡關掉時這個 API 回 404 → 視為沒有 workflow run
-  resp=$(api_try GET "/repos/$REPO/actions/runs?head_sha=$sha&per_page=1" "$t") && rc=0 || rc=$?
-  case $rc in
-    0) n=$(jfield .total_count "$resp") && [[ $n =~ ^[0-9]+$ ]] || die "workflow run 查詢回應不是預期的 JSON,不合併"
-       [[ $n -eq 0 ]] || out+=" workflow run($n)" ;;
-    4) ;;
-    *) die "讀不到 workflow run(若上面是 HTTP 403:App 要加 Actions: Read 權限)" ;;
-  esac
   printf '%s' "$out"
 }
 

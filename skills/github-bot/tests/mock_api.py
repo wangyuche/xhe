@@ -24,11 +24,13 @@ PRS = {
     20: ("c" * 40, "clean", "open"),  # head 沒有 workflow,但 base(withci)有
     21: ("d" * 40, "clean", "open"),  # workflows 查詢回 200 但不是 JSON
     22: ("e" * 40, "clean", "open"),  # 外部 CI App 的 check suite(還沒有 run)
+    23: ("0" * 40, "clean", "open"),  # base 分支的 commit 有外部 CI status(只在 main 跑的 CI)
 }
-BASES = {20: "withci"}
+BASES = {20: "withci", 23: "ciext"}
+BASE_SHAS = {"develop": "f" * 40, "withci": "ab" * 20, "ciext": "ac" * 20}
 # 每個 SHA 的 CI 計數:suites, runs, statuses, workflow runs
-CI = {"1" * 40: (1, 0, 0, 0), "2" * 40: (0, 1, 0, 0), "3" * 40: (0, 0, 1, 0), "4" * 40: (0, 0, 0, 1)}
-WORKFLOW_FILES = {"5" * 40: [{"name": "ci.yml"}], "withci": [{"name": "deploy.yml"}]}
+CI = {"ac" * 20: (0, 0, 1, 0), "1" * 40: (1, 0, 0, 0), "2" * 40: (0, 1, 0, 0), "3" * 40: (0, 0, 1, 0), "4" * 40: (0, 0, 0, 1)}
+WORKFLOW_FILES = {"5" * 40: [{"name": "ci.yml"}], "ab" * 20: [{"name": "deploy.yml"}]}
 CALLS = {}
 
 
@@ -73,7 +75,12 @@ class H(BaseHTTPRequestHandler):
                 return self.send(404, {"message": "Not Found"})
             return self.send(200, {"total_count": CI.get(sha, (0, 0, 0, 0))[3], "workflow_runs": []})
         if p.startswith("/repos/o/r/commits/"):
-            sha, rest = p[len("/repos/o/r/commits/"):].split("/", 1)
+            tail = p[len("/repos/o/r/commits/"):]
+            if "/" not in tail:                       # GET commits/<分支>:base 分支目前的 commit
+                if tail in BASE_SHAS:
+                    return self.send(200, {"sha": BASE_SHAS[tail]})
+                return self.send(404, {"message": "No commit found"})
+            sha, rest = tail.split("/", 1)
             suites, runs, statuses, _ = CI.get(sha, (0, 0, 0, 0))
             if rest.startswith("check-suites"):
                 if sha == "e" * 40:
