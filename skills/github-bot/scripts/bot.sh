@@ -169,8 +169,10 @@ resolve_repo() {
 pat() {
   local t
   if [[ -n $GH_USER ]]; then
-    t=$(gh auth token --hostname github.com --user "$GH_USER" 2>/dev/null) \
-      || die "gh 沒有登入 $GH_USER(執行 gh auth login 加入該帳號)"
+    gh auth token --help 2>/dev/null | grep -q -- '--user' \
+      || die "gh 版本太舊,不支援 gh auth token --user(多帳號);請升級 gh"
+    t=$(gh auth token --hostname github.com --user "$GH_USER" 2>"$SCRATCH/gh.err") \
+      || die "gh 取不到 $GH_USER 的 token(沒登入就執行 gh auth login 加入該帳號):$(cat "$SCRATCH/gh.err")"
   else
     t=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$TOKEN_FILE" | head -n1 | awk '{print $1}' | tr -d '\r' || true)
   fi
@@ -359,7 +361,8 @@ check_ci() {
     else
       [[ $((nr + ns)) -gt 0 ]] && ready=1
     fi
-    [[ $ready -eq 0 && $allow_no_ci -eq 1 && $has_wf -eq 0 ]] && break   # 有 workflow 時仍等滿 60 秒
+    # --allow-no-ci:沒有 workflow 時仍等 15 秒給外部 CI 登記;有 workflow 時等滿 60 秒
+    [[ $ready -eq 0 && $allow_no_ci -eq 1 && $has_wf -eq 0 && $i -ge 4 ]] && break
     if [[ $ready -eq 1 ]]; then
       if [[ $((nr + ns)) -eq $last ]]; then stable=$((stable + 1)); else stable=0; last=$((nr + ns)); fi
       [[ $stable -ge 3 ]] && break
@@ -378,9 +381,12 @@ check_ci() {
   # 有 check run 的 suite、以及 GitHub Actions 的 suite(不論新舊、有沒有 run)都必須完成且成功;
   # 排隊中(例如 concurrency 等待)或需要核准(action_required)一律拒絕。
   # 確定永遠不會跑的 suite,由呼叫端以 --ignore-suite <id> 明確略過(錯誤訊息會列出 id)。
+  # 已完成但 cancelled / stale 的 suite(被同 SHA 的新一輪取代)不看 suite 本身,改由下面的
+  # check runs 判斷:check-runs 預設只回每個名稱最新的一次,舊的被取消的 run 若沒被成功的取代就會被擋。
   bad=$(jq -r --arg ign " $ignore_suites " '.check_suites[]
           | select(((.latest_check_runs_count // 0) > 0) or .app.slug == "github-actions")
           | . as $su | select(($ign | contains(" \($su.id) ")) | not)
+          | select((.status == "completed" and ((.conclusion // "") | IN("cancelled","stale"))) | not)
           | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not))
           | "suite:\(.app.slug)#\(.id)=\(.conclusion // .status)"' <<<"$suites")
   bad+=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | " \(.name)=\(.conclusion // .status)"' <<<"$runs")
@@ -453,5 +459,5 @@ case ${1:-} in
   _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
             token_file "$2"; u=$3; shift 3; push_git "$TOKEN_TMP" "$u" "$@" ;;
   _scratch) echo "$SCRATCH"; [[ ${2:-} == hang ]] && { /bin/sleep 30 & wait $!; } ;;   # 測試用:印出暫存目錄(可選擇卡住等訊號)
-  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

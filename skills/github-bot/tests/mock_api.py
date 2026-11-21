@@ -89,6 +89,19 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/commits/{s21}/status":
             return self.send(200, {"state": "failure", "total_count": 1})
+        s22 = "9" * 40
+        if p == "/repos/o/r/pulls/22":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s22}})
+        if p == f"/repos/o/r/contents/.github/workflows?ref={s22}":
+            return self.send(200, [{"name": "ci.yml"}])
+        if p == f"/repos/o/r/commits/{s22}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 1, "check_runs": [{"name": "ci", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}}]})
+        if p == f"/repos/o/r/commits/{s22}/check-suites?per_page=100":
+            return self.send(200, {"total_count": 2, "check_suites": [
+                {"id": 221, "app": {"slug": "github-actions"}, "status": "completed", "conclusion": "cancelled", "latest_check_runs_count": 1},
+                {"id": 222, "app": {"slug": "github-actions"}, "status": "completed", "conclusion": "success", "latest_check_runs_count": 1}]})
+        if p == f"/repos/o/r/commits/{s22}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
         s20 = "7" * 40
         if p == "/repos/o/r/pulls/20":
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": s20}})
@@ -165,6 +178,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/repos/o/r/pulls/22/merge" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/20/merge" and self.auth() in (TOKEN, PAT):
             return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/18/merge" and self.auth() in (TOKEN, PAT):

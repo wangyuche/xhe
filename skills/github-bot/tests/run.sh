@@ -108,7 +108,7 @@ S14=$(printf '1%.0s' $(seq 40)); S15=$(printf '2%.0s' $(seq 40)); S16=$(printf '
 check "外部 CI status 失敗拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 14 --sha $S14 2>&1 | grep -q 'commit status 為 failure'"
 check "沒有任何 CI 時預設拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 2>&1 | grep -q '沒有任何 CI 結果'"
 check "外部 status 先到不算 Actions CI" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 16 --sha $S16 2>&1 | grep -q '仍沒有 GitHub Actions 的 check run'"
-check "token 失敗只報真正原因" bash -c "! bash '$BOT' --repo o/missing token 2>&1 | grep -q '缺 .token'"
+check "token 失敗只報真正原因" bash -c "o=\$(bash '$BOT' --repo o/missing token 2>&1); grep -q 'App installation' <<<\"\$o\" && ! grep -q '缺 .token' <<<\"\$o\""
 check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
 S17=$(printf '4%.0s' $(seq 40))
 check "晚登記的 workflow(queued suite)擋住 merge" bash -c "bash '$BOT' --repo o/r merge 17 --sha $S17 2>&1 | grep -q 'suite:github-actions#172=queued'"
@@ -116,6 +116,10 @@ S18=$(printf '5%.0s' $(seq 40))
 check "排隊中的 Actions suite 不論新舊都擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $S18 2>&1 | grep -q 'suite:github-actions#182=queued'"
 check "--ignore-suite 明確略過後放行" [ "$(bash "$BOT" --repo o/r merge 18 --sha "$S18" --ignore-suite 182)" = "$C40" ]
 S21=$(printf '8%.0s' $(seq 40))
+S22=$(printf '9%.0s' $(seq 40))
+check "被取代的 cancelled suite 不擋(看最新 check run)" [ "$(bash "$BOT" --repo o/r merge 22 --sha "$S22")" = "$C40" ]
+: > "$TMP/sleep.log"
+check "--allow-no-ci 無 workflow 仍等外部 CI 登記" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 15 --sha $S15 --allow-no-ci >/dev/null 2>&1; [ \$(wc -l < '$TMP/sleep.log') -ge 3 ]"
 check "--allow-no-ci 仍檢查外部 CI 失敗" bash -c "bash '$BOT' --repo o/r merge 21 --sha $S21 --allow-no-ci 2>&1 | grep -q 'commit status 為 failure'"
 S19=$(printf '6%.0s' $(seq 40)); S20=$(printf '7%.0s' $(seq 40))
 check "其他 App 的 check run 不算 Actions CI" bash -c "bash '$BOT' --repo o/r merge 19 --sha $S19 2>&1 | grep -q '仍沒有 GitHub Actions 的 check run'"
@@ -124,6 +128,7 @@ check "--repo 拒絕 .. 片段" bash -c "bash '$BOT' --repo ../x token 2>&1 | gr
 check "parse 拒絕 .. 片段" bash -c "! bash '$BOT' _parse https://github.com/../x.git"
 printf 'ghp_testpat  # expires 2027\n' > "$TMP/pat-comment"
 check "token 行尾註解" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat-comment' bash '$BOT' --repo o/r token | grep -qx ghp_testpat"
+check "用法說明完整" bash -c "bash '$BOT' 2>&1 | grep -q '只支援 github.com'"
 check "_ 指令需 GITHUB_BOT_TEST=1" bash -c "GITHUB_BOT_TEST= bash '$BOT' _parse https://github.com/a/b 2>&1 | grep -q '只給測試用'"
 printf 'APP_ID=123456\nKEY_FILE=~svc/key.pem\n' > "$TMP/config-tilde"
 check "~user 不展開成 \$HOMEuser" bash -c "GITHUB_BOT_CONFIG='$TMP/config-tilde' bash '$BOT' _jwt 2>&1 | grep -q \"KEY_FILE='~svc/key.pem'\""
@@ -156,8 +161,6 @@ check "被 SIGTERM 中斷也刪除暫存目錄" bash -c "d=\$(cat '$TMP/sigterm/
 printf 'not a key\n' > "$TMP/badkey.pem"
 check "私鑰壞掉時明確報錯" bash -c "GITHUB_BOT_APP_ID=1 GITHUB_BOT_KEY_FILE='$TMP/badkey.pem' bash '$BOT' _jwt 2>&1 | grep -q '私鑰簽章失敗'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
-git -C "$TMP/prepo" config url."git@github.com:".insteadOf https://github.com/
-git -C "$TMP/prepo" config --unset url."git@github.com:".insteadOf
 check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]
 printf '[url "git@github.com:"]\n\tpushInsteadOf = https://github.com/\n' > "$TMP/prepo/.git/extra.cfg"
 git -C "$TMP/prepo" config include.path extra.cfg
@@ -235,6 +238,7 @@ check "pat commit 作者是機器人帳號" [ "$(git -C "$TMP/repo2" log -1 --fo
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'GH'
 #!/usr/bin/env bash
+[[ "$*" == "auth token --help" ]] && { echo "  -u, --user string"; exit 0; }
 [[ "$*" == "auth token --hostname github.com --user xhe-bot" ]] && { echo ghp_testpat; exit 0; }
 echo "no account" >&2; exit 1
 GH
@@ -243,6 +247,8 @@ printf 'GH_USER=xhe-bot\n' > "$TMP/config-gh"
 GH_RUN="env PATH=$TMP/bin:$PATH GITHUB_BOT_CONFIG=$TMP/config-gh"
 check "gh token" [ "$($GH_RUN bash "$BOT" --repo o/r token)" = ghp_testpat ]
 check "gh identity" grep -qx 'name=xhe-bot' <<<"$($GH_RUN bash "$BOT" identity)"
+mkdir -p "$TMP/oldgh"; printf '#!/bin/sh\necho "usage: gh auth token [--hostname]"\n' > "$TMP/oldgh/gh"; chmod +x "$TMP/oldgh/gh"
+check "舊版 gh 明確提示升級" bash -c "PATH='$TMP/oldgh:$PATH' GITHUB_BOT_GH_USER=xhe-bot GITHUB_BOT_CONFIG=/nonexistent bash '$BOT' --repo o/r token 2>&1 | grep -q '版本太舊'"
 check "gh 帳號未登入失敗" bash -c "! env PATH='$TMP/bin:$PATH' GITHUB_BOT_GH_USER=nobody GITHUB_BOT_CONFIG=/nonexistent bash '$BOT' --repo o/r token 2>/dev/null"
 check "gh 優先於 TOKEN_FILE" [ "$(env PATH="$TMP/bin:$PATH" GITHUB_BOT_CONFIG="$TMP/config-pat" GITHUB_BOT_GH_USER=xhe-bot bash "$BOT" --repo o/r token)" = ghp_testpat ]
 
