@@ -53,7 +53,7 @@ createServer(async (req, res) => {
     const id = `fake-${++n}`;
     const lat = Object.values(g).find(v => v.class_type === 'EmptySD3LatentImage')?.inputs ?? {};
     const text = JSON.stringify(g);
-    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEERR/.test(text) ? 3 : 0 };
+    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEERR/.test(text) ? 3 : 0, histDrop: /FLAKYHIST/.test(text) ? 2 : 0 };
     jobs.set(id, job);
     // QUEUED:先排隊 2.5 秒(queue_pending),再執行 0.3 秒
     if (job.pending) setTimeout(() => { job.pending = false; setTimeout(() => { job.done = true; }, 300); }, 2500);
@@ -62,6 +62,7 @@ createServer(async (req, res) => {
   }
   if (p.startsWith('/history/')) {
     const id = p.slice(9), j = jobs.get(id);
+    if (j && j.histDrop > 0) { j.histDrop--; return req.socket.destroy(); }
     if (!j || !j.done) return send(res, 200, {});
     if (j.error) return send(res, 200, { [id]: { status: { status_str: 'error', completed: false, messages: [['execution_error', { exception_message: 'fake failure' }]] }, outputs: {} } });
     return send(res, 200, { [id]: { status: { status_str: 'success', completed: true }, outputs: { 11: { images: [{ filename: `${id}.png`, subfolder: '', type: 'temp' }] } } } });

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // game-art-kit:ComfyUI HTTP API 客戶端(只用 Node 內建模組)。
-// 用法(run 的 --timeout 只算開始執行後的時間;排隊等待另有 --queue-timeout,預設 240 秒):
+// 用法(run 的 --timeout 只算開始執行後的時間,預設 240 秒;排隊等待另有 --queue-timeout,預設 180 秒;合計配 Bash 600 秒逾時):
 //   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、建議的 workflow 預設值(JSON)
 //   node comfy.mjs upload <圖檔> --prefix <專案-角色>       → 上傳到 ComfyUI 的 temp 區,印出 LoadImage 用的名稱
-//   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 300] [--queue-timeout 240]
+//   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 240] [--queue-timeout 180]
 //                                                           → 填參數、送出、輪詢、下載 PNG、刪除 history,印出結果 JSON
 //   node comfy.mjs pngsize <圖檔>                           → {"width":…,"height":…}
 //   node comfy.mjs scrub-check <目錄>                       → 產出不含 ComfyUI 位址 / 私有 IP;找到就結束碼 1
@@ -225,9 +225,9 @@ async function run() {
   const out = flags.out ?? die('缺 --out', 2);
   const name = flags.name ?? die('缺 --name', 2);
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) die('--name 只能用英數、_ . -', 2);
-  const timeout = Number(flags.timeout ?? 300);
+  const timeout = Number(flags.timeout ?? 240);
   if (!Number.isFinite(timeout) || timeout <= 0) die(`--timeout 要是正數(秒):${flags.timeout}`, 2);
-  const queueTimeout = Number(flags['queue-timeout'] ?? 240);
+  const queueTimeout = Number(flags['queue-timeout'] ?? 180);
   if (!Number.isFinite(queueTimeout) || queueTimeout <= 0) die(`--queue-timeout 要是正數(秒):${flags['queue-timeout']}`, 2);
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
@@ -263,6 +263,7 @@ async function run() {
   let stage = null; // 下載暫存目錄;中止時也要刪
   let printed = false; // 已印出 ok 結果、檔案已就位
   const onSignal = async (sig) => {
+    if (STOPPING) return; // 只收尾一次
     STOPPING = true;
     try {
       if (!printed) console.error(`收到 ${sig},取消 ComfyUI 上的工作後結束`);
@@ -272,7 +273,7 @@ async function run() {
       console.error(`警告:中止時收尾失敗:${e?.message || e}`);
     } finally {
       // 結果已印出就算成功(只是收尾被打斷),否則 130 / 143
-      process.exit(printed ? 0 : sig === 'SIGINT' ? 130 : 143);
+      process.exit(printed ? 0 : { SIGINT: 130, SIGHUP: 129 }[sig] ?? 143);
     }
   };
   const halt = () => new Promise(() => {}); // 中止中:停在這裡,等訊號處理結束程序
@@ -280,13 +281,16 @@ async function run() {
   try {
     let hist = null;
     let startedAt = null; // 離開排隊、開始執行的時間;--timeout 從這裡算
+    // 輪詢時的網路錯誤 / 逾時不放棄,下一輪再試;連續 5 次才當作連不上
+    let fails = 0;
+    const poll = async (path) => { try { const r = await json(path, { timeoutMs: 10000 }); fails = 0; return r; } catch (e) { if (!(e instanceof Fail) || e.code !== 5 || ++fails >= 5) throw e; return { __status: 'net' }; } };
     while (true) {
       if (STOPPING) await halt();
-      const h = await json(`/history/${id}`, { timeoutMs: 10000 });
+      const h = await poll(`/history/${id}`);
       if (STOPPING) await halt();
       if (h && h[id]) { hist = h[id]; if (hist.status?.completed || hist.status?.status_str === 'error') break; }
       if (startedAt === null) {
-        const q = await json('/queue', { timeoutMs: 10000 });
+        const q = await poll('/queue');
         if (STOPPING) await halt();
         // /queue 回錯誤時不判斷,下一輪再查(不能當成已開始執行)
         if (!q.__status && Array.isArray(q.queue_pending) && !q.queue_pending.some(x => x[1] === id)) startedAt = Date.now();
@@ -296,6 +300,7 @@ async function run() {
       if (STOPPING) await halt();
       if (ran > timeout || waited > queueTimeout) {
         await cleanup();
+        if (STOPPING) await halt(); // 收尾期間收到中止訊號:交給訊號處理,以 130 / 129 / 143 結束
         console.log(JSON.stringify({ name, status: 'timeout', reason: ran > timeout ? 'run' : 'queue', seconds: ran > timeout ? timeout : queueTimeout, prompt_id: id }));
         process.exit(4);
       }
