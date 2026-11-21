@@ -110,7 +110,35 @@ git config --unset credential.helper
 git config http.proxy http://evil.example:8080
 check "repo 有 http.proxy 時拒絕 push" bash -c "bash '$BOT' push feat/w 2>&1 | grep -q '拒絕推送'"
 git config --unset http.proxy
+git config remote.https://gitlab.example.test/grp/proj.git.pushurl https://evil.example/x.git
+check "repo 有 remote.<網址>.pushurl 時拒絕 push" bash -c "bash '$BOT' push feat/w 2>&1 | grep -q '拒絕推送'"
+git config --unset remote.https://gitlab.example.test/grp/proj.git.pushurl
+git config credential.https://evil.example.helper store
+check "repo 有 credential.<網址>.helper 時拒絕 push" bash -c "bash '$BOT' push feat/w 2>&1 | grep -q '拒絕推送'"
+git config --unset credential.https://evil.example.helper
+git config extensions.worktreeConfig true; git config --worktree http.sslVerify false
+check "config.worktree 有 http.sslVerify 時拒絕 push" bash -c "bash '$BOT' push feat/w 2>&1 | grep -q '拒絕推送'"
+git config --worktree --unset http.sslVerify; git config --unset extensions.worktreeConfig
+printf '[include]\n\tpath = %s\n' "$TMP/inc.cfg" >> .git/config; printf '[http]\n\tproxy = http://evil.example:1\n' > "$TMP/inc.cfg"
+check "include 進來的 http.proxy 也拒絕 push" bash -c "bash '$BOT' push feat/w 2>&1 | grep -q '拒絕推送'"
+git config --unset include.path
+git config http.postBuffer 524288000
+check "無害的 http.postBuffer 不擋 push" bash -c "TMPDIR='$TMP/tt' bash '$BOT' push feat/pb >/dev/null 2>&1"
+git config --unset http.postBuffer
 check "拒絕時沒有推出 feat/w" bash -c "! git -C '$TMP/remote.git' rev-parse --verify -q feat/w >/dev/null"
+# credential helper 只綁 origin 主機、不遞迴推 submodule:用記錄參數的 git 包裝檢查實際的 push 指令
+REAL_GIT=$(command -v git); mkdir -p "$TMP/gitwrap"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$TMP/git.log" "$REAL_GIT" > "$TMP/gitwrap/git"; chmod +x "$TMP/gitwrap/git"
+: > "$TMP/git.log"
+PATH="$TMP/gitwrap:$PATH" TMPDIR="$TMP/tt" bash "$BOT" push feat/v >/dev/null 2>&1
+PUSHLINE=$(grep ' push ' "$TMP/git.log" | tail -1)
+check "push 的 credential helper 只綁 origin 主機" bash -c "grep -q -- '-c credential.https://gitlab.example.test.helper=!f' <<<\"\$1\" && ! grep -q -- '-c credential.helper=!' <<<\"\$1\"" _ "$PUSHLINE"
+check "push 停用 submodule 遞迴" bash -c "grep -q -- 'push.recurseSubmodules=no' <<<\"\$1\" && grep -q -- 'submodule.recurse=false' <<<\"\$1\" && grep -q -- 'push --no-recurse-submodules' <<<\"\$1\"" _ "$PUSHLINE"
+check "push 仍推成功(feat/v)" [ "$(git -C "$TMP/remote.git" rev-parse feat/v 2>/dev/null)" = "$(git rev-parse HEAD)" ]
+check "push 傳給 git 的 safe.directory 已展開 ~(HOME 換掉後才不會失效)" bash -c "H='$TMP/fakehome'; mkdir -p \$H; printf '[safe]\\n\\tdirectory = ~/repo\\n' > \$H/gc; : > '$TMP/git.log'
+  HOME=\$H GIT_CONFIG_GLOBAL=\$H/gc PATH='$TMP/gitwrap:$PATH' TMPDIR='$TMP/tt' bash '$BOT' push feat/sd >/dev/null 2>&1
+  grep ' push ' '$TMP/git.log' | tail -1 | grep -qF -- \"-c safe.directory=\$H/repo \""
+check "不受信任的 repo(dubious ownership)拒絕 push" bash -c "! GIT_TEST_ASSUME_DIFFERENT_OWNER=1 bash '$BOT' push feat/do >/dev/null 2>&1 && ! git -C '$TMP/remote.git' rev-parse --verify -q feat/do >/dev/null"
 unset GITLAB_BOT_PUSH_URL
 
 # --- mr ---
@@ -127,7 +155,7 @@ check "mr 只有 read_api 時 403 失敗" bash -c "GITLAB_BOT_TOKEN_CMD='echo gl
 
 # --- merge(sleep 換成記錄呼叫次數的空操作)---
 A40=$(printf 'a%.0s' $(seq 40)); C40=$(printf 'c%.0s' $(seq 40)); D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40)); F40=$(printf 'f%.0s' $(seq 40))
-mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\necho called >> "%s"\n' "$TMP/sleep.log" > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
+mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\necho "$1" >> "%s"\n' "$TMP/sleep.log" > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
 REAL_PATH=$PATH; export PATH="$TMP/fastbin:$PATH"
 reset_mock() { curl -sS -X POST "$MOCK/__reset" >/dev/null; : > "$TMP/sleep.log"; }
 
@@ -137,16 +165,25 @@ check "控制字元 JSON 不會讓 jq 失敗(bug a)" bash -c "bash '$BOT' merge 
 reset_mock
 OUT=$(bash "$BOT" merge 3 --sha "$A40" 2>&1)
 check "unchecked → checking → mergeable 會等待後合併(bug b)" grep -q '^merged: .*/merge_requests/3$' <<<"$OUT"
-check "bug b 確實有等待(sleep 3 次)" [ "$(wc -l < "$TMP/sleep.log" | tr -d ' ')" -eq 3 ]
+check "bug b 確實有等待(sleep 3 次)" [ "$(grep -cx 3 "$TMP/sleep.log")" -eq 3 ]
 reset_mock
+: > "$TMP/req.log"
 bash "$BOT" merge 1 --sha "$A40" >/dev/null 2>&1
-check "已 mergeable 時不等待" [ ! -s "$TMP/sleep.log" ]
+check "已 mergeable 時不等待合併狀態" [ "$(grep -cx 3 "$TMP/sleep.log")" -eq 0 ]
+check "等晚登記的 CI:查 4 次、間隔 5 秒共 3 次" [ "$(grep -cx 5 "$TMP/sleep.log")" -eq 3 ]
+check "合併前再確認一次 CI(head statuses 共查 5 次)" [ "$(grep -c "^GET .*/repository/commits/$A40/statuses" "$TMP/req.log")" -eq 5 ]
+check "目標分支的 commit 也查 pipeline 與 commit status" bash -c "grep -q 'pipelines?sha=2222222222222222222222222222222222222222' '$TMP/req.log' && grep -q 'commits/2222222222222222222222222222222222222222/statuses' '$TMP/req.log'"
+reset_mock
+check "剛 push 完(第一次 GET 是舊 sha / 衝突)仍等重新計算後合併" bash -c "bash '$BOT' merge 17 --sha $A40 2>&1 | grep -q '^merged: .*/merge_requests/17$'"
+check "GitLab 狀態 ci_still_running 時以結束碼 2 拒絕" bash -c "bash '$BOT' merge 18 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -q 'ci_still_running' '$TMP/err'"
 check "merge SHA 不符拒絕" bash -c "bash '$BOT' merge 1 --sha $C40 2>&1 | grep -q '不是 review 過的'"
 check "merge 短 SHA 拒絕" bash -c "! bash '$BOT' merge 1 --sha abc1234 2>/dev/null"
 check "merge 缺 --sha 拒絕" bash -c "! bash '$BOT' merge 1 2>/dev/null"
 check "merge has_conflicts 拒絕" bash -c "bash '$BOT' merge 4 --sha $A40 2>&1 | grep -q 'MR 有衝突'"
 check "merge 已關閉拒絕" bash -c "bash '$BOT' merge 8 --sha $A40 2>&1 | grep -q '不是 open'"
-for t in "5 $C40 head 有 .gitlab-ci.yml" "6 $D40 head 有 1 個 pipeline" "7 $A40 withci 有 .gitlab-ci.yml" "9 $E40 head 有 1 個 commit status"; do
+reset_mock
+for t in "5 $C40 head 有 .gitlab-ci.yml" "6 $D40 head 有 1 個 pipeline" "7 $A40 withci 有 .gitlab-ci.yml" "9 $E40 head 有 1 個 commit status" \
+         "11 0000000000000000000000000000000000000000 head 有 1 個 pipeline" "13 $A40 tgtci 有 1 個 commit status" "14 $A40 MR 有 1 個 pipeline"; do
   set -- $t; iid=$1 sha=$2; shift 2; msg="$*"
   : > "$TMP/req.log"
   check "merge !$iid($msg)以結束碼 2 拒絕" bash -c "bash '$BOT' merge $iid --sha $sha 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF -- '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
@@ -162,6 +199,16 @@ done
 echo '{}' > "$TMP/scenario.json"
 : > "$TMP/req.log"
 check "merge !10(查詢 .gitlab-ci.yml 回 500)拒絕且不送合併" bash -c "! bash '$BOT' merge 10 --sha $F40 2>'$TMP/err' && grep -q '無法確認' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+N40=$(printf '9%.0s' $(seq 40))
+check "merge !15(查詢 pipelines 回 500)拒絕且不送合併" bash -c "bash '$BOT' merge 15 --sha $N40 2>'$TMP/err'; r=\$?; [ \$r -ne 0 ] && [ \$r -ne 2 ] && grep -q '查不到 head 的 pipeline' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+check "merge !16(目標分支查不到)拒絕且不送合併" bash -c "! bash '$BOT' merge 16 --sha $A40 2>'$TMP/err' && grep -q '查不到目標分支 gone' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+for k in ci_config_path auto_devops_enabled only_allow_merge_if_pipeline_succeeds; do
+  echo "{\"hide_fields\": [\"$k\"]}" > "$TMP/scenario.json"; : > "$TMP/req.log"
+  check "merge !1(專案回應沒有 $k,Developer 權限)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF '沒有 $k 欄位' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+done
+echo '{"auto_devops_enabled": "yes"}' > "$TMP/scenario.json"; : > "$TMP/req.log"
+check "merge !1(布林欄位值異常)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF '無法確認' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+echo '{}' > "$TMP/scenario.json"
 
 # --- 反向驗證:在暫存複本上拿掉修正,對應測試必須失敗 ---
 mkdir -p "$TMP/mut"
@@ -178,6 +225,13 @@ check "反向驗證:拿掉輪詢 → bug b 測試失敗" bash -c "! cmp -s '$BOT
 mutate norecheck '?with_merge_status_recheck=true' ''
 reset_mock
 check "反向驗證:拿掉 with_merge_status_recheck → bug b 測試失敗" bash -c "! cmp -s '$BOT' '$TMP/mut/norecheck.sh' && bash '$TMP/mut/norecheck.sh' merge 3 --sha $A40 2>&1 | grep -q '無法合併:unchecked'"
+mutate nolate 'for i in 1 2 3 4; do' 'for i in 1; do'
+reset_mock
+check "反向驗證:拿掉等待晚登記 CI → !11 會被合併" bash -c "! cmp -s '$BOT' '$TMP/mut/nolate.sh' && bash '$TMP/mut/nolate.sh' merge 11 --sha 0000000000000000000000000000000000000000 2>/dev/null | grep -q '^merged:'"
+mutate nofields 'for k in ci_config_path auto_devops_enabled only_allow_merge_if_pipeline_succeeds; do' 'for k in; do'
+echo '{"hide_fields": ["auto_devops_enabled"]}' > "$TMP/scenario.json"
+check "反向驗證:拿掉缺欄位檢查 → Developer 權限時會被合併" bash -c "! cmp -s '$BOT' '$TMP/mut/nofields.sh' && bash '$TMP/mut/nofields.sh' merge 1 --sha $A40 2>/dev/null | grep -q '^merged:'"
+echo '{}' > "$TMP/scenario.json"
 export PATH=$REAL_PATH
 
 echo "---- $pass passed, $fail failed"
