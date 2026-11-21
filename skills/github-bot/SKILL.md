@@ -58,7 +58,7 @@ description: 用 GitHub App 機器人(例如 xhe-bot[bot])身分 commit、push �
 
 建議 repo 的 `main` 設分支保護(Settings → Branches / Rulesets:Require a pull request),bot 只能走 PR。
 
-## 用法(在 repo 內執行;其他 repo 前面加 `--repo owner/repo`)
+## 用法(在要操作的 repo 目錄內執行;origin 不是可辨識的 github.com 網址時才加 `--repo owner/repo`,push 的 `--repo` 必須跟 origin 相同)
 
 ```bash
 BOT=~/.claude/skills/github-bot/scripts/bot.sh
@@ -86,7 +86,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
 4. `bash $BOT merge <號碼> --sha $HEAD_SHA`,預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
-   - **bot 只自動合併沒有任何 CI 的 repo / commit**:`.github/workflows` 有任何檔案,或這個 commit 有任何 check run、commit status、GitHub Actions workflow run(沒有 run 的空 check suite 不算;repo 關掉 Actions 也不算),就拒絕並列出偵測到的項目——這時**不合併,回報使用者**,由使用者看過 CI 後自己合併。
+   - **bot 只自動合併沒有任何 CI 的 repo / commit**:PR head 或 base 分支的 `.github/workflows` 有任何檔案,或這個 commit 有任何 check run、commit status、GitHub Actions workflow run(沒有 run 的空 check suite 不算;repo 關掉 Actions 也不算),就拒絕並列出偵測到的項目——這時**不合併,回報使用者**,由使用者看過 CI 後自己合併。
    - 會等 15 秒(4 次查詢)確認沒有晚登記的外部 CI,合併前再確認一次;查詢失敗一律拒絕。
    - PR 非 open、head 不是該 SHA、有衝突、GitHub 回報 unstable / blocked / behind 也拒絕。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。

@@ -21,10 +21,12 @@ PRS = {
     17: ("7" * 40, "clean", "open"),  # status 第 3 次查詢才出現(等待期間)
     18: ("8" * 40, "clean", "open"),  # status 只在合併前最後一次查詢出現
     19: ("9" * 40, "clean", "open"),  # Actions 關閉:actions/runs 回 404
+    20: ("c" * 40, "clean", "open"),  # head 沒有 workflow,但 base(withci)有
 }
+BASES = {20: "withci"}
 # 每個 SHA 的 CI 計數:suites, runs, statuses, workflow runs
 CI = {"1" * 40: (1, 0, 0, 0), "2" * 40: (0, 1, 0, 0), "3" * 40: (0, 0, 1, 0), "4" * 40: (0, 0, 0, 1)}
-WORKFLOW_FILES = {"5" * 40: [{"name": "ci.yml"}]}
+WORKFLOW_FILES = {"5" * 40: [{"name": "ci.yml"}], "withci": [{"name": "deploy.yml"}]}
 CALLS = {}
 
 
@@ -108,7 +110,8 @@ class H(BaseHTTPRequestHandler):
             n = int(p.rsplit("/", 1)[1])
             if n in PRS:
                 sha, st, state = PRS[n]
-                return self.send(200, {"state": state, "mergeable_state": st, "head": {"sha": sha}})
+                return self.send(200, {"state": state, "mergeable_state": st, "head": {"sha": sha},
+                                       "base": {"ref": BASES.get(n, "develop")}})
         if p == "/repos/o/nodef" and self.authed():
             return self.send(200, {})
         if p == "/repos/o/moved":

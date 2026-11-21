@@ -306,8 +306,18 @@ cmd_push() {
     && git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "分支名稱不合法:$branch"
   case $branch in main|master) die "不推 $branch;請推功能分支再開 PR" ;; esac
   # 推送時停用 hooks、換掉 HOME,git-lfs 的 pre-push 不會執行 → LFS 物件不會上傳
-  if git grep -q 'filter=lfs' HEAD -- .gitattributes ':(glob)**/.gitattributes' 2>/dev/null; then
+  local top info
+  top=$(git rev-parse --show-toplevel) || die "不在 git repo 裡"
+  info=$(git rev-parse --git-path info/attributes)
+  if git -C "$top" grep -q 'filter=lfs' HEAD -- ':(top).gitattributes' ':(top,glob)**/.gitattributes' 2>/dev/null \
+     || { [[ -f $info ]] && grep -q 'filter=lfs' "$info"; }; then
     die "這個 repo 使用 Git LFS,bot.sh push 不支援(LFS 物件不會上傳);請改用一般 git push"
+  fi
+  # --repo 必須跟本地 origin 是同一個 repo(推的是這個目錄的 HEAD)
+  if [[ -n $REPO ]]; then
+    local o; o=$(parse_repo "$(git remote get-url origin 2>/dev/null)" 2>/dev/null || true)
+    [[ -z $o || $(tr '[:upper:]' '[:lower:]' <<<"$o") == $(tr '[:upper:]' '[:lower:]' <<<"$REPO") ]] \
+      || die "--repo $REPO 跟這個目錄的 origin($o)不同;push 推的是目前目錄的 HEAD,請到對應的 repo 執行"
   fi
   load_conf; resolve_repo
   local t user=x-access-token def
@@ -361,15 +371,18 @@ cmd_pr() {
 #   workflow run。check suite 不看:GitHub / 已安裝的 App 會建立沒有任何 run 的空 suite,
 #   真正跑過的 CI 一定會留下 check run / status / workflow run。
 # 外部 CI 可能晚幾秒才登記,所以等 15 秒(4 次輪詢)都沒有才算沒有 CI;合併前再確認一次。
-ci_signals() {   # 印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 die
-  local sha=$1 t=$2 wf rc n out=""
-  wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
-  case $rc in
-    0) n=$(jq -r 'if type=="array" then length else 1 end' <<<"$wf")
-       [[ $n -eq 0 ]] || out+=" .github/workflows($n 個檔案)" ;;
-    4) ;;
-    *) die "查不到 repo 是否有 workflow,不合併" ;;
-  esac
+ci_signals() {   # ci_signals <head SHA> <token> <base 分支>:印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 die
+  local sha=$1 t=$2 base=$3 wf rc n out="" ref
+  # head 與 base 兩邊都看:base 上才有的 workflow(例如只在 push 到 main 時跑)合併後就會觸發
+  for ref in "$sha" "$base"; do
+    wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$(jq -rn --arg v "$ref" '$v|@uri')" "$t") && rc=0 || rc=$?
+    case $rc in
+      0) n=$(jq -r 'if type=="array" then length else 1 end' <<<"$wf")
+         [[ $n -eq 0 ]] || out+=" .github/workflows@${ref:0:12}($n 個檔案)" ;;
+      4) ;;
+      *) die "查不到 repo 是否有 workflow,不合併" ;;
+    esac
+  done
   local path label
   local resp
   for path in "commits/$sha/check-runs?filter=all&per_page=1:check run" "commits/$sha/status:commit status"; do
@@ -390,9 +403,9 @@ ci_signals() {   # 印出偵測到的 CI 跡象(空 = 沒有),查詢失敗就 di
 }
 
 require_no_ci() {
-  local sha=$1 t=$2 sig i
+  local sha=$1 t=$2 base=$3 sig i
   for i in 1 2 3 4; do
-    sig=$(ci_signals "$sha" "$t") || exit 1
+    sig=$(ci_signals "$sha" "$t" "$base") || exit 1
     [[ -z $sig ]] || die "這個 repo / commit 有 CI($sig),bot 不自動合併;請使用者確認 CI 後自行合併"
     [[ $i -eq 4 ]] || sleep 5
   done
@@ -418,7 +431,8 @@ cmd_merge() {
   [[ $(jq -r .state <<<"$pr") == open ]] || die "PR #$num 不是 open"
   [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
   [[ $(jq -r '.mergeable_state // ""' <<<"$pr") != dirty ]] || die "PR #$num 有衝突,無法合併"
-  require_no_ci "$sha" "$t"
+  local base_ref; base_ref=$(jfield .base.ref "$pr") || exit 1
+  require_no_ci "$sha" "$t" "$base_ref"
   for i in 1 2 3 4 5 6 7 8 9 10; do        # GitHub 還在算時 mergeable_state 為 unknown
     pr=$(api GET "/repos/$REPO/pulls/$num" "$t")
     [[ $(jq -r .head.sha <<<"$pr") == "$sha" ]] || die "PR #$num head 已不是 $sha(review 後有新 commit,請重新 review)"
@@ -435,7 +449,7 @@ cmd_merge() {
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
   # 合併前再確認一次沒有 CI(等待期間之後才登記的也要擋)
-  local sig; sig=$(ci_signals "$sha" "$t") || exit 1     # 查詢失敗就停,不能當成「沒有 CI」
+  local sig; sig=$(ci_signals "$sha" "$t" "$base_ref") || exit 1     # 查詢失敗就停,不能當成「沒有 CI」
   [[ -z $sig ]] || die "合併前偵測到 CI($sig),bot 不自動合併;請使用者確認 CI 後自行合併"
   local r
   r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \

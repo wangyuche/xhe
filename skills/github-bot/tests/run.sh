@@ -7,6 +7,8 @@ TMP=$(mktemp -d)
 MOCK_PID=""
 cleanup() { [[ -n $MOCK_PID ]] && { kill "$MOCK_PID" 2>/dev/null; wait "$MOCK_PID" 2>/dev/null; }; rm -rf "$TMP"; }
 trap cleanup EXIT
+# 在沒有 origin 的暫存 repo 裡跑,不受執行時所在目錄(例如 xhe 本身的 origin)影響
+git init -q "$TMP/work" && cd "$TMP/work"
 
 pass=0; fail=0
 ok()  { echo "PASS $1"; pass=$((pass + 1)); }
@@ -107,11 +109,12 @@ check "merge GitHub 說 unstable 拒絕" bash -c "bash '$BOT' --repo o/r merge 9
 : > "$TMP/sleep.log"
 check "merge closed 立即拒絕(不輪詢)" bash -c "PATH='$TMP/slbin:$PATH' bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ ! -s '$TMP/sleep.log' ]"
 check "只有空的 check suite 不算 CI" [ "$(bash "$BOT" --repo o/r merge 11 --sha "$(sha_of 1)")" = "$B40" ]
+check "base 分支有 workflow 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 20 --sha $(sha_of c) 2>&1 | grep -q '.github/workflows@withci'"
 check "Actions 關閉(runs 404)不算 CI" [ "$(bash "$BOT" --repo o/r merge 19 --sha "$(sha_of 9)")" = "$B40" ]
 check "有 check run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 12 --sha $(sha_of 2) 2>&1 | grep -q 'check run(1)'"
 check "有 commit status 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 13 --sha $(sha_of 3) 2>&1 | grep -q 'commit status(1)'"
 check "有 workflow run 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 14 --sha $(sha_of 4) 2>&1 | grep -q 'workflow run(1)'"
-check "有 .github/workflows 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 15 --sha $(sha_of 5) 2>&1 | grep -q '.github/workflows(1 個檔案)'"
+check "有 .github/workflows 就不自動合併" bash -c "bash '$BOT' --repo o/r merge 15 --sha $(sha_of 5) 2>&1 | grep -q '.github/workflows@555555555555(1 個檔案)'"
 check "workflows 查詢失敗時拒絕(fail closed)" bash -c "bash '$BOT' --repo o/r merge 16 --sha $(sha_of 6) 2>&1 | grep -q '查不到 repo 是否有 workflow'"
 check "等待期間才登記的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 17 --sha $(sha_of 7) 2>&1 | grep -q '有 CI(.*commit status(1)'"
 check "合併前最後一次才出現的 CI 也擋" bash -c "bash '$BOT' --repo o/r merge 18 --sha $(sha_of 8) 2>&1 | grep -q '合併前偵測到 CI'"
@@ -144,6 +147,12 @@ printf 'not a key\n' > "$TMP/badkey.pem"
 check "私鑰壞掉時明確報錯" bash -c "GITHUB_BOT_APP_ID=1 GITHUB_BOT_KEY_FILE='$TMP/badkey.pem' bash '$BOT' _jwt 2>&1 | grep -q '私鑰簽章失敗'"
 git init -q "$TMP/lfsrepo" && (cd "$TMP/lfsrepo" && printf '*.png filter=lfs diff=lfs merge=lfs -text\n' > .gitattributes && git add .gitattributes && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q -m lfs) >/dev/null 2>&1
 check "Git LFS repo 拒絕推送" bash -c "cd '$TMP/lfsrepo' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
+mkdir -p "$TMP/lfsrepo/src"
+check "從子目錄推送也偵測到 LFS" bash -c "cd '$TMP/lfsrepo/src' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
+git init -q "$TMP/lfsinfo" && (cd "$TMP/lfsinfo" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -q --allow-empty -m x && mkdir -p .git/info && echo '*.bin filter=lfs' > .git/info/attributes) >/dev/null 2>&1
+check ".git/info/attributes 的 LFS 也偵測" bash -c "cd '$TMP/lfsinfo' && bash '$BOT' --repo o/r push feat/x 2>&1 | grep -q 'Git LFS'"
+git -C "$TMP/lfsinfo" remote add origin https://github.com/o/a.git
+check "--repo 跟 origin 不同時拒絕推送" bash -c "cd '$TMP/lfsinfo' && rm .git/info/attributes && bash '$BOT' --repo o/b push feat/x 2>&1 | grep -q '跟這個目錄的 origin'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]
 printf '[url "git@github.com:"]\n\tpushInsteadOf = https://github.com/\n' > "$TMP/prepo/.git/extra.cfg"
