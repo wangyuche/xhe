@@ -51,7 +51,7 @@ skills:
 **配色(每支都要選，沒有預設)**:render.mjs 與 compose.mjs 沒有預設配色，用到標題 / 亮點 / 程式碼 / 結尾卡、漸層封面或 `headline` 時必須給 `theme` 五個欄位(`bg`、`bg2`、`fg`、`accent`、`muted`,都是 `#RRGGBB`),置頂鏡頭至少要 `theme.bg`,否則結束碼 2。
 - 派工有配色要求 → 照做。
 - repo → 從 repo 自己的視覺識別取色，依序找:logo / icon 圖(Read 看圖)、README 用的本機圖、網站或文件的主色(`grep -rE 'theme-color|--primary|--brand|primary:'` 在 css / html / tailwind 設定 / docs 設定)。都沒有 → 依專案性質與語言生態推定(例如 Rust 專案用鏽橘、資料視覺化用冷靜藍綠),標「推定」。
-- 影片 → 從 `first-frame.png` 或來源畫面的主色取 `accent`,`bg` 取畫面暗部色。
+- 影片 → 先從來源抽一格(`ffmpeg -ss <第一段起點> -i <影片> -frames:v 1 <job>/work/<n>/palette.png`,compose 之前就要有,`first-frame.png` 要到 compose 才產生),Read 看圖,主色取 `accent`、暗部取 `bg`。
 - 不沿用 SKILL.md 範例或其他支影片的色碼。`fg` 與 `bg` 對比 ≥ 4.5:1。寫進 cards.json / timeline.json 的 `theme`,`script.md` 寫「配色:<五個色碼>;來源:<檔案路徑或推定理由>」。
 
 1. **repo 模式**

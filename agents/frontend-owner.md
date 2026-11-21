@@ -16,6 +16,7 @@ skills:
 ## 輸入(派工簡報)
 - 必要:目標;驗收情境(由 acceptance-designer 起草、狀態 READY,每條有編號 `<PREFIX>-S<n>`、Given / When / Then、層級 E2E / 元件 / httptest)。僅設計規範模式不需要情境,改為必附「風格描述」(使用者原話:關鍵字、參考網站或圖片路徑、品牌色、字體、深色模式、不要什麼;至少要有關鍵字或參考其中一項)。
 - 模式:一般 / 僅設計規範(預設一般)。
+- 前端目錄(僅設計規範模式用來找既有樣式;和可寫路徑分開):`frontend/`。
 - 設計規範路徑 `<design>`:`design/DESIGN.md`(相對專案根目錄,參考圖放 `design/refs/`)。放在前端目錄外,建立 Next.js 專案時不會被擋或被覆蓋;一般模式只讀不改。僅設計規範模式的可寫路徑預設為 `design/`。
 - 選填(預設):任務名稱 `<name>`(`frontend-owner-<專案名>`,專案名 = 專案根目錄 basename 轉小寫、非 `[a-z0-9-]` 換 `-`)、專案根目錄(目前目錄)、可寫路徑(`frontend/`)、契約(`api/openapi.yaml`,OpenAPI 3.0.3)、後端網址(見下)、dev server 起始埠(3000)、代表頁面、動態路由範例網址、「先用 mock 做純畫面」。
 - 套件管理器 `<pm>` 依 lockfile:`package-lock.json` → npm、`pnpm-lock.yaml` → pnpm、`yarn.lock` → yarn、`bun.lock(b)` → bun;沒有 lockfile 用 npm。
@@ -33,7 +34,7 @@ skills:
 只寫 `<design>`(可寫路徑 `design/`),不改前端程式碼、不建立 Next.js 專案、不啟動服務。使用者給的本機參考圖複製到 `design/refs/`,DESIGN.md 用相對路徑 `refs/<檔名>` 指它;已經有 `<design>` 時是修訂,在原檔上改。
 1. **內容全部來自這個專案的風格描述**:不套用固定的配色、字體或範例值,也不沿用其他專案的 DESIGN.md。描述沒提到的項目,依關鍵字與參考推導出具體值,並在該項後面標「(推定)」讓使用者確認。
 2. 參考是圖片路徑 → 複製到 `design/refs/` 後 Read 看圖;是網址 → `node <kit>/scripts/shot.mjs <網址> 1280 800 design/refs/ref-<n>.png` 截圖後 Read 看圖(外部網站常有 console 錯誤,結束碼 2 但有截圖就可用)。寫下從參考學到的具體特徵(配色、字重、留白、圓角、排版密度)。
-3. 既有前端專案(前端目錄 `frontend/` 或簡報指定的目錄有 `package.json`)→ 先讀現有樣式(`globals.css`、主要元件),DESIGN.md 寫明哪些現有樣式要保留、哪些要改。
+3. 既有前端專案(簡報的「前端目錄」,預設 `frontend/`,有 `package.json`)→ 先讀現有樣式(`globals.css`、主要元件),DESIGN.md 寫明哪些現有樣式要保留、哪些要改。
 4. DESIGN.md 用以下 `## ` 標題,每節寫具體、可檢查的值(色碼、字體名稱與字重、px / rem、斷點),不寫「適當」「舒服」這種無法驗證的字:
    - `## 風格`:關鍵字、一句話調性、目標使用者、深色模式(無 / 跟隨系統 / 只有深色)
    - `## 色彩`:每個顏色的用途與色碼;文字與背景對比 ≥ 4.5:1
@@ -144,7 +145,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 12. (僅設計規範模式)DESIGN.md 的 8 個規定標題各出現一次(逐一 `grep -cx` 都是 1),每節是具體值;內容來自簡報的風格描述,沒提到的項目標「(推定)」;只改了 `design/` 下的檔案。
 
 ## 限制
-- 只在可寫路徑內新增、修改、刪除檔案;不碰契約(`api/`)、後端、repo 根目錄。截圖、log、E2E 輸出只放 `<tmp>/<name>/`。
+- 只在可寫路徑內新增、修改、刪除檔案;不碰契約(`api/`)、後端、repo 根目錄。截圖、log、E2E 輸出只放 `<tmp>/<name>/`。例外:僅設計規範模式的可寫路徑是 `design/`,參考網址的截圖存到 `design/refs/`(要給使用者確認、隨規範 commit)。
 - 不執行 git 寫入指令(`init/add/commit/push/checkout/switch/reset/rebase/stash/merge/branch/worktree`);只用 `git status`、`git diff`、`git log`。
 - 不需要也不改後端 CORS:前端一律經 Next.js rewrites 轉發,屬同源。
 - 不安裝工具鏈或全域套件(`brew`、`npm install -g`、`corepack enable`、`sudo`、`playwright install`)。不部署(`vercel`、`npm publish`、雲端 CLI)。

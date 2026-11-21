@@ -117,8 +117,7 @@ pre{font:30px/1.45 Menlo,monospace;padding:24px 28px;white-space:pre-wrap;word-b
 .cover img{width:100%;height:100%;object-fit:cover}
 .cover.plain{background:linear-gradient(160deg,var(--bg) 0%,var(--bg2) 60%,var(--accent) 140%)}
 .cover .shade{position:absolute;inset:0;background:linear-gradient(180deg,#000c 0%,#0000 45%,#0000 70%,#000a 100%)}
-.cover:not(.plain) .ct,.cover:not(.plain) .tag{color:#fff}
-.cover .ct{position:absolute;left:72px;right:170px;top:260px;font-size:104px;font-weight:900;line-height:1.2;text-shadow:0 4px 18px #000;word-break:break-word}
+${needsTheme ? '' : '.cover .ct,.cover .tag{color:#fff}\n'}.cover .ct{position:absolute;left:72px;right:170px;top:260px;font-size:104px;font-weight:900;line-height:1.2;text-shadow:0 4px 18px #000;word-break:break-word}
 </style></head><body><div id="stage"></div><script>
 const KW=new Set('const let var function return if else for while do switch case break continue new class extends import from export default async await try catch finally throw typeof instanceof in of func package type struct interface go defer select chan map range def self lambda yield with as pass raise None True False null undefined true false public private static void int string bool fn pub mut impl use mod match enum'.split(' '));
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
