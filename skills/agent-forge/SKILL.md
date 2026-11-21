@@ -20,13 +20,17 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 任務不屬於任何一份時,先告訴使用者,不要硬套;需要時再提議新增 playbook。
 
-**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是最新版,共用倉庫更新後下個任務就會用到新規則。
+**每個任務開始前,都用 Read 重新讀對應的 playbook**,不要靠之前讀過的記憶。這份 `SKILL.md` 在一個對話裡只會載入一次,但 playbook 每次讀都是當下的檔案:skill 目錄連到 xhe 的本機工作目錄,下個任務用的是那裡**目前 checkout 的版本**(包括未合併的分支與未 commit 的修改)。
 
 ## 檔案位置
 
-- **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 都在這裡。這個目錄在共用倉庫裡是**唯讀**的。
+- **skill 目錄**(載入時會給「Base directory for this skill」):`playbooks/`、`roles/`、`templates/` 都在這裡。這個目錄是 xhe repo 的連結(`~/.claude/skills/agent-forge` → xhe):在其他專案裡**不要直接改**;在 xhe 的分支上改會立刻對所有專案生效。改法見下方。
 - **產出**一律寫在**目前專案的根目錄**底下:`.claude/agents/`、`.claude/agent-specs/`、`.claude/skills/`。不要寫進 skill 目錄。
-- **版本指紋:** 對 skill 目錄算一次內容雜湊,用來判斷規則有沒有變:`find <skill 目錄> -type f -name '*.md' | sort | xargs shasum | shasum`。回報時可附上前 8 碼。
+- **版本指紋:** 對 skill 目錄算內容雜湊,用來判斷規則有沒有變。用 subshell 一次做完(不改目前目錄;skill 目錄是連結要 `-L`;相對路徑讓連結路徑和實際路徑算出一樣;沒有檔案就失敗):
+  ```bash
+  (cd <skill 目錄> && [ "$(find -L . -type f -name '*.md' | wc -l)" -gt 0 ] && find -L . -type f -name '*.md' -print0 | LC_ALL=C sort -z | xargs -0 shasum | shasum | cut -c1-8)
+  ```
+  回報時附前 8 碼,並附來源狀態:`git -C <skill 目錄> rev-parse --short HEAD`、與 `origin/main` 是否相同(`git -C <skill 目錄> rev-parse HEAD origin/main`)、`git -C <skill 目錄> status --porcelain -- .` 是否為空。HEAD 不等於 `origin/main` 或有未 commit 的修改時,註明「規則含未審查的修改」。2026-11-21 起改用這個算法,之前記錄的指紋不能直接比,要重算。
 
 ## 派出審查角色
 
@@ -38,12 +42,17 @@ description: 造專業 agent、協調多個 agent 同時做事、並依使用成
 
 ## 修改 agent-forge 本身
 
-共用倉庫是唯讀的,而且只發佈審查過的版本。要改 agent-forge 本身(playbook、角色、範本):
+skill 目錄是 xhe 本機工作目錄的連結(使用者 2026-11-21 決定不另開只放 `main` 的副本):目前 checkout 的分支與未 commit 的修改會直接生效。要改 agent-forge 本身(playbook、角色、範本):
 
-1. 在其他專案裡,只**提出**改動清單,不要嘗試修改 skill 目錄。
-2. 實際修改在 xhe repo 開分支、commit、開 PR,由使用者審查合併。
-3. 合併進 `main` 後,由使用者在 host 上執行 `sbx skills update agent-forge` 發佈到共用倉庫(第一次安裝用 `sbx skills add wangyuche/xhe --skill agent-forge`)。
-4. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
+1. 在其他專案裡,只**提出**改動清單,不要直接修改 skill 目錄。
+2. 實際修改在 xhe repo 開分支、commit、開 PR。**在 xhe 裡要用獨立的 worktree 改**(`git fetch origin && git worktree add --no-track <暫存路徑> -b <分支> origin/main`),不要在連結指向的那個工作目錄切分支或改檔:那裡的任何修改、切換都會立刻影響所有專案。PR 由使用者審查合併,或由 bot 依 `github-bot` 的規則自我審查後合併。
+3. 合併後,`git -C <xhe> branch --show-current` 是 `main`、且 `git status` 乾淨,才切回 `main` 並 `git pull --ff-only`(失敗就停下來問使用者);是其他分支(即使乾淨,也可能是別的 session 的工作)或有未 commit 的修改時,停下來問使用者,不要硬切。不論有沒有切回 `main`,都要 `git worktree remove <暫存路徑>`;確認 PR 狀態是 MERGED 後再 `git branch -D <分支>`(squash 合併時 `-d` 會拒絕),遠端分支用 `github-bot` 刪。
+4. 第一次安裝:先 `ls -la ~/.claude/skills/agent-forge` 看目標。
+   - 已經是指到 xhe 的連結:不用做。
+   - 指錯的連結:`rm ~/.claude/skills/agent-forge`(不要 `rm -rf` 穿過連結)。
+   - 實體目錄(舊的 sbx 安裝):問過使用者後移到 skills 目錄**外面** `mv ~/.claude/skills/agent-forge ~/.claude/agent-forge.old-$(date +%Y%m%d%H%M%S)`(留在 skills 裡會被當成第二個 agent-forge 載入)。
+   - `mkdir -p ~/.claude/skills`,確認 `test ! -e ~/.claude/skills/agent-forge && test ! -L ~/.claude/skills/agent-forge`(斷掉的連結 `-e` 判斷不到)後,用絕對路徑 `ln -s /<xhe 絕對路徑>/skills/agent-forge ~/.claude/skills/agent-forge`。
+5. 改到 `SKILL.md` 本身時,要開新對話才會生效;只改 playbook、角色、範本的話,下個任務就會生效。
 
 ## 原則
 
