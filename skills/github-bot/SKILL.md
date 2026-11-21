@@ -85,7 +85,7 @@ GH_TOKEN=$(bash $BOT token) gh pr view <號碼>   # 其他 gh 操作需要時再
    - 有 `important`(這次變更造成的 bug)→ 修好、`bash $BOT commit` / `push`,回到第 1 步用新 SHA 重新 review。
    - 只剩 `nit` / `pre_existing` / 沒有發現 → 可以合併。`nit` 順手修的話一樣要重新 review。
    - 測試沒跑過或失敗、PR 有衝突、review 判斷需要使用者決定的產品問題 → 不合併,回報使用者。
-4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、檢查失敗或未完成、被分支規則擋住都會拒絕),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
+4. `bash $BOT merge <號碼> --sha $HEAD_SHA`(PR 非 open、head 不是該 SHA、有衝突、check run / commit status 失敗或未完成、被分支規則擋住都會拒絕;repo 有 workflow 但這個 commit 還沒有 CI 結果時最多等 60 秒,仍沒有就拒絕。workflow 本來就不在 PR 分支觸發的 repo,確認後才加 `--allow-no-ci`),預設 merge commit(跟 repo 既有「Merge pull request #n」一致)。
 5. 回報使用者:PR 網址、review 結論(各發現怎麼處理)、merge commit SHA。合併後的功能分支、force-push、改歷史仍先問使用者。
 
 `main` 的分支規則若要求 approval,作者不能核准自己的 PR,合併會被擋;要讓 bot 自己合併,規則只開「Require a pull request」、approvals 設 0。

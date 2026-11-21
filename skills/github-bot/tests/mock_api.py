@@ -57,6 +57,17 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"total_count": 0, "check_runs": []})
         if p == f"/repos/o/r/contents/.github/workflows?ref={e40}":
             return self.send(200, [{"name": "ci.yml"}])
+        f40 = "f" * 40
+        if p == f"/repos/o/r/commits/{f40}/check-runs?per_page=100":
+            return self.send(200, {"total_count": 0, "check_runs": []})
+        if p == f"/repos/o/r/commits/{f40}/status":
+            return self.send(200, {"state": "pending", "total_count": 0})
+        if p == f"/repos/o/r/contents/.github/workflows?ref={f40}":
+            return self.send(502, {"message": "Bad Gateway"})
+        if p == "/repos/o/r/pulls/13":
+            return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": f40}})
+        if p == "/repos/o/moved":
+            return self.send(301, {"message": "Moved Permanently"})
         if p == "/repos/o/r/pulls/11":
             return self.send(200, {"state": "open", "mergeable": True, "mergeable_state": "clean", "head": {"sha": d40}})
         if p == "/repos/o/r/pulls/12":
@@ -79,6 +90,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/repos/o/r/pulls/12/merge" and self.auth() in (TOKEN, PAT):
+            return self.send(200, {"merged": True, "sha": "c" * 40})
         if self.path == "/repos/o/r/pulls/7/merge" and self.auth() in (TOKEN, PAT):
             if body != {"sha": "a" * 40, "merge_method": "merge"}:
                 return self.send(422, {"message": "bad merge body"})

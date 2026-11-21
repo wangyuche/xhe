@@ -52,6 +52,8 @@ check "API 網址限制" bash -c "GITHUB_BOT_API_URL=http://attacker.example bas
 printf 'APP_ID=123456  # my app\nKEY_FILE=%s\n' "$TMP/key.pem" > "$TMP/config-comment"
 printf 'APP_ID=123456\nKEY_FILE="%s"\n' "$TMP/k #1.pem" > "$TMP/config-hash"; cp "$TMP/key.pem" "$TMP/k #1.pem"
 check "引號內的 # 不當註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-hash' bash '$BOT' _jwt >/dev/null"
+printf 'APP_ID=123456\nKEY_FILE="%s" # app key\n' "$TMP/key.pem" > "$TMP/config-qc"
+check "引號值加行尾註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-qc' bash '$BOT' _jwt >/dev/null"
 check "設定行尾註解" bash -c "GITHUB_BOT_CONFIG='$TMP/config-comment' bash '$BOT' _jwt >/dev/null"
 check "--repo 缺值不 crash" bash -c "bash '$BOT' --repo 2>&1 | grep -q '後面要接值'"
 check "--repo 格式錯誤拒絕" bash -c "! bash '$BOT' --repo 'bad repo' token 2>/dev/null"
@@ -92,7 +94,13 @@ check "merge 檢查失敗拒絕" bash -c "bash '$BOT' --repo o/r merge 9 --sha $
 check "merge closed 立即拒絕" bash -c "s=\$(date +%s); bash '$BOT' --repo o/r merge 10 --sha $A40 2>&1 | grep -q '不是 open' && [ \$(( \$(date +%s) - s )) -lt 3 ]"
 D40=$(printf 'd%.0s' $(seq 40)); E40=$(printf 'e%.0s' $(seq 40))
 check "merge CI 進行中拒絕" bash -c "bash '$BOT' --repo o/r merge 11 --sha $D40 2>&1 | grep -q 'CI 未完成'"
-check "merge 有 workflow 但 CI 未登記拒絕" bash -c "bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '還沒有任何 CI'"
+# CI 未登記時會等 60 秒;測試把 sleep 換成空操作
+mkdir -p "$TMP/fastbin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fastbin/sleep"; chmod +x "$TMP/fastbin/sleep"
+check "merge 有 workflow 但 CI 未登記拒絕" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 12 --sha $E40 2>&1 | grep -q '仍沒有任何 CI'"
+check "merge --allow-no-ci 放行" [ "$(PATH="$TMP/fastbin:$PATH" bash "$BOT" --repo o/r merge 12 --sha "$E40" --allow-no-ci)" = "$C40" ]
+F40=$(printf 'f%.0s' $(seq 40))
+check "workflow 查詢失敗時拒絕(fail closed)" bash -c "PATH='$TMP/fastbin:$PATH' bash '$BOT' --repo o/r merge 13 --sha $F40 2>&1 | grep -q '查不到 repo 是否有 workflow'"
+check "repo 改名時有明確訊息" bash -c "GITHUB_BOT_TOKEN_FILE='$TMP/pat0' bash '$BOT' --repo o/moved pr --head x --title T 2>&1 | grep -q '已改名'"
 check "merge 有衝突拒絕" bash -c "bash '$BOT' --repo o/r merge 8 --sha $A40 2>&1 | grep -q '有衝突'"
 check "merge 不明 method 拒絕" bash -c "! bash '$BOT' --repo o/r merge 7 --sha $A40 --method octopus 2>/dev/null"
 
@@ -138,8 +146,11 @@ check "SSL_CERT_FILE / CURL_CA_BUNDLE 被移除" [ -z "$(cd "$TMP/prepo" && SSL_
 CRED2=$(cd "$TMP/prepo" && printf 'protocol=https\nhost=evil.example\n\n' | bash "$BOT" _pushgit tok123 u credential fill 2>/dev/null || true)
 check "credential 不給 github.com 以外的主機" bash -c "! grep -q tok123 <<<'$CRED2'"
 git -C "$TMP/prepo" config push.recurseSubmodules on-demand
-check "push.recurseSubmodules 拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status 2>&1 | grep -q '請先移除'"
+check "push.recurseSubmodules 被覆蓋成 no" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config push.recurseSubmodules)" = no ]
 git -C "$TMP/prepo" config --unset push.recurseSubmodules
+git -C "$TMP/prepo" config submodule.lib.url https://github.com/o/lib.git; git -C "$TMP/prepo" config submodule.lib.active true
+check "已初始化的 submodule 不擋推送" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u status >/dev/null 2>&1"
+git -C "$TMP/prepo" config --remove-section submodule.lib
 git -C "$TMP/prepo" config include.path "$TMP/unreadable.cfg"; printf '[url "x"]\n\tinsteadOf = y\n' > "$TMP/unreadable.cfg"; chmod 000 "$TMP/unreadable.cfg"
 check "設定檢查失敗時拒絕(fail closed)" bash -c "cd '$TMP/prepo' && ! bash '$BOT' _pushgit t u status >/dev/null 2>&1"
 chmod 600 "$TMP/unreadable.cfg"; git -C "$TMP/prepo" config --unset include.path

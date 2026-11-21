@@ -5,7 +5,7 @@
 #   bot.sh commit <git commit 參數...>      以 bot 身分 git commit
 #   bot.sh push <分支>                      把 HEAD 推到遠端 <分支>(拒絕預設分支、main、master,不 force)
 #   bot.sh pr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]
-#   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase]
+#   bot.sh merge <PR 號碼> --sha <review 過的 head SHA> [--method merge|squash|rebase] [--allow-no-ci]
 #                                           SHA 不符(review 後又有新 commit)GitHub 會拒絕
 # 共用選項(放在子指令前):--repo owner/repo(預設取 origin)
 # 設定:~/.config/github-bot/config(或 GITHUB_BOT_CONFIG),三擇一,優先序 GH_USER > TOKEN_FILE > App:
@@ -39,7 +39,12 @@ load_conf() {
   local c_app="" c_key="" c_tok="" c_gh="" k v
   if [[ -f $CONF ]]; then
     while IFS='=' read -r k v; do
-      [[ $v =~ ^[[:space:]]*[\"\'] ]] || v=${v%%[[:space:]]#*}   # 未加引號的值才去掉行尾註解「 # ...」
+      # 行尾註解:加引號的值取到對應的結尾引號為止;未加引號的值砍掉「 # ...」
+      if [[ $v =~ ^[[:space:]]*\"([^\"]*)\" ]] || [[ $v =~ ^[[:space:]]*\'([^\']*)\' ]]; then
+        v=${BASH_REMATCH[1]}
+      else
+        v=${v%%[[:space:]]#*}
+      fi
       k=$(trim_val "$k"); v=$(trim_val "$v")
       case $k in
         APP_ID)     c_app=$v ;;
@@ -101,19 +106,20 @@ api() {
   code=${resp##*$'\n'}; resp=${resp%$'\n'*}
   if [[ $code != 2* ]]; then
     echo "bot.sh: $method $path → HTTP $code" >&2
+    [[ $code == 301 || $code == 307 ]] && echo "bot.sh: repo 已改名或移轉,請更新 origin 或 --repo" >&2
     jq -r '.message // empty, (.errors[]? | tostring)' <<<"$resp" >&2 2>/dev/null || printf '%s\n' "$resp" >&2
     exit 1
   fi
   printf '%s\n' "$resp"
 }
 
-# api_try:同 api,但 HTTP 404 時不報錯、回傳 1(給「可能不存在」的查詢用)
+# api_try:同 api,但 HTTP 404 回傳 4(給「可能不存在」的查詢用);其他錯誤回傳 2 並印出原因。
+# 呼叫端必須明確檢查回傳碼(在 $(...) 裡 exit 只會結束子 shell)
 api_try() {
-  local out rc
+  local out
   out=$(api "$@" 2>&1) && { printf '%s\n' "$out"; return 0; }
-  rc=$?
-  grep -q '→ HTTP 404' <<<"$out" && return 1
-  printf '%s\n' "$out" >&2; exit $rc
+  grep -q '→ HTTP 404' <<<"$out" && return 4
+  printf '%s\n' "$out" >&2; return 2
 }
 
 # jfield <欄位> <json>:欄位缺或為 null 就失敗(避免 "null" 字串混過檢查)
@@ -178,7 +184,9 @@ identity() {
   slug=$(jfield .slug "$(api GET /app "$j")")
   # 有 repo(--repo 或 GitHub origin)就用 installation token 查,避免匿名 60 次 / 小時限制;
   # 新 repo 還沒有 origin 時退回匿名查詢
-  if [[ -n $REPO ]] || parse_repo "$(git remote get-url origin 2>/dev/null)" >/dev/null; then t=$(token); fi
+  if [[ -n $REPO ]] || parse_repo "$(git remote get-url origin 2>/dev/null)" >/dev/null; then
+    t=$(token 2>/dev/null) || t=""                # App 沒裝在這個 repo(例如 fork)就退回匿名查詢
+  fi
   if [[ -n $t ]]; then
     u=$(api GET "/users/${slug}%5Bbot%5D" "$t")
   else
@@ -228,7 +236,7 @@ push_git() {
   # 這些能改寫推送網址、走 proxy、關 TLS 驗證、附加別的認證或 helper
   # 只有 exit 1(沒有符合)才算乾淨;其他錯誤(git 太舊、include 壞掉、dubious ownership)一律拒絕
   bad=$("${clean[@]}" git ${safe[@]+"${safe[@]}"} config --show-scope --includes --name-only \
-          --get-regexp '^(url|http|credential|push|submodule)\..*$' 2>&1) && rc=0 || rc=$?
+          --get-regexp '^(url|http|credential)\..*$' 2>&1) && rc=0 || rc=$?
   [[ $rc -eq 0 || $rc -eq 1 ]] || die "無法檢查 repo 設定(git config exit $rc):$bad"
   [[ $rc -eq 1 ]] || die "repo 設定有會影響推送認證或網址的項目,請先移除:$(tr '\n' ' ' <<<"$bad")"
   "${clean[@]}" \
@@ -278,33 +286,51 @@ cmd_pr() {
   jfield .html_url "$r"
 }
 
-# CI 檢查:有 check run / commit status 未完成或失敗就拒絕;repo 有 workflow 但 CI 還沒登記也拒絕
-# (剛推完時 GitHub 還沒建 check suite,mergeable_state 會先顯示 clean)
+# CI 檢查:有 check run / commit status 未完成或失敗就拒絕。
+# 剛推完時 GitHub 還沒建 check suite(mergeable_state 會先顯示 clean):repo 有 workflow 但
+# 這個 commit 還沒有任何 CI 結果時,最多等 60 秒;仍然沒有就拒絕,除非呼叫端給 --allow-no-ci
+# (workflow 不在 PR 分支上觸發的 repo 用)。
 check_ci() {
-  local sha=$1 t=$2 runs st n bad wf
-  runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
-    || die "讀不到 check runs(App 要加 Checks: Read 權限)"
-  st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
-    || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
+  local sha=$1 t=$2 allow_no_ci=$3 runs st n bad wf rc i
+  for i in $(seq 13); do
+    runs=$(api GET "/repos/$REPO/commits/$sha/check-runs?per_page=100" "$t") \
+      || die "讀不到 check runs(App 要加 Checks: Read 權限)"
+    st=$(api GET "/repos/$REPO/commits/$sha/status" "$t") \
+      || die "讀不到 commit status(App 要加 Commit statuses: Read 權限)"
+    [[ $(jq -r '.total_count' <<<"$runs") -le $(jq -r '.check_runs | length' <<<"$runs") ]] \
+      || die "check runs 超過 100 個,無法全部確認,不合併"
+    n=$(( $(jq -r '.total_count' <<<"$runs") + $(jq -r '.total_count' <<<"$st") ))
+    [[ $n -gt 0 ]] && break
+    if [[ $i -eq 1 ]]; then
+      wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t") && rc=0 || rc=$?
+      case $rc in
+        0) [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -gt 0 ]] || return 0 ;;
+        4) return 0 ;;                                   # 沒有 workflow 目錄:這個 repo 沒有 Actions CI
+        *) die "查不到 repo 是否有 workflow,不合併" ;;
+      esac
+    fi
+    [[ $i -eq 13 ]] && break
+    sleep 5
+  done
+  if [[ $n -eq 0 ]]; then
+    [[ $allow_no_ci == 1 ]] && return 0
+    die "repo 有 GitHub Actions workflow,但等了 60 秒這個 commit 仍沒有任何 CI 結果;若 workflow 本來就不在 PR 分支觸發,加 --allow-no-ci"
+  fi
   bad=$(jq -r '.check_runs[] | select(.status != "completed" or ((.conclusion // "") | IN("success","neutral","skipped") | not)) | "\(.name)=\(.conclusion // .status)"' <<<"$runs")
   [[ -z $bad ]] || die "CI 未完成或失敗,不合併:$(tr '\n' ' ' <<<"$bad")"
   [[ $(jq -r '.total_count' <<<"$st") == 0 || $(jq -r '.state' <<<"$st") == success ]] \
     || die "commit status 為 $(jq -r .state <<<"$st"),不合併"
-  n=$(( $(jq -r '.total_count' <<<"$runs") + $(jq -r '.total_count' <<<"$st") ))
-  if [[ $n -eq 0 ]] && wf=$(api_try GET "/repos/$REPO/contents/.github/workflows?ref=$sha" "$t"); then
-    [[ $(jq -r 'if type=="array" then length else 0 end' <<<"$wf") -eq 0 ]] \
-      || die "repo 有 GitHub Actions workflow 但這個 commit 還沒有任何 CI 結果,等 CI 跑完再合併"
-  fi
 }
 
 cmd_merge() {
-  local num=${1:-} sha="" method=merge
+  local num=${1:-} sha="" method=merge allow_no_ci=0
   [[ $num =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <PR 號碼> --sha <SHA> [--method merge|squash|rebase]"
   shift
   while [[ $# -gt 0 ]]; do
     case $1 in
       --sha) need_val "$1" $#; sha=$2; shift 2 ;;
       --method) need_val "$1" $#; method=$2; shift 2 ;;
+      --allow-no-ci) allow_no_ci=1; shift ;;
       *) die "merge 不認得參數 $1" ;;
     esac
   done
@@ -330,7 +356,7 @@ cmd_merge() {
     behind)   die "PR #$num 落後 base,分支規則要求先更新" ;;
     *)        die "PR #$num 狀態不允許合併(mergeable_state=$st)" ;;
   esac
-  check_ci "$sha" "$t"
+  check_ci "$sha" "$t" "$allow_no_ci"
   local r
   r=$(api PUT "/repos/$REPO/pulls/$num/merge" "$t" \
     "$(jq -nc --arg s "$sha" --arg m "$method" '{sha:$s, merge_method:$m}')")
