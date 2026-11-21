@@ -50,6 +50,15 @@ if (needsTheme) {
     if (!THEME_KEYS.includes(k)) usage(`theme.${k} 不是可用欄位(${THEME_KEYS.join(', ')})`);
     if (!/^#[0-9a-fA-F]{6}$/.test(String(v))) usage(`theme.${k} 必須是 #RRGGBB 色碼`);
   }
+  // WCAG 對比:fg 對 bg、bg2 ≥ 4.5;muted 對 bg、bg2 ≥ 3
+  const lum = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+    .map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  for (const [fgk, min] of [['fg', 4.5], ['muted', 3]]) for (const bgk of ['bg', 'bg2']) {
+    const r = ratio(theme[fgk], theme[bgk]);
+    if (r < min) usage(`theme.${fgk} 對 theme.${bgk} 對比 ${r.toFixed(2)}:1 < ${min}:1,換更深或更淺的顏色`);
+  }
 }
 
 const TYPES = new Set(['title', 'point', 'code', 'end', 'subtitle', 'headline', 'cover']);
