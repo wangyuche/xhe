@@ -87,6 +87,11 @@ check "credential 給 bot 使用者" grep -qx 'username=botuser' <<<"$CRED"
 check "token 不在 git 子程序環境" bash -c "cd '$TMP/prepo' && ! bash '$BOT' _pushgit tok123 u -c alias.envdump='!env' envdump | grep -q tok123"
 printf '[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n' > "$TMP/gitconfig-ssh"
 check "忽略全域 insteadOf" [ "$(cd "$TMP/prepo" && GIT_CONFIG_GLOBAL="$TMP/gitconfig-ssh" bash "$BOT" _pushgit t u ls-remote --get-url https://github.com/o/r.git)" = https://github.com/o/r.git ]
+mkdir -p "$TMP/tt"
+(cd "$TMP/prepo" && TMPDIR="$TMP/tt" bash "$BOT" _pushgit t u status >/dev/null 2>&1)
+check "token 暫存檔結束後刪除" [ -z "$(ls -A "$TMP/tt")" ]
+(cd "$TMP/prepo" && TMPDIR="$TMP/tt" bash "$BOT" _pushgit t u nosuchcmd >/dev/null 2>&1)
+check "失敗時也刪除 token 暫存檔" [ -z "$(ls -A "$TMP/tt")" ]
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 git -C "$TMP/prepo" config url."git@github.com:".insteadOf https://github.com/
 check "repo 有 url.* 設定拒絕" bash -c "cd '$TMP/prepo' && bash '$BOT' _pushgit t u ls-remote --get-url x 2>&1 | grep -q insteadOf"

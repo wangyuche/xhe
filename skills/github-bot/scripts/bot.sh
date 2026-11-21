@@ -154,6 +154,14 @@ cmd_commit() {
   git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" commit "$@"
 }
 
+# 把 token 寫進 0600 暫存檔(TOKEN_TMP,全域變數,讓 EXIT trap 在函式外也看得到),結束時刪除
+TOKEN_TMP=""
+token_file() {
+  TOKEN_TMP=$(umask 077; mktemp)
+  trap '[[ -z $TOKEN_TMP ]] || rm -f "$TOKEN_TMP"' EXIT
+  printf '%s' "$1" > "$TOKEN_TMP"
+}
+
 # 推送專用的 git 參數:不讀全域 / 系統設定(避免 insteadOf 改走 SSH 或個人憑證)、
 # 停用 hooks、token 只放在 0600 暫存檔由 credential helper 讀,不放進子程序的環境變數。
 # 用法:push_git <token 檔> <使用者> <git 子指令...>
@@ -174,14 +182,13 @@ cmd_push() {
   [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != -* ]] || die "分支名稱不合法:$branch"
   case $branch in main|master) die "不推 $branch;請推功能分支再開 PR" ;; esac
   load_conf; resolve_repo
-  local t user=x-access-token def tf
+  local t user=x-access-token def
   t=$(token)
   [[ $MODE == pat ]] && { identity; user=$BOT_NAME; }
   def=$(api GET "/repos/$REPO" "$t" | jq -r .default_branch)
   [[ $branch != "$def" ]] || die "不推預設分支 $def;請推功能分支再開 PR"
-  tf=$(mktemp); chmod 600 "$tf"; printf '%s' "$t" > "$tf"; unset t
-  trap 'rm -f "$tf"' EXIT
-  push_git "$tf" "$user" push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
+  token_file "$t"; unset t
+  push_git "$TOKEN_TMP" "$user" push "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
 }
 
 cmd_pr() {
@@ -254,7 +261,6 @@ case ${1:-} in
   _jwt)     load_conf; jwt ;;                         # 測試用
   _parse)   parse_repo "$2" ;;                         # 測試用
   _pushgit) # 測試用:_pushgit <token> <使用者> <git 子指令...>,用 push 的同一組 git 參數
-            tf=$(mktemp); printf '%s' "$2" > "$tf"; trap 'rm -f "$tf"' EXIT
-            u=$3; shift 3; push_git "$tf" "$u" "$@" ;;
+            token_file "$2"; u=$3; shift 3; push_git "$TOKEN_TMP" "$u" "$@" ;;
   *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
