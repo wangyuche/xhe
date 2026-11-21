@@ -177,7 +177,10 @@ printf '[safe]\n\tdirectory =\n\tdirectory = /a\n\tdirectory = ~nosuchuser-xhe/x
 check "safe.directory 展不開的 ~user 略過,其他項目仍保留" [ "$(cd "$TMP/prepo" && GIT_CONFIG_GLOBAL="$TMP/gc-baduser" bash "$BOT" _pushgit t u config --get-all safe.directory 2>/dev/null | tr '\n' ' ')" = "/a /b " ]
 check "safe.directory 展不開時印警告" bash -c "cd '$TMP/prepo' && GIT_CONFIG_GLOBAL='$TMP/gc-baduser' bash '$BOT' _pushgit t u status 2>&1 >/dev/null | grep -qF '~nosuchuser-xhe/x'"
 printf '[safe]\n\tdirectory =\n\tdirectory = :(optional)~/opt-exists\n\tdirectory = :(optional)/no/such/xhe-dir\n\tdirectory = *\n' > "$TMP/gc-opt"; mkdir -p "$TMP/fh/opt-exists"
+if [ -z "$(git -c 'x.y=:(optional)/no/such/xhe-dir' config --type=path x.y 2>/dev/null)" ]; then
 check "safe.directory 的 :(optional) 展開;不存在的靜默略過;* 保留" [ "$(cd "$TMP/prepo" && HOME="$TMP/fh" GIT_CONFIG_GLOBAL="$TMP/gc-opt" bash "$BOT" _pushgit t u config --get-all safe.directory 2>&1 | tr '\n' ' ')" = "$TMP/fh/opt-exists * " ]
+else echo "SKIP :(optional) 測試(這版 git 不支援)"; fi
+check "呼叫端設了 GIT_CONFIG 時 safe.directory 仍帶入" bash -c "cd '$TMP/prepo' && GIT_CONFIG='$TMP/gc-reset' GIT_CONFIG_GLOBAL='$TMP/gc-reset' bash '$BOT' _pushgit t u config --get-all safe.directory 2>&1 | grep -qx /b"
 check "暫存路徑含特殊字元時拒絕" bash -c "mkdir -p \"$TMP/o'q\" && TMPDIR=\"$TMP/o'q\" bash '$BOT' _scratch 2>&1 | grep -q '特殊字元'"
 check "停用 hooks" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config core.hooksPath)" = /dev/null ]
 check "credential 不受 extraheader 影響" [ "$(cd "$TMP/prepo" && bash "$BOT" _pushgit t u config --get-all http.extraHeader | tail -1)" = "" ]

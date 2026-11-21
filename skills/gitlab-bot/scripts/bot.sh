@@ -127,14 +127,14 @@ clean_push() {
   # 逐筆用 git 的 --type=path 把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);展不開的(例如不存在的 ~user)
   # 跳過並警告(原值傳給 git 會讓 git 直接 fatal),不影響其他項目;空值 = 清除前面的項目(跟 git 一樣)
   local -a safe=()
-  while IFS= read -r sd; do
+  while IFS= read -r -d '' sd; do
     if [[ -z $sd ]]; then safe=(); continue; fi
     # 每筆都交給 git 展開(~/、~user、%(prefix)/、:(optional));:(optional) 指向不存在的路徑時 git 回 1 且無輸出 → 靜默略過
     local raw=$sd
-    sd=$(cd / && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c "botsafe.dir=$raw" config --type=path botsafe.dir 2>/dev/null) || {
+    sd=$(cd / && env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c "botsafe.dir=$raw" config --type=path botsafe.dir 2>/dev/null) || {
       [[ $raw == ':(optional)'* ]] || echo "警告:safe.directory「${raw}」展不開,略過" >&2; continue; }
     safe+=(-c "safe.directory=$sd")
-  done < <({ git config --system --includes --get-all safe.directory; git config --global --includes --get-all safe.directory; } 2>/dev/null || true)
+  done < <({ env -u GIT_CONFIG git config --system --includes --null --get-all safe.directory; env -u GIT_CONFIG git config --global --includes --null --get-all safe.directory; } 2>/dev/null || true)
   mkdir -p "$SCRATCH/home"
   local -a clean=(env -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_ASKPASS -u SSH_ASKPASS
     -u GIT_SSL_NO_VERIFY -u GIT_SSL_CAINFO -u GIT_SSL_CAPATH -u GIT_SSL_CERT -u GIT_SSL_KEY -u GIT_SSL_CERT_PASSWORD_PROTECTED
