@@ -9,10 +9,10 @@
   - `stack-nextjs`(`paths: ["**/next.config.*", "**/app/**/*.tsx", "**/app/**/*.ts"]`,不會比對到 `.go` 檔):App Router、Server / Client Component、轉發後端、型別產生、驗證順序、create-next-app 版本。
   - 三個 skill(含 `web-dev-kit`)都寫在 agent frontmatter 的 `skills:` 預先載入,不依賴 `paths` 自動出現(`paths` 只驗證過會出現在清單,沒驗證會被自動呼叫)。
   - 之後新增其他前端技術時,加 `stack-<技術>` skill,不新增 agent。
-- **前端呼叫後端的方式(固定):** 瀏覽器端一律呼叫相對路徑 `/api/...`,由 `next.config` 的 `rewrites` 轉發到環境變數 `API_PROXY_TARGET`;Server Component 直接用 `API_PROXY_TARGET` 組網址,並把 `cookies()` 取到的 session cookie 放進 `Cookie` header 轉送(登入機制為後端發的 HttpOnly session cookie,前端不在 JS 存 token)。所以前端換埠號不影響後端 CORS。不使用 `NEXT_PUBLIC_*` 放後端網址。`next.config` 在 `API_PROXY_TARGET` 沒設時不加 rewrites(build 不報錯);呼叫後端的 Server Component 一律動態渲染(`await connection()`),build 時不打 API。
-- **`API_PROXY_TARGET` 指向哪裡(三種情況,固定):**
+- **前端呼叫後端的方式(固定):** 瀏覽器端一律呼叫相對路徑 `/api/...`,由 `src/proxy.ts` 在每個請求執行時轉發到環境變數 `BACKEND_URL`(舊名 `API_PROXY_TARGET` 為備援,兩者都沒設回 503;2026-11-21 改,讓 Docker 容器啟動時才決定後端);Server Component 用 `src/lib/backend.ts` 取同一個網址,並把 `cookies()` 取到的 session cookie 放進 `Cookie` header 轉送(登入機制為後端發的 HttpOnly session cookie,前端不在 JS 存 token)。所以前端換埠號不影響後端 CORS。不使用 `NEXT_PUBLIC_*` 放後端網址。`next.config` 為 `output: "standalone"`,build 不需要後端網址;呼叫後端的 Server Component 一律動態渲染(`await connection()`),build 時不打 API。
+- **`BACKEND_URL` 指向哪裡(三種情況,固定):**
   1. 簡報給了後端網址 → 用它。
-  2. 有契約、沒給後端網址 → 用契約 mock:`serve.sh <name>-mock <可寫路徑> 4010 -- <pm> run mock:api`(`mock:api` = `prism mock <契約> -p {port}`,`@stoplight/prism-cli` 為 devDependency),`API_PROXY_TARGET` 指向它;回報寫「未與真實後端串接(契約 mock)」。
+  2. 有契約、沒給後端網址 → 用契約 mock:`serve.sh <name>-mock <可寫路徑> 4010 -- <pm> run mock:api`(`mock:api` = `prism mock <契約> -p {port}`,`@stoplight/prism-cli` 為 devDependency),`BACKEND_URL` 指向它;回報寫「未與真實後端串接(契約 mock)」。
   3. 沒有契約、或需要的端點不在契約裡 → 回 ISSUES 附契約變更請求;只有簡報明說「先用 mock 做純畫面」時,元件直接讀 `src/mocks/` 的本地資料,不經 `/api`。
 - **型別:** 由 API 契約產生,`openapi-typescript <契約> -o src/lib/api/schema.d.ts`(寫成 `package.json` 的 `gen:api` script),不手寫 API 型別。
 - **測試:** Vitest + Testing Library + jsdom,`package.json` 的 `test` script 為 `vitest run`。
@@ -35,9 +35,9 @@
 - **驗收情境 → 測試:** 簡報的每個驗收情境至少一個測試,放在情境標的層級(E2E 或元件),測試名稱以情境編號加冒號開頭(例如 `test('LOGIN-S3: 密碼錯誤顯示錯誤訊息', …)`)。可以自己多加測試,不能少。情境標的層級不屬於前端(例如只標 httptest)就不寫,回報註明「後端負責」。
 - **沒有編號的需求 → BLOCKED**(2026-11-21 新增):簡報要實作但沒有 `<PREFIX>-S<n>` 的需求,請主 agent 先交 acceptance-designer 編號,不自己編號。
 - **列表修改操作**(2026-11-21 新增):先讀 `stack-react/references/optimistic-updates.md`,5 條各有測試。
-- **E2E:** 每個新增的使用者流程(新頁面、表單送出、登入等互動)至少一個 E2E 測試;修改既有流程時更新對應測試。既有專案沒有 Playwright 時:簡報中有 E2E 層級的情境,就視為要求補上 Playwright(依「E2E 測試」段的固定設定);沒有 E2E 層級情境時不要求,回報寫「未執行:專案沒有 E2E」。自己驗證時:`node_modules/.bin/playwright test --list` 必須成功(測試能載入);接著用目前的 `API_PROXY_TARGET` 跑 `test:e2e`。接真實後端時必須全部通過;接契約 mock 時(Prism 只回範例,不保存狀態)照實回報通過 / 失敗數,失敗的測試標「待整合驗證」,不影響 PASS。
+- **E2E:** 每個新增的使用者流程(新頁面、表單送出、登入等互動)至少一個 E2E 測試;修改既有流程時更新對應測試。既有專案沒有 Playwright 時:簡報中有 E2E 層級的情境,就視為要求補上 Playwright(依「E2E 測試」段的固定設定);沒有 E2E 層級情境時不要求,回報寫「未執行:專案沒有 E2E」。自己驗證時:`node_modules/.bin/playwright test --list` 必須成功(測試能載入);接著用目前的 `BACKEND_URL` 跑 `test:e2e`。接真實後端時必須全部通過;接契約 mock 時(Prism 只回範例,不保存狀態)照實回報通過 / 失敗數,失敗的測試標「待整合驗證」,不影響 PASS。
 - **測試:** 新增的元件(不含 `page.tsx`、`layout.tsx`)至少一個測試;修改元件時,既有測試要通過,行為有改就更新或補測試。既有專案沒有測試框架時,不要求新元件測試,回報寫「未執行:專案沒有測試框架」;要補框架需簡報要求。
-- **驗證順序:** `<pm> run lint` → `<pm> run build` → `npx tsc --noEmit`(build 之後跑,路由型別才已產生)→ `node_modules/.bin/vitest run --reporter=verbose`(印出每個測試名稱,供情境對照)→ (需要時)啟動契約 mock → `serve.sh` 啟動 `next dev -p {port}`(帶 `--env API_PROXY_TARGET=…`)→ 截圖 → `node_modules/.bin/playwright test --list` → `E2E_BASE_URL=<url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e` → 檢查 server.log → `stop.sh`(dev server 與 mock 都停)→ `scope.sh check` → `secret-scan.sh`。沒有 lint / test script 的既有專案,該步寫「未執行:沒有 script」。
+- **驗證順序:** `<pm> run lint` → `<pm> run build` → `npx tsc --noEmit`(build 之後跑,路由型別才已產生)→ `node_modules/.bin/vitest run --reporter=verbose`(印出每個測試名稱,供情境對照)→ (需要時)啟動契約 mock → `serve.sh` 啟動 `next dev -p {port}`(帶 `--env BACKEND_URL=…`)→ 截圖 → `node_modules/.bin/playwright test --list` → `E2E_BASE_URL=<url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e` → 檢查 server.log → `stop.sh`(dev server 與 mock 都停)→ `scope.sh check` → `secret-scan.sh`。沒有 lint / test script 的既有專案,該步寫「未執行:沒有 script」。
 - **截圖範圍:**
   - 改到的頁面(`page.tsx`)全部截。
   - 改到 `layout.tsx`:截簡報指定的代表頁面;沒指定就截同一路由區段下的頁面,最多 3 個,該區段的根頁面優先。
@@ -68,7 +68,7 @@
   - 專案根目錄:目前工作目錄(必須是 git repo,否則 BLOCKED)。
   - 可寫路徑:`frontend/`。
   - API 契約路徑:`api/openapi.yaml`。
-  - 後端網址(`API_PROXY_TARGET`):沒給就依「`API_PROXY_TARGET` 指向哪裡」處理。
+  - 後端網址(`BACKEND_URL`):沒給就依「`BACKEND_URL` 指向哪裡」處理。
   - dev server 起始埠:3000(被占用時 `serve.sh` 自動往上找)。
   - 代表頁面、動態路由範例網址。
   - 「先用 mock 做純畫面」。
@@ -102,7 +102,7 @@
   - /login 手機 → {"http":200,"scrollWidth":390,"innerWidth":390,"consoleErrors":0}(已檢視:無截斷)
   - 截圖檔:$TMPDIR/web-dev-kit/frontend-owner-shop/login-desktop.png、login-mobile.png
 - dev server log:無 `Error` / `⨯`
-- 後端串接:API_PROXY_TARGET=http://localhost:8080(簡報提供)
+- 後端串接:BACKEND_URL=http://localhost:8080(簡報提供)
 - 範圍檢查:`scope.sh check` → IN 3 項,out=0
 - 秘密掃描:`secret-scan.sh` → hits=0
 - 已知限制:點擊送出的互動未自動化驗證

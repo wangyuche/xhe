@@ -1,15 +1,11 @@
 import type { NextConfig } from "next";
 
-// 瀏覽器一律打相對路徑 /api/...,由這裡轉發到後端。
-// API_PROXY_TARGET 沒設時不加 rewrites(build 不會失敗);next build 時就會固定下來,
-// 所以 build 與 start 都要帶同一個值。
-const target = process.env.API_PROXY_TARGET?.replace(/\/$/, "");
-
+// /api/* 由 src/proxy.ts 在「每個請求」讀 BACKEND_URL(備援 API_PROXY_TARGET)轉發,
+// 不用 rewrites(rewrites 在 next build 時就固定)。同一個 build / Docker 映像可接任何後端。
+// output: "standalone":npm run build 產生 .next/standalone/server.js(postbuild 會複製 static 與 public),
+// npm start 與 Docker 都跑它。
 const nextConfig: NextConfig = {
-  async rewrites() {
-    if (!target) return [];
-    return [{ source: "/api/:path*", destination: `${target}/api/:path*` }];
-  },
+  output: "standalone",
 };
 
 export default nextConfig;

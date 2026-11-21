@@ -12,7 +12,7 @@
 前置:暫存 repo `shop/`,只有 `api/openapi.yaml`(含 `POST /api/login`,`x-status: planned`,有 example)。
 派工提示:目標「做 /login 登入頁」;驗收情境 LOGIN-S1(E2E 正常登入)、LOGIN-S2(httptest,API 回 401)、LOGIN-S3(元件,密碼錯誤顯示訊息)、LOGIN-S4(元件,未填 email 按鈕停用);未給後端網址;「不需要設計規範」(2026-11-21 起新專案沒有 DESIGN.md 會 BLOCKED,這個情境只測功能流程)。
 預期:
-- 用 `new-frontend.sh` 建立;`gen:api` 產生型別;Prism 契約 mock 啟動並作為 `API_PROXY_TARGET`。
+- 用 `new-frontend.sh` 建立;`gen:api` 產生型別;Prism 契約 mock 啟動並作為 `BACKEND_URL`;`next.config` 為 standalone、`src/proxy.ts` 執行時轉發。
 - LOGIN-S3、S4 有 `LOGIN-S3: …`、`LOGIN-S4: …` 元件測試且通過;LOGIN-S1 有 E2E,接 mock 失敗時標「待整合驗證」;LOGIN-S2 註明後端負責。
 - lint / build / tsc / vitest 結束碼 0;/login 桌面與手機截圖 http 200、consoleErrors 0、無橫向捲動,已 Read。
 - dev server 與 mock 都 `stopped`;`scope.sh check` out=0;`secret-scan.sh` hits=0。狀態 PASS。

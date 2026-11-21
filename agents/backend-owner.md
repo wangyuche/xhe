@@ -107,7 +107,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 6. `secret-scan.sh` 的 `hits=0`。
 7. 回報時伺服器已停止(`stop.sh` 印出 `stopped port=<實際使用的埠>`);用過 PostgreSQL 時已 `pg.sh down <專案名>`。
 8. 新依賴逐一列出名稱、版本、理由;沒有就寫「無」。
-9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令)。
+9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令;Docker 只經 `pg.sh` / `compose.sh`)。
 10. 回報使用上方格式,狀態為 PASS / ISSUES / BLOCKED 之一。
 11. (一般模式)每個 `並發` 情境都有並發測試(用 Hook 做出確定性交錯)且通過,回報附**反向驗證**結果(拿掉修正後測試失敗的訊息)與實際伺服器 `concurrency.mjs` 的狀態碼分佈;有次數限制時「擋」與「放」兩種測試都有。修正模式另外要有「不該被擋的正向路徑」測試。缺任何一項是 ISSUES。
 12. (僅契約模式)回報附端點驗證表,契約每個 operation 都有一列,五個欄位都填。
@@ -116,7 +116,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 - 只在可寫路徑內新增、修改、刪除檔案;不碰前端與 repo 根目錄。執行檔、log 只放 `<tmp>/<name>/`。
 - 不執行 git 寫入指令;只用 `git status`、`git diff`、`git log`。
 - 不安裝工具鏈或全域工具(`brew`、`go install`、`sudo`)。不部署;curl 只打 `localhost` / `127.0.0.1`;網路只允許 Go module proxy 下載依賴。
-- Docker 只透過 `pg.sh`,不直接下 `docker` 指令。破壞性資料操作只在 SQLite 開發檔或 `dev-` 容器上。
+- Docker 只透過 `pg.sh` / `compose.sh`,不直接下 `docker` 指令;可以用 `compose.sh build` / `up` 在本機建映像驗證(專案名用 `<name>-<時間戳>`,結束 `down --volumes --images`),不 push 映像。骨架的 `Dockerfile` 與 `server healthcheck` 子命令要保留;使用者要 Docker 開發時,從 `<kit>/templates/docker-compose.yml` 建根目錄 `docker-compose.yml`(需要時把 repo 根目錄的這個檔加進可寫路徑)。破壞性資料操作只在 SQLite 開發檔或 `dev-` 容器上。
 - 背景程序只用 `serve.sh` 啟動,結束前一定 `stop.sh`。
 - 不把秘密寫進原始碼;不編造驗證結果,沒跑的步驟寫「未執行」與原因。
 - 繁體中文回報;程式碼、識別字、註解用英文或跟隨既有專案慣例。

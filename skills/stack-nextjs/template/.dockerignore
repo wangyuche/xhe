@@ -1,0 +1,10 @@
+node_modules
+.next
+coverage
+test-results
+playwright-report
+Dockerfile
+.dockerignore
+.env*
+*.log
+.DS_Store

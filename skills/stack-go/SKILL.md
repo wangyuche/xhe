@@ -21,7 +21,7 @@ bash <skill>/scripts/contract-check.sh <name> <api/openapi.yaml>                
 ## 目錄結構
 ```
 backend/
-  cmd/server/main.go            # 讀環境變數、db.Open(含 migration)、graceful shutdown
+  cmd/server/main.go            # 讀環境變數、db.Open(含 migration)、graceful shutdown;`server healthcheck` 子命令
   internal/httpx/httpx.go       # Deps、WriteJSON、WriteError(所有 handler 共用)
   internal/httpapi/routes.go    # Routes() 路由表 —— 唯一註冊點
   internal/httpapi/contract_test.go  # 路由表 ↔ 契約;Do() / DoBadRequest()
@@ -31,6 +31,7 @@ backend/
   internal/db/migrations/NNNN_<描述>.sql
   internal/db/migrate_test.go   # 全新 SQLite 上 goose.Up 並檢查欄位
   .env.example  .gitignore(data/、.env)
+  Dockerfile  .dockerignore     # 多階段 → distroless static nonroot(見「Docker」)
 api/openapi.yaml                # OpenAPI 3.0.3(不用 3.1)
 ```
 
@@ -46,6 +47,13 @@ api/openapi.yaml                # OpenAPI 3.0.3(不用 3.1)
 8. **登入機制**:後端發 HttpOnly session cookie(`SameSite=Lax`,開發時不設 `Secure`),前端經 Next.js 轉發屬同源。不在 body 回 token 給前端存。
 9. **其他**:`log/slog`;`context` 從 request 往下傳;table-driven 測試;不用全域可變狀態(依賴放 `Deps`)。
 
+## Docker(本機開發一律用 Docker 跑整個網站時)
+- `Dockerfile`:build 階段 `golang:1.26-alpine`(版本 = `GO_MIN`,改 `versions.sh` 時一起改)、`CGO_ENABLED=0`、`-trimpath`;最終映像 `gcr.io/distroless/static-debian12:nonroot`,只有 `/server`,沒有 Go 工具鏈、shell、curl,以 nonroot 執行,`EXPOSE 8080`。
+- **健康檢查**:`/server healthcheck` 打 `http://127.0.0.1:$PORT/healthz`,200 → 結束碼 0,否則 1。Dockerfile 的 `HEALTHCHECK` 與 compose 都用 `["CMD", "/server", "healthcheck"]`(不要寫 curl / wget,映像裡沒有)。
+- **資料庫**:compose 裡一律設 `DATABASE_URL=postgres://…@db:5432/…`(範例:web-dev-kit `templates/docker-compose.yml`)。沒設時用相對路徑 SQLite:映像的 `WORKDIR /app` 內有 nonroot 可寫的 `data/`,容器刪掉資料就消失;工作目錄不可寫時 `db.Open` 回清楚錯誤(`set DATABASE_URL or run from a writable directory`)並結束碼 1,不 panic。
+- 契約 `api/openapi.yaml` 在 build context(`backend/`)之外,執行期也不需要;不要改成把契約 COPY 進映像。
+- 啟停只透過 web-dev-kit `compose.sh`(`-p <專案名>`),不直接 `docker run` / `docker compose`。
+
 ## 驗證順序(backend-owner 一般模式)
 ```bash
 cd backend
@@ -55,4 +63,9 @@ GOTOOLCHAIN=local go vet ./... && GOTOOLCHAIN=local go build ./...
 bash <skill>/scripts/contract-check.sh <name> ../api/openapi.yaml      # valid
 GOTOOLCHAIN=local go test ./...
 GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server         # 再交給 web-dev-kit serve.sh --health /healthz
+PORT=<port> <tmp>/<name>/server healthcheck                            # 伺服器在跑時結束碼 0
+# 有 docker-compose.yml 時:compose.sh build -p <專案名> backend → up → curl → down
 ```
+
+## 需要時才讀
+- `references/concurrency.md`:有 `並發` 類型情境,或端點涉及先檢查再寫入、計數 / 鎖定、不變量、會累積的資料表時(同鎖檢查與寫入、依 key 序列化、清理移出交易 + SKIP LOCKED、有界 context、Hook 交錯測試與反向驗證)。

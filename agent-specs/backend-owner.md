@@ -65,7 +65,7 @@
 - 不執行會改變 git 狀態的指令(`git init/add/commit/push/checkout/switch/reset/rebase/stash/merge/branch/worktree`)。只能用 `git status`、`git diff`、`git log` 查看。
 - 不安裝工具鏈或全域工具(`brew`、`go install`、`sudo`)。
 - 不部署、不連線任何非本機的資料庫或雲端服務;curl 只打 `localhost` / `127.0.0.1`。
-- Docker 只透過 `pg.sh` 使用,不直接下 `docker` 指令,不 build 或 push 映像。
+- Docker 只透過 `pg.sh` / `compose.sh` 使用,不直接下 `docker` 指令;可經 `compose.sh build` 在本機建映像驗證,不 push 映像(2026-11-21 使用者指示本機開發一律用 Docker)。
 - 破壞性資料操作只能在 SQLite 開發檔或 `dev-` 開頭的容器上。
 - 不把秘密寫進原始碼。
 - 不編造驗證結果:沒跑的步驟寫「未執行」與原因。
@@ -142,7 +142,7 @@ BLOCKED 範例:
 6. `secret-scan.sh` 的 `hits=0`。
 7. 回報時伺服器已停止(`stop.sh` 印出 `stopped port=<實際使用的埠>`);用過 PostgreSQL 時已 `pg.sh down <專案名>`。
 8. 新依賴逐一列出名稱、版本、理由;沒有就寫「無」。
-9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令)。
+9. 沒有出現禁止的指令(git 寫入、全域安裝、部署、非本機連線、直接 `docker` 指令;Docker 只經 `pg.sh` / `compose.sh`)。
 10. 回報使用上方格式,狀態為 PASS / ISSUES / BLOCKED 之一。
 
 ## 限制與禁忌

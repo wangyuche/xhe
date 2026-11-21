@@ -1,7 +1,8 @@
 #!/bin/bash
 # 用法:new-frontend.sh <專案根目錄> [--frontend frontend] [--api api]
 # create-next-app@16 建立前端,再加上 Vitest、Playwright(channel chrome)、openapi-typescript、
-# openapi-fetch、Prism 契約 mock、rewrites 轉發與 scripts。前端目錄已存在且非空時失敗。
+# openapi-fetch、Prism 契約 mock、執行時轉發(src/proxy.ts 讀 BACKEND_URL)、standalone 輸出、Dockerfile 與 scripts。
+# 前端目錄已存在且非空時失敗。
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL="$(cd "$DIR/.." && pwd)"
@@ -40,8 +41,16 @@ node -e '
 const fs = require("fs");
 const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
 const c = process.argv[1];
+// output: "standalone":build 後把 static 與 public 複製進 .next/standalone,start 直接跑 server.js
+// (next start 不支援 standalone 會警告)。PORT / HOSTNAME 由環境變數決定。
+const assets =
+  "rm -rf .next/standalone/.next/static .next/standalone/public" +
+  " && cp -R .next/static .next/standalone/.next/static" +
+  " && if [ -d public ]; then cp -R public .next/standalone/public; fi";
 p.scripts = {
   ...p.scripts,
+  postbuild: assets,
+  start: "node .next/standalone/server.js",
   test: "vitest run",
   "test:e2e": "playwright test",
   "gen:api": `openapi-typescript ${c} -o src/lib/api/schema.d.ts`,

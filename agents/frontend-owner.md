@@ -50,13 +50,13 @@ skills:
 以下第 1–4 步只用於一般模式。
 
 ### 第 1 步:專案準備(完成條件:可寫路徑是可 build 的 Next.js 專案)
-- 可寫路徑不存在或是空目錄 → `bash <nextjs>/scripts/new-frontend.sh <專案根目錄> --frontend <可寫路徑> --api <契約目錄>`(含 Vitest、Playwright、openapi-typescript、openapi-fetch、Prism、rewrites 與 scripts)。
+- 可寫路徑不存在或是空目錄 → `bash <nextjs>/scripts/new-frontend.sh <專案根目錄> --frontend <可寫路徑> --api <契約目錄>`(含 Vitest、Playwright、openapi-typescript、openapi-fetch、Prism、`src/proxy.ts` 執行時轉發、standalone 輸出、Dockerfile 與 scripts)。
 - 可寫路徑有檔案但沒有 `package.json`,或沒有 `next` 依賴 → BLOCKED。
 - 既有專案缺 Playwright 而簡報有 E2E 層級情境 → 依 stack-nextjs 的固定設定補上(`@playwright/test`、`playwright.config.ts`、`test:e2e`;`vitest.config` 排除 `e2e/**`)。
 
-### 第 2 步:決定 `API_PROXY_TARGET`(完成條件:三種情況擇一)
+### 第 2 步:決定 `BACKEND_URL`(完成條件:三種情況擇一;舊專案用 `API_PROXY_TARGET`,`src/proxy.ts` 兩者都讀)
 1. 簡報給了後端網址 → 用它。
-2. 有契約、沒給網址 → 契約 mock(在第 4 步啟動:`serve.sh <name>-mock <可寫路徑> 4010 -- <pm> run mock:api`),`API_PROXY_TARGET` 指向它;回報寫「未與真實後端串接(契約 mock)」。這一步只決定用哪一種,不啟動任何服務。
+2. 有契約、沒給網址 → 契約 mock(在第 4 步啟動:`serve.sh <name>-mock <可寫路徑> 4010 -- <pm> run mock:api`),`BACKEND_URL` 指向它;回報寫「未與真實後端串接(契約 mock)」。這一步只決定用哪一種,不啟動任何服務。
 3. 沒有契約、或需要的端點不在契約裡 → 最後狀態為 ISSUES,附「契約變更請求」(端點、欄位、理由),不自行猜介面。仍繼續做不依賴該端點的部分(頁面骨架、其他元件)並跑完第 4 步驗證,回報列出已完成與未完成的部分。只有簡報明說「先用 mock 做純畫面」時,元件直接讀 `src/mocks/` 的本地資料(假值以 `test-` 開頭)。
 
 ### 第 3 步:實作與測試(完成條件:每個前端層級的情境都有測試)
@@ -71,11 +71,11 @@ skills:
 ### 第 4 步:驗證(完成條件:依序跑完,結果記錄在回報)
 ```bash
 <pm> run lint
-<pm> run build                                  # 帶 API_PROXY_TARGET(若有)
+<pm> run build                                  # 不需要後端網址(轉發在執行時讀 BACKEND_URL)
 npx tsc --noEmit                                # build 之後
 node_modules/.bin/vitest run --reporter=verbose
 # (情況 2)serve.sh <name>-mock … -- <pm> run mock:api
-bash <kit>/scripts/serve.sh <name> <可寫路徑> 3000 --env API_PROXY_TARGET=<target> -- node_modules/.bin/next dev -p {port}
+bash <kit>/scripts/serve.sh <name> <可寫路徑> 3000 --env BACKEND_URL=<target> -- node_modules/.bin/next dev -p {port}
 # 截圖(見下)
 node_modules/.bin/playwright test --list
 E2E_BASE_URL=<url> E2E_OUTPUT_DIR=<tmp>/<name>/e2e <pm> run test:e2e
@@ -149,7 +149,7 @@ bash <kit>/scripts/secret-scan.sh <name>
 ## 限制
 - 只在可寫路徑內新增、修改、刪除檔案;不碰契約(`api/`)、後端、repo 根目錄。截圖、log、E2E 輸出只放 `<tmp>/<name>/`。例外:僅設計規範模式的可寫路徑是 `design/`,參考網址的截圖存到 `design/refs/`(要給使用者確認、隨規範 commit)。
 - 不執行 git 寫入指令(`init/add/commit/push/checkout/switch/reset/rebase/stash/merge/branch/worktree`);只用 `git status`、`git diff`、`git log`。
-- 不需要也不改後端 CORS:前端一律經 Next.js rewrites 轉發,屬同源。
+- 不需要也不改後端 CORS:前端一律經 `src/proxy.ts` 在執行時轉發 `/api/*`,屬同源。`schema.d.ts` 要 commit(Docker build context 只有前端目錄,看不到契約)。Docker 只透過 `compose.sh`。
 - 不安裝工具鏈或全域套件(`brew`、`npm install -g`、`corepack enable`、`sudo`、`playwright install`)。不部署(`vercel`、`npm publish`、雲端 CLI)。
 - 背景程序只用 `serve.sh` 啟動(不用 `&`、`nohup`),結束前一定 `stop.sh`。
 - 不編造驗證結果:沒跑的步驟寫「未執行」與原因。

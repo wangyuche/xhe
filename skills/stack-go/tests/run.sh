@@ -3,6 +3,7 @@
 # 需要 Go >= 1.26 與網路(Go module proxy);沒有 go 時印 SKIP。測完刪除暫存目錄。
 set -uo pipefail
 SKILL="$(cd "$(dirname "$0")/.." && pwd)"
+KIT="$(cd "$SKILL/../web-dev-kit" && pwd)"
 source "$SKILL/scripts/versions.sh"
 PASS=0; FAIL=0; SKIP=0
 ok()   { echo "PASS  $1"; PASS=$((PASS + 1)); }
@@ -15,7 +16,7 @@ if ! go_ok; then
 fi
 
 WORK="$(mktemp -d)"; export WEB_DEV_KIT_TMP="$WORK/kit"
-trap 'rm -rf "$WORK"' EXIT
+trap 'bash "$KIT/scripts/stop.sh" t-go >/dev/null 2>&1; chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 P="$WORK/shop"; mkdir -p "$P"
 
 out="$(bash "$SKILL/scripts/new-backend.sh" "$P" 2>&1)" && ok "new-backend:建立骨架" || bad "new-backend" "$out"
@@ -59,6 +60,25 @@ sed -i '' 's/"status": "ok"/"status": "bad"/' internal/httpapi/routes.go
 out="$(go test ./internal/httpapi/ -run TestHealthz 2>&1)"; rc=$?
 [ $rc -ne 0 ] && echo "$out" | grep -q "does not match contract" && ok "Do():回應不符契約時失敗" || bad "Do():回應驗證" "$out"
 sed -i '' 's/"status": "bad"/"status": "ok"/' internal/httpapi/routes.go
+
+# healthcheck 子命令(容器 HEALTHCHECK 用):伺服器在跑時 0,沒在跑時 1
+SRV="$WORK/kit/server"; mkdir -p "$WORK/kit"
+out="$(go build -o "$SRV" ./cmd/server 2>&1)" && ok "go build -o server" || bad "go build -o" "$out"
+RUNDIR="$WORK/run"; mkdir -p "$RUNDIR"
+out="$(bash "$KIT/scripts/serve.sh" t-go "$RUNDIR" 18080 --health /healthz -- "$SRV" 2>&1)" || bad "serve server" "$out"
+GP="$(echo "$out" | sed -n 's/.*port=\([0-9]*\).*/\1/p')"
+[ -f "$RUNDIR/data/dev.db" ] && ok "沒設 DATABASE_URL:在工作目錄建 data/dev.db" || bad "預設 SQLite" "$(ls -R "$RUNDIR")"
+PORT="$GP" "$SRV" healthcheck && ok "healthcheck:伺服器在跑時結束碼 0" || bad "healthcheck:在跑" "port=$GP"
+bash "$KIT/scripts/stop.sh" t-go >/dev/null
+out="$(PORT="$GP" "$SRV" healthcheck 2>&1)"; rc=$?
+[ $rc -eq 1 ] && ok "healthcheck:沒在跑時結束碼 1" || bad "healthcheck:沒在跑" "rc=$rc $out"
+# 工作目錄不可寫(像 distroless 的 /)且沒設 DATABASE_URL:清楚的錯誤,不是 panic
+RO="$WORK/ro"; mkdir -p "$RO"; chmod 555 "$RO"
+out="$(cd "$RO" && env -u DATABASE_URL PORT="$GP" "$SRV" 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q "set DATABASE_URL or run from a writable directory" && ! echo "$out" | grep -q panic && ok "唯讀工作目錄:清楚錯誤並結束碼 1" || bad "唯讀工作目錄" "rc=$rc $out"
+chmod 755 "$RO"
+grep -q "gcr.io/distroless/static-debian12:nonroot" Dockerfile && grep -q "CGO_ENABLED=0" Dockerfile && grep -q "golang:$GO_MIN-alpine" Dockerfile \
+  && ok "Dockerfile:多階段、CGO_ENABLED=0、distroless nonroot、Go 版本 = GO_MIN" || bad "Dockerfile" "$(cat Dockerfile)"
 
 # 情境子測試的 -run 寫法(integration-verifier 用)
 cat > internal/httpapi/scenario_test.go <<'EOF'

@@ -30,7 +30,7 @@ skills:
 
 1. **契約**:`bash <go>/scripts/contract-check.sh <name> <契約>` → `valid`;列出仍為 `x-status: planned` 的 operation(本次端點清單內的不能是 planned)。
 2. **後端**:`rm -f <tmp>/<name>/it.db*` → `GOTOOLCHAIN=local go build -o <tmp>/<name>/server ./cmd/server`(在後端目錄)→ 讀 `<後端目錄>/.env.example`,除了 `PORT` 以外每個變數照檔案中的值(秘密類是 `dev-` 假值)傳 `--env`,`DATABASE_URL` 覆蓋為 `file:<tmp>/<name>/it.db?_pragma=foreign_keys(1)`(PostgreSQL 時改用 `bash <kit>/scripts/pg.sh up <專案名>` 的輸出)→ `bash <kit>/scripts/serve.sh <name>-be <後端目錄> 8080 --health /healthz --env … -- <tmp>/<name>/server`。
-3. **前端**:凍結安裝(`npm ci` / `pnpm install --frozen-lockfile` / `yarn install --immutable` / `bun install --frozen-lockfile`;失敗歸前端)→ `NEXT_TELEMETRY_DISABLED=1 API_PROXY_TARGET=<後端 url> <pm> run build` → `bash <kit>/scripts/serve.sh <name>-fe <前端目錄> 3000 --env API_PROXY_TARGET=<後端 url> --env NEXT_TELEMETRY_DISABLED=1 -- node_modules/.bin/next start -p {port}`。
+3. **前端**:凍結安裝(`npm ci` / `pnpm install --frozen-lockfile` / `yarn install --immutable` / `bun install --frozen-lockfile`;失敗歸前端)→ `NEXT_TELEMETRY_DISABLED=1 <pm> run build`(不需要後端網址)→ `bash <kit>/scripts/serve.sh <name>-fe <前端目錄> 3000 --env BACKEND_URL=<後端 url> --env NEXT_TELEMETRY_DISABLED=1 -- <pm> run -s start`(standalone `server.js`,讀 serve.sh 給的 `PORT`;舊專案沒有 standalone `start` 時才用 `node_modules/.bin/next start -p {port}`,並以 `API_PROXY_TARGET` 指定後端)。
 4. **資料準備**:依 seed 請求用 curl 直連後端(只打本機);需要登入時 `-c <tmp>/<name>/cookies.txt` 存 session cookie;記下回傳的 id 組出動態路由網址。
 5. **轉發檢查**:端點清單每項至少一個成功、一個錯誤案例:
    `node <kit>/scripts/proxy-diff.mjs <前端url> <後端url> <方法> <路徑> [--data …] [--cookie-jar <tmp>/<name>/cookies.txt] [--ignore …]`
@@ -61,7 +61,7 @@ skills:
 - HEAD:開始 3f2a9c1 / 結束 3f2a9c1;工作目錄乾淨
 - 契約:contract-check → valid;planned:無
 - 後端:url=http://localhost:8080(暫存 SQLite;env 來自 .env.example:SESSION_SECRET)
-- 前端:`npm ci` → 0;`npm run build` → 0;url=http://localhost:3000(next start)
+- 前端:`npm ci` → 0;`npm run build` → 0;url=http://localhost:3000(standalone start)
 - seed:POST /api/register + /api/login → session cookie 存入 cookies.txt
 - 並發:POST /api/register ×10 → {"statuses":{"201":10},"ok":true};POST /api/login ×10 → {"statuses":{"200":10},"ok":true}
 - 轉發:
@@ -102,7 +102,7 @@ skills:
 - 不修改任何專案檔案、不修 bug、不寫或改測試。
 - 不執行 git 寫入指令;只用 `git status`、`git diff`、`git log`、`git rev-parse`。
 - 不新增依賴、不全域安裝、不 `playwright install`、不部署。網路只允許套件管理器下載(npm registry、Go module proxy);其餘請求只打 `localhost` / `127.0.0.1`。
-- Docker 只透過 `pg.sh`。背景程序只用 `serve.sh`,結束前一定 `stop.sh`。
+- Docker 只透過 `pg.sh` / `compose.sh`(compose 專案名用 `<name>-<時間戳>`,結束 `down --volumes --images`,不碰其他專案的容器)。背景程序只用 `serve.sh`,結束前一定 `stop.sh`。
 - 所有輸出(build log、E2E 結果、截圖、暫存資料庫、cookie)只放 `<tmp>/<name>/`(server.log 由 `serve.sh` 放在 `<tmp>/<name>-be/`、`<tmp>/<name>-fe/`)。
 - 簡報要求修改程式、修 bug 或合併時:那一部分不照做,在回報說明原因,其餘照常驗證。合併流程是 PASS 後由主 agent 開 PR,確認驗證的 SHA 仍是 PR head 後由主 agent 合併(沒有遠端時在本地合併);驗證者本身不合併。
 - 不編造結果:沒跑的步驟寫「未執行」與原因;缺口不算通過。
