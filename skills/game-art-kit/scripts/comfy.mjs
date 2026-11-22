@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // game-art-kit:ComfyUI HTTP API 客戶端(只用 Node 內建模組)。
 // 用法(run 的 --timeout 只算開始執行後的時間,預設 240 秒;排隊等待另有 --queue-timeout,預設 180 秒;合計配 Bash 600 秒逾時):
-//   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、建議的 workflow 預設值(JSON)
+//   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、本機去背、音訊模型、建議的 workflow 預設值(JSON)
 //   node comfy.mjs upload <圖檔> --prefix <專案-角色>       → 上傳到 ComfyUI 的 temp 區,印出 LoadImage 用的名稱
 //   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 240] [--queue-timeout 180]
-//                                                           → 填參數、送出、輪詢、下載 PNG、刪除 history,印出結果 JSON
+//                                                           → 填參數、送出、輪詢、下載 PNG / 音訊、刪除 history,印出結果 JSON;拒絕 Save* 與雲端 API 節點
 //   node comfy.mjs pngsize <圖檔>                           → {"width":…,"height":…}
 //   node comfy.mjs scrub-check <目錄>                       → 產出不含 ComfyUI 位址 / 私有 IP;找到就結束碼 1
 // 共同參數:--url <位址> 臨時覆寫。位址優先序:--url > 環境變數 COMFYUI_URL > ~/.config/game-art-kit/config 的 COMFYUI_URL=。
@@ -80,6 +80,12 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 
+// PNG 色彩類型 → 通道數(6 = RGBA、4 = 灰階 + alpha;有 alpha 才是 4 / 2)
+function pngChannels(file) {
+  const t = readFileSync(file)[25];
+  return { 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 }[t] ?? null;
+}
+
 // ---------- check ----------
 const MODEL_DIRS = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras', 'controlnet', 'clip_vision', 'style_models', 'ipadapter'];
 function family(name) {
@@ -95,6 +101,8 @@ function family(name) {
   if (/t5xxl|umt5/.test(n)) return 't5';
   if (/sdxl|(^|[_-])xl([_.-])|pony|illustrious/.test(n)) return 'sdxl';
   if (/sd.?1\.?5|v1-5/.test(n)) return 'sd15';
+  if (/stable.?audio/.test(n)) return 'stable-audio';
+  if (/ace.?step/.test(n)) return 'ace-step';
   return '未知';
 }
 // /models 可能回子資料夾路徑(例如 flux/ae.safetensors):用檔名比對,回傳完整路徑
@@ -120,7 +128,25 @@ async function check() {
     clip_l: pick(te, /^clip_l/), t5: pick(te, /t5xxl/), flux_vae: pick(vae, /^ae\./),
     zimage_unet: pick(dm, /z.?image/), zimage_clip: pick(te, /qwen_?3_?4b/),
     qwen_controlnet_union: pick(models.controlnet, /qwen.*union/),
+    sfx_ckpt: pick(models.checkpoints, /stable.?audio.*sfx/) ?? pick(models.checkpoints, /stable.?audio/),
+    sfx_clip: pick(te, /t5.?gemma|t5.?base/),
+    bgm_ckpt: pick(models.checkpoints, /ace.?step/),
   };
+  // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
+  // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
+  const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x : []);
+  const opts = (node) => { const m = oi[node]?.input?.required?.model; return Array.isArray(m?.[0]) ? m[0] : []; };
+  const hasFile = (re) => rmbgFiles.some(f => re.test(f));
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const bg = [];
+  if (has('RMBG')) {
+    const ms = opts('RMBG').filter(o => hasFile(new RegExp(`^${esc(o)}/[^/]+\\.(safetensors|pth|bin|onnx|ckpt)$`, 'i')));
+    if (ms.length) bg.push({ node: 'RMBG', models: ms });
+  }
+  const bgOk = bg.length > 0 && has('InvertMask') && has('JoinImageWithAlpha');
+  const unsupportedBg = [];
+  const coreBg = await json('/models/background_removal').then(x => Array.isArray(x) ? x : []);
+  if (has('RemoveBackground') && coreBg.length) unsupportedBg.push({ node: 'RemoveBackground', note: '主機有核心去背模型,但本 kit 的 sprite 骨架用 RMBG,不能用' });
   const workflows = {
     'qwen-t2i': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae),
     'qwen-edit-1ref': !!(has('TextEncodeQwenImageEditPlus') && d.qwen_edit_unet && d.qwen_clip && d.qwen_vae)
@@ -132,6 +158,10 @@ async function check() {
     'qwen-t2i-canny': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae && d.qwen_controlnet_union && has('Canny') && has('SetUnionControlNetType')),
   };
   workflows['qwen-edit-2ref'] = workflows['qwen-edit-3ref'] = workflows['qwen-edit-1ref'];
+  workflows['qwen-t2i-sprite'] = workflows['qwen-t2i'] && bgOk;
+  workflows['qwen-edit-1ref-sprite'] = workflows['qwen-edit-1ref'] && bgOk;
+  workflows['stable-audio-sfx'] = !!(d.sfx_ckpt && d.sfx_clip && ['CheckpointLoaderSimple', 'CLIPLoader', 'ConditioningStableAudio', 'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
+  workflows['ace-step-bgm'] = !!(d.bgm_ckpt && ['CheckpointLoaderSimple', 'ModelSamplingAuraFlow', 'TextEncodeAceStepAudio1.5', 'ConditioningZeroOut', 'EmptyAceStep1.5LatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
   // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
   // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。
   const methods = [];
@@ -149,6 +179,12 @@ async function check() {
     models: Object.fromEntries(Object.entries(models).map(([k, v]) => [k, v.map(n => ({ name: n, family: family(n) }))])),
     consistency_methods: methods,
     unsupported_consistency: unsupported,
+    background_removal: bgOk ? bg : [],
+    unsupported_background_removal: unsupportedBg,
+    audio_models: {
+      sfx: workflows['stable-audio-sfx'] ? models.checkpoints.filter(n => /stable.?audio/i.test(n)) : [],
+      bgm: workflows['ace-step-bgm'] ? models.checkpoints.filter(n => /ace.?step/i.test(n)) : [],
+    },
     workflows_available: workflows,
     defaults: d,
   };
@@ -236,7 +272,18 @@ async function run() {
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);
-  if (Object.values(graph).some(n => n?.class_type === 'SaveImage')) die('workflow 不可用 SaveImage(會寫進伺服器 output/);用 PreviewImage', 2);
+  if (Object.values(graph).some(n => /^Save(Image|Audio|Video|Animated|WEBM|Latent)/.test(n?.class_type ?? ''))) die('workflow 不可用 Save* 節點(會寫進伺服器 output/);圖用 PreviewImage、音訊用 PreviewAudio', 2);
+  // 雲端 API 節點(付費、把內容送到外部):名稱黑名單 + /object_info 的 api_node 旗標,一律拒絕
+  const CLOUD = /^(Bria|Recraft|Stability|ElevenLabs|OpenAI|Gemini|Kling|Luma|Runway|Ideogram|Pika|Minimax|Tripo|Moonvalley|Vidu|Rodin|Pixverse|Veo|Flux(Pro|Kontext(Pro|Max)))/;
+  const classes = [...new Set(Object.values(graph).map(n => n?.class_type).filter(Boolean))];
+  const cloudByName = classes.filter(c => CLOUD.test(c));
+  if (cloudByName.length) die(`workflow 含雲端 API 節點,不能用:${cloudByName.join(', ')}`, 2);
+  {
+    const oi = await json('/object_info', { timeoutMs: 60000 });
+    if (oi.__status) die(`/object_info 回 HTTP ${oi.__status}`, 3);
+    const api = classes.filter(c => oi[c]?.api_node === true);
+    if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);
+  }
 
   const t0 = Date.now();
   const client_id = randomUUID();
@@ -361,8 +408,11 @@ async function run() {
       die('ComfyUI 執行失敗(見上方)', 3);
     }
     const imgs = [];
-    for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
-    if (!imgs.length) die('workflow 沒有輸出圖片(要有 PreviewImage)', 3);
+    for (const o of Object.values(hist.outputs ?? {})) {
+      for (const im of o.images ?? []) imgs.push({ ...im, kind: 'image' });
+      for (const au of o.audio ?? []) imgs.push({ ...au, kind: 'audio' });
+    }
+    if (!imgs.length) die('workflow 沒有輸出(圖要有 PreviewImage、音訊要有 PreviewAudio)', 3);
     // 先全部下載到暫存,都成功才搬進 --out(避免留下半套檔案)
     stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
     const files = [];
@@ -372,14 +422,15 @@ async function run() {
         if (STOPPING) await halt();
         const im = imgs[i];
         const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
-        if (Date.now() > dlEnd) die('下載圖片超過 60 秒', 5);
+        if (Date.now() > dlEnd) die('下載輸出超過 60 秒', 5);
         const r = await api(`/view?${q}`, { timeoutMs: Math.max(1000, dlEnd - Date.now()) });
-        if (!r.ok) die(`下載圖片失敗 HTTP ${r.status}`, 3);
+        if (!r.ok) die(`下載輸出失敗 HTTP ${r.status}`, 3);
         let buf;
-        try { buf = Buffer.from(await r.arrayBuffer()); } catch (e) { die(`下載圖片途中斷線(${e.cause?.code || e.name})`, 5); }
-        const fname = imgs.length === 1 ? `${name}.png` : `${name}-${i + 1}.png`;
+        try { buf = Buffer.from(await r.arrayBuffer()); } catch (e) { die(`下載輸出途中斷線(${e.cause?.code || e.name})`, 5); }
+        const ext = im.kind === 'image' ? '.png' : (extname(im.filename).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.flac');
+        const fname = imgs.length === 1 ? `${name}${ext}` : `${name}-${i + 1}${ext}`;
         writeFileSync(join(stage, fname), buf);
-        files.push({ fname, ...pngSize(join(stage, fname)) });
+        files.push(im.kind === 'image' ? { fname, ...pngSize(join(stage, fname)), channels: pngChannels(join(stage, fname)) } : { fname, kind: 'audio', bytes: buf.length });
       }
       if (STOPPING) await halt();
       mkdirSync(join(out, 'workflows'), { recursive: true });

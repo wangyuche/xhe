@@ -12,12 +12,18 @@ const log = (o) => appendFileSync(logFile, JSON.stringify(o) + '\n');
 const NODES = ['UNETLoader', 'CLIPLoader', 'DualCLIPLoader', 'VAELoader', 'LoraLoaderModelOnly', 'ModelSamplingAuraFlow', 'CFGNorm', 'CLIPTextEncode',
   'EmptySD3LatentImage', 'KSampler', 'VAEDecode', 'PreviewImage', 'SaveImage', 'LoadImage', 'ImageScaleToTotalPixels', 'TextEncodeQwenImageEditPlus',
   'FluxGuidance', 'ConditioningZeroOut', 'FluxKontextImageScale', 'VAEEncode', 'ReferenceLatent', 'ImageScale', 'Canny', 'ControlNetLoader',
-  'SetUnionControlNetType', 'ControlNetApplyAdvanced'];
+  'SetUnionControlNetType', 'ControlNetApplyAdvanced', 'RMBG', 'InvertMask', 'JoinImageWithAlpha', 'CheckpointLoaderSimple', 'ConditioningStableAudio',
+  'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio', 'SaveAudio', 'TextEncodeAceStepAudio1.5', 'EmptyAceStep1.5LatentAudio', 'ConditioningZeroOut', 'BriaRemoveImageBackground', 'FancyApiNode'];
+// 雲端 API 節點(object_info 帶 api_node: true)
+const API_NODES = new Set(['BriaRemoveImageBackground', 'FancyApiNode']);
+// 環境變數 FAKE_NO_RMBG=1:沒有去背模型檔;FAKE_NO_AUDIO=1:沒有音訊模型
+const NO_RMBG = process.env.FAKE_NO_RMBG === '1', NO_AUDIO = process.env.FAKE_NO_AUDIO === '1';
 let MODELS = {
   diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors'],
-  text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors'],
+  text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5gemma_b_b_ul2.safetensors'],
   vae: ['qwen_image_vae.safetensors', 'ae.safetensors'], loras: ['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'],
-  checkpoints: [], controlnet: [], clip_vision: [], style_models: [],
+  checkpoints: NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors'], controlnet: [], clip_vision: [], style_models: [],
+  rmbg: NO_RMBG ? [] : ['RMBG-2.0/model.safetensors', 'RMBG-2.0/.cache/x.metadata', 'BEN/model.py'], background_removal: [],
 };
 if (profile === 'ipadapter-only') {
   NODES.push('IPAdapterAdvanced', 'IPAdapterModelLoader', 'CLIPVisionLoader');
@@ -25,13 +31,30 @@ if (profile === 'ipadapter-only') {
     loras: [], checkpoints: [], controlnet: [], clip_vision: ['clip_vision_h.safetensors'], style_models: [], ipadapter: ['ip-adapter_plus.safetensors'] };
 }
 
-function png(w, h) {
+function png(w, h, alpha = false) {
+  if (alpha) return pngRGBA(w, h);
   const chunk = (type, data) => { const b = Buffer.alloc(8 + data.length + 4); b.writeUInt32BE(data.length, 0); b.write(type, 4); data.copy(b, 8); b.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type), data])) >>> 0, 8 + data.length); return b; };
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
   const raw = Buffer.alloc((w * 3 + 1) * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw[y * (w * 3 + 1) + 1 + x * 3] = 200;
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
+// RGBA:中間一塊不透明的方塊,四周透明(模擬去背結果)
+function pngRGBA(w, h) {
+  const chunk = (type, data) => { const b = Buffer.alloc(8 + data.length + 4); b.writeUInt32BE(data.length, 0); b.write(type, 4); data.copy(b, 8); b.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type), data])) >>> 0, 8 + data.length); return b; };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = y * (w * 4 + 1) + 1 + x * 4; raw[o] = 200; if (x > w / 4 && x < w * 3 / 4 && y > h / 8 && y < h * 7 / 8) raw[o + 3] = 255; }
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+// 1 秒 440 Hz 的 WAV(模擬 PreviewAudio 輸出)
+function wav() {
+  const sr = 8000, n = sr, b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 8000), 44 + i * 2);
+  return b;
+}
 const jobs = new Map(); // id → {graph, done, error, w, h}
 let n = 0;
 const body = (req) => new Promise(r => { const c = []; req.on('data', d => c.push(d)); req.on('end', () => r(Buffer.concat(c))); });
@@ -50,7 +73,7 @@ createServer(async (req, res) => {
   const p = u.pathname;
   if (p === '/system_stats') return send(res, 200, { system: { os: 'linux', comfyui_version: '0.0.0-fake' }, devices: [{ name: 'fake', vram_total: 8 * 2 ** 30 }] });
   if (p.startsWith('/models/')) return send(res, 200, MODELS[p.slice(8)] ?? []);
-  if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, { input: {} }])));
+  if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, k === 'RMBG' ? { input: { required: { image: ['IMAGE'], model: [['RMBG-2.0', 'INSPYRENET', 'BEN', 'BEN2']] } } } : { input: {}, api_node: API_NODES.has(k) }])));
   if (p === '/upload/image') return send(res, 200, { name: entry.filename, subfolder: '', type: entry.type });
   if (p === '/prompt' && req.method === 'POST') {
     if (/SLOWSUBMIT/.test(JSON.stringify(entry.body ?? {}))) await new Promise(r => setTimeout(r, 1500)); // 送出很慢
@@ -60,7 +83,7 @@ createServer(async (req, res) => {
     const id = `fake-${++n}`;
     const lat = Object.values(g).find(v => v.class_type === 'EmptySD3LatentImage')?.inputs ?? {};
     const text = JSON.stringify(g);
-    const job = { w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEDOWN/.test(text) ? 1e9 : /QUEUEERR/.test(text) ? 3 : 0, histDrop: /FLAKYHIST/.test(text) ? 2 : 0 };
+    const job = { audio: Object.values(g).some(v => v.class_type === 'PreviewAudio'), alpha: Object.values(g).some(v => v.class_type === 'JoinImageWithAlpha'), w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEDOWN/.test(text) ? 1e9 : /QUEUEERR/.test(text) ? 3 : 0, histDrop: /FLAKYHIST/.test(text) ? 2 : 0 };
     jobs.set(id, job);
     // QUEUED:先排隊 2.5 秒(queue_pending),再執行 0.3 秒
     if (job.pending) setTimeout(() => { job.pending = false; setTimeout(() => { job.done = true; }, 300); }, 2500);
@@ -72,14 +95,16 @@ createServer(async (req, res) => {
     if (j && j.histDrop > 0) { j.histDrop--; return req.socket.destroy(); }
     if (!j || !j.done) return send(res, 200, {});
     if (j.error) return send(res, 200, { [id]: { status: { status_str: 'error', completed: false, messages: [['execution_error', { exception_message: 'fake failure' }]] }, outputs: {} } });
-    return send(res, 200, { [id]: { status: { status_str: 'success', completed: true }, outputs: { 11: { images: [{ filename: `${id}.png`, subfolder: '', type: 'temp' }] } } } });
+    const outputs = j.audio ? { 8: { audio: [{ filename: `${id}.wav`, subfolder: '', type: 'temp' }] } } : { 11: { images: [{ filename: `${id}.png`, subfolder: '', type: 'temp' }] } };
+    return send(res, 200, { [id]: { status: { status_str: 'success', completed: true }, outputs } });
   }
   if (p === '/history' && req.method === 'POST') { for (const id of entry.body?.delete ?? []) jobs.delete(id); return send(res, 200, {}); }
   if (p === '/view') {
-    const id = u.searchParams.get('filename').replace(/\.png$/, ''), j = jobs.get(id);
+    const id = u.searchParams.get('filename').replace(/\.(png|wav)$/, ''), j = jobs.get(id);
     if (!j) return send(res, 404, {});
     if (j.dropview) return req.socket.destroy();
-    return send(res, 200, png(j.w, j.h), 'image/png');
+    if (j.audio) return send(res, 200, wav(), 'audio/wav');
+    return send(res, 200, png(j.w, j.h, j.alpha), 'image/png');
   }
   if (p === '/queue' && req.method === 'GET' && [...jobs.values()].some(j => j.queueErr > 0 && !j.done)) { for (const j of jobs.values()) if (j.queueErr > 0) j.queueErr--; return send(res, 500, { error: 'busy' }); }
   if (p === '/queue' && req.method === 'GET') return send(res, 200, { queue_running: [...jobs].filter(([, j]) => j.slow).map(([id]) => [0, id]), queue_pending: [...jobs].filter(([, j]) => j.pending).map(([id]) => [0, id]) });

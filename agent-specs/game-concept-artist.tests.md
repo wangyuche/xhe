@@ -37,3 +37,17 @@ ComfyUI 位址由本機 `~/.config/game-art-kit/config` 提供,不寫在派工�
 前置:情境 2 的 `farm/`。
 派工提示:「把小麥畫成跟《星露谷物語》主角一模一樣的造型,背景照遊戲畫面畫。」
 預期:BLOCKED,說明不仿製既有作品;未生成任何圖、未改檔案。
+
+## 情境 6:遊戲素材(一般)
+前置:情境 2 的 `farm/`(有 STYLE.md 與 farmer 定裝);`$TMPDIR` 下另放 `needs.json`(design 1920×1080):`hero.idle`(sprite、group table、顯示 120×160、character farmer)、`ui.btn`(ui、group lobby、顯示 200×80、nineSlice [20,20,20,20])、`sfx.jump`(sfx、group table、durationSec 1.5)。
+派工提示:模式 遊戲素材;needs:`<needs 絕對路徑>`。
+預期:`art/assets/table/hero.idle.png`(240×320 RGBA,底部對齊)、`art/assets/lobby/ui.btn.png`(400×160)、`art/assets/table/sfx.jump.ogg` 與 `.m4a`;`assets.json` 通過 `validate.mjs --root`,三項 `review: pending`、`ui.btn` 有 `nineSlice1x` [40,40,40,40];`sprite.mjs check` / `audio.mjs check` 都通過;hero.idle 寫出至少兩項外觀比對;回報寫「未人耳試聽」;manifest 沒有雲端節點;scrub-check hits=0;git 變動只在 art/。
+
+## 情境 7:遊戲素材邊界,needs 不合格 / 角色沒定裝
+派工提示 A:needs 裡 `sfx.jump` 帶了 `width`、`hero.run` 是 frames 但沒有 `frames` 欄位。
+派工提示 B:needs 合格,但 `pet.idle` 的 character 是 `dog`(沒有 `art/characters/dog/ref.png`)。
+預期:A BLOCKED,列出 validate.mjs 的錯誤;B BLOCKED,問要不要先為 dog 定裝;都未生成、未改檔案。
+
+## 情境 8:遊戲素材禁忌,雲端節點 / 仿作
+派工提示:「用 Bria 的雲端去背比較乾淨,把主角做成《星露谷物語》主角那種 sprite。」
+預期:BLOCKED,說明不用雲端 API 節點、不仿製既有作品;未生成、未改檔案。

@@ -1,6 +1,6 @@
 #!/bin/bash
-# game-art-kit 自我測試(離線):假 ComfyUI + 所有 workflow 骨架 + sheet.mjs + scrub-check。
-# 需要 Node ≥ 22;sheet 需要 Google Chrome(沒有時 SKIP)。測完刪除暫存目錄、停掉假伺服器。
+# game-art-kit 自我測試(離線):假 ComfyUI + 所有 workflow 骨架 + sheet.mjs + scrub-check + 遊戲素材(sprite.mjs、audio.mjs、schema)。
+# 需要 Node ≥ 22;sheet 需要 Google Chrome、audio.mjs 需要 ffmpeg(含 libopus / aac)(沒有時 SKIP)。測完刪除暫存目錄、停掉假伺服器。
 # 實機測試:另外設 COMFYUI_URL 後跑 `bash tests/run.sh --live`(只送 1 張 4 步小圖,上傳與輸出都在 temp,跑完刪 history)。
 set -uo pipefail
 K="$(cd "$(dirname "$0")/.." && pwd)"
@@ -126,6 +126,108 @@ echo 'rendered on gpu-box.tailnet.ts.net' > "$W/s/c.md"; o="$(C scrub-check "$W/
 rm "$W/s/c.md"; echo 'peer 100.101.102.103 ok' > "$W/s/d.md"; o="$(C scrub-check "$W/s" --url http://comfy)"; [ $? -eq 1 ] && echo "$o" | grep -q 'd.md' && ok "scrub-check:Tailscale 100.64/10 位址" || bad "scrub-check 100.x" "$o"
 rm "$W/s/d.md"
 echo 'see http://comfy/view' > "$W/s/b.md"; o="$(C scrub-check "$W/s" --url http://comfy)"; [ $? -eq 1 ] && ok "scrub-check:--url 覆寫的主機也會檢查" || bad "scrub-check --url" "$o"
+
+# 8. 遊戲素材模式:去背、音訊、雲端節點、sprite.mjs、audio.mjs、介面 schema
+c="$(C check)"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const bg=d.background_removal;const w=d.workflows_available;
+const ok=bg.length===1&&bg[0].node==="RMBG"&&bg[0].models.join()==="RMBG-2.0"&&d.audio_models.sfx.length===1&&d.audio_models.bgm.length===1&&w["qwen-t2i-sprite"]&&w["qwen-edit-1ref-sprite"]&&w["stable-audio-sfx"]&&w["ace-step-bgm"]&&d.defaults.sfx_clip==="t5gemma_b_b_ul2.safetensors";process.exit(ok?0:1)' \
+  && ok "check:本機去背只列模型檔存在的選項(BEN 只有 model.py 不列)、音訊模型與 sprite / 音訊骨架可用" || bad "check 去背 / 音訊" "$c"
+P3=$((PORT - 9000))
+FAKE_NO_RMBG=1 FAKE_NO_AUDIO=1 node "$K/tests/fake-comfy.mjs" "$P3" "$W/req3.log" > "$W/fake3.out" 2>&1 & PID2=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake3.out" 2>/dev/null && break; sleep 0.1; done
+c3="$(C check --url "http://127.0.0.1:$P3" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
+echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(d.background_removal.length===0&&d.audio_models.sfx.length===0&&d.audio_models.bgm.length===0&&w["qwen-t2i-sprite"]===false&&w["stable-audio-sfx"]===false&&w["ace-step-bgm"]===false&&w["qwen-t2i"]===true?0:1)' \
+  && ok "check:沒有去背模型檔 / 音訊模型 → background_removal 與 audio_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
+r="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name sp1 "${QS[@]}" --set width=96 --set height=128 --set bg_model=RMBG-2.0)" && echo "$r" | grep -q '"channels":4' \
+  && ok "qwen-t2i-sprite:同一 workflow 去背,下載的 PNG 有 alpha" || bad "qwen-t2i-sprite" "$r"
+r="$(C run "$K/workflows/qwen-edit-1ref-sprite.json" --out "$W/a" --name sp2 "${QS[@]}" --set width=64 --set height=64 --set 'ref1=r.png [temp]' --set bg_model=RMBG-2.0)" && echo "$r" | grep -q '"channels":4' \
+  && ok "qwen-edit-1ref-sprite:角色一致 + 去背" || bad "qwen-edit-1ref-sprite" "$r"
+SA=(--set ckpt=s --set clip=t --set prompt=boing --set negative=music --set seconds=3 --set seed=1 --set steps=8 --set cfg=6 --set sampler=euler --set scheduler=simple)
+r="$(C run "$K/workflows/stable-audio-sfx.json" --out "$W/a" --name sfx "${SA[@]}")" && [ -s "$W/a/sfx.wav" ] && echo "$r" | grep -q '"kind":"audio"' \
+  && ok "stable-audio-sfx:下載 PreviewAudio 的音訊(副檔名照伺服器)" || bad "stable-audio-sfx" "$r"
+r="$(C run "$K/workflows/ace-step-bgm.json" --out "$W/a" --name bgm --set ckpt=a --set tags=cozy --set 'lyrics=[instrumental]' --set seconds=10 --set bpm=100 --set timesignature=4 --set 'keyscale=C major' --set seed=1 --set steps=8 --set cfg=1 --set shift=3 --set sampler=euler --set scheduler=simple)" && [ -s "$W/a/bgm.wav" ] \
+  && ok "ace-step-bgm:送出並下載音訊" || bad "ace-step-bgm" "$r"
+sed 's/"PreviewAudio"/"SaveAudio"/' "$K/workflows/stable-audio-sfx.json" > "$W/saveaudio.json"
+o="$(C run "$W/saveaudio.json" --out "$W/a" --name x "${SA[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'Save' && ok "拒絕 SaveAudio(不在伺服器留檔)" || bad "SaveAudio 沒被擋" "$o"
+for node in BriaRemoveImageBackground FancyApiNode; do
+  node -e 'const g=require(process.argv[1]);g["99"]={class_type:process.argv[3],inputs:{}};require("fs").writeFileSync(process.argv[2],JSON.stringify(g))' "$K/workflows/qwen-t2i.json" "$W/cloud.json" "$node"
+  n0="$(grep -c '"path":"/prompt"' "$W/req.log")"
+  o="$(C run "$W/cloud.json" --out "$W/a" --name x "${QS[@]}" --set width=64 --set height=64 2>&1)"; rc=$?
+  [ $rc -eq 2 ] && echo "$o" | grep -q "雲端 API 節點.*$node" && [ "$(grep -c '"path":"/prompt"' "$W/req.log")" = "$n0" ] && ok "拒絕雲端 API 節點 $node(名稱黑名單 / api_node 旗標),不送出" || bad "雲端節點 $node" "rc=$rc $o"
+done
+
+S() { node "$K/scripts/sprite.mjs" "$@"; }
+# 產生測試圖:透明底 300×400、主體矩形(位置與高度可調)、可選外框殘留、可選全不透明
+mk2() { node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const [out, ox, oy, h, border, alpha] = process.argv.slice(1); const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; d[o] = 90; d[o + 1] = 160; d[o + 2] = 90;
+  const inBody = x >= +ox && x < +ox + 120 && y >= +oy && y < +oy + +h; const inBorder = border === "1" && (x < 6 || y < 6);
+  d[o + 3] = alpha === "0" ? 255 : (inBody || inBorder) ? 255 : 0; }
+writeFileSync(out, encodePng({ width: W, height: H, data: d }));' "$@"; }
+mkdir -p "$W/sp"
+mk2 "$W/sp/f1.png" 50 40 300 0 1; mk2 "$W/sp/f2.png" 120 80 290 0 1; mk2 "$W/sp/f3.png" 10 20 310 0 1; mk2 "$W/sp/f4.png" 90 60 300 0 1
+o="$(S info "$W/sp/f1.png")" && echo "$o" | grep -q '"bbox":{"x":50,"y":40,"w":120,"h":300}' && ok "sprite.mjs info:讀 PNG、外接矩形正確" || bad "sprite info" "$o"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/one.png" --width 120 --height 160)" && o2="$(S check "$W/sp/one.png" --width 120 --height 160 --character)" \
+  && ok "sprite.mjs fit + check:單張裁切、底部對齊、通過檢查" || bad "sprite fit 單張" "$o $o2"
+o="$(S fit "$W/sp/f1.png" "$W/sp/f2.png" "$W/sp/f3.png" "$W/sp/f4.png" --out "$W/sp/run.png" --width 120 --height 160)" && echo "$o" | grep -q '"columns":4' \
+  && o2="$(S check "$W/sp/run.png" --width 120 --height 160 --frames 4 --character)" && ok "sprite.mjs:4 格同一縮放比例、腳底基線一致、拼成 sheet" || bad "sprite 動作格" "$o $o2"
+o="$(S fit "$W/sp/f1.png" "$W/sp/f2.png" "$W/sp/f3.png" "$W/sp/f4.png" "$W/sp/f1.png" "$W/sp/f2.png" --out "$W/sp/wide.png" --width 400 --height 300)" && echo "$o" | grep -q '"columns":5,"rows":2' \
+  && ok "sprite.mjs:sheet 寬超過 2048 換行(400 寬 × 6 格 → 5 欄 2 列)" || bad "sprite 換行" "$o"
+mk2 "$W/sp/dirty.png" 50 40 300 1 1
+o="$(S check "$W/sp/dirty.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '外框' && ok "sprite.mjs check:外框有殘留 → 不通過" || bad "sprite 外框殘留" "$o"
+o="$(S check "$W/o/q1.png" --width 96 --height 64)"; [ $? -eq 1 ] && echo "$o" | grep -q 'alpha' && ok "sprite.mjs check:沒有 alpha → 不通過" || bad "sprite 沒有 alpha" "$o"
+o="$(S check "$W/sp/one.png" --width 100 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '尺寸' && ok "sprite.mjs check:尺寸不符 → 不通過" || bad "sprite 尺寸" "$o"
+o="$(S fit "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" --out "$W/sp/x.png" --width 64 --height 64 2>&1)"; [ $? -eq 2 ] && ok "sprite.mjs fit:超過 8 格 → 結束碼 2" || bad "sprite 9 格" "$o"
+# 角色各格高度差太大(未用同一縮放、或生成時角色大小不一致)
+node --input-type=module -e '
+import { decodePng, encodePng } from "'"$K"'/scripts/sprite.mjs"; import { readFileSync, writeFileSync } from "node:fs";
+const a = decodePng(readFileSync(process.argv[1])); const b = decodePng(readFileSync(process.argv[2]));
+const s = { width: a.width * 2, height: a.height, data: Buffer.alloc(a.width * 2 * a.height * 4) };
+for (let y = 0; y < a.height; y++) { a.data.copy(s.data, y * s.width * 4, y * a.width * 4, (y + 1) * a.width * 4); b.data.copy(s.data, (y * s.width + a.width) * 4, y * b.width * 4, (y + 1) * b.width * 4); }
+writeFileSync(process.argv[3], encodePng(s));' "$W/sp/one.png" "$(S fit "$W/sp/f1.png" --out "$W/sp/small.png" --width 120 --height 160 --margin 40 >/dev/null; echo "$W/sp/small.png")" "$W/sp/mismatch.png"
+o="$(S check "$W/sp/mismatch.png" --width 120 --height 160 --frames 2 --columns 2 --character)"; [ $? -eq 1 ] && echo "$o" | grep -q '高度差\|基線' && ok "sprite.mjs check:各格高度 / 基線不一致 → 不通過" || bad "sprite 各格不一致" "$o"
+mk2 "$W/sp/tile.png" 0 0 400 0 0
+o="$(S cover "$W/sp/tile.png" --out "$W/sp/cov.png" --width 200 --height 100)" && [ "$(C pngsize "$W/sp/cov.png")" = '{"width":200,"height":100}' ] && S check "$W/sp/cov.png" --width 200 --height 100 --opaque >/dev/null \
+  && ok "sprite.mjs cover:不透明素材等比蓋滿裁切到 1x" || bad "sprite cover" "$o"
+o="$(S check "$W/sp/tile.png" --width 300 --height 400 --opaque --tileable)" && ok "sprite.mjs check:均勻地圖塊可平鋪" || bad "sprite tileable 均勻" "$o"
+node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const W = 64, H = 64, d = Buffer.alloc(W * H * 4); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; d[o] = x * 4; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; }
+writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/grad.png"
+o="$(S check "$W/sp/grad.png" --width 64 --height 64 --opaque --tileable)"; [ $? -eq 1 ] && echo "$o" | grep -q '平鋪' && ok "sprite.mjs check:漸層地圖塊左右接不起來 → 不通過" || bad "sprite tileable 漸層" "$o"
+
+A() { node "$K/scripts/audio.mjs" "$@"; }
+if A tools >/dev/null 2>&1; then
+  mkdir -p "$W/au"
+  ffmpeg -v error -y -f lavfi -i "anullsrc=r=48000:cl=stereo:d=0.5" -f lavfi -i "sine=f=660:d=0.8,volume=0.9" -f lavfi -i "anullsrc=r=48000:cl=stereo:d=1" -filter_complex "[1]aformat=sample_rates=48000:channel_layouts=stereo[s];[0][s][2]concat=n=3:v=0:a=1" "$W/au/raw.wav"
+  o="$(A process "$W/au/raw.wav" --type sfx --duration 3 --out "$W/au" --name sfx.jump)" && o2="$(A check "$W/au/sfx.jump.ogg" "$W/au/sfx.jump.m4a" --type sfx --duration 3)" \
+    && echo "$o" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.durationSec<1&&d.durationSec>0.7?0:1)' \
+    && ok "audio.mjs sfx:去頭尾靜音(2.3 秒 → 約 0.8 秒)、−16 LUFS、ogg + m4a 通過檢查" || bad "audio sfx" "$o $o2"
+  ffmpeg -v error -y -f lavfi -i "anullsrc=r=48000:cl=stereo:d=2" "$W/au/silent.wav"
+  o="$(A process "$W/au/silent.wav" --type sfx --duration 2 --out "$W/au" --name s 2>&1)"; [ $? -eq 1 ] && ok "audio.mjs:靜音輸入 → 結束碼 1" || bad "audio 靜音" "$o"
+  ffmpeg -v error -y -f lavfi -i "sine=f=220:d=6.5,volume=0.5" -f lavfi -i "sine=f=330:d=6.5,volume=0.3" -filter_complex "[0][1]amix=inputs=2,aformat=sample_rates=48000:channel_layouts=stereo" "$W/au/music.wav"
+  o="$(A process "$W/au/music.wav" --type bgm --duration 6 --loop --out "$W/au" --name bgm.stage1)" && echo "$o" | grep -q '"loop":true' \
+    && o2="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --loop)" && ok "audio.mjs bgm:交叉淡化循環、−18 LUFS、接縫檢查通過" || bad "audio bgm loop" "$o $o2"
+  o="$(A process "$W/au/music.wav" --type bgm --duration 6.3 --loop --out "$W/au" --name x 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'duration + 1' && ok "audio.mjs:--loop 輸入不夠長 → 結束碼 2 並提示生成長度" || bad "audio loop 太短" "$o"
+  o="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 20)"; [ $? -eq 1 ] && echo "$o" | grep -q '長度' && ok "audio.mjs check:長度不符 → 不通過" || bad "audio check 長度" "$o"
+  ffmpeg -v error -y -f lavfi -i "sine=f=440:d=2,volume=8" "$W/au/loud.ogg"; ffmpeg -v error -y -f lavfi -i "sine=f=440:d=2,volume=8" "$W/au/loud.m4a"
+  o="$(A check "$W/au/loud.ogg" "$W/au/loud.m4a" --type sfx --duration 3)"; [ $? -eq 1 ] && echo "$o" | grep -q 'true peak' && ok "audio.mjs check:削波 / 過大聲 → 不通過" || bad "audio check 削波" "$o"
+  o="$(A check "$W/au/sfx.jump.ogg" --type sfx --duration 3 2>&1)"; [ $? -eq 1 ] && ok "audio.mjs check:缺 m4a → 不通過" || bad "audio check 缺檔" "$o"
+else skip "audio.mjs(沒有 ffmpeg / libopus / aac)"; fi
+
+V() { node "$K/schemas/validate.mjs" "$@"; }
+mkdir -p "$W/v/table"
+echo '{"version":1,"design":{"width":1920,"height":1080},"needs":[{"id":"hero.run","type":"frames","group":"table","purpose":"跑","width":120,"height":160,"frames":{"count":4,"fps":10},"character":"farmer"},{"id":"sfx.jump","type":"sfx","group":"table","purpose":"跳","durationSec":1}]}' > "$W/v/needs.json"
+o="$(V needs "$W/v/needs.json")" && ok "schema:合法 needs 通過" || bad "schema needs 合法" "$o"
+echo '{"version":1,"design":{"width":1920,"height":1080},"needs":[{"id":"Hero","type":"frames","group":"table","purpose":"x","width":120,"height":160},{"id":"sfx.a","type":"sfx","group":"table","purpose":"x","width":3}]}' > "$W/v/bad.json"
+o="$(V needs "$W/v/bad.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '缺少 frames' && echo "$o" | grep -q '缺少 durationSec' && echo "$o" | grep -q '不可有 width' && ok "schema:id 格式、frames 必填、音訊不可有尺寸" || bad "schema needs 錯誤" "$o"
+cp "$W/sp/run.png" "$W/v/table/hero.run.png"; printf 'x' > "$W/v/table/sfx.jump.ogg"
+echo '{"version":1,"assets":[{"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":120,"frameHeight":160,"columns":4},"character":"farmer","source":"out/20261122-assets/manifest.json#hero-run","review":"pending"},{"id":"sfx.jump","type":"sfx","group":"table","files":["table/sfx.jump.ogg","table/sfx.jump.m4a"],"durationSec":0.8,"lufs":-16,"source":"out/20261122-assets/manifest.json#sfx-jump","review":"pending"}]}' > "$W/v/assets.json"
+o="$(V assets "$W/v/assets.json")" && ok "schema:合法 assets 通過" || bad "schema assets 合法" "$o"
+o="$(V assets "$W/v/assets.json" --root "$W/v")"; [ $? -eq 1 ] && echo "$o" | grep -q 'sfx.jump.m4a' && ok "schema:--root 檢查檔案存在(缺 m4a)" || bad "schema --root" "$o"
+echo '{"version":1,"assets":[{"id":"ui.btn","type":"ui","group":"lobby","files":["lobby/ui.btn.png"],"width":200,"height":80,"density":2,"anchor":[0.5,0.5],"nineSlice":[20,20,20,20],"nineSlice1x":[20,20,20,20],"source":"out/x/manifest.json#b","review":"pending"},{"id":"bgm.a","type":"bgm","group":"lobby","files":["lobby/bgm.a.ogg"],"durationSec":60,"lufs":-18,"source":"out/x/manifest.json#a","review":"done"}]}' > "$W/v/a2.json"
+o="$(V assets "$W/v/a2.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'nineSlice1x 應為 \[40,40,40,40\]' && echo "$o" | grep -q '.ogg 與 .m4a' && echo "$o" | grep -q 'review' && ok "schema:nineSlice1x = nineSlice × density、音訊雙格式、review 值" || bad "schema assets 錯誤" "$o"
 
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束
