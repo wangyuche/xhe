@@ -13,7 +13,7 @@
 #   the waits; "observed":false / "ok":false when the DDL or probe was never seen waiting.
 #   Every session has statement_timeout and lock_timeout, so nothing waits forever; the hold session is cancelled at the end.
 # --goose-up takes the Up section of a goose file; files marked NO TRANSACTION are refused (cannot run in a transaction).
-# Last line: JSON summary. Exit: 0 observed, 1 error, 2 usage, 4 DSN not this container.
+# Last line: JSON summary. Exit: 0 observed (hold mode: ok true), 1 error / not observed, 2 usage, 4 DSN not this container.
 source "$(dirname "$0")/_common.sh"
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -42,9 +42,11 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$DSN" ] && [ -n "$SQL" ] || die "需要 --dsn 與 --sql / --file / --goose-up" 2
 # The DDL runs between BEGIN and ROLLBACK; transaction control inside it would make it permanent.
-if printf '%s\n' "$SQL" "$HOLD" "$PROBE" | sed 's/--.*$//' | grep -Eiq '(^|;)[[:space:]]*(COMMIT|END|ROLLBACK|BEGIN|START[[:space:]]+TRANSACTION|SAVEPOINT|RELEASE|PREPARE[[:space:]]+TRANSACTION)([[:space:];]|$)'; then
-  die "SQL 裡有交易控制語句(COMMIT / BEGIN / ROLLBACK …),locks.sh 無法保證 ROLLBACK,拒絕" 2
-fi
+for part in "$SQL" "$HOLD" "$PROBE"; do
+  [ -n "$part" ] || continue
+  bad="$(printf '%s\n' "$part" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" \
+    || die "SQL 裡有交易控制語句或 psql 指令($bad),locks.sh 無法保證 ROLLBACK,拒絕" 2
+done
 case "$HOLD_S" in *[!0-9]*|"") die "--hold-seconds 要是整數秒" 2 ;; esac
 if [ -n "$HOLD" ]; then
   # Monitoring polls through docker exec (~0.3–1 s each); the DDL / probe must keep waiting long enough to be observed.
@@ -173,3 +175,4 @@ by() { echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | awk -F'|' -v s="dbrev-lock-
 OKV=$OBSERVED; case "$DDL_RES" in error*|connect-failed) OKV=false ;; esac
 printf '{"mode":"hold","ddl":"%s","ddl_blocked_by":"%s","probe":"%s","probe_blocked_by":"%s","observed":%s,"ok":%s}\n' \
   "$DDL_RES" "$(by ddl)" "$PROBE_RES" "$(by probe)" "$OBSERVED" "$OKV"
+[ "$OKV" = true ]

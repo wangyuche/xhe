@@ -19,7 +19,6 @@ cleanup() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     for c in $(docker ps -a --filter "label=dbrev=$N" --format '{{.Names}}') $(docker ps -a --filter "label=dbrev=$N-old" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1; done
     [ -n "$PULLED" ] && docker image rm "$IMAGE" >/dev/null 2>&1
-    [ -n "${VOL_BEFORE+x}" ] && for v in $(comm -13 <(echo "$VOL_BEFORE") <(docker volume ls -q | sort)); do docker volume rm "$v" >/dev/null 2>&1; done
   fi
   rm -rf "$WORK"
 }
@@ -110,7 +109,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker pull -q "$IMAGE" >/dev/null && PULLED=1 || { bad "docker pull $IMAGE"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; exit 1; }
 fi
 GIT_BEFORE="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
-VOL_BEFORE="$(docker volume ls -q | sort)"
+VOL_BEFORE="$(docker volume ls -q --filter label=com.docker.volume.anonymous | sort)"
 
 o="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" --mount "$FX/db/init:/docker-entrypoint-initdb.d" --mount "$FX/db/roles.sql:/roles.sql:rw" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q '一律唯讀' && ok "pg.sh up:--mount 帶 :rw → 拒絕(結束碼 4)" || bad "--mount rw 應拒絕" "rc=$rc $o"
@@ -173,6 +172,13 @@ echo "$o" | grep -q '| fx.accounts | ShareRowExclusiveLock | writes' && echo "$o
 printf -- '-- +goose Up\nDROP TABLE IF EXISTS fx.no_such_table;\nCREATE INDEX IF NOT EXISTS accounts_pkey ON fx.accounts (id);\n' > "$WORK/notice.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/notice.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && ! echo "$o" | grep -q 'NOTICE' && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:DDL 的 NOTICE 不會被當成鎖" || bad "locks NOTICE" "rc=$rc $o"
+printf '%s\n' "CREATE FUNCTION fx.tmp_f() RETURNS trigger LANGUAGE plpgsql AS \$\$" "BEGIN" "  IF NEW.balance < 0 THEN RAISE EXCEPTION 'neg'; END IF;" "  RETURN CASE WHEN true THEN NEW END;" "END;" "\$\$;" > "$WORK/fn.sql"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --file "$WORK/fn.sql" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:plpgsql 函式裡的 BEGIN / END / CASE … END 不算交易控制" || bad "locks 函式本體" "rc=$rc $o"
+for q in 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
+\c fx_test'; do
+  o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "$q" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:ABORT / psql 指令 → 拒絕" || bad "locks ABORT/meta" "$o"
+done
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE TABLE fx.tmp_c (i int); COMMIT;' 2>&1)"; rc=$?
 gone2="$(echo "SELECT to_regclass('fx.tmp_c') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
 [ $rc -eq 2 ] && [ "$gone2" = t ] && ok "locks.sh:SQL 含 COMMIT → 拒絕,沒有留下物件" || bad "locks COMMIT" "rc=$rc gone=$gone2 $o"
@@ -344,8 +350,9 @@ if echo "$o" | grep -q "gc name=$N removed=1 remaining=0" && [ -n "$(docker ps -
   ok "pg.sh gc:只刪 label dbrev=$N 且名稱前綴 dbrev-$N- 的容器(同 label 但名稱不符的不刪)"
 else bad "pg.sh gc" "$o"; fi
 docker rm -f -v "other-$N" >/dev/null 2>&1
-VOL_NEW="$(comm -13 <(echo "$VOL_BEFORE") <(docker volume ls -q | sort))"
-[ -z "$VOL_NEW" ] && ok "結束:沒有留下新的 docker volume(資料都在 tmpfs)" || bad "留下 volume" "$VOL_NEW"
+# only reports (never deletes) new anonymous volumes; other projects' named volumes are not touched
+VOL_NEW="$(comm -13 <(echo "$VOL_BEFORE") <(docker volume ls -q --filter label=com.docker.volume.anonymous | sort))"
+[ -z "$VOL_NEW" ] && ok "結束:沒有留下新的匿名 docker volume(資料都在 tmpfs)" || bad "留下匿名 volume(可能是本測試或同時執行的其他程式)" "$VOL_NEW"
 [ -z "$(docker ps -aq --filter "label=dbrev=$N")" ] && ok "結束:docker ps -a --filter label=dbrev=$N 為空" || bad "殘留容器" "$(docker ps -a --filter "label=dbrev=$N")"
 
 echo "---"

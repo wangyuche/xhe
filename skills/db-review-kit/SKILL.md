@@ -34,14 +34,15 @@ bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard o
 bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0
 
-# goose(版本取自 go.mod;只複製 *.sql 到暫存目錄執行;-env none,不讀 .env)
+# goose(版本取自 go.mod;只複製 *.sql 到暫存目錄執行;goose CLI 支援時加 -env none,不讀 .env;舊版本來就不讀)
 bash <kit>/scripts/goose.sh <name> validate --dir <migrations>
 bash <kit>/scripts/goose.sh <name> run --dir <migrations> --table <版本表> --dsn <dsn> -- up-to 53
 bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本表> \
   --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶破壞性 Down 旗標的 DSN> --from <審查的第一版> [--to <最後一版>]
 # → 前一版 → up-to → down-to 前一版(不帶旗標)→ 被拒時用 --dsn-allow 再 down → up-to;每步印指令與輸出
 #   資料庫目前版本高於 --to、或 --to < --from → 拒絕;go.mod 對 goose 有 replace → 結束碼 1(goose 實測標缺口)
-#   最後一行 JSON:{"before","up","down_no_flag":"ok|rejected","down_with_flag":"ok|failed|no-allow-dsn|skipped","up_again","final_version","reject_message","ok"}
+#   最後一行 JSON:{"before","up":"ok|failed","down_no_flag":"ok|rejected|not-run","down_with_flag":"ok|failed|no-allow-dsn|skipped",
+#                  "up_again":"ok|failed|not-run","final_version","reject_message","ok"};範圍內有 Go migration → ok=false(缺口)
 
 # 鎖(一律 ROLLBACK)
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --goose-up <migration.sql>       # 交易內執行 Up,列出每個鎖與它會擋什麼
@@ -50,6 +51,8 @@ bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
 #   --hold 模式的 --monitor-dsn 必須是 superuser(或 pg_read_all_stats + pg_signal_backend),否則結束碼 2
 # → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)|connect-failed","ddl_blocked_by",…,"observed","ok"}(沒看到 DDL / probe 在等鎖 → observed / ok 為 false)
 #   NO TRANSACTION 檔(CREATE INDEX CONCURRENTLY 等)不能用 --goose-up(結束碼 1),改推導或手動 hold
+#   SQL 裡有交易控制(COMMIT / BEGIN / ROLLBACK / ABORT / SAVEPOINT …,函式本體與字串內的不算)或 psql 指令 → 結束碼 2
+#   hold 模式 ok=false 時結束碼 1
 
 # GRANT 矩陣(每項用該角色的 LOGIN DSN 實際連線執行,BEGIN … ROLLBACK)
 bash <kit>/scripts/grants.sh <name> --matrix <矩陣檔> --dsn app=<mj_app DSN> --dsn admin=<…>

@@ -71,6 +71,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -n "$label" ] && [ -n "$obj" ] && [ -n "$act" ] && [ -n "$expect" ] || die "matrix 第 $LN 行格式錯誤:$line" 2
   dsn="$(dsn_for "$label")" || die "matrix 第 $LN 行的 label $label 沒有對應 --dsn" 2
   stmt="$(stmt_for "$obj" "$act")" || die "matrix 第 $LN 行不認得的動作:$act" 2
+  bad="$(printf '%s\n' "$stmt" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" \
+    || die "matrix 第 $LN 行有交易控制語句或 psql 指令($bad),無法保證 ROLLBACK" 2
   out="$(printf 'BEGIN;\n%s;\nROLLBACK;\n' "$stmt" | psql_dsn "$dsn" -q 2>&1)" && rc=0 || rc=$?
   code="$(echo "$out" | sed -n 's/^\(psql:[^ ]* \)\{0,1\}ERROR: *\([0-9A-Z]\{5\}\):.*/\2/p' | head -1)"
   # connection-time errors: "psql: error: … FATAL:  42501: permission denied for database …"

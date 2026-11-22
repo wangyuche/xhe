@@ -31,6 +31,8 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$SCRIPT" ] && [ -n "$DSN_A" ] && [ -n "$DSN_B" ] || die "需要 --script、--dsn A=…、--dsn B=…" 2
 [ -n "$CHK" ] || CHK="$DSN_A"
+nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
+[ -z "$nocmp" ] || die "CHECK 行要寫成 CHECK: <sql> => <預期>:$nocmp" 2
 bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:space:]]*$//' | grep -vE '^[0-9]+(\.[0-9]+)?$' | head -1 || true)"
 [ -z "$bad_sleep$(grep -E '^SLEEP:[[:space:]]*$' "$SCRIPT" || true)" ] || die "SLEEP: 的值要是秒數(例如 0.5):${bad_sleep:-空白}" 2
 printf '%s' "$STEP_WAIT" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--step-wait 要是秒數(例如 1 或 0.5)" 2
