@@ -108,6 +108,10 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
+    if re.search(r"standard_conforming_strings|escape_string_warning", raw, re.I):
+        # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
+        print("changing standard_conforming_strings is not allowed")
+        return 1
     if "--connect" in sys.argv[1:]:
         allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}

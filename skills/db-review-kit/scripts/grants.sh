@@ -54,7 +54,7 @@ stmt_for() { # <object> <action>
       echo "UPDATE $obj SET $(echo "$cols" | awk -F, '{for(i=1;i<=NF;i++){gsub(/ /,"",$i); printf "%s%s = DEFAULT", (i>1?", ":""), $i}}') WHERE false" ;;
     delete) echo "DELETE FROM $obj WHERE false" ;;
     truncate) echo "TRUNCATE $obj" ;;
-    sql:*) local s="${act#sql:}"; echo "${s//\{obj\}/$obj}" ;;
+    sql:*) local s="${act#sql:}"; echo "${s//\{obj\}/"$obj"}" ;;
     *) return 1 ;;
   esac
 }

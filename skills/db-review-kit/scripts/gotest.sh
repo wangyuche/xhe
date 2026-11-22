@@ -24,7 +24,9 @@ while [ $# -gt 0 ]; do
     --run) RUN="${2:?}"; shift 2 ;;
     --p) PAR="${2:?}"; shift 2 ;;
     --timeout) TMO="${2:?}"; shift 2 ;;
-    --) shift; PKGS=("$@"); break ;;
+    --) shift; PKGS=("$@")
+        for a in ${PKGS[@]+"${PKGS[@]}"}; do case "$a" in -*) die "-- 後面只能放套件路徑,不能放 go 旗標($a)" 2 ;; esac; done
+        break ;;
     *) die "未知參數:$1" 2 ;;
   esac
 done

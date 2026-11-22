@@ -95,7 +95,9 @@ psql_dsn() {
   local dsn="$1"; shift
   QUIET_GUARD=1 guard_dsns "$dsn"
   local idsn
-  idsn="$(dsnpy opts "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT}")"
+  # standard_conforming_strings is pinned on: _txcheck.py lexes '…' literals with that rule (the guard refuses DSN
+  # options and _txcheck refuses SQL that change it)
+  idsn="$(dsnpy opts "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT} -c standard_conforming_strings=on")"
   # The password travels as PGPASSWORD in docker exec's environment (taken from this process via `-e PGPASSWORD`),
   # never in argv, so `ps` does not show it; it still works when the bootstrap requires scram on 127.0.0.1.
   local pw; pw="$(dsnpy field "$idsn" password)"
@@ -160,8 +162,7 @@ check_extra_env() {
     ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
     # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
     case "$ku" in
-      GOOSE_*|GOOGLE_*) ;;   # project variables (goose settings, GCP client libs) are allowed
-      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GO*|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
+      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GOFLAGS|GOTOOLCHAIN|GOROOT|GOPATH|GOBIN|GOENV|GOAUTH|GOPROXY|GOSUMDB|GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE|GOCACHE|GOMODCACHE|GOWORK|GOTMPDIR|GOVCS|GOEXPERIMENT|GODEBUG|GOOS|GOARCH|GOAMD64|GOARM|GOARM64|GO386|GOMIPS|GOMIPS64|GOPPC64|GORISCV64|GOWASM|GOTELEMETRY|GOTELEMETRYDIR|GOCOVERDIR|GOGC|GOMAXPROCS|GOMEMLIMIT|GOTRACEBACK|GOFIPS140|GCCGO|GCCGOTOOLDIR|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
         die "$k 是隔離環境 / 工具鏈會執行的變數,不能用 --env 覆寫" 4 ;;
     esac
     case "$v" in

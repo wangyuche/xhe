@@ -34,8 +34,6 @@ done
 [ -n "$CHK" ] || CHK="$DSN_A"
 case "$LT" in *[0-9]ms|*[0-9]s|*[0-9]min) ;; *) die "--lock-timeout 要帶單位,例如 10s" 2 ;; esac
 printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式例:10s" 2
-lt_ms=$(printf '%s' "$LT" | awk '/ms$/{print $0+0; next} /min$/{print ($0+0)*60000; next} {print ($0+0)*1000}')
-[ "$lt_ms" -gt 1000 ] || die "--lock-timeout 要大於 deadlock_timeout(1s),否則 deadlock 會被當成 lock timeout" 2
 # SETUP / A / B are checked whole; CHECK only up to its LAST "=>" (the rest is the expected text, never sent to psql).
 # The check is per raw line (no cross-line lexing), so lines sent to different sessions cannot hide each other.
 bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' || true; grep -E '^CHECK:' "$SCRIPT" | sed -E 's/^CHECK:[[:space:]]*//; s/(.*)=>.*$/\1/' || true; } \
@@ -50,6 +48,10 @@ bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:spa
 printf '%s' "$STEP_WAIT" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--step-wait 要是秒數(例如 1 或 0.5)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN_A" "$DSN_B" "$CHK"
+lt_ms=$(printf '%s' "$LT" | awk '/ms$/{print $0+0; next} /min$/{print ($0+0)*60000; next} {print ($0+0)*1000}')
+DT="$(printf "SELECT setting::int * CASE unit WHEN 's' THEN 1000 WHEN 'min' THEN 60000 ELSE 1 END FROM pg_settings WHERE name = 'deadlock_timeout';\n" | psql_dsn "$CHK" -qAt 2>/dev/null || true)"
+case "$DT" in ""|*[!0-9]*) DT=1000 ;; esac
+[ "$lt_ms" -gt "$DT" ] || die "--lock-timeout 要大於 deadlock_timeout(${DT}ms),否則 deadlock 會被當成 lock timeout" 2
 # cleanup cancels both sessions through the check DSN: it must be allowed to signal other roles' backends
 priv="$(printf "SELECT rolsuper OR pg_has_role(current_user, 'pg_signal_backend', 'member') FROM pg_roles WHERE rolname = current_user;\n" | psql_dsn "$CHK" -qAt 2>&1 || true)"
 ua="$(dsnpy field "$DSN_A" user)"; ub="$(dsnpy field "$DSN_B" user)"; uc="$(dsnpy field "$CHK" user)"

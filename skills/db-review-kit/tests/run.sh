@@ -65,6 +65,8 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '
 for kv in 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:${kv%%=*} 等會被工具鏈執行的變數不能傳" || bad "${kv%%=*} 應拒絕" "$o"
 done
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
+o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?options=-c%20standard_conforming_strings%3Doff')"; [ $? -eq 4 ] && ok "guard:DSN options 改 standard_conforming_strings → 拒絕" || bad "guard scs" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_ARGS=--report=json' 'NOTIFY=ci@example.com' 'SUPER=superuser=on'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:--report=json、email 這類值不誤擋" || bad "誤擋 report/email" "$o"
 for kv in 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
@@ -157,7 +159,7 @@ o="$(bash "$S/goose.sh" "$N" validate --dir "$FX/migrations" 2>&1)"; [ $? -eq 0 
 o="$(DATABASE_URL=postgres://evil@10.255.255.1/x GOOSE_DBSTRING=postgres://evil@10.255.255.1/x bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --dsn-allow "$MIGA" --from 3 2>&1)"; rc=$?
 j="$(echo "$o" | tail -1)"
 echo "$j" | grep -q '"before": 2' && echo "$j" | grep -q '"down_no_flag": "rejected"' && echo "$j" | grep -q '"down_with_flag": "ok"' \
-  && echo "$j" | grep -q '"up_again": "ok"' && echo "$j" | grep -q '"ok": true' && echo "$j" | grep -q 'fx.allow_data_down' && [ $rc -eq 0 ] \
+  && echo "$j" | grep -q '"up_again": "ok"' && echo "$j" | grep -q '"ok": true' && echo "$j" | grep -q '"down_rejected_without_flag": true' && echo "$j" | grep -q 'fx.allow_data_down' && [ $rc -eq 0 ] \
   && ok "goose.sh roundtrip:前一版 → up → down 不帶旗標被拒(RAISE)→ 帶旗標成功 → up" || bad "goose roundtrip" "$o"
 o="$(bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --from 3 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | grep -q 'up 不會真的執行' && ok "goose.sh roundtrip:資料庫已在審查版本、沒給 --dsn-allow → 拒絕(不會假裝 up 過)" || bad "roundtrip 已在版本" "rc=$rc $o"
@@ -186,7 +188,7 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --file "$WORK/fn.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:plpgsql 函式裡的 BEGIN / END / CASE … END 不算交易控制" || bad "locks 函式本體" "rc=$rc $o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE FUNCTION fx.tmp_g(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN x > 0 THEN 1 ELSE 0 END; END' 2>&1)"; rc=$?
 [ $rc -eq 0 ] && ok "locks.sh:BEGIN ATOMIC … END 函式本體不算交易控制" || bad "locks BEGIN ATOMIC" "rc=$rc $o"
-for q in 'CREATE TABLE fx.tmp_h (i int); SELECT begin atomic FROM (SELECT 1 AS begin) s; COMMIT; SELECT 1 AS end' 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
+for q in "SET standard_conforming_strings = off; SELECT 'a\\' , ' ; COMMIT ; SELECT ';" 'CREATE TABLE fx.tmp_h (i int); SELECT begin atomic FROM (SELECT 1 AS begin) s; COMMIT; SELECT 1 AS end' 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
 \c fx_test' 'CREATE TABLE fx.tmp_e (i int) \g
 COMMIT' "SELECT E'a\\'b'; COMMIT;"; do
   o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "$q" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:ABORT / psql 指令 → 拒絕" || bad "locks ABORT/meta" "$o"
@@ -314,6 +316,7 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/race-nosemi.txt" --dsn A="$MIG" --ds
 o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'check-dsn' && ok "race.sh:A/B 不同角色且 check DSN 不是 superuser → 拒絕" || bad "race check-dsn 權限" "$o"
 printf '%s\n' "A: SELECT 'x;" 'B: SELECT 1 \! touch /tmp/pwn;' > "$WORK/race-bad3.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad3.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:跨 session 的未閉合引號藏不住 \\!" || bad "race 跨 session" "$o"
+o="$(bash "$S/gotest.sh" "$N" --dir "$FX" -- -mod=mod ./... 2>&1)"; [ $? -eq 2 ] && ok "gotest.sh:-- 後面的 go 旗標(-mod=mod)→ 拒絕" || bad "gotest -- 旗標" "$o"
 o="$(bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" -- -dir "$FX/migrations" fix 2>&1)"; [ $? -eq 2 ] && ok "goose.sh run:goose 旗標 / fix / create → 拒絕(不寫專案檔)" || bad "goose run 旗標" "$o"
 printf '%s\n' 'A: \c host=10.0.0.5 dbname=prod' > "$WORK/race-bad.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:腳本裡有 \\c → 拒絕" || bad "race \\c" "$o"

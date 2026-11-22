@@ -11,6 +11,7 @@ Commands:
   build <user> <pw> <port> <db> [<options>]   build a DSN
 Exit codes: 0 ok, 2 usage, 4 guard failure.
 """
+import re
 import sys
 import urllib.parse as up
 
@@ -52,6 +53,9 @@ def parse(dsn):
 
 def guard_one(expected_port, dsn):
     p, host, port, q = parse(dsn)
+    for k, v in q:
+        if k.lower() == "options" and re.search(r"standard_conforming_strings|escape_string", v, re.I):
+            raise DsnError("options must not change standard_conforming_strings (it changes how literals are lexed)")
     bad = sorted({k for k, _ in q if k.lower() in FORBIDDEN_PARAMS})
     if bad:
         raise DsnError("query parameter overrides connection target: " + ",".join(bad))

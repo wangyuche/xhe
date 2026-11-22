@@ -135,10 +135,14 @@ until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name 
 done
 (printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$SQL" \
   | { set +e; psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out"; }) & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
-wait_lock() { # <session> : until it waits on a lock (max 5 s)
-  local i=0
-  until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-${RID}-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>/dev/null)" = 1 ]; do
-    i=$((i + 1)); [ $i -lt 50 ] || return 1; sleep 0.1
+wait_lock() { # <session> : until it waits on a lock; gives up after the lock timeout (wall clock), reports monitor errors
+  local start r; start=$(date +%s)
+  while :; do
+    r="$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-${RID}-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>&1)" \
+      || { echo "monitor 查詢失敗:$(echo "$r" | head -1)" >&2; return 1; }
+    [ "$r" = 1 ] && return 0
+    [ $(( $(date +%s) - start )) -lt "$LT_S" ] || return 1
+    sleep 0.1
   done
 }
 OBSERVED=true

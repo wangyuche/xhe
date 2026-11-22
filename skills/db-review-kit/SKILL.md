@@ -45,7 +45,8 @@ bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本�
 # → 前一版 → up-to → down-to 前一版(不帶旗標)→ 被拒時用 --dsn-allow 再 down → up-to;每步印指令與輸出
 #   資料庫目前版本高於 --to、或 --to < --from → 拒絕;已高於前一版時用 --dsn-allow 先退回(沒給就拒絕);go.mod 對 goose 有 replace → 結束碼 1(goose 實測標缺口)
 #   最後一行 JSON:{"before","up":"ok|failed","down_no_flag":"ok|rejected|not-run","down_with_flag":"ok|failed|no-allow-dsn|skipped",
-#                  "up_again":"ok|failed|not-run","final_version","reject_message","ok"};範圍內有 Go migration → ok=false(缺口)
+#                  "up_again":"ok|failed|not-run","final_version","reject_message","down_rejected_without_flag":true|false|null,"ok"}
+#   ok 只看 up / down / up 跑完;「破壞性 Down 有守門」看 down_rejected_without_flag(要 true);範圍內有 Go migration → ok=false(缺口)
 
 # 鎖(一律 ROLLBACK)
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --goose-up <migration.sql>       # 交易內執行 Up,列出每個鎖與它會擋什麼

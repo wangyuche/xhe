@@ -164,6 +164,8 @@ case "$SUB" in
     python3 -I -c 'import json,sys
 k=["before","from","to","up","down_no_flag","down_with_flag","up_again","final_version","reject_message"]
 d=dict(zip(k,sys.argv[1:10])); d["ok"]=sys.argv[10]=="true"
+# separate from ok: was the Down refused without the flag? (expected for guarded destructive Downs)
+d["down_rejected_without_flag"]={"rejected":True,"ok":False}.get(d["down_no_flag"])
 for n in ("before","from","to"): d[n]=int(d[n])
 print(json.dumps(d,ensure_ascii=False))' "$BEFORE" "$FROM" "$TO" "$up1" "$down_strict" "$down_allow" "$up2" "$FINAL" "$reject_msg" "$OK"
     [ "$OK" = true ]

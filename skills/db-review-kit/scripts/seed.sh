@@ -5,7 +5,8 @@
 #   seed.sh <name> --dsn DSN --table T --rows N --col 'col=expr' [--col …] [--batch 100000]
 #            expressions may use g (1..N), e.g. --col "name='user-'||g" --col "balance=g % 1000"
 #
-# Batches commit separately (statement_timeout 300s each) so one Bash call stays well under 600 s; ANALYZE at the end.
+# Batches commit separately (statement_timeout 300s each) and ANALYZE runs at the end. All batches run in this one call:
+# for large seeds split --rows across several calls (or run in the background) to stay under a 600 s tool limit.
 # Prints free space on the container's tmpfs before and after. Exit: 1 failure, 2 usage, 4 DSN not this container.
 source "$(dirname "$0")/_common.sh"
 
