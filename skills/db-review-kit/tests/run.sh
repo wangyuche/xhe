@@ -302,6 +302,11 @@ for q in '\set x `id`' '\echo -- \! id' "-- don't do this
 SELECT 'x';"; do
   o="$(printf '%s\n' "$q" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:$q → 拒絕" || bad "psql $q" "$o"
 done
+printf '%s\n' "A: SELECT '=>'; \\c host=10.0.0.5 dbname=prod" > "$WORK/race-bad2.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad2.txt" --dsn A="$MIG" --dsn B="$MIG" --check-dsn "$SU" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:=> 後面藏 \\c 也會被抓到" || bad "race => bypass" "$o"
+printf '%s\n' 'A: BEGIN;' 'A: UPDATE fx.accounts SET name = name WHERE false' > "$WORK/race-nosemi.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-nosemi.txt" --dsn A="$MIG" --dsn B="$MIG" --check-dsn "$SU" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:A/B 行沒有分號 → 用法錯誤" || bad "race 無分號" "$o"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'check-dsn' && ok "race.sh:A/B 不同角色且 check DSN 不是 superuser → 拒絕" || bad "race check-dsn 權限" "$o"
 printf '%s\n' 'A: \c host=10.0.0.5 dbname=prod' > "$WORK/race-bad.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:腳本裡有 \\c → 拒絕" || bad "race \\c" "$o"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$MIG" --lock-timeout 500ms 2>&1)"; [ $? -eq 2 ] && ok "race.sh:--lock-timeout ≤ 1s → 用法錯誤" || bad "race lock-timeout" "$o"

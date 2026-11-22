@@ -36,8 +36,12 @@ case "$LT" in *[0-9]ms|*[0-9]s|*[0-9]min) ;; *) die "--lock-timeout 要帶單位
 printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式例:10s" 2
 lt_ms=$(printf '%s' "$LT" | awk '/ms$/{print $0+0; next} /min$/{print ($0+0)*60000; next} {print ($0+0)*1000}')
 [ "$lt_ms" -gt 1000 ] || die "--lock-timeout 要大於 deadlock_timeout(1s),否則 deadlock 會被當成 lock timeout" 2
-bad="$(grep -E '^(SETUP|A|B|CHECK):' "$SCRIPT" | sed -E 's/^(SETUP|A|B|CHECK):[[:space:]]*//; s/=>.*$//' | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
+# SETUP / A / B are checked whole; CHECK only up to its LAST "=>" (the rest is the expected text, never sent to psql)
+bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' || true; grep -E '^CHECK:' "$SCRIPT" | sed -E 's/^CHECK:[[:space:]]*//; s/(.*)=>.*$/\1/' || true; } \
+  | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
   || die "腳本裡有不允許的 psql 指令($bad),拒絕" 4
+nosemi="$(grep -E '^(A|B):' "$SCRIPT" | sed -E 's/[[:space:]]+$//' | grep -vE ';$' | head -1 || true)"
+[ -z "$nosemi" ] || die "A: / B: 的每一行都要以 ; 結尾(否則 psql 會先印標記、語句卻還沒送出):$nosemi" 2
 nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
 [ -z "$nocmp" ] || die "CHECK 行要寫成 CHECK: <sql> => <預期>:$nocmp" 2
 bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:space:]]*$//' | grep -vE '^[0-9]+(\.[0-9]+)?$' | head -1 || true)"
@@ -45,6 +49,12 @@ bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:spa
 printf '%s' "$STEP_WAIT" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--step-wait 要是秒數(例如 1 或 0.5)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN_A" "$DSN_B" "$CHK"
+# cleanup cancels both sessions through the check DSN: it must be allowed to signal other roles' backends
+priv="$(printf "SELECT rolsuper OR pg_has_role(current_user, 'pg_signal_backend', 'member') FROM pg_roles WHERE rolname = current_user;\n" | psql_dsn "$CHK" -qAt 2>&1 || true)"
+ua="$(dsnpy field "$DSN_A" user)"; ub="$(dsnpy field "$DSN_B" user)"; uc="$(dsnpy field "$CHK" user)"
+if [ "$priv" != t ] && { [ "$ua" != "$ub" ] || [ "$ua" != "$uc" ]; }; then   # same role may cancel its own backends
+  die "--check-dsn 要是 superuser(或 pg_signal_backend),才能在中斷時取消兩個 session;請給 superuser DSN" 2
+fi
 
 mkdir -p "$(name_dir "$NAME")"
 W="$(mktemp -d "$(name_dir "$NAME")/race.XXXXXX")"
@@ -99,7 +109,7 @@ while IFS= read -r line || [ -n "$line" ]; do
       echo "$n|$s|$st|$sql" >> "$W/steps"
       echo "step $n $s: $sql → $st"
       ;;
-    SLEEP:*) sleep "$(echo "${line#SLEEP:}" | tr -d ' ')" ;;
+    SLEEP:*) sleep "$(printf '%s' "${line#SLEEP:}" | tr -d '[:space:]')" ;;
   esac
 done < "$SCRIPT"
 { exec 7>&- 8>&-; } 2>/dev/null || true

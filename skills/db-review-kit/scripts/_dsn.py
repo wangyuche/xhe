@@ -5,8 +5,9 @@ Commands:
   guard <port> <dsn>...      every DSN must be postgres://…@127.0.0.1:<port>/… with no host overrides
   internal <dsn>             rewrite host:port to 127.0.0.1:5432 (address inside the container)
   opts <dsn> <options>       prepend libpq options (kit defaults first, so options already in the DSN win)
+  nopass <dsn>               drop the password (userinfo and ?password=)
   mask <dsn>                 replace the password with ***
-  field <dsn> user|db|port   print one component
+  field <dsn> user|db|port|host|password   print one component
   build <user> <pw> <port> <db> [<options>]   build a DSN
 Exit codes: 0 ok, 2 usage, 4 guard failure.
 """

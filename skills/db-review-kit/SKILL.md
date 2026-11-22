@@ -67,7 +67,8 @@ bash <kit>/scripts/grants.sh <name> --matrix <矩陣檔> --dsn app=<mj_app DSN> 
 
 # 併發(兩個 session 依腳本交錯;每步超過 --step-wait 秒沒完成就標 waiting、繼續下一步)
 bash <kit>/scripts/race.sh <name> --script <腳本> --dsn A=<dsn> --dsn B=<dsn> [--check-dsn <superuser>] [--lock-timeout 10s]
-#   腳本行:SETUP: <sql> / A: <sql> / B: <sql> / SLEEP: <秒> / CHECK: <sql> => <預期>(每個語句一行)
+#   腳本行:SETUP: <sql> / A: <sql>; / B: <sql>; / SLEEP: <秒> / CHECK: <sql> => <預期>(每個語句一行,A/B 要以 ; 結尾)
+#   --check-dsn 要是 superuser(A、B、check 都同一角色時例外),中斷時才能取消兩個 session
 #   → 每步 done / waiting 與最終錯誤(錯誤歸到正確的步驟);JSON {"deadlock":bool,"errors":{"40P01":1},"checks":{…}}(連線失敗記為 "connect");CHECK 不符結束碼 1
 
 # 種子與效能
