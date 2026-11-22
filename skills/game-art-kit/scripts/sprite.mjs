@@ -7,8 +7,9 @@
 //        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
 //   node sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]
-//        算 1x 尺寸:density 預設 min(2, …) 取到讓單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
-//        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組)
+//        算 1x 尺寸:density 預設 2,往下調到單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
+//        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組);
+//        因 2048 上限把 density 調到低於要求(--density 或預設 2)時另加 "lowered":true(只是寬取整的差異不算)
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
@@ -145,7 +146,7 @@ export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
 export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
-  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);density 要取 min(2, 2048 ÷ 顯示最長邊)`);
+  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (m === 0 && imgs.length === 1) {
     const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1);
     // 不留邊時只能等比:裁切後的比例和 W×H 差超過 3% 就失敗(拉伸會讓邊框粗細不一、九宮格切線對不上),請用相同比例重出
@@ -159,7 +160,6 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
   const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
-  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);density 要取 min(2, 2048 ÷ 顯示最長邊)`);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
   imgs.forEach((im, i) => {
@@ -183,13 +183,17 @@ function centroidX(img, b) {
 }
 
 export function density1x(dw, dh, frames = 1, want = 2) {
-  let d = Math.min(want, 2048 / Math.max(dw, dh));
-  for (let i = 0; i < 200; i++) {
-    // 寬取整後,印出的 density = 寬 ÷ 顯示寬,高也用同一個 density 算(validate 用 round(顯示 × density) 比對)
-    const W = Math.floor(dw * d), dens = +(W / dw).toFixed(4), H = Math.round(dh * dens);
+  if (!Number.isFinite(want) || want <= 0) die(`--density 要是正數(收到 ${want})`);
+  if (Math.floor(dw * want + 1e-9) < 1) die(`--density ${want} 太小:顯示寬 ${dw} × density 不到 1 px`);
+  // 寬取整(無條件捨去)後,印出的 density = 寬 ÷ 顯示寬(4 位小數),高用同一個 density 四捨五入(validate 同樣算法)
+  const size = (W) => { const dens = +(W / dw).toFixed(4); return { W, dens, H: Math.round(dh * dens) }; };
+  const base = size(Math.floor(dw * want + 1e-9)).dens; // 沒受 2048 限制時的值,低於它才算 lowered
+  // 從要求的寬(且單邊 ≤ 2048)往下逐 px 找第一個單張與整張 sheet 都 ≤ 2048 的寬:最大可行值,不會多降
+  for (let W = Math.floor(Math.min(dw * want, dw * 2048 / Math.max(dw, dh)) + 1e-9); W >= 1; W--) {
+    const { dens, H } = size(W);
     const { columns, rows } = sheetLayout(frames, W);
-    if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows };
-    d *= 0.98;
+    // lowered:實際 density 低於要求(needs 指定或預設 2),agent 列在已知限制;< 1 時透明素材跳過、不透明素材允許(見 agent)
+    if (H >= 1 && W * columns <= 2048 && H <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows, ...(dens < base - 1e-4 ? { lowered: true } : {}) };
   }
   die('找不到合適的 density(顯示尺寸太大)');
 }
