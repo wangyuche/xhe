@@ -28,7 +28,7 @@ PostgreSQL / migration 審查者(只讀 verifier):主 agent 在合併任何 migr
 - `## 審查編號`:字首與格式(例:`F<任務號>-<k>` 必修、`F<任務號>-S<k>` 建議)、審查紀錄位置(例:`docs/architecture/_archive/db-review-*.md`)。
 - `## 例外與規範文件`:專案明文記錄的例外與規範在哪裡(例:`docs/architecture/data/migrations.md`、ADR)。
 
-設定檔不存在或缺節時:db-reviewer 從專案文件與程式推導,在回報附「設定草稿」(每項標來源或「推定」)給主 agent 存檔;推導不出的值,相關面向標「無法判定」並列在待決問題,不自行假設。
+設定檔不存在或缺節時:db-reviewer 從專案文件與程式推導,在回報附「設定草稿」(每項標來源或「推定」)給主 agent 存檔;推導不出的值,相關面向標「無法判定」並列在待決問題,不自行假設。PostgreSQL 映像推導不出來(設定沒有、專案也沒有 compose / Dockerfile / 文件寫明)時視同實測環境不可用:不挑映像、不啟動容器,實測項目全部標缺口,待決問題請使用者提供映像;簡報直接給映像時照用(2026-11-22 Build 時補,agent 測試發現)。
 
 ## 編號與總結
 - 任務號 `<n>`:簡報必附(新審或複審;複審沿用原任務號;平行派多個 reviewer 時由主 agent 各自指定)。
@@ -78,7 +78,7 @@ PostgreSQL / migration 審查者(只讀 verifier):主 agent 在合併任何 migr
   1. 簡報有必要欄位;`git -C <專案根> status --porcelain` 記基準。
   2. 讀設定檔(或推導草稿)、資料設計文件、要審的 migration、相關程式、規範與例外文件、既有審查紀錄。
   3. 環境:docker 可用;docker 可用記憶體 / 磁碟足夠(不足時降種子規模);`go` 版本符合 go.mod(`GOTOOLCHAIN=local`)。不可用時改純推導,實測項目全部標缺口。
-  4. docker 必須是本機:`DOCKER_HOST` 未設且 `docker context show` 是本機 context(`default` / `desktop-linux` / `colima` 等指向本機 socket);不是 → BLOCKED。
+  4. docker 必須是本機:`DOCKER_HOST` 未設(或是本機 `unix://` socket;2026-11-22 Build 時釐清)且 `docker context show` 是本機 context(`default` / `desktop-linux` / `colima` 等指向本機 socket);不是 → BLOCKED。
   5. 清掉同前綴(`dbrev-<name>-`)的殘留容器。
 - **隔離規則**(每個實測指令都適用):
   - 只連本次建立的容器;所有 go / goose / psql 指令用 `env -i PATH=… HOME=<tmp>/home GOCACHE=… GOMODCACHE=… GOTOOLCHAIN=local GOFLAGS=-mod=readonly PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null` 加上**明確列出的 DSN** 執行(只另外放行 Go 下載需要的 `GOPROXY`、`GOSUMDB`、`GOPRIVATE`、`GONOSUMDB`、`GONOPROXY`、`HTTPS_PROXY`、`HTTP_PROXY`、`NO_PROXY`,不放行任何 DB 相關變數),不繼承 shell 的 `DATABASE_URL`、`TEST_*`、`PG*`。執行前檢查每個 DSN 的 host 是 `127.0.0.1`、port 是本容器的埠。

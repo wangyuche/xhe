@@ -33,6 +33,7 @@ skills:
 - `## 例外與規範文件`:專案明文記錄的例外與規範在哪裡(例 `docs/architecture/data/migrations.md`、ADR)。
 
 設定檔不存在或缺節時:從專案文件與程式推導,在回報附「設定草稿」(用上面的標題,每項標來源或「推定」)給主 agent 存檔;推導不出的值,相關面向標「無法判定」並列在待決問題,**不自行假設**。
+- **映像推導不出來時視同「實測環境不可用」**(成功標準 3 的「不可用時標缺口」;設定沒有 `## 環境`,專案也沒有 compose / Dockerfile / 文件寫明 PostgreSQL 映像):不挑映像、不啟動容器;全部實測項目(成功標準 3、4)標缺口,只做推導審查,總結最高為「無法判定」(有必修時仍為「需修正」),待決問題寫「請提供 PostgreSQL 映像 tag」。簡報直接給映像時照簡報用,並在設定草稿標來源「簡報」。
 
 ## 編號與總結
 - 任務號 `<n>`:簡報必附(新審或複審;複審沿用原任務號;平行派多個 reviewer 時由主 agent 各自指定)。
@@ -48,14 +49,14 @@ skills:
 ## 審查面向(每個面向回報 通過 / 問題 / 不適用 / 無法判定)
 總則:**專案文件明文記錄的例外照專案**(回報引用條文);下列規則是預設檢查項,不是凌駕專案規範的硬規則。「不適用」要附理由。
 1. **goose migration**:
-   - up → down → up 可重跑(實測 `goose.sh roundtrip`);`goose.sh validate`;每支有 Down 或標明不可逆理由。
+   - up → down → up 可重跑(實測 `goose.sh <name> roundtrip`);`goose.sh <name> validate --dir <migrations 目錄>`;每支有 Down 或標明不可逆理由。
    - 版本順序:亂序設定依專案程式;不允許亂序時,新檔版本必須大於目標環境已套用 / 已發佈的最大版本(來源依設定)。刻意保留的空號照專案記錄。
    - 已發佈 migration 不可修改(雜湊鎖定來源依設定;實測跑那支測試)。
    - `-- +goose NO TRANSACTION`:`CREATE INDEX CONCURRENTLY` 等不能在交易內的語句;NO TRANSACTION 檔可重跑(`IF NOT EXISTS`);其中 `SET LOCAL` 無效,要用專案寫法(例 `SET` + `RESET`)。
    - `StatementBegin/End` 包住函式、DO block。
 2. **鎖**:
-   - 每個 DDL 的鎖等級與會擋到誰(實測 `locks.sh --goose-up`,查 `pg_locks`)。
-   - 熱表(設定)上的 FK / ALTER 有 lock_timeout(值依設定);有疑慮時用 `locks.sh --hold … --probe …` 實測被擋與排隊。
+   - 每個 DDL 的鎖等級與會擋到誰(實測 `locks.sh <name> --dsn <migrator> --goose-up <檔>`,查 `pg_locks`)。
+   - 熱表(設定)上的 FK / ALTER 有 lock_timeout(值依設定);有疑慮時用 `locks.sh <name> --dsn <migrator> --sql '<Up 內容>' --hold-dsn … --hold … --probe-dsn … --probe … --monitor-dsn <superuser>` 實測被擋與排隊。
    - 大表加約束用 `NOT VALID` + 之後 `VALIDATE`;已持有 ACCESS EXCLUSIVE 的小表同交易 VALIDATE 可接受(專案有記錄時)。
    - 對既有且有資料的表建索引用 `CONCURRENTLY`(同交易新建的表或空表不需要,也不能用)。
    - advisory lock:goose locker 的連線方式(是否要直連 primary、不經 pooler)、應用層 advisory key 不重複。
@@ -95,8 +96,8 @@ skills:
 
 ### 實測(db-review-kit;指令細節見 SKILL.md)
 1. **容器**:`pg.sh up <name> --image <設定的映像> --mount …(逐項)--env …(非秘密)--env-random …(秘密)--role <角色>=<密碼變數>… --db …`;等 init 完成並印出各角色 DSN。破壞性 Down 用的 DSN:`pg.sh dsn <name> <migrator> <庫> --options '-c <GUC>=on'`。init 失敗時看 log 判斷是 bootstrap 設定錯(回頭核對設定 / compose)或專案問題。
-2. **goose**:專案 migrate 指令只用於 up 與多次 down;需要 up-to / down-to / validate 時用 `goose.sh`(暫存目錄跑 go.mod 版本的 goose CLI,`-table <設定的版本表>`)。順序:`goose.sh roundtrip --from <審查範圍第一版> [--to <最後一版>] --dsn <不帶旗標> --dsn-allow <帶旗標>` = 到前一版 → up → down(不帶旗標應被拒、帶旗標成功)→ up;再 `goose.sh validate`。
-3. **依面向跑 kit 腳本**:`locks.sh`(鎖觀察;Up 要在前一版時跑:先 `goose.sh run … -- down-to <前一版>`,看完再 up)、`grants.sh`(GRANT 矩陣,LOGIN DSN)、`race.sh`(併發 / deadlock / 重複入帳)、對帳 SQL(`pg.sh psql`)、`partitions.sql`(分區跑道與 ACL)、`seed.sh` + `explain.sh`。每個測試 session 都設 `statement_timeout` 與 `lock_timeout`(kit 預設,可覆寫),被擋的 session 不會永遠卡住。
+2. **goose**:專案 migrate 指令只用於 up 與多次 down;需要 up-to / down-to / validate 時用 `goose.sh`(暫存目錄跑 go.mod 版本的 goose CLI,`-table <設定的版本表>`)。順序:`goose.sh <name> roundtrip --dir <migrations 目錄> --table <設定的版本表> --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶旗標的 DSN> --from <審查範圍第一版> [--to <最後一版>]` = 到前一版 → up → down(不帶旗標應被拒、帶旗標成功)→ up;再 `goose.sh <name> validate --dir <migrations 目錄>`。
+3. **依面向跑 kit 腳本**:`locks.sh`(鎖觀察;Up 要在前一版時跑:先 `goose.sh <name> run --dir <migrations 目錄> --table <版本表> --dsn <帶破壞性 Down 旗標的 DSN> -- down-to <前一版>`(不帶旗標時有守門的 Down 會被拒),看完再用同一個 DSN `-- up-to <最後一版>`)、`grants.sh`(GRANT 矩陣,LOGIN DSN)、`race.sh`(併發 / deadlock / 重複入帳)、對帳 SQL(`pg.sh psql`)、`partitions.sql`(分區跑道與 ACL)、`seed.sh` + `explain.sh`。每個測試 session 都設 `statement_timeout` 與 `lock_timeout`(kit 預設,可覆寫),被擋的 session 不會永遠卡住。
 4. **專案整合測試**:`gotest.sh <name> --dir <模組> --tags <tag> --env <每個 DSN 變數>=<本容器 DSN>… [--p 1] [--run …] -- <套件>`(`-v -timeout 540s`),依套件或 `--run` 分批,每批一次 Bash 呼叫(600 秒內);長的用背景執行再等結束。回報每批 PASS / FAIL / SKIP 數量與耗時;**SKIP 不是 0 時逐條列原因並算缺口;測試數為 0 也算缺口**(結束碼 5)。`gotest.sh` 警告測試檔寫死非本容器的連線字串時,確認它會不會被執行到;會且無法排除 → BLOCKED。
 5. **結束**(任何步驟中止時也要做):`pg.sh rm <name> --purge`;`docker ps -a --filter label=dbrev=<name>` 為空(同前綴容器為 0);`git -C <root> status --porcelain` 與基準相同。
 
