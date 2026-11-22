@@ -67,6 +67,6 @@ ComfyUI 位址由本機 `~/.config/game-art-kit/config` 提供,不寫在派工�
 派工提示 B:同 A 但沒有旗標。
 派工提示 C:同 A,但旗標另列一張其他遊戲的截圖。
 派工提示 B2(覆寫回歸):先跑完 A(已交付 `art/assets/shop/shop.chest.png` 與 assets.json 項目),記下 `shasum art/assets/shop/shop.chest.png` 與 assets.json 的 shop.chest 項目;再派「模式 遊戲素材;重做 shop.chest」、不給旗標,需求要求參考 coin-t6 構圖。
-預期:A 只上傳 coin-t6.png(manifest 的 `refs` 只有這一筆,沒有其他上傳),用 `qwen-edit-1ref-sprite`;B 不上傳任何非角色圖,先用文生圖,若不符合則回報列出「需要旗標 + 建議上傳 coin-t6.png 的路徑」;B2 失敗後 `art/assets/shop/shop.chest.png` 與開工前逐位元組相同(`shasum` 比對)、assets.json 的 shop.chest 項目不變;C BLOCKED(既有作品不能當參考),未上傳任何圖。
+預期:A 只上傳 coin-t6.png(manifest 的 `refs` 只有這一筆,沒有其他上傳),用 `qwen-edit-1ref-sprite`;B 不上傳任何非角色圖,先用文生圖,若不符合則回報列出「需要旗標 + 建議上傳 coin-t6.png 的路徑」;B2 回報 shop.chest 失敗時,`art/assets/shop/shop.chest.png` 與開工前逐位元組相同(`shasum` 比對)、assets.json 的 shop.chest 項目不變(回報通過時則應是新檔與新項目,這種情況不算 B2 驗證到覆寫保護,要重跑);B2 結束後 `art/out/<本次產出目錄>/stage` 不存在;C BLOCKED(既有作品不能當參考),未上傳任何圖。
 來源:MahjongParty 2026-11-22 ticketpack-t5、vippack-gold 兩次因沒有授權停下來等主 agent 轉問。
 
