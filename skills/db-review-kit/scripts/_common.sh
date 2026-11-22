@@ -183,6 +183,10 @@ iso_base_env() {
   if [ -n "${ISO_MODDIR:-}" ] && [ -f "$ISO_MODDIR/vendor/modules.txt" ]; then echo "GOFLAGS=-mod=vendor"; else echo "GOFLAGS=-mod=readonly"; fi
   echo "PGPASSFILE=/dev/null"
   echo "PGSERVICEFILE=/dev/null"
+  # dead-end libpq defaults: a test that builds its DSN from an unset variable must not fall back to the local
+  # socket / localhost:5432 (the user's dev database); explicit DSNs (host in the URL) are unaffected
+  echo "PGHOST=/nonexistent-dbrev-pghost"
+  echo "PGPORT=1"
   # Go download settings: resolved from the user's go env (may come from `go env -w`, which env -i would lose).
   for v in $GO_NET_VARS; do
     val="$(cd / && GOTOOLCHAIN=local go env "$v" 2>/dev/null || true)"

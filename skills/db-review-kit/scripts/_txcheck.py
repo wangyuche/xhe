@@ -163,7 +163,12 @@ def main():
     # an actual change of these GUCs (SET / RESET / ALTER … SET / set_config with that name), not every set_config call
     # only real changes: SET / RESET / ALTER … SET of these names (outside comments / literals), or set_config whose
     # first argument is not a plain literal naming another setting (also catches assembled names)
-    stripped_raw = strip(raw)
+    open_state = {}
+    stripped_raw = strip(raw, state=open_state)
+    if open_state.get("open") and "--connect" not in sys.argv[1:]:
+        # an unterminated literal / comment / dollar body would swallow the kit's own wrapper statements
+        print("the SQL ends inside an unterminated literal, comment or dollar-quoted body")
+        return 2
     if re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?(standard_conforming_strings|escape_string_warning)\b", stripped_raw, re.I) or \
             re.search(r"\bSET\s+(standard_conforming_strings|escape_string_warning)\b", stripped_raw, re.I) or \
             re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?\"(standard_conforming_strings|escape_string_warning)\"", raw, re.I) or \

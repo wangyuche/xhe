@@ -111,9 +111,13 @@ case "$CMD" in
       if [ -d "$abs" ] && [ -n "$(find "$abs" \( -type s -o -type c -o -type b \) -print -quit 2>/dev/null)" ]; then
         die "--mount 的目錄裡有 socket / device(唯讀掛載擋不住 connect):$abs" 4
       fi
-      for sec in .ssh .aws .config .docker .kube .gnupg .netrc .pgpass .azure .gcloud Library/Keychains; do
-        case "$chk/" in "$hp/$(printf '%s' "$sec" | { [ "$(uname -s)" = Darwin ] && tr '[:upper:]' '[:lower:]' || cat; })"/*) die "--mount 不能掛家目錄裡的憑證目錄($sec):$abs" 4 ;; esac
+      for sec in .ssh .aws .config .docker .kube .gnupg .netrc .pgpass .azure .gcloud .git-credentials .npmrc .pypirc \
+                 .bash_history .zsh_history .local/share Library/Keychains "Library/Application Support"; do
+        s0="$hp/$(printf '%s' "$sec" | { [ "$(uname -s)" = Darwin ] && tr '[:upper:]' '[:lower:]' || cat; })"
+        case "$chk/" in "$s0"/*) die "--mount 不能掛家目錄裡的憑證位置($sec):$abs" 4 ;; esac   # inside it
+        case "$s0/" in "$chk"/*) die "--mount 的來源包含憑證位置($sec):$abs" 4 ;; esac        # contains it
       done
+      case "$abs" in *,*|*=*) die "--mount 解析後的路徑含 , 或 =:$abs" 2 ;; esac
       RUNARGS+=(--mount "type=bind,source=$abs,target=$dest,readonly")
     done
     STATE_RANDOM=""

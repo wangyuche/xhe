@@ -67,8 +67,10 @@ func sqlState(err error) string {
 
 // The kit runs tests under env -i; ambient connection settings must never reach the test process.
 func TestNoAmbientConnectionEnv(t *testing.T) {
+	// the kit sets dead-end PGHOST / PGPORT on purpose; anything else from the calling shell is a leak
+	sentinel := map[string]string{"PGHOST": "/nonexistent-dbrev-pghost", "PGPORT": "1"}
 	for _, k := range []string{"DATABASE_URL", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "TEST_DATABASE_URL"} {
-		if v, ok := os.LookupEnv(k); ok {
+		if v, ok := os.LookupEnv(k); ok && v != sentinel[k] {
 			t.Fatalf("ambient %s leaked into the test environment (len=%d)", k, len(v))
 		}
 	}

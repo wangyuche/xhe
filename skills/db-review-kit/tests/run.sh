@@ -44,9 +44,9 @@ o="$(DSNPY opts 'postgres://u:p@127.0.0.1:6000/db?options=-c%20lock_timeout%3D9s
 # ---------- 2. isolated env (offline) ----------
 o="$(DATABASE_URL=postgres://evil@10.255.255.1/x PGHOST=10.255.255.1 PGPASSWORD=leak TEST_DATABASE_URL=postgres://x@10.0.0.1/y_test GOOSE_DBSTRING=x GOFLAGS=-mod=mod \
      bash -c "source '$S/_common.sh'; run_iso $N -- env" 2>&1)"
-if ! echo "$o" | grep -qE '^(DATABASE_URL|PGHOST|PGPASSWORD|TEST_DATABASE_URL|GOOSE_DBSTRING)=' && echo "$o" | grep -qx 'GOFLAGS=-mod=readonly' \
+if ! echo "$o" | grep -qE '^(DATABASE_URL|PGPASSWORD|TEST_DATABASE_URL|GOOSE_DBSTRING)=' && echo "$o" | grep -qx 'PGHOST=/nonexistent-dbrev-pghost' && echo "$o" | grep -qx 'GOFLAGS=-mod=readonly' \
    && echo "$o" | grep -qx 'PGPASSFILE=/dev/null' && echo "$o" | grep -qx 'GOTOOLCHAIN=local' && echo "$o" | grep -q "^HOME=$DB_REVIEW_KIT_TMP/$N/home"; then
-  ok "隔離:shell 的 DATABASE_URL / PG* / TEST_* / GOOSE_* 不會被繼承;GOFLAGS=-mod=readonly、GOTOOLCHAIN=local、HOME 在暫存目錄"
+  ok "隔離:shell 的 DATABASE_URL / PG* / TEST_* / GOOSE_* 不會被繼承(PGHOST 是 kit 的死路值);GOFLAGS=-mod=readonly、GOTOOLCHAIN=local、HOME 在暫存目錄"
 else bad "隔離環境" "$o"; fi
 if command -v go >/dev/null 2>&1; then
   real_mod="$(go env GOMODCACHE)"; real_cache="$(go env GOCACHE)"
@@ -219,6 +219,7 @@ gone2="$(echo "SELECT to_regclass('fx.tmp_c') IS NULL;" | bash "$S/pg.sh" psql "
 printf -- '-- +goose NO TRANSACTION\n-- +goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS x ON fx.accounts (name);\n' > "$WORK/nt.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$(echo "$MIG" | sed 's#/fx_test?#/fx_nope?#')" --sql 'SELECT 1' 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":null' && ! echo "$o" | grep -q '重建' && ok "locks.sh:連不上資料庫 → 回報連線錯誤,不會誤報 COMMIT" || bad "locks 連線失敗" "rc=$rc $o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'SELECT 1; /* todo' 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:SQL 結尾留下未關的註解 → 拒絕(不會誤報 rolled_back:false)" || bad "locks 未關註解" "$o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.accounts ADD COLUMN x int' 2>&1)"; rc=$?
 echo "$o" | grep -q '| fx.accounts | AccessExclusiveLock | reads+writes' && echo "$o" | tail -1 | grep -q '"access_exclusive":1' && [ $rc -eq 0 ] \
   && ok "locks.sh:ALTER 既有表不會被標成 new,ACCESS EXCLUSIVE 有算到" || bad "locks 既有表" "rc=$rc $o"

@@ -40,8 +40,8 @@ printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式�
 bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' || true; grep -E '^CHECK:' "$SCRIPT" | sed -E 's/^CHECK:[[:space:]]*//; s/(.*)=>.*$/\1/' || true; } \
   | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
   || { trc=$?; die "腳本不允許:$bad" "$trc"; }
-nosemi="$(grep -E '^(A|B):' "$SCRIPT" | sed -E 's/^(A|B):[[:space:]]*//' | python3 -I "$KIT_DIR/scripts/_txcheck.py" --ends-with-semicolon || true)"
-[ -z "$nosemi" ] || die "A: / B: 的每一行都要以 ; 結尾(否則 psql 會先印標記、語句卻還沒送出):$nosemi" 2
+nosemi="$(grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' | python3 -I "$KIT_DIR/scripts/_txcheck.py" --ends-with-semicolon || true)"
+[ -z "$nosemi" ] || die "SETUP: / A: / B: 的每一行都要以 ; 結尾(否則 psql 會先印標記、語句卻還沒送出):$nosemi" 2
 unknown="$(grep -vE '^[[:space:]]*($|#)|^(SETUP|A|B|SLEEP|CHECK):' "$SCRIPT" | head -1 || true)"
 [ -z "$unknown" ] || die "不認得的腳本行(只接受 SETUP: / A: / B: / SLEEP: / CHECK:、空行、# 註解):$unknown" 2
 nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
