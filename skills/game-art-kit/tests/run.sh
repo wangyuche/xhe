@@ -187,9 +187,10 @@ o="$(S check "$W/sp/dirty.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo 
 o="$(S check "$W/o/q1.png" --width 96 --height 64)"; [ $? -eq 1 ] && echo "$o" | grep -q 'alpha' && ok "sprite.mjs check:沒有 alpha → 不通過" || bad "sprite 沒有 alpha" "$o"
 o="$(S check "$W/sp/one.png" --width 100 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '尺寸' && ok "sprite.mjs check:尺寸不符 → 不通過" || bad "sprite 尺寸" "$o"
 o="$(S fit "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" --out "$W/sp/x.png" --width 64 --height 64 2>&1)"; [ $? -eq 2 ] && ok "sprite.mjs fit:超過 8 格 → 結束碼 2" || bad "sprite 9 格" "$o"
-o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui.png" --width 240 --height 100 --margin 0)" && o2="$(S info "$W/sp/ui.png")" && echo "$o2" | grep -q '"bbox":{"x":0,"y":0,"w":240,"h":100}' \
-  && o3="$(S check "$W/sp/ui.png" --width 240 --height 100 --full-bleed)" && ok "sprite.mjs fit --margin 0(UI / 九宮格):不留透明邊,check --full-bleed 通過" || bad "sprite margin 0" "$o $o2 $o3"
-o="$(S check "$W/sp/ui.png" --width 240 --height 100)"; [ $? -eq 1 ] && ok "sprite.mjs check:不加 --full-bleed 時貼邊的 UI 不通過外框檢查" || bad "sprite full-bleed 對照" "$o"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui.png" --width 96 --height 240 --margin 0)" && o2="$(S info "$W/sp/ui.png")" && echo "$o2" | grep -q '"bbox":{"x":0,"y":0,"w":96,"h":240}' \
+  && o3="$(S check "$W/sp/ui.png" --width 96 --height 240 --full-bleed)" && ok "sprite.mjs fit --margin 0(UI / 九宮格):不留透明邊,check --full-bleed 通過" || bad "sprite margin 0" "$o $o2 $o3"
+o="$(S check "$W/sp/ui.png" --width 96 --height 240)"; [ $? -eq 1 ] && ok "sprite.mjs check:不加 --full-bleed 時貼邊的 UI 不通過外框檢查" || bad "sprite full-bleed 對照" "$o"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui2.png" --width 240 --height 100 --margin 0 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '比例' && ok "sprite.mjs fit --margin 0:比例差太多 → 失敗(不拉伸變形)" || bad "sprite margin 0 比例" "$o"
 mkdir -p "$W/lnk"; ln -s "$K" "$W/lnk/kit"
 o="$(node "$W/lnk/kit/scripts/sprite.mjs" check "$W/sp/dirty.png" --width 300 --height 400)"; rc=$?
 o2="$(node "$W/lnk/kit/schemas/validate.mjs" needs "$W/sp/dirty.png")"; rc2=$?

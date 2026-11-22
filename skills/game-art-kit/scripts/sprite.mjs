@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // game-art-kit:遊戲素材的 PNG 處理(純 Node,不需要任何套件)。尺寸一律是 1x 檔案像素(= 顯示尺寸 × density)。
 // 用法:
-//   node sprite.mjs info <png>                                           → {width,height,channels,coverage,bbox}
+//   node sprite.mjs info <png>                                           → {width,height,hasAlpha,coverage,bbox}
 //   node sprite.mjs fit <in.png>... --out <out.png> --width W --height H [--align bottom|center] [--margin px]
 //        裁掉透明邊 → 同一個縮放比例(以最大的那張為準,確保每張都放得下)→ 置中 / 底部對齊補到 W×H。
 //        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
@@ -16,7 +16,11 @@
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { inflateSync, deflateSync, crc32 } from 'node:zlib';
+import { inflateSync, deflateSync } from 'node:zlib';
+
+// CRC32(zlib.crc32 要 Node 22.2 以上,自己算以支援 22.0)
+const CRC_T = new Uint32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = (buf) => { let c = 0xffffffff; for (const b of buf) c = CRC_T[(c ^ b) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
 
 class Fail extends Error { constructor(m, c) { super(m); this.code = c; } }
 const die = (m, c = 2) => { throw new Fail(m, c); };
@@ -115,17 +119,24 @@ function blit(dst, src, dx, dy) {
   }
 }
 
+const FOOT = 3;
 export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(count, Math.floor(2048 / w))); return { columns, rows: Math.ceil(count / columns) }; };
 
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
 export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
-  if (m === 0 && imgs.length === 1) { const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1); return { sheet: resample(imgs[0], b.x, b.y, b.w, b.h, W, H), columns: 1, rows: 1, scale: W / b.w, margin: 0 }; }
+  if (m === 0 && imgs.length === 1) {
+    const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1);
+    // 不留邊時只能等比:裁切後的比例和 W×H 差超過 3% 就失敗(拉伸會讓邊框粗細不一、九宮格切線對不上),請用相同比例重出
+    const ar = (b.w / b.h) / (W / H);
+    if (Math.abs(ar - 1) > 0.03) die(`裁切後比例 ${b.w}×${b.h} 和目標 ${W}×${H} 差 ${Math.round(Math.abs(ar - 1) * 100)}%(> 3%),--margin 0 不能等比放滿;請用接近 ${W}:${H} 的比例重出`, 1);
+    return { sheet: resample(imgs[0], b.x, b.y, b.w, b.h, W, H), columns: 1, rows: 1, scale: W / b.w, margin: 0 };
+  }
   const boxes = imgs.map((im, i) => bbox(im) ?? die(`第 ${i + 1} 張是全透明`, 1));
   const maxW = Math.max(...boxes.map(b => b.w)), maxH = Math.max(...boxes.map(b => b.h));
   if (m === 0) die('--margin 0 只用於單張(UI / 九宮格:裁邊後直接縮放到 W×H)');
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
-  const s = Math.min((W - 2 * m) / maxW, (H - 2 * m) / maxH);
+  const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
@@ -133,7 +144,8 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
     const b = boxes[i], dw = Math.max(1, Math.round(b.w * s)), dh = Math.max(1, Math.round(b.h * s));
     const cell = resample(im, b.x, b.y, b.w, b.h, dw, dh);
     const cx = (i % columns) * W, cy = Math.floor(i / columns) * H;
-    const dx = cx + Math.round((W - dw) / 2), dy = cy + (align === 'bottom' ? H - m - dh : Math.round((H - dh) / 2));
+    // 底部對齊:腳底離下緣 3 px(在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
+    const dx = cx + Math.round((W - dw) / 2), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
     blit(sheet, cell, dx, dy);
   });
   return { sheet, columns, rows, scale: s, margin: m };

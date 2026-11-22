@@ -5,7 +5,7 @@ description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:
 
 # game-art-kit
 
-`<kit>` = 這個 skill 的目錄。只用 Node 內建模組(≥ 22);`sheet.mjs` 需要本機 Google Chrome;`audio.mjs` 需要 ffmpeg / ffprobe(含 libopus 與 aac 編碼器,`brew install ffmpeg`)。**風格不放在這裡**:配色、畫風、提示詞基底寫在各遊戲的 `art/STYLE.md`。
+`<kit>` = 這個 skill 的目錄。只用 Node 內建模組(≥ 22.0);`sheet.mjs` 需要本機 Google Chrome;`audio.mjs` 需要 ffmpeg / ffprobe(含 libopus 與 aac 編碼器,`brew install ffmpeg`)。**風格不放在這裡**:配色、畫風、提示詞基底寫在各遊戲的 `art/STYLE.md`。
 
 ## ComfyUI 位址(本機環境設定,不進 git)
 
@@ -34,11 +34,11 @@ node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --
 node <kit>/scripts/comfy.mjs pngsize <圖>              # {"width":…,"height":…}
 node <kit>/scripts/comfy.mjs scrub-check <目錄>        # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1
 node <kit>/scripts/sheet.mjs <spec.json> <輸出.png>    # 拼分鏡表 / 標註表(格式見檔頭)
-node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center]
-#   裁透明邊 → 同一動作各格用同一縮放比例 → 角色底部對齊 / 其他置中補到 1x 尺寸 → 多格拼 sheet(橫向,寬超過 2048 換行);印 columns / rows
+node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center] [--margin 0]
+#   裁透明邊 → 同一動作各格用同一縮放比例 → 角色底部對齊(腳底離下緣 3 px)/ 其他置中補到 1x 尺寸;--margin 0(單張 UI / 九宮格)等比放滿,比例差 > 3% 失敗 → 多格拼 sheet(橫向,寬超過 2048 換行);印 columns / rows
 node <kit>/scripts/sprite.mjs cover <背景.png> --out <id>.png --width <1x 寬> --height <1x 高>   # 不透明素材:等比蓋滿再置中裁切
-node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> [--frames N --columns C] [--character] [--opaque] [--tileable]
-#   有 alpha、尺寸、每格覆蓋率 10–90%、外框 2 px 不透明 < 1%、各格基線差 ≤ 2 px / 高度差 ≤ 10%(--character)、平鋪邊緣差 ≤ 8(--tileable)
+node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> [--frames N --columns C] [--character] [--opaque] [--tileable] [--full-bleed]
+#   有 alpha、尺寸、每格覆蓋率 10–90%、外框 2 px 不透明 < 1%(--full-bleed:fit --margin 0 的 UI 不查外框與覆蓋率上限)、各格基線差 ≤ 2 px / 高度差 ≤ 10%(--character)、平鋪邊緣差 ≤ 8(--tileable)
 node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
 #   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
 #   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)

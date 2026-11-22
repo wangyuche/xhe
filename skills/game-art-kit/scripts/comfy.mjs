@@ -80,9 +80,13 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 
-// PNG 色彩類型 → 通道數(6 = RGBA、4 = 灰階 + alpha;有 alpha 才是 4 / 2)
+// PNG 色彩類型 → 通道數(6 = RGBA、4 = 灰階 + alpha;有 alpha 時回 4 / 2)
 function pngChannels(file) {
-  const t = readFileSync(file)[25];
+  const b = readFileSync(file), t = b[25];
+  // 調色盤 / 灰階 / RGB 帶 tRNS 也算有 alpha(回 4)
+  let p = 8, trns = false;
+  while (p + 8 <= b.length) { const len = b.readUInt32BE(p), type = b.toString('ascii', p + 4, p + 8); if (type === 'tRNS') { trns = true; break; } if (type === 'IDAT' || type === 'IEND') break; p += 12 + len; }
+  if (trns) return 4;
   return { 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 }[t] ?? null;
 }
 

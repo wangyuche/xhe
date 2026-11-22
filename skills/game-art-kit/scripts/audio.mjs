@@ -81,7 +81,7 @@ function process_(input, { type, dur, out, name, loop }) {
       loopState = true;
     } else {
       if (inDur < dur - 0.5) die(`輸入只有 ${inDur.toFixed(2)} 秒,短於 duration ${dur}`);
-      ff(['-i', input, '-af', `atrim=0:${dur},asetpts=PTS-STARTPTS,afade=t=out:st=${Math.max(0, dur - 1)}:d=1,aformat=sample_rates=48000:channel_layouts=stereo`, stage1]);
+      ff(['-i', input, '-af', `atrim=0:${dur},asetpts=PTS-STARTPTS,afade=t=out:st=${Math.max(0, Math.min(inDur, dur) - 1)}:d=1,aformat=sample_rates=48000:channel_layouts=stereo`, stage1]);
     }
     // 響度:先量,算增益;增益後 true peak 超過 −1.5 就降增益(響度可能因此低於目標,check 會判斷範圍)
     const m0 = measure(stage1);
@@ -94,15 +94,17 @@ function process_(input, { type, dur, out, name, loop }) {
     // 仍超過 −1.5 dBTP(取樣間峰值)再補一次降增益
     const norm = join(tmp, 'n.wav');
     // 限幅會吃掉響度:量測後補增益再限幅,最多 4 次,直到響度在目標 ±0.5 LU 內
+    let applied = gain;
     for (let i = 0; i < 4; i++) {
-      ff(['-i', stage1, '-af', short ? `volume=${gain.toFixed(2)}dB` : `volume=${gain.toFixed(2)}dB,alimiter=limit=0.708:attack=1:release=50:level=disabled`, norm]);
+      applied = gain;
+      ff(['-i', stage1, '-af', short ? `volume=${gain.toFixed(2)}dB` : `volume=${gain.toFixed(2)}dB,alimiter=limit=0.708:attack=1:release=50:level=disabled:latency=1`, norm]);
       if (short) break;
       const mi = measure(norm);
       if (!(mi.lufs > -69) || Math.abs(mi.lufs - TARGET[type].lufs) <= 0.5) break;
       gain += TARGET[type].lufs - mi.lufs;
     }
     const m1 = measure(norm);
-    if (m1.truePeak > TP_OUT) { const fix = join(tmp, 'f.wav'); ff(['-i', norm, '-af', `volume=${(TP_OUT - m1.truePeak - 0.1).toFixed(2)}dB`, fix]); renameSync(fix, norm); }
+    if (m1.truePeak > TP_OUT) { const adj = TP_OUT - m1.truePeak - 0.1; const fix = join(tmp, 'f.wav'); ff(['-i', norm, '-af', `volume=${adj.toFixed(2)}dB`, fix]); renameSync(fix, norm); applied += adj; }
     mkdirSync(out, { recursive: true });
     const ogg = join(tmp, `${name}.ogg`), m4a = join(tmp, `${name}.m4a`);
     ff(['-i', norm, '-c:a', 'libopus', '-b:a', type === 'bgm' ? '128k' : '96k', ogg]);
@@ -111,7 +113,7 @@ function process_(input, { type, dur, out, name, loop }) {
     const files = [];
     for (const f of [ogg, m4a]) { const dst = join(out, f.split('/').pop()); try { renameSync(f, dst); } catch { copyFileSync(f, dst); } files.push(dst); }
     const m = measure(files[0]);
-    return { files, durationSec: +duration(files[0]).toFixed(3), lufs: short || !isFinite(m.lufs) ? null : m.lufs, truePeak: m.truePeak, gainDb: +gain.toFixed(2), normalized: short ? 'peak' : 'lufs', loop: type === 'bgm' ? loopState : undefined };
+    return { files, durationSec: +duration(files[0]).toFixed(3), lufs: short || !isFinite(m.lufs) ? null : m.lufs, truePeak: m.truePeak, gainDb: +applied.toFixed(2), normalized: short ? 'peak' : 'lufs', loop: type === 'bgm' ? loopState : undefined };
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 }
 
