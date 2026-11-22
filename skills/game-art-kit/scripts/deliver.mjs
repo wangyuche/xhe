@@ -49,6 +49,7 @@ export function recover(assets) {
       else if (!e.bak && (e.placed || (e.placing && !tmpLeft))) step(() => rmSync(join(assets, e.dest), { force: true }));
     }
     step(() => rmSync(join(assets, j.jsonTmp), { force: true }));
+    step(() => rmSync(join(assets, j.jsonBak + '.part'), { force: true }));
     if (existsSync(join(assets, j.jsonBak))) step(() => { rmSync(join(assets, 'assets.json'), { force: true }); renameSync(join(assets, j.jsonBak), join(assets, 'assets.json')); });
     else if (j.jsonExisted === false) step(() => rmSync(join(assets, 'assets.json'), { force: true })); // 第一次交付:原本沒有 assets.json
     for (const d of [...(j.createdDirs ?? [])].reverse()) step(() => { if (existsSync(join(assets, d)) && !readdirSync(join(assets, d)).length) rmdirSync(join(assets, d)); });
@@ -122,7 +123,8 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
     const fileErrs = next.assets.filter(a => changedIds.has(a.id)).flatMap(a => a.files.filter(f => !existsSync(join(assets, f))).map(f => `${a.id}: 缺 ${f}`));
     if (fileErrs.length || failAt === 'validate') throw new Error(`交付後檢查不通過:${fileErrs.join(';') || '測試注入'}`);
     writeFileSync(join(assets, journal.jsonTmp), JSON.stringify(next, null, 2) + '\n');
-    if (existsSync(target)) copyFileSync(target, join(assets, journal.jsonBak)); // 備份用複製,換上用一次 rename(assets.json 不會有消失的瞬間)
+    // 備份:先複製到暫存名再 rename 成 jsonBak,所以 jsonBak 存在就一定是完整的;換上用一次 rename(assets.json 不會有消失的瞬間)
+    if (existsSync(target)) { const t = join(assets, journal.jsonBak + '.part'); copyFileSync(target, t); renameSync(t, join(assets, journal.jsonBak)); }
     renameSync(join(assets, journal.jsonTmp), target);
     journal.state = 'committed'; saveJournal();
   } catch (e) {
@@ -146,7 +148,7 @@ if (isMain) {
     const a = process.argv.slice(2), flags = {}, files = [];
     for (let i = 0; i < a.length; i++) {
       if (a[i] === '--recover') flags.recover = true;
-      else if (['--stage', '--assets', '--json'].includes(a[i])) { const k = a[i]; flags[k.slice(2)] = a[++i] ?? die(`${k} 缺值`); }
+      else if (['--stage', '--assets', '--json'].includes(a[i])) { const k = a[i], v = a[++i]; if (v == null || v.startsWith('--')) die(`${k} 缺值`); flags[k.slice(2)] = v; }
       else if (a[i].startsWith('--')) die(`不認得的參數 ${a[i]}`);
       else files.push(a[i]);
     }

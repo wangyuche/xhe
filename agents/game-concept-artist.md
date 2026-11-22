@@ -94,7 +94,7 @@ skills:
    短於 0.4 秒的音效量不到整體響度,`audio.mjs` 改以峰值正規化(輸出 `normalized: "peak"`、`lufs: null`),assets.json 寫 `"normalized": "peak"`、不寫 `lufs`,`audio.mjs check` 加 `--peak`。
 6. **配樂**(`bgm`):`ace-step-bgm`(tags = STYLE.md 的氛圍 + 需求;`lyrics` = `[instrumental]`;seconds = durationSec + 1;`bpm`、`timesignature`、`keyscale` 依 needs 的 `purpose` 決定,沒提到時依氛圍推定(例如輕鬆 90–110、緊張 130–150;拍號 4;`keyscale` 要完整調名,明亮例如 `C major` / `G major`、陰暗例如 `A minor` / `D minor`),三者寫進 manifest),再 `audio.mjs process <下載的音訊> --type bgm --duration <durationSec> [--loop] --out <stage> --name <id>`,`audio.mjs check <stage>/<id>.ogg <stage>/<id>.m4a --type bgm --duration <durationSec> [--loop [--approx]]` 通過;`loop` 輸出為 `approx` 時 assets.json 寫 `"loop": "approx"`、`audio.mjs check` 加 `--approx`,並列在已知限制。音訊回報一律寫「未人耳試聽」。
 7. 重出與上限:每個素材(單張 sprite、UI、背景、地圖塊、音訊)check 或看圖不符合時最多重出 2 次(動作格以單格計),仍不符合記失敗並列出;累計生成次數(含重出)達 40 就停止,已完成的保留,回 ISSUES。
-8. assets.json 由第 1 點的 `deliver.mjs` 換上(manifest.json 已在交付前寫好;沒交付的項目保留原內容),之後再跑一次 `validate.mjs assets art/assets/assets.json --root art/assets`;只因為**這次沒動到的舊項目**缺檔或格式而不通過時(deliver 的輸出會先警告),照實列在回報的已知限制,不要自己改那些項目;這次交付的項目不通過(deliver 交付前已用 stage 檔案驗過,理論上不會發生)→ 狀態 ISSUES,列出錯誤,不要手改 assets.json;「本次產出目錄」的 `manifest.json`(`source` = `out/<本次產出目錄名>/manifest.json#<檔名>`,**相對 `art/`**,和 `files` 相對 `art/assets/` 不同)。
+8. assets.json 由第 1 點的 `deliver.mjs` 換上(manifest.json 已在交付前寫好;沒交付的項目保留原內容),之後再跑一次 `validate.mjs assets art/assets/assets.json --root art/assets`;只因為**這次沒動到的舊項目**缺檔或格式而不通過時(deliver 的輸出會先警告),照實列在回報的已知限制,不要自己改那些項目;這次交付的項目不通過(deliver 交付前已用 stage 檔案驗過,理論上不會發生)→ 狀態 ISSUES,列出錯誤,不要手改 assets.json;assets.json 的 `source` = `out/<本次產出目錄名>/manifest.json#<檔名>`(**相對 `art/`**,和 `files` 相對 `art/assets/` 不同)。
 
 ### 結束(每個模式都要;完成條件:三項都通過)
 1. `node <kit>/scripts/comfy.mjs scrub-check art/`(簡報有「ComfyUI:<位址>」覆寫時,加同一個 `--url`)→ `hits=0`。
@@ -134,7 +134,7 @@ skills:
 6. 有 STYLE.md 時,提示詞包含正向 / 負向基底(manifest 可查)。
 7. 風格試作:2–4 張,每張設定與 seed 寫在 manifest,狀態 BLOCKED 附選擇問題。風格定稿:STYLE.md 9 個標題各一次、每節具體值、推定項標註;每個主要角色完成角色定裝。角色定裝:`ref.png`、`sheet.png`、`character.md`(5 個標題)都存在;重新定裝時有 `ref.prev.png`。
 8. `scrub-check` 通過;git 變動只在 `art/`;暫存目錄(`<tmp>`,遊戲素材模式另含 `art/out/<本次產出目錄名>/stage`)已刪除;沒有連規定以外的網路、沒有在 ComfyUI 主機上安裝或刪除東西、沒有 git 寫入。
-9. 遊戲素材模式:`assets.json` 通過 schema 驗證(含 `--root` 檔案存在),needs 每項都有(或列為跳過 / 失敗);圖類素材 `sprite.mjs check` 通過且每張 Read 看過;動作格每格寫出至少兩項外觀比對;音訊 `audio.mjs check` 通過;manifest 沒有雲端 API 節點;新增項目 `review` 都是 `pending`。
+9. 遊戲素材模式:這次交付的項目通過 `assets.json` schema 驗證(含 `--root` 檔案存在;沒動到的舊項目不通過時列在已知限制,見第 8 點),needs 每項都有(或列為跳過 / 失敗);圖類素材 `sprite.mjs check` 通過且每張 Read 看過;動作格每格寫出至少兩項外觀比對;音訊 `audio.mjs check` 通過;manifest 沒有雲端 API 節點;新增項目 `review` 都是 `pending`。
 10. 狀態:全部符合 → PASS;有任何一張重出 2 次仍不符合、逾時、分鏡格數不一致或達生成上限 → ISSUES(已完成的保留);需要使用者決定 → BLOCKED。回報格式符合範例。
 
 ## 限制
