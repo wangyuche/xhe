@@ -335,9 +335,11 @@ o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME:/h" 2>&1)"; [ $? 
 printf '%s\n' 'A: SELECT 1;' 'b: SELECT 1;' > "$WORK/race-lc.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-lc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:不認得的行(小寫 b:)→ 用法錯誤" || bad "race 未知行" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --tmpfs-size 0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:--tmpfs-size 0 → 拒絕(size=0 是沒有上限)" || bad "tmpfs 0" "$o"
-mkdir -p "$DB_REVIEW_KIT_TMP/image.lock" && echo 999999 > "$DB_REVIEW_KIT_TMP/image.lock/pid"
 echo "dbrev-selftest-nonexistent:0" > "$DB_REVIEW_KIT_TMP/pulled-images"   # makes gc take the lock
-o="$(bash "$S/pg.sh" gc "$N-zz" 2>&1)"; [ $? -eq 0 ] && [ ! -d "$DB_REVIEW_KIT_TMP/image.lock" ] && ok "pg.sh:擁有者已不存在的 image.lock 會被接手" || bad "stale image.lock" "$o"
+bash -c "source '$S/_common.sh'; image_lock; exec sleep 300" & LOCKER=$!   # exec: the killed pid is the fd holder
+sleep 1; kill -9 "$LOCKER" 2>/dev/null; wait "$LOCKER" 2>/dev/null
+START=$(date +%s); o="$(bash "$S/pg.sh" gc "$N-zz" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && [ $(( $(date +%s) - START )) -lt 30 ] && ok "pg.sh:持有 image.lock 的程序被 kill -9 後鎖自動釋放(flock)" || bad "image.lock 釋放" "rc=$rc $o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1 WHERE 'a;-- b' <> ''" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:字串裡的 ;-- 不會被當成結尾註解切掉(照分號規則拒絕)" || bad "explain ;-- literal" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --timeout 2m 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--timeout 不是秒數 → 用法錯誤(不啟動容器)" || bad "pg timeout" "$o"
 printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
@@ -347,7 +349,7 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
-for q in 'SELECT 1 \echo $$ \! id' "SELECT E'a\\nb';" "\\echo it's
+for q in 'SELECT a$$x$ \! id $x$;' 'SELECT 1 \echo $$ \! id' "SELECT E'a\\nb';" "\\echo it's
 \\! id
 \\echo '" "\\echo 'a\\'' \\! id" '\echo $a$ \! id $a$' '\set x `id`' '\echo -- \! id' "-- don't do this
 \! id

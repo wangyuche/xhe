@@ -74,7 +74,8 @@ if [ -n "$HOLD" ]; then
          | grep -oiE "[0-9]+(ms|s|min)?'?$" | tr -d "'" | tail -1 || true)"
   if [ -n "$own" ]; then
     own_s=$(printf '%s' "$own" | awk '/ms$/{v=$0+0; print int((v+999)/1000); next} /min$/{print ($0+0)*60; next} /s$/{print $0+0; next} {v=$0+0; print int((v+999)/1000)}')
-    if [ "$own_s" -lt "$LT_S" ]; then echo "注意:SQL 自己的 SET LOCAL lock_timeout = $own(比 --lock-timeout 短,以它為準)" >&2; LT_S="$own_s"; fi
+    # 0 = no limit in PostgreSQL: keep --lock-timeout
+    if [ "$own_s" -gt 0 ] && [ "$own_s" -lt "$LT_S" ]; then echo "注意:SQL 自己的 SET LOCAL lock_timeout = $own(比 --lock-timeout 短,以它為準)" >&2; LT_S="$own_s"; fi
   fi
   [ -z "$PROBE" ] || [ "$LT_S" -ge 5 ] || die "有 --probe 時有效的 lock_timeout 至少 5s(目前 ${LT_S}s;migration 自己設較短時,改不帶 --probe 觀察 DDL 被擋,probe 的排隊改推導)" 2
 else

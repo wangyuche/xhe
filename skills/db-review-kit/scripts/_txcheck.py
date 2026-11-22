@@ -53,14 +53,14 @@ def strip(sql, keep_comments=False):
             out.append(" ")
             continue
         m = re.match(r"\$([A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$", sql[i:])   # psql allows high-bit tag chars
-        if m and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] == "_")):
+        if m and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] in "_$")):   # '$' is an identifier character too
             tag = m.group(0)
             j = sql.find(tag, i + len(tag))
             i = n if j < 0 else j + len(tag)
             out.append(" '' ")
             continue
         if c in ("'", '"'):
-            esc = c == "'" and i > 0 and sql[i - 1] in "eE" and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] == "_"))
+            esc = c == "'" and i > 0 and sql[i - 1] in "eE" and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] in "_$"))
             j = i + 1
             while j < n:
                 if esc and sql[j] == "\\":

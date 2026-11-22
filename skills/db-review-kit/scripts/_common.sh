@@ -23,26 +23,23 @@ name_dir() { echo "$KIT_TMP/$1"; }
 # Images this kit pulled are recorded kit-wide ($KIT_TMP/pulled-images); whichever rm / gc runs when no container
 # uses one any more removes it, even if a different <name> pulled it.
 # pull → docker run and the cleanup both hold $KIT_TMP/image.lock, so a parallel up's fresh pull is never removed.
-# The lock dir holds the owner's PID; a lock whose owner is gone (killed rm / gc / up) is taken over.
+# Kernel flock on $KIT_TMP/image.lockfile, held through fd 9 of this shell (python only takes the lock on the inherited
+# descriptor). The kernel releases it when the holder exits or is killed, so there are no stale locks to take over.
 image_lock() {
-  own_dir "$KIT_TMP"; local i=0 d="$KIT_TMP/image.lock" owner
-  until mkdir "$d" 2>/dev/null; do
-    owner="$(cat "$d/pid" 2>/dev/null || true)"
-    # stale (owner gone, or no pid for over a minute): take over by an atomic rename, so only one process wins
-    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || { [ -z "$owner" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
-      local stale="$d.stale.$$.$RANDOM"
-      if mv "$d" "$stale" 2>/dev/null; then
-        if [ "$(cat "$stale/pid" 2>/dev/null || true)" = "$owner" ]; then rm -rf "$stale"; else mv "$stale" "$d" 2>/dev/null || rm -rf "$stale"; fi
-      fi
-      continue
-    fi
-    i=$((i + 1)); [ $i -lt 1200 ] || die "image.lock 被占用超過 10 分鐘($d,owner=${owner:-?})" 1; sleep 0.5
-  done
-  echo $$ > "$d/pid"; IMAGE_LOCK_HELD=1
+  own_dir "$KIT_TMP"
+  exec 9>>"$KIT_TMP/image.lockfile"
+  python3 -I -c 'import fcntl, signal, sys
+signal.alarm(600)
+try:
+    fcntl.flock(9, fcntl.LOCK_EX)
+except Exception as e:
+    sys.exit("image.lock: %s" % e)' || die "image.lock 等超過 10 分鐘" 1
+  IMAGE_LOCK_HELD=1
 }
-image_unlock() {   # only release a lock that is still ours
+image_unlock() {
   [ -n "${IMAGE_LOCK_HELD:-}" ] || return 0
-  [ "$(cat "$KIT_TMP/image.lock/pid" 2>/dev/null || true)" != "$$" ] || rm -rf "$KIT_TMP/image.lock"
+  python3 -I -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_UN)' 2>/dev/null || true
+  { exec 9>&-; } 2>/dev/null || true   # braces: the 2>/dev/null must not become permanent for this shell
   IMAGE_LOCK_HELD=""
 }
 record_pulled() { own_dir "$KIT_TMP"; printf '%s\n' "$1" >> "$KIT_TMP/pulled-images"; }
