@@ -217,6 +217,9 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$(echo "$MIG" | sed 's#/fx_test?#/fx_nope?#'
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.accounts ADD COLUMN x int' 2>&1)"; rc=$?
 echo "$o" | grep -q '| fx.accounts | AccessExclusiveLock | reads+writes' && echo "$o" | tail -1 | grep -q '"access_exclusive":1' && [ $rc -eq 0 ] \
   && ok "locks.sh:ALTER 既有表不會被標成 new,ACCESS EXCLUSIVE 有算到" || bad "locks 既有表" "rc=$rc $o"
+printf -- '--+goose NO TRANSACTION\n--+goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS y ON fx.accounts (name);\n' > "$WORK/nt2.sql"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/nt2.sql" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'NO TRANSACTION' && ok "locks.sh:--+goose 寫法也認得 NO TRANSACTION" || bad "locks --+goose" "$o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'SELECT 1' --probe 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:沒有 --hold 時給 --probe → 用法錯誤" || bad "locks probe 無 hold" "$o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/nt.sql" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'NO TRANSACTION' && ok "locks.sh:NO TRANSACTION 檔 → 拒絕交易內觀察" || bad "NO TRANSACTION" "$o"
 bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" -- up >/dev/null 2>&1 || bad "goose up 回到最新版"
 START=$(date +%s)
@@ -293,6 +296,9 @@ echo "$o" | tail -1 | grep -q '"errors":{"23505":1,"connect":1}\|"errors":{"conn
 printf '%s\n' "A: BEGIN; -- A starts" "A: UPDATE fx.accounts SET name = name WHERE name = 'race-a';" "B: BEGIN;" "B: UPDATE fx.accounts SET name = name WHERE name = 'race-b';" "A: COMMIT;" "B: COMMIT;" > "$WORK/clean.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"deadlock":false,"errors":{}' && ok "race.sh:沒有任何錯誤時也印 JSON(errors 為空)" || bad "race 無錯誤" "rc=$rc $o"
+printf '%s\n' 'SETUP: CREATE OR REPLACE FUNCTION fx.tmp_notice() RETURNS int LANGUAGE plpgsql AS $$BEGIN RAISE NOTICE '"'"'checked'"'"'; RETURN 1; END$$;' 'A: SELECT 1;' 'B: SELECT 1;' 'CHECK: SELECT fx.tmp_notice() => 1' > "$WORK/race-notice.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-notice.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && echo "$o" | grep -q "CHECK PASS" && ok "race.sh:CHECK 查詢有 NOTICE 也照 stdout 比對" || bad "race CHECK NOTICE" "rc=$rc $o"
 
 # ---------- seed / explain ----------
 o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --file "$FX/db/dev/seed-accounts.sql" --var n=2000 2>&1)"; rc=$?
@@ -313,6 +319,7 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.accounts; -- hot path" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:同一行分號後的註解不算第二個語句" || bad "explain 同行註解" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1; /* note */" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:分號後的 /* */ 註解不算第二個語句" || bad "explain 區塊註解" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --env POSTGRES_INITDB_WALDIR=/wal 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:POSTGRES_INITDB_WALDIR → 拒絕(WAL 也要在 tmpfs)" || bad "WALDIR" "$o"
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --role app 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--role 格式錯誤在啟動容器前就拒絕" || bad "pg role 早檢查" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --timeout 2m 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--timeout 不是秒數 → 用法錯誤(不啟動容器)" || bad "pg timeout" "$o"
 printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q2.sql" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:結尾分號後面接註解行也算一個語句" || bad "explain 分號+註解" "$o"

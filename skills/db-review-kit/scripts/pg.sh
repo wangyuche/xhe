@@ -31,7 +31,7 @@ case "$CMD" in
       | awk '{ split($1,a,"="); printf "docker_mem_mb=%d %s %s\n", a[2]/1048576, $2, $3 }'
     own_dir "$KIT_TMP"
     echo "tmp=$KIT_TMP tmp_free_mb=$(df -Pk "$KIT_TMP" | awk 'NR==2{print int($4/1024)}')"
-    if command -v go >/dev/null 2>&1; then echo "go=$(go env GOVERSION)"; else echo "go=missing"; fi
+    if command -v go >/dev/null 2>&1; then echo "go=$(cd / && GOTOOLCHAIN=local go env GOVERSION)"; else echo "go=missing"; fi
     ;;
 
   up)
@@ -60,6 +60,13 @@ case "$CMD" in
     printf '%s' "$TIMEOUT" | grep -Eq '^[0-9]+$' && [ "$TIMEOUT" -ge 1 ] || die "--timeout 要是秒數" 2
     require_local_docker
     [ -z "$(list_ours "$NAME")" ] || die "已有 dbrev-$NAME-* 容器;先 pg.sh gc $NAME" 1
+    # format checks that do not need the container run before any pull / docker run
+    for rs in ${ROLESPEC[@]+"${ROLESPEC[@]}"}; do
+      r0="${rs%%=*}"; p0="${rs#*=}"
+      [ "$r0" != "$rs" ] && [ -n "$r0" ] && [ -n "$p0" ] || die "--role 格式是 ROLE=PWVAR:$rs" 2
+      case "$r0" in *[!A-Za-z0-9_-]*) die "--role 的角色名稱只能是英數、底線、連字號:$r0" 2 ;; esac
+    done
+    for db in ${DBLIST[@]+"${DBLIST[@]}"}; do case "$db" in ""|*[!A-Za-z0-9_]*) die "--db 名稱只能是英數與底線:$db" 2 ;; esac; done
 
     ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"
     SUPERPASS="$(rand_hex 16)"

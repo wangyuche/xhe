@@ -28,8 +28,8 @@ while [ $# -gt 0 ]; do
     --file) [ -f "${2:?}" ] || die "檔案不存在:$2" 2; SQL="$(cat "$2")"; shift 2 ;;
     --goose-up)
       [ -f "${2:?}" ] || die "檔案不存在:$2" 2
-      grep -qiE '^-- \+goose NO TRANSACTION' "$2" && die "$2 是 NO TRANSACTION 檔,不能在交易內觀察;改用 --hold 模式搭配手動語句,或推導" 1
-      SQL="$(awk 'tolower($0) ~ /^-- \+goose up/{f=1; next} tolower($0) ~ /^-- \+goose down/{f=0} f && $0 !~ /^-- \+goose /' "$2")"
+      grep -qiE '^--[[:space:]]*\+goose[[:space:]]+NO[[:space:]]+TRANSACTION' "$2" && die "$2 是 NO TRANSACTION 檔,不能在交易內觀察;改用 --hold 模式搭配手動語句,或推導" 1
+      SQL="$(awk 'tolower($0) ~ /^--[ \t]*\+goose[ \t]+up/{f=1; next} tolower($0) ~ /^--[ \t]*\+goose[ \t]+down/{f=0} f && $0 !~ /^--[ \t]*\+goose[ \t]/' "$2")"
       shift 2 ;;
     --lock-timeout) LT="${2:?}"; shift 2 ;;
     --hold-dsn) HOLD_DSN="${2:?}"; shift 2 ;;
@@ -69,6 +69,7 @@ if [ -n "$HOLD" ]; then
 else
   [ -n "$LT" ] || LT="2s"
 fi
+[ -n "$HOLD" ] || [ -z "$PROBE$PROBE_DSN$HOLD_DSN" ] || die "--probe / --probe-dsn / --hold-dsn 只能和 --hold 一起用" 2
 [ -z "$HOLD" ] || [ -n "$HOLD_DSN" ] || HOLD_DSN="$DSN"
 [ -z "$PROBE" ] || [ -n "$PROBE_DSN" ] || PROBE_DSN="$DSN"
 [ -n "$MON" ] || MON="$DSN"

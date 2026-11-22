@@ -167,7 +167,8 @@ fi
 while IFS= read -r line; do
   q="${line#CHECK:}"; exp="${q##*=>}"; q="${q%=>*}"
   exp="$(echo "$exp" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  got="$(printf '%s\n' "$q" | psql_dsn "$CHK" -qAt 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//')" || true
+  got="$(printf '%s\n' "$q" | psql_dsn "$CHK" -qAt 2>"$W/check.err" | tr '\n' ' ' | sed 's/[[:space:]]*$//')" || true   # stdout only; NOTICE / WARNING go to check.err
+  [ "$got" = "$exp" ] || { [ ! -s "$W/check.err" ] || got="$got [stderr: $(tr '\n' ' ' < "$W/check.err" | cut -c1-200)]"; }
   if [ "$got" = "$exp" ]; then CP=$((CP + 1)); v=PASS; else CF=$((CF + 1)); v=FAIL; fi
   echo "CHECK $v:$q=> expected '$exp' got '$got'"
 done < <(grep -E '^CHECK:' "$SCRIPT" || true)
