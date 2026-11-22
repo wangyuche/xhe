@@ -2,7 +2,7 @@
 
 ## 結果
 
-**2026-11-22 kit 自我測試**:`bash skills/db-review-kit/tests/run.sh` → pass=215 fail=0 skip=0(PR #31 第四十一輪 review 修正後)(本機 Docker desktop-linux、Go 1.27.4、postgres:18-alpine);結束時 `docker ps -a --filter label=dbrev` 為空。
+**2026-11-22 kit 自我測試**:`bash skills/db-review-kit/tests/run.sh` → pass=217 fail=0 skip=0(PR #31 第四十二輪 review 修正後)(本機 Docker desktop-linux、Go 1.27.4、postgres:18-alpine);結束時 `docker ps -a --filter label=dbrev` 為空。
 
 **2026-11-22 情境 4 實跑(主 agent 扮演 db-reviewer,只讀)**,回報摘錄:
 

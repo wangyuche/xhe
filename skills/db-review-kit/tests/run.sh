@@ -330,12 +330,15 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.accounts; -- hot path" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:同一行分號後的註解不算第二個語句" || bad "explain 同行註解" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1 FROM fx.accounts WHERE id = 1; -- user's lookup" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:分號後的註解含撇號也算一個語句" || bad "explain 撇號註解" "$o"
 o="$(printf 'UPDATE pg_settings SET setting = %s WHERE name = %s;\n' "'off'" "'standard_conforming_strings'" | python3 -I "$S/_txcheck.py" 2>&1)"; [ $? -eq 2 ] && ok "_txcheck:UPDATE pg_settings → 拒絕" || bad "pg_settings update" "$o"
+o="$(printf '\\set column1 1\nVALUES (1) \\gset\nSELECT :column1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -ne 0 ] && ok "pg.sh psql:VALUES … \\gset 之後的裸變數 → 拒絕" || bad "psql VALUES gset" "$o"
 o="$(printf 'SELECT t.* FROM pg_class t LIMIT 1 \\gset\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:\\gset 餵 t.* → 拒絕" || bad "psql gset t.*" "$o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE FUNCTION fx.tmp_sc(n text, v text) RETURNS text LANGUAGE plpgsql AS $$BEGIN PERFORM set_config(n, v, true); RETURN v; END$$' 2>&1)"; [ $? -eq 0 ] && ok "locks.sh:函式本體裡的 set_config(變數) 不會被誤擋" || bad "locks set_config in body" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1; /* note */" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:分號後的 /* */ 註解不算第二個語句" || bad "explain 區塊註解" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --env POSTGRES_INITDB_WALDIR=/wal 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:POSTGRES_INITDB_WALDIR → 拒絕(WAL 也要在 tmpfs)" || bad "WALDIR" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --role app 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--role 格式錯誤在啟動容器前就拒絕" || bad "pg role 早檢查" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME:/h" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount 家目錄 → 拒絕" || bad "mount HOME" "$o"
+ln -s "$HOME/.ssh/nonexistent-or-key" "$WORK/linked.sql" 2>/dev/null
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$WORK/linked.sql:/x.sql" 2>&1)"; [ $? -ne 0 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:指向家目錄憑證的 symlink 檔 → 拒絕" || bad "mount symlink" "$o"
 if [ -d "$HOME/.ssh" ]; then o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME/.ssh:/s" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount ~/.ssh → 拒絕" || bad "mount .ssh" "$o"; else skip "mount ~/.ssh(本機沒有 ~/.ssh)"; fi
 printf '%s\n' 'A: SELECT 1;' 'b: SELECT 1;' > "$WORK/race-lc.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-lc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:不認得的行(小寫 b:)→ 用法錯誤" || bad "race 未知行" "$o"

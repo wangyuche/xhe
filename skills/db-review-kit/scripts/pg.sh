@@ -91,7 +91,8 @@ case "$CMD" in
       [ -e "$src" ] || die "--mount 來源不存在:$src" 1
       # only regular files / directories; never sockets or devices (docker.sock …), never / or $HOME or a parent of it
       [ -f "$src" ] || [ -d "$src" ] || die "--mount 來源要是一般檔案或目錄(不接受 socket / device):$src" 4
-      if [ -d "$src" ]; then abs="$(cd "$src" && pwd -P)"; else abs="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"; fi
+      # fully resolved (a symlinked file must not lead to a credential file)
+      abs="$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$src")"
       [ ! -S "$abs" ] && [ ! -c "$abs" ] && [ ! -b "$abs" ] || die "--mount 來源不能是 socket / device:$abs" 4
       hp="$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")"
       case "$hp/" in "$abs"/*|"$abs/") die "--mount 不能掛 / 或家目錄(或其上層):$abs" 4 ;; esac
@@ -133,6 +134,12 @@ case "$CMD" in
     # anonymous on-disk volume is created and --tmpfs-size really caps the data.
     VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
     [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
+    # the image's PGDATA too, when it is not under a declared VOLUME (e.g. images that keep data elsewhere)
+    IPGDATA="$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" | sed -n 's/^PGDATA=//p' | head -1)"
+    if [ -n "$IPGDATA" ]; then
+      under=""; for v in $VOLS; do case "$IPGDATA/" in "$v"/*) under=1 ;; esac; done
+      [ -n "$under" ] || VOLS="$VOLS $IPGDATA"
+    fi
     for v in $VOLS; do RUNARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
     docker run --name "$CONTAINER" "${RUNARGS[@]}" "$IMAGE" >/dev/null || { rm -f "$DIR/run.env"; image_unlock; LOCKED=""; cleanup_fail; die "docker run 失敗" 1; }
     image_unlock; LOCKED=""   # the container now uses the image, so cleanup elsewhere keeps it

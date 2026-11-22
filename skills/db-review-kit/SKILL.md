@@ -41,7 +41,7 @@ bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 lab
 
 # goose(版本取自 go.mod;只複製 *.sql 到暫存目錄執行;goose CLI 支援時加 -env none,不讀 .env;舊版本來就不讀)
 bash <kit>/scripts/goose.sh <name> validate --dir <migrations>
-#   go.mod 沒有 goose(CLI 另外安裝)時加 --goose-version vX.Y.Z(取自設定檔);有 vendor/modules.txt 時沙盒用 -mod=vendor
+#   go.mod 沒有 goose(CLI 另外安裝)時加 --goose-version vX.Y.Z(取自設定檔)
 bash <kit>/scripts/goose.sh <name> run --dir <migrations> --table <版本表> --dsn <dsn> -- up-to 53
 bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本表> \
   --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶破壞性 Down 旗標的 DSN> --from <審查的第一版> [--to <最後一版>]
@@ -94,6 +94,7 @@ bash <kit>/scripts/gotest.sh <name> --dir <模組目錄> --tags integration \
   --env TEST_DATABASE_URL=<dsn> --env TEST_APP_DATABASE_URL=<dsn> ... [--run <regex>] [--p 1] [--timeout 540s] [-- ./migrations/...]
 #   → stderr:tests: PASS a / FAIL b / SKIP c、subtests …、每個 SKIP 的原因、每個 FAIL 的最後輸出、GAP 行
 #   → stdout 最後一行 JSON {"status":"PASS|FAIL|GAP","tests":{…},"subtests":{…},"skipped":[…],"failed":[…],"elapsed_s":…}
+#   模組有 vendor/modules.txt 時沙盒用 -mod=vendor(否則 -mod=readonly)。
 #   結束碼 0 PASS、1 FAIL、5 GAP(SKIP > 0 或測試數 0)。完整 log:<tmp>/<name>/gotest-*.jsonl
 ```
 

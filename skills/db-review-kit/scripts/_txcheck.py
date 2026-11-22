@@ -218,9 +218,11 @@ def main():
                 buf.append(line)
                 if re.search(r"\\gset", line):
                     st_txt = strip("\n".join(buf)); st_txt = st_txt[st_txt.rfind(";") + 1:]
-                    # columns the script does not spell out: SELECT *, t.*, (expr).*, TABLE x, RETURNING *
-                    if re.search(r"\bSELECT\s+(ALL\s+|DISTINCT\s+)?\*|,\s*\*\s*(,|\bFROM\b|$)|\.\s*\*|\bRETURNING\s+\*|^\s*TABLE\b",
-                                 st_txt, re.I | re.M):
+                    # Only a plain SELECT without '*' has column names that all come from identifiers in the script.
+                    # Anything else (VALUES, TABLE, FETCH, CALL, EXECUTE, WITH, … RETURNING, or any '*' but count(*))
+                    # can produce names from the catalog: treat as "could set any variable".
+                    no_count = re.sub(r"\bcount\s*\(\s*\*\s*\)", "count(1)", st_txt, flags=re.I)
+                    if not re.match(r"\s*SELECT\b", st_txt, re.I) or "*" in no_count:
                         star = True
                     buf = []
             assigned |= idents | {p + w for p in prefixes for w in idents}
