@@ -70,7 +70,8 @@ for (const [group, list] of groups) {
       const expectW = a.frames ? a.frames.frameWidth * a.frames.columns : Math.round(a.width * a.density);
       const expectH = a.frames ? a.frames.frameHeight * Math.ceil(a.frames.count / a.frames.columns) : Math.round(a.height * a.density);
       if (a.frames && (a.frames.frameWidth % 2 || a.frames.frameHeight % 2)) die(`${a.id}:frameWidth / frameHeight 要是偶數(0.5x 才能剛好一半、格子不偏移)`);
-      if (meta.width !== expectW || meta.height !== expectH) die(`${a.id}:1x 應為 ${expectW}×${expectH}(顯示 × density),實際 ${meta.width}×${meta.height}`);
+      // 容許 ±1 px(sprite.mjs density 的 1x 寬無條件捨去、density 取 4 位小數;同 validate.mjs)
+      if (Math.abs(meta.width - expectW) > 1 || Math.abs(meta.height - expectH) > 1) die(`${a.id}:1x 應為 ${expectW}×${expectH}(顯示 × density),實際 ${meta.width}×${meta.height}`);
       for (const tier of ['1x', '0.5x']) {
         // frames:0.5x 一定剛好一半(格寬高已要求偶數),格子才不偏移;其他圖一半後進位成偶數
         const w = tier === '1x' ? meta.width : a.frames ? meta.width / 2 : half(meta.width);

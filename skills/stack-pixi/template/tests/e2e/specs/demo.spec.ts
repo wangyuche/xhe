@@ -42,6 +42,7 @@ test('DEMO-S4 portrait phone shows the rotate prompt', async ({ browser }) => {
   await expect(page.locator('#rotate')).toBeVisible();
   await expect(page.locator('#rotate')).toHaveText('Please rotate your device to landscape.');
   await shot(page, `demo-s4-${PORTRAIT.name}`);
+  expectNoErrors(page);
   await context.close();
 });
 

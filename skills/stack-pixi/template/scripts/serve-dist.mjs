@@ -2,6 +2,7 @@
 //   PORT=<埠> node scripts/serve-dist.mjs <distDir> [apiTarget]
 //   apiTarget 有給時,/v1/* 反向代理過去(不改 Origin)。只綁 127.0.0.1。
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -18,9 +19,10 @@ const gz = new Map();
 
 http.createServer((req, res) => {
   if (api && req.url.startsWith('/v1/')) {
-    const p = http.request({ host: api.hostname, port: api.port, path: req.url, method: req.method, headers: req.headers },
-      (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
-    p.on('error', () => { res.writeHead(502); res.end(); });
+    const mod = api.protocol === 'https:' ? https : http;
+    const p = mod.request({ host: api.hostname, port: api.port, path: req.url, method: req.method, headers: req.headers },
+      (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); r.on('error', () => res.destroy()); });
+    p.on('error', () => { if (res.headersSent) res.destroy(); else { res.writeHead(502); res.end(); } });
     req.pipe(p);
     return;
   }

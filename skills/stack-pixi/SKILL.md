@@ -51,7 +51,7 @@ paths: ["**/src/scenes/**/*.ts", "**/src/core/**/*.ts", "**/src/components/**/*.
 - **PX-PERF-07(MUST)** 每個素材群組有 AVIF KB 預算(budgets「## 素材預算」),超過就建置失敗(`build-assets.mjs`、`check-assets.mjs`)。
 
 ### RES 解析度與版面
-- **PX-RES-01(MUST)** 素材分 1x / 0.5x 兩級;單張上限 1x ≤ 2048²、0.5x ≤ 1024²(GPU / 記憶體限制,跨專案相同)。1x 檔案 = 顯示尺寸 × density(density 預設 2,背景類縮到上限內),0.5x = 1x 的一半無條件進位成偶數。級別看像素需求:`cover × min(DPR, 2) > 0.6 → 1x`(`src/assets/tier.ts`;專案可在「例外」另訂)。
+- **PX-RES-01(MUST)** 素材分 1x / 0.5x 兩級;單張上限 1x ≤ 2048²、0.5x ≤ 1024²(GPU / 記憶體限制,跨專案相同)。1x 檔案 = 顯示尺寸 × density(density 預設 2;單張與整張 frames sheet 超過 2048 時自動降低,以 game-art-kit `sprite.mjs density` 的輸出為準),0.5x = 1x 的一半無條件進位成偶數。級別看像素需求:`cover × min(DPR, 2) > 0.6 → 1x`(`src/assets/tier.ts`;專案可在「例外」另訂)。
 - **PX-RES-02(MUST)** `resolution = min(devicePixelRatio, 2)`、`autoDensity: true`。
 - **PX-RES-03(MUST)** 版面只有一個入口:renderer `resize` → SceneManager → `scene.layout(fit)`;元件不自己監聽 resize。
 
@@ -107,7 +107,7 @@ bash <skill>/scripts/new-pixi.sh --check <目錄>     # 骨架齊全、budgets �
 
 ## 檢查腳本(既有專案也可用;專案已有同等檢查時用專案的)
 ```bash
-node <skill>/scripts/check-layers.mjs <project> [--paths src/game,src/services,src/core]
+node <skill>/scripts/check-layers.mjs <project> [--paths src/game,src/services]   # --paths 只列純邏輯資料夾(src/core 會 import pixi,不要列)
 node <skill>/scripts/check-i18n.mjs <project> [--src src]
 node <skill>/scripts/check-assets.mjs <project> [--budgets docs/performance-budgets.md] [--art <art/assets>]
 node <skill>/scripts/check-early.mjs <project> [--dist dist] [--boot boot,shared]   # 先 vite build

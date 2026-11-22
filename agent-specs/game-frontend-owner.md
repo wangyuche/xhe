@@ -45,7 +45,7 @@ stack-pixi 新增的編號(A11Y、I18N、INPUT、NET、SEC、TEST 等)從各類�
 
 ## 尺寸定義與素材介面(結構強制)
 - **設計座標**:專案的設計解析度(新專案寫在 `src/config/design.ts`,例如 1920×1080 橫式)。
-- **顯示尺寸** = 素材在設計座標下顯示的大小。**密度 `density`** = 1x 檔案 ÷ 顯示尺寸:圖示、按鈕、角色等預設 2;背景與全螢幕類取 `min(2, 2048 ÷ 顯示最長邊)`(1x 不超過 PX-RES-01 上限);needs 可逐項指定(lobby 也是逐零件標註 1 倍或 2 倍)。**1x 檔案 = 顯示 × density;0.5x = 1x 的一半,無條件進位成偶數**(同 lobby)。Pixi 的 resolution 由 density 換算。1x / 0.5x 的選擇照專案;新專案預設用 lobby EX-01 的像素需求公式(`cover × min(DPR,2) > 0.6 → 1x`,cover = 畫面縮放比)。
+- **顯示尺寸** = 素材在設計座標下顯示的大小。**密度 `density`** = 1x 檔案寬 ÷ 顯示寬:預設 2,但單張圖與整張 frames sheet 都必須 ≤ 2048(PX-RES-01),超過時自動降低;實際值以 game-art-kit `sprite.mjs density` 的輸出為準(1x 寬無條件捨去、density 取 4 位小數),美術照它寫進 assets.json。needs 可逐項指定(lobby 也是逐零件標註 1 倍或 2 倍),指定值放不進 2048 時 validator 會擋。**1x 檔案 = 顯示 × density;0.5x = 1x 的一半,無條件進位成偶數**(同 lobby)。Pixi 的 resolution 由 density 換算。1x / 0.5x 的選擇照專案;新專案預設用 lobby EX-01 的像素需求公式(`cover × min(DPR,2) > 0.6 → 1x`,cover = 畫面縮放比)。
 - JSON Schema 放 `game-art-kit/schemas/`,兩邊共用,kit 內附無依賴驗證器;schema 依 `type` 分條件:
   - `needs.schema.json`(本 agent 寫 `<可寫路徑>/assets.needs.json`):`{"version":1, "design":{width, height}, "needs":[…]}`。每項:
     - 共通:`id`、`type`、`group`、`purpose`。

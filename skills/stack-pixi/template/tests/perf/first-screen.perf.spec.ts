@@ -9,8 +9,8 @@ test('perf first screen', async ({ browser }) => {
     const page = await newPage(browser, v);
     await page.addInitScript(() => {
       const w = window as any;
-      w.__tbt = 0;
-      new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!w.__interactiveAt) w.__tbt += Math.max(0, e.duration - 50); }).observe({ type: 'longtask', buffered: true });
+      w.__longtasks = [] as Array<{ start: number; duration: number }>;
+      new PerformanceObserver((l) => { for (const e of l.getEntries()) w.__longtasks.push({ start: e.startTime, duration: e.duration }); }).observe({ type: 'longtask', buffered: true });
       const watch = () => {
         const el = document.getElementById('loading');
         if (!el) return requestAnimationFrame(watch);
@@ -23,19 +23,24 @@ test('perf first screen', async ({ browser }) => {
     await throttle(page);
     let bytes = 0;
     let interactive = false;
+    const pendingSizes: Promise<void>[] = [];
     await page.exposeFunction('__onInteractive', () => { interactive = true; }); // 可互動當下就停止計入,不等下一次輪詢
-    page.on('requestfinished', async (r) => {
+    page.on('requestfinished', (r) => {
       if (interactive) return;
-      try { const s = await r.sizes(); bytes += s.responseBodySize + s.responseHeadersSize; } catch { /* 已關閉 */ }
+      pendingSizes.push(r.sizes().then((s) => { bytes += s.responseBodySize + s.responseHeadersSize; }, () => {}));
     });
     await page.goto('/');
     await page.waitForFunction(() => (window as any).__interactiveAt, null, { timeout: 90_000 });
     interactive = true;
-    const m = await page.evaluate(() => ({
-      fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? NaN,
-      interactive: (window as any).__interactiveAt as number,
-      tbt: (window as any).__tbt as number,
-    }));
+    await page.waitForTimeout(100); // 讓可互動那個 long task 的 entry 送達
+    await Promise.all(pendingSizes);
+    const m = await page.evaluate(() => {
+      const w = window as any;
+      const at = w.__interactiveAt as number;
+      // TBT:開始時間在可互動之前的 long task(含觸發可互動的那一個)
+      const tbt = (w.__longtasks as Array<{ start: number; duration: number }>).filter((e) => e.start < at).reduce((s, e) => s + Math.max(0, e.duration - 50), 0);
+      return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? NaN, interactive: at, tbt };
+    });
     runs.push({ ...m, bytes });
     await page.context().close();
   }

@@ -18,13 +18,18 @@ export const RUNS = Number(process.env.PERF_RUNS) || 5;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** 讀 budgets:每節的 `| key | 數值 |` 表格列,數值後可接「(推定)」;`—` 或空白 = 未設定。 */
+/** 門檻只從這幾節讀(「最新實測」「例外」的表格不是門檻)。 */
+const THRESHOLD_SECTIONS = ['首屏', '場景切換', '傳輸量', '長時間遊玩'];
+
+/** 讀 budgets:門檻各節的 `| key | 數值 |` 表格列,數值後可接「(推定)」;`—` 或空白 = 未設定。同一個 key 以第一次出現為準。 */
 export function budgets(): Record<string, number | undefined> {
   const md = readFileSync(join(HERE, '../../docs/performance-budgets.md'), 'utf8');
   const out: Record<string, number | undefined> = {};
-  for (const line of md.split('\n')) {
+  const lines = md.split(/^## /m).filter((sec) => THRESHOLD_SECTIONS.includes(sec.split('\n')[0]!.trim())).join('\n').split('\n');
+  for (const line of lines) {
     const c = line.split('|').map((x) => x.trim());
     if (c.length >= 4 && /^[a-z][a-z0-9_]*$/.test(c[1]!)) {
+      if (c[1]! in out) continue;
       const m = /^-?\d+(\.\d+)?/.exec(c[2]!);
       out[c[1]!] = m ? parseFloat(m[0]) : undefined;
     }
