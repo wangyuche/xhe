@@ -33,17 +33,18 @@ function readJson(p, what) {
 export function recover(assets) {
   const jp = join(assets, JOURNAL);
   if (!existsSync(jp)) return { ok: true, recovered: false };
-  const j = readJson(jp, '交付日誌');
+  let j; try { j = JSON.parse(readFileSync(jp, 'utf8')); } catch (e) { die(`交付日誌 ${jp} 讀不出來(${e.message}):請人工檢查 art/assets 裡的 .deliver- 檔(.bak 結尾是交付前的舊檔),處理完刪掉日誌再重跑`, 1); }
   const errs = [], step = (fn) => { try { fn(); } catch (e) { errs.push(e.message); } };
   if (j.state === 'committed') {
     for (const e of j.entries) if (e.bak) step(() => rmSync(join(assets, e.bak), { force: true }));
     step(() => rmSync(join(assets, j.jsonBak), { force: true }));
   } else {
     for (const e of [...j.entries].reverse()) {
+      const tmpLeft = existsSync(join(assets, e.tmp)); // 還在 = 沒換名
       step(() => rmSync(join(assets, e.tmp), { force: true }));
       if (e.bak && existsSync(join(assets, e.bak))) step(() => { rmSync(join(assets, e.dest), { force: true }); renameSync(join(assets, e.bak), join(assets, e.dest)); });
       // 原本沒有這個檔:已換上(placed),或換名途中被砍(placing 且 tmp 已不在)→ 新檔拿掉
-      else if (!e.bak && (e.placed || (e.placing && !existsSync(join(assets, e.tmp))))) step(() => rmSync(join(assets, e.dest), { force: true }));
+      else if (!e.bak && (e.placed || (e.placing && !tmpLeft))) step(() => rmSync(join(assets, e.dest), { force: true }));
     }
     step(() => rmSync(join(assets, j.jsonTmp), { force: true }));
     if (existsSync(join(assets, j.jsonBak))) step(() => { rmSync(join(assets, 'assets.json'), { force: true }); renameSync(join(assets, j.jsonBak), join(assets, 'assets.json')); });
@@ -75,18 +76,21 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
     const missing = a.files.filter(f => !delivered.has(key(f)));
     if (missing.length) die(`項目 ${a.id} 有變更,但這些檔沒有一起交付:${missing.join(', ')}`);
   }
+  const nextIds = new Set(next.assets.map(a => a.id));
+  const dropped = (cur.assets ?? []).map(a => a.id).filter(id => !nextIds.has(id));
+  if (dropped.length) die(`新的 assets.json 少了既有項目:${dropped.join(', ')}(--json 要保留所有既有項目)`);
   for (const f of files) if (!existsSync(join(stage, f))) die(`stage 沒有 ${f}(先確認該項 check 通過且輸出在 stage)`, 1);
   // 驗證:schema 看整份;檔案存在只看這次有變更的項目(無關的舊項目缺檔只警告,不擋這次交付)
   const changedIds = new Set(next.assets.filter(a => curById.get(a.id) !== canon(a)).map(a => a.id));
   const schemaErrs = validate('assets', next);
   if (schemaErrs.length) die(`新的 assets.json 格式不通過:${schemaErrs.slice(0, 5).join(';')}`);
-  const unrelatedMissing = next.assets.filter(a => !changedIds.has(a.id)).flatMap(a => a.files.filter(f => !existsSync(join(assets, f))));
+  const unrelatedMissing = next.assets.filter(a => !changedIds.has(a.id)).flatMap(a => a.files.filter(f => !delivered.has(key(f)) && !existsSync(join(assets, f))));
 
   const uniq = `.deliver-${process.pid}`;
   const entries = files.map(f => ({ dest: norm(f), tmp: norm(f) + uniq, bak: null, placed: false }));
   const journal = { state: 'copying', entries, jsonTmp: 'assets.json' + uniq, jsonBak: 'assets.json' + uniq + '.bak', jsonExisted: existsSync(target), createdDirs: [] };
-  const saveJournal = () => writeFileSync(join(assets, JOURNAL), JSON.stringify(journal, null, 2));
-  mkdirSync(assets, { recursive: true });
+  const saveJournal = () => { const t = join(assets, JOURNAL + uniq); writeFileSync(t, JSON.stringify(journal, null, 2)); renameSync(t, join(assets, JOURNAL)); };
+  if (!existsSync(assets)) die(`--assets ${assets} 不存在(先 mkdir -p 它)`);
   saveJournal();
   try {
     for (const e of entries) {

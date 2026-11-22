@@ -107,7 +107,7 @@
 | 透明素材不能帶白色貼紙外框(提示詞不寫 sticker / sticker art) | 檢查(kit `sprite.mjs check` 外圈接近純白 > 30% 不通過,錯誤訊息附改法;`--full-bleed` 的 UI 不在檢查範圍,僅文字要求看圖)+ 測試(kit tests 白框 ×3、淺灰外圈、白色主體) | 2026-11-22 MahjongParty ticketpack-t5、bundlepack-t2~t6、VIP 卡多輪白框,靠人眼發現;已交付的 ticketpack-t5 現在會被擋下 |
 | 底部留白依簡報(例如對齊既有素材的 8 px)用 `fit --foot`,不手動補像素 | 結構(kit `sprite.mjs fit --foot`)+ 測試(kit tests「--foot 8」) | 2026-11-22 MahjongParty 四輪都 fit 成 H-5 再補 5 列透明 |
 | 非角色參考圖(現有素材、先前生成的圖)只能上傳簡報旗標「使用者授權上傳參考圖」列出的檔案;沒旗標時回報列出建議路徑 | 旗標 + 測試(tests 情境 9,2026-11-22 實跑:9A / 9B / 9C 的旗標行為都符合預期;9B 另發現重出覆寫交付檔,已改流程,見下一條)+ 限制條文 | 2026-11-22 MahjongParty ticketpack-t5、vippack-gold 兩次停下等主 agent 轉問 |
-| 遊戲素材的交付檔(圖、背景、音訊)一律先產生在這次產出目錄的暫存區(`art/out/<本次產出目錄名>/stage/<group>/`),通過後用 kit `deliver.mjs` 全有或全無交付;沒通過的項目 assets.json 不動(不讓失敗的產出覆寫已交付的檔) | 結構(kit `deliver.mjs`:複製 / 換檔 / 驗證任一步失敗全部還原)+ 測試(kit tests deliver ×13)+ 文字(工作流程「遊戲素材」第 1 點);只發生 1 次;例外直接加入:會遺失已交付素材;使用者 2026-11-22 看過改動清單(含這條修正)後指示「全部補完」 | 2026-11-22 情境 9B 實跑:失敗圖覆寫 shop.chest.png,agent 自行還原 |
+| 遊戲素材的交付檔(圖、背景、音訊)一律先產生在這次產出目錄的暫存區(`art/out/<本次產出目錄名>/stage/<group>/`),通過後用 kit `deliver.mjs` 全有或全無交付;沒通過的項目 assets.json 不動(不讓失敗的產出覆寫已交付的檔) | 結構(kit `deliver.mjs`:複製 / 換檔 / 驗證任一步失敗全部還原)+ 測試(kit tests deliver ×18)+ 文字(工作流程「遊戲素材」第 1 點);只發生 1 次;例外直接加入:會遺失已交付素材;使用者 2026-11-22 看過改動清單(含這條修正)後指示「全部補完」 | 2026-11-22 情境 9B 實跑:失敗圖覆寫 shop.chest.png,agent 自行還原 |
 
 ## 協調者(agent-forge multi-agent)
 
