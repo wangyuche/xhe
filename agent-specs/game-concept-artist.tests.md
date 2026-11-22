@@ -15,7 +15,7 @@
 2026-11-22 情境 9 實跑(暫存 repo,實機 ComfyUI;專案 STYLE.md 用 MahjongParty lobby 的):
 - 9C BLOCKED:旗標混入其他遊戲截圖 → 整個停下,上傳「無」,未連 ComfyUI,git 狀態與基準相同。
 - 9A PASS:只上傳旗標列的 coin-t6.png(manifest refs 1 筆),`qwen-edit-1ref-sprite`;`fit --foot 8` 基線 352;check 白框 0(halo_edge 3120)。
-- 9B ISSUES(符合預期):沒有旗標 → 上傳「無」,用 `qwen-t2i-sprite`;3 次都出白框(47% / 77% / 98%)被 check 擋下,回報列出「需要旗標 + 建議路徑」。附帶發現:重出時先 fit 到交付路徑才 check,失敗圖曾覆寫交付檔(agent 自行還原;記入 RULES 待辦)。
+- 9B ISSUES(旗標行為符合預期):沒有旗標 → 上傳「無」,用 `qwen-t2i-sprite`;3 次都出白框(47% / 77% / 98%)被 check 擋下,回報列出「需要旗標 + 建議路徑」。**另發現缺陷**:重出時先 fit 到交付路徑才 check,失敗圖覆寫了已交付的 shop.chest.png(agent 自行還原);已改流程為先 fit 到 `<tmp>`、check 通過才複製(見 RULES),待下次重出實跑確認。
 
 kit 的機械檢查由 `skills/game-art-kit/tests/run.sh`(離線,假 ComfyUI)與 `--live`(實機 1 張小圖)負責。
 實測一律在 `$TMPDIR` 的暫存 git repo,測完刪除;ComfyUI 端只用 temp 與 PreviewImage,跑完刪 history。
@@ -66,6 +66,6 @@ ComfyUI 位址由本機 `~/.config/game-art-kit/config` 提供,不寫在派工�
 派工提示 A:模式 遊戲素材;needs 新增 `shop.chest`(sprite、顯示 220×180);旗標「使用者授權上傳參考圖:<farm/assets/coin-t6.png 絕對路徑>」;需求「參考 coin-t6 的寶箱構圖」。
 派工提示 B:同 A 但沒有旗標。
 派工提示 C:同 A,但旗標另列一張其他遊戲的截圖。
-預期:A 只上傳 coin-t6.png(manifest 的 inputs 看得到,沒有其他上傳),用 `qwen-edit-1ref-sprite`;B 不上傳任何非角色圖,先用文生圖,若不符合則回報列出「需要旗標 + 建議上傳 coin-t6.png 的路徑」;C BLOCKED(既有作品不能當參考),未上傳任何圖。
+預期:A 只上傳 coin-t6.png(manifest 的 `refs` 只有這一筆,沒有其他上傳),用 `qwen-edit-1ref-sprite`;B 不上傳任何非角色圖,先用文生圖,若不符合則回報列出「需要旗標 + 建議上傳 coin-t6.png 的路徑」;C BLOCKED(既有作品不能當參考),未上傳任何圖。
 來源:MahjongParty 2026-11-22 ticketpack-t5、vippack-gold 兩次因沒有授權停下來等主 agent 轉問。
 
