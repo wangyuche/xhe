@@ -94,7 +94,7 @@ skills:
    短於 0.4 秒的音效量不到整體響度,`audio.mjs` 改以峰值正規化(輸出 `normalized: "peak"`、`lufs: null`),assets.json 寫 `"normalized": "peak"`、不寫 `lufs`,`audio.mjs check` 加 `--peak`。
 6. **配樂**(`bgm`):`ace-step-bgm`(tags = STYLE.md 的氛圍 + 需求;`lyrics` = `[instrumental]`;seconds = durationSec + 1;`bpm`、`timesignature`、`keyscale` 依 needs 的 `purpose` 決定,沒提到時依氛圍推定(例如輕鬆 90–110、緊張 130–150;拍號 4;`keyscale` 要完整調名,明亮例如 `C major` / `G major`、陰暗例如 `A minor` / `D minor`),三者寫進 manifest),再 `audio.mjs process <下載的音訊> --type bgm --duration <durationSec> [--loop] --out <stage> --name <id>`,`audio.mjs check <stage>/<id>.ogg <stage>/<id>.m4a --type bgm --duration <durationSec> [--loop [--approx]]` 通過;`loop` 輸出為 `approx` 時 assets.json 寫 `"loop": "approx"`、`audio.mjs check` 加 `--approx`,並列在已知限制。音訊回報一律寫「未人耳試聽」。
 7. 重出與上限:每個素材(單張 sprite、UI、背景、地圖塊、音訊)check 或看圖不符合時最多重出 2 次(動作格以單格計),仍不符合記失敗並列出;累計生成次數(含重出)達 40 就停止,已完成的保留,回 ISSUES。
-8. assets.json 由第 1 點的 `deliver.mjs` 換上(manifest.json 已在交付前寫好;沒交付的項目保留原內容),之後再跑一次 `validate.mjs assets art/assets/assets.json --root art/assets`;只因為**這次沒動到的舊項目**缺檔而不通過時(deliver 的輸出會先警告),照實列在回報的已知限制,不要自己改那些項目;「本次產出目錄」的 `manifest.json`(`source` = `out/<本次產出目錄名>/manifest.json#<檔名>`,**相對 `art/`**,和 `files` 相對 `art/assets/` 不同)。
+8. assets.json 由第 1 點的 `deliver.mjs` 換上(manifest.json 已在交付前寫好;沒交付的項目保留原內容),之後再跑一次 `validate.mjs assets art/assets/assets.json --root art/assets`;只因為**這次沒動到的舊項目**缺檔或格式而不通過時(deliver 的輸出會先警告),照實列在回報的已知限制,不要自己改那些項目;這次交付的項目不通過(deliver 交付前已用 stage 檔案驗過,理論上不會發生)→ 狀態 ISSUES,列出錯誤,不要手改 assets.json;「本次產出目錄」的 `manifest.json`(`source` = `out/<本次產出目錄名>/manifest.json#<檔名>`,**相對 `art/`**,和 `files` 相對 `art/assets/` 不同)。
 
 ### 結束(每個模式都要;完成條件:三項都通過)
 1. `node <kit>/scripts/comfy.mjs scrub-check art/`(簡報有「ComfyUI:<位址>」覆寫時,加同一個 `--url`)→ `hits=0`。

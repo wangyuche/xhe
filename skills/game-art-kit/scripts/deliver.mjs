@@ -33,7 +33,9 @@ function readJson(p, what) {
 export function recover(assets) {
   const jp = join(assets, JOURNAL);
   if (!existsSync(jp)) return { ok: true, recovered: false };
-  let j; try { j = JSON.parse(readFileSync(jp, 'utf8')); if (!Array.isArray(j?.entries) || typeof j.jsonTmp !== 'string' || typeof j.jsonBak !== 'string') throw new Error('格式不對'); } catch (e) { die(`交付日誌 ${jp} 讀不出來(${e.message}):請人工檢查 art/assets 裡的 .deliver- 檔(.bak 結尾是交付前的舊檔),處理完刪掉日誌再重跑`, 1); }
+  let j; try { j = JSON.parse(readFileSync(jp, 'utf8')); if (!Array.isArray(j?.entries) || typeof j.jsonTmp !== 'string' || typeof j.jsonBak !== 'string') throw new Error('格式不對');
+    const bad = (p) => typeof p !== 'string' || isAbsolute(p) || normalize(p).split(sep).includes('..');
+    if ([j.jsonTmp, j.jsonBak, ...(j.createdDirs ?? []), ...j.entries.flatMap(e => [e.dest, e.tmp, e.bak ?? 'x'])].some(bad)) throw new Error('日誌裡有絕對路徑或含 .. 的路徑'); } catch (e) { die(`交付日誌 ${jp} 讀不出來(${e.message}):請人工檢查 art/assets 裡的 .deliver- 檔(.bak 結尾是交付前的舊檔),處理完刪掉日誌再重跑`, 1); }
   const errs = [], step = (fn) => { try { fn(); } catch (e) { errs.push(e.message); } };
   if (j.state === 'committed') {
     for (const e of j.entries) if (e.bak) step(() => rmSync(join(assets, e.bak), { force: true }));
@@ -53,6 +55,7 @@ export function recover(assets) {
   }
   if (errs.length) die(`還原時有錯誤,日誌保留,請人工檢查:${errs.join(';')}`, 1);
   rmSync(jp, { force: true });
+  for (const n of readdirSync(assets)) if (n.startsWith(JOURNAL + '.deliver-')) rmSync(join(assets, n), { force: true });
   return { ok: true, recovered: true, state: j.state ?? 'placing' };
 }
 
@@ -70,6 +73,7 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
   // 內容有變的項目(新增或和目前 assets.json 不同),它的 files 要全部一起交付
   const target = join(assets, 'assets.json');
   const cur = existsSync(target) ? readJson(target, '目前的 assets.json') : { assets: [] };
+  if (!cur || typeof cur !== 'object' || !Array.isArray(cur.assets ?? [])) die('目前的 art/assets/assets.json 格式不對(要是 {"assets":[…]}),先修好它');
   const curById = new Map((cur.assets ?? []).map(a => [a.id, canon(a)]));
   for (const a of next.assets) {
     if (curById.get(a.id) === canon(a)) continue;
@@ -89,6 +93,9 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
   const blocking = schemaErrs.filter(e => { const m = /^assets\[(\d+)\]/.exec(e); return !m || changedIds.has(idxOf.get(+m[1])); });
   if (blocking.length) die(`新的 assets.json 格式不通過:${blocking.slice(0, 5).join(';')}`);
   const legacyErrs = schemaErrs.filter(e => !blocking.includes(e));
+  // 交付前用 stage 的檔案驗證有變更的項目(PNG 尺寸、frames、音訊雙格式等 --root 檢查),不通過就不換檔
+  const stageErrs = validate('assets', { ...next, assets: next.assets.filter(a => changedIds.has(a.id)) }, { root: stage });
+  if (stageErrs.length) die(`有變更的項目用 stage 的檔案驗證不通過(交付前就擋下,沒有換檔):${stageErrs.slice(0, 5).join(';')}`, 1);
   const unrelatedMissing = next.assets.filter(a => !changedIds.has(a.id)).flatMap(a => a.files.filter(f => !delivered.has(key(f)) && !existsSync(join(assets, f))));
 
   const uniq = `.deliver-${process.pid}`;
@@ -115,7 +122,7 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
     const fileErrs = next.assets.filter(a => changedIds.has(a.id)).flatMap(a => a.files.filter(f => !existsSync(join(assets, f))).map(f => `${a.id}: 缺 ${f}`));
     if (fileErrs.length || failAt === 'validate') throw new Error(`交付後檢查不通過:${fileErrs.join(';') || '測試注入'}`);
     writeFileSync(join(assets, journal.jsonTmp), JSON.stringify(next, null, 2) + '\n');
-    if (existsSync(target)) renameSync(target, join(assets, journal.jsonBak));
+    if (existsSync(target)) copyFileSync(target, join(assets, journal.jsonBak)); // 備份用複製,換上用一次 rename(assets.json 不會有消失的瞬間)
     renameSync(join(assets, journal.jsonTmp), target);
     journal.state = 'committed'; saveJournal();
   } catch (e) {
