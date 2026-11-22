@@ -62,6 +62,9 @@ start_session() { # <label> <dsn> <fifo> <out>
 start_session A "$DSN_A" "$W/a.fifo" "$W/a.out" & PA=$!
 start_session B "$DSN_B" "$W/b.fifo" "$W/b.out" & PB=$!
 exec 7>"$W/a.fifo"; exec 8>"$W/b.fifo"
+trap '' PIPE   # a session whose psql already exited must not kill the script on the next write;
+# FIFO writes use /usr/bin/printf: bash's builtin keeps a failed write buffered and flushes it into the next redirect
+ENDED_A=""; ENDED_B=""
 
 n=0; : > "$W/steps"
 wait_marker() { # <outfile> <marker> <seconds> -> 0 found
@@ -73,24 +76,26 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     A:*|B:*)
       s="${line%%:*}"; sql="${line#*:}"; sql="${sql# }"; n=$((n + 1))
-      if [ "$s" = A ]; then printf '%s\n\\echo __DBREV_STEP_%d__\n' "$sql" "$n" >&7; f="$W/a.out"
-      else printf '%s\n\\echo __DBREV_STEP_%d__\n' "$sql" "$n" >&8; f="$W/b.out"; fi
-      if wait_marker "$f" "__DBREV_STEP_${n}__" "$STEP_WAIT"; then st=done; else st=waiting; fi
+      wok=0
+      if [ "$s" = A ]; then f="$W/a.out"; [ -z "$ENDED_A" ] && /usr/bin/printf '%s\n\\echo __DBREV_STEP_%d__\n' "$sql" "$n" >&7 2>/dev/null && wok=1; [ $wok = 1 ] || ENDED_A=1
+      else f="$W/b.out"; [ -z "$ENDED_B" ] && /usr/bin/printf '%s\n\\echo __DBREV_STEP_%d__\n' "$sql" "$n" >&8 2>/dev/null && wok=1; [ $wok = 1 ] || ENDED_B=1; fi
+      if [ $wok = 0 ]; then st="not-sent(session $s ended)"
+      elif wait_marker "$f" "__DBREV_STEP_${n}__" "$STEP_WAIT"; then st=done; else st=waiting; fi
       echo "$n|$s|$st|$sql" >> "$W/steps"
       echo "step $n $s: $sql → $st"
       ;;
     SLEEP:*) sleep "$(echo "${line#SLEEP:}" | tr -d ' ')" ;;
   esac
 done < "$SCRIPT"
-exec 7>&-; exec 8>&-
+exec 7>&- 2>/dev/null || true; exec 8>&- 2>/dev/null || true
 k=0; while { kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; } && [ $k -lt 160 ]; do sleep 0.25; k=$((k + 1)); done
 
 # Attribute each ERROR to the step whose marker follows it in that session's output.
 seg_errors() { # <outfile> <step> -> "CODE message" lines between the previous marker and this one
   awk -v want="__DBREV_STEP_$2__" '
     /^__DBREV_STEP_[0-9]+__$/ { if ($0 == want) { print buf; found=1; exit } buf=""; next }
-    /ERROR: +[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]:/ { sub(/^.*ERROR: +/, ""); buf = buf (buf ? "; " : "") $0 }
-    END { if (!found && buf != "") print buf " (session ended before marker)" }' "$1"
+    /(ERROR|FATAL): +[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]:/ { sub(/^.*(ERROR|FATAL): +/, ""); buf = buf (buf ? "; " : "") $0 }
+    ' "$1"
 }
 echo "### results"
 : > "$W/codes"
@@ -99,12 +104,16 @@ while IFS='|' read -r i s st sql; do
   if grep -qx "__DBREV_STEP_${i}__" "$f"; then fin=finished; else fin="never-finished"; fi
   e="$(seg_errors "$f" "$i")"
   [ -n "$e" ] && echo "$e" | grep -oE '^[0-9A-Z]{5}' >> "$W/codes"
+  if [ -z "$e" ] && [ "$fin" != finished ]; then e="no result (session ended; see trailing errors)"; fi
   echo "step $i $s ($st → $fin): ${e:-ok}"
 done < "$W/steps"
 # errors after the last marker (e.g. at session end)
 for s in A B; do f="$W/a.out"; [ $s = B ] && f="$W/b.out"
-  tail_err="$(awk '/^__DBREV_STEP_[0-9]+__$/{buf=""; next} /ERROR: +[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]:/{sub(/^.*ERROR: +/,""); buf=buf (buf?"; ":"") $0} END{print buf}' "$f")"
+  tail_err="$(awk '/^__DBREV_STEP_[0-9]+__$/{buf=""; next} /(ERROR|FATAL): +[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]:/{sub(/^.*(ERROR|FATAL): +/,""); buf=buf (buf?"; ":"") $0} END{print buf}' "$f")"
   [ -z "$tail_err" ] || { echo "session $s trailing: $tail_err"; echo "$tail_err" | grep -oE '^[0-9A-Z]{5}' >> "$W/codes"; }
+  # connection failures carry no SQLSTATE in psql's output ("psql: error: … FATAL: …")
+  conn_err="$(grep -m1 '^psql: error:' "$f" | cut -c1-200 || true)"
+  [ -z "$conn_err" ] || { echo "session $s connect failed: $conn_err"; echo connect >> "$W/codes"; }
 done
 
 CP=0; CF=0
@@ -116,7 +125,7 @@ while IFS= read -r line; do
   echo "CHECK $v:$q=> expected '$exp' got '$got'"
 done < <(grep -E '^CHECK:' "$SCRIPT" || true)
 
-ERRJSON="$(sort "$W/codes" | uniq -c | awk '{printf "%s\"%s\":%d", (n++?",":""), $2, $1}')"
+ERRJSON="$(sort "$W/codes" | grep -v '^$' | uniq -c | awk '{printf "%s\"%s\":%d", (n++?",":""), $2, $1}')"
 DL=false; grep -qx 40P01 "$W/codes" && DL=true
 echo "{\"deadlock\":$DL,\"errors\":{${ERRJSON}},\"checks\":{\"pass\":$CP,\"fail\":$CF}}"
 [ $CF -eq 0 ]

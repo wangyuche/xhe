@@ -39,6 +39,9 @@ if [ -z "$MODULE" ]; then
 fi
 GOOSE_VER="$(awk '$1=="github.com/pressly/goose/v3"{print $2; exit} $1=="require" && $2=="github.com/pressly/goose/v3"{print $3; exit}' "$MODULE/go.mod")"
 [ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;goose 版本無法判定" 1
+case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
+grep -qE '^[[:space:]]*(replace[[:space:]]+)?github\.com/pressly/goose/v3([[:space:]]+v[^ ]+)?[[:space:]]*=>' "$MODULE/go.mod" \
+  && die "go.mod 對 goose 有 replace;kit 只會編上游版本,行為可能不同 → goose 相關實測標缺口" 1
 
 DIR="$(name_dir "$NAME")"; mkdir -p "$DIR/bin"
 WORK="$(mktemp -d "$DIR/goose.XXXXXX")"
@@ -84,8 +87,12 @@ case "$SUB" in
     load_state "$NAME"; verify_container "$NAME"
     guard_dsns "$DSN" ${DSN_ALLOW:+"$DSN_ALLOW"}
     FROM=$((10#$FROM)); [ -n "$TO" ] && TO=$((10#$TO)) || TO="$FROM"
+    UPDSN0="${DSN_ALLOW:-$DSN}"
     versions | grep -qx "$FROM" || die "--dir 裡沒有版本 $FROM" 1
     versions | grep -qx "$TO" || die "--dir 裡沒有版本 $TO" 1
+    [ "$TO" -ge "$FROM" ] || die "--to 不能小於 --from" 2
+    CUR0="$(goose_cmd "$UPDSN0" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1)"
+    [ -z "$CUR0" ] || [ "$CUR0" -le "$TO" ] || die "資料庫目前在版本 $CUR0,高於 --to $TO;roundtrip 會連帶 down 審查範圍外的 migration。先用 goose.sh run 退到 ≤ $TO,或改 --to" 1
     BEFORE="$(versions | awk -v f="$FROM" '$1<f{b=$1} END{print b+0}')"
     UPDSN="${DSN_ALLOW:-$DSN}"
     step() { # <label> <dsn-label> <dsn> <args...>; prints output, sets RC

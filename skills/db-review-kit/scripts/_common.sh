@@ -88,7 +88,7 @@ psql_dsn() {
 
 # ---------- isolated environment for go / goose ----------
 # Never inherits DATABASE_URL, TEST_*, PG*, GOOSE_* etc.: everything goes through env -i plus an allowlist.
-GO_NET_VARS="GOPROXY GOSUMDB GOPRIVATE GONOSUMDB GONOPROXY"
+GO_NET_VARS="GOPROXY GOSUMDB GOPRIVATE GONOSUMDB GONOPROXY GOINSECURE"
 PROXY_VARS="HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy"
 
 # Prints KEY=VALUE lines of the isolated base environment (one per line).
@@ -129,11 +129,14 @@ check_extra_env() {
     case "$kv" in *=*) ;; *) die "--env 需要 K=V:$kv" 2 ;; esac
     k="${kv%%=*}"; v="${kv#*=}"
     case "$k" in ""|*[!A-Za-z0-9_]*) die "環境變數名稱不合法:$k" 2 ;; esac
+    local ku; ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
     case "$v" in
       postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v" ;;
+      *://*) die "$k 的值是非 postgres 的 URL,拒絕" 4 ;;
+      *host=*|*hostaddr=*|*@*) die "$k 的值看起來是連線設定(host= / @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
       *)
-        case "$k" in
-          PG*|*DATABASE*|*DSN*|*_URL|*_URI) [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4 ;;
+        case "$ku" in
+          PG*|*DATABASE*|*DSN*|*_URL|*_URI|*DB*|*HOST*) [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4 ;;
         esac ;;
     esac
   done

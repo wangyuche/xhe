@@ -45,6 +45,11 @@ case "$HOLD_S" in *[!0-9]*|"") die "--hold-seconds 要是整數秒" 2 ;; esac
 [ -n "$MON" ] || MON="$DSN"
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN" ${HOLD_DSN:+"$HOLD_DSN"} ${PROBE_DSN:+"$PROBE_DSN"} "$MON"
+if [ -n "$HOLD" ]; then
+  # Seeing other roles' wait_event and cancelling their backends needs superuser (or pg_read_all_stats + pg_signal_backend).
+  priv="$(printf "SELECT rolsuper OR (pg_has_role(current_user, 'pg_read_all_stats', 'member') AND pg_has_role(current_user, 'pg_signal_backend', 'member')) FROM pg_roles WHERE rolname = current_user;\n" | psql_dsn "$MON" -qAt 2>&1 || true)"
+  [ "$priv" = t ] || die "--hold 模式的 --monitor-dsn 要是 superuser(或 pg_read_all_stats + pg_signal_backend)才能看到 / 取消其他角色的 session;請給 superuser DSN" 2
+fi
 
 WORK="$(mktemp -d "$(name_dir "$NAME")/locks.XXXXXX" 2>/dev/null || { mkdir -p "$(name_dir "$NAME")"; mktemp -d "$(name_dir "$NAME")/locks.XXXXXX"; })"
 PIDS=""

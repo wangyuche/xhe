@@ -24,7 +24,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$DSN" ] && [ -n "$Q" ] || die "需要 --dsn 與 --query / --file" 2
-case "$RUNS" in *[!0-9]*|"") die "--runs 要是整數" 2 ;; esac
+case "$RUNS" in *[!0-9]*|""|0) die "--runs 要是 ≥ 1 的整數" 2 ;; esac
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"
 Q="$(printf '%s' "$Q" | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
@@ -35,6 +35,7 @@ SCRIPT="$(i=0; while [ $i -le "$RUNS" ]; do printf 'BEGIN;\nEXPLAIN (ANALYZE, TI
 TIMES="$(printf '%s\n' "$SCRIPT" | psql_dsn "$DSN" -qAt | awk '
   /^Planning Time:/ { p = $3 }
   /^Execution Time:/ { n++; if (n > 1) printf "%.3f\n", p + $3 }')"
+[ -n "$TIMES" ] || { echo '{"runs":0,"ok":false,"error":"no timings parsed"}'; exit 1; }
 echo "$TIMES" | sort -n | awk -v runs="$RUNS" -v target="$TARGET" '
   { v[NR] = $1 }
   END {

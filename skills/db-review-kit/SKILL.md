@@ -40,12 +40,14 @@ bash <kit>/scripts/goose.sh <name> run --dir <migrations> --table <版本表> --
 bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本表> \
   --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶破壞性 Down 旗標的 DSN> --from <審查的第一版> [--to <最後一版>]
 # → 前一版 → up-to → down-to 前一版(不帶旗標)→ 被拒時用 --dsn-allow 再 down → up-to;每步印指令與輸出
+#   資料庫目前版本高於 --to、或 --to < --from → 拒絕;go.mod 對 goose 有 replace → 結束碼 1(goose 實測標缺口)
 #   最後一行 JSON:{"before","up","down_no_flag":"ok|rejected","down_with_flag":"ok|failed|no-allow-dsn|skipped","up_again","final_version","reject_message","ok"}
 
 # 鎖(一律 ROLLBACK)
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --goose-up <migration.sql>       # 交易內執行 Up,列出每個鎖與它會擋什麼
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
   --hold-dsn <dsn> --hold '<開著交易的語句>' --probe-dsn <app> --probe '<熱表寫入>' --monitor-dsn <superuser> [--lock-timeout 2s] [--hold-seconds 8]
+#   --hold 模式的 --monitor-dsn 必須是 superuser(或 pg_read_all_stats + pg_signal_backend),否則結束碼 2
 # → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)","ddl_blocked_by",…}
 #   NO TRANSACTION 檔(CREATE INDEX CONCURRENTLY 等)不能用 --goose-up(結束碼 1),改推導或手動 hold
 
@@ -60,7 +62,7 @@ bash <kit>/scripts/grants.sh <name> --matrix <矩陣檔> --dsn app=<mj_app DSN> 
 # 併發(兩個 session 依腳本交錯;每步超過 --step-wait 秒沒完成就標 waiting、繼續下一步)
 bash <kit>/scripts/race.sh <name> --script <腳本> --dsn A=<dsn> --dsn B=<dsn> [--check-dsn <superuser>] [--lock-timeout 10s]
 #   腳本行:SETUP: <sql> / A: <sql> / B: <sql> / SLEEP: <秒> / CHECK: <sql> => <預期>(每個語句一行)
-#   → 每步 done / waiting 與最終錯誤(錯誤歸到正確的步驟);JSON {"deadlock":bool,"errors":{"40P01":1},"checks":{…}};CHECK 不符結束碼 1
+#   → 每步 done / waiting 與最終錯誤(錯誤歸到正確的步驟);JSON {"deadlock":bool,"errors":{"40P01":1},"checks":{…}}(連線失敗記為 "connect");CHECK 不符結束碼 1
 
 # 種子與效能
 bash <kit>/scripts/seed.sh <name> --dsn <dsn> --file <專案種子腳本> --var n=300000          # 優先用專案的
@@ -84,9 +86,10 @@ bash <kit>/scripts/gotest.sh <name> --dir <模組目錄> --tags integration \
 
 - **docker 只用本機**:`DOCKER_HOST` 不是 `unix://`,或目前 context 的端點不是 `unix://` / `npipe://` → 結束碼 4,不執行任何 docker 指令。
 - **只連本容器**:每個 DSN 先過守門:`postgres://`、host 一定是 `127.0.0.1`、port 一定是本容器的埠;query 不能有 `host`、`hostaddr`、`port`、`service`、`servicefile`、`passfile`、`dbname`、`user`;多主機拒絕。psql 在容器內執行(DSN 改寫成容器內 `127.0.0.1:5432`),`env -i` + `PGPASSFILE=/dev/null`。
+- psql 在容器內經 `127.0.0.1` 連線,官方映像的 `pg_hba.conf` 對容器內 `127.0.0.1` 是 `trust`:**角色身分、LOGIN 屬性、`ALTER ROLE … SET` 都照實套用,但不驗證密碼**。要驗證密碼 / `pg_hba` 時,用主機端連線(例如 `gotest.sh` 的 Go 測試經映射埠連入,走 `scram-sha-256`)。
 - **每個 psql session** 帶 `statement_timeout`(預設 60s,`DBREV_STATEMENT_TIMEOUT`)與 `lock_timeout`(預設 5s,`DBREV_LOCK_TIMEOUT`);kit 預設放在 `options` 前面,DSN 自己的 `options` 優先。goose session 帶 `statement_timeout=300s`。
-- **go / goose 在 `env -i` 沙盒**:只有 `PATH`、`HOME=<tmp>/<name>/home`、`TMPDIR=<tmp>/<name>/gotmp`、`GOCACHE`、`GOMODCACHE`、`GOTOOLCHAIN=local`、`GOFLAGS=-mod=readonly`、`PGPASSFILE=/dev/null`、`PGSERVICEFILE=/dev/null`、Go 下載變數(`GOPROXY`、`GOSUMDB`、`GOPRIVATE`、`GONOSUMDB`、`GONOPROXY`,值取自沙盒外的 `go env`,保留 `go env -w` 的設定)與 `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`,加上呼叫時用 `--env` 明確給的變數。shell 的 `DATABASE_URL`、`TEST_*`、`PG*`、`GOOSE_*` 一律不繼承。`--env` 的值是 `postgres://` 時要過守門;名稱像連線設定(`PG*`、`*DATABASE*`、`*DSN*`、`*_URL`、`*_URI`)但值不是 URL → 結束碼 4。
-- **Go 快取用使用者真正的**(使用者 2026-11-22 決定):沙盒的 `GOMODCACHE` / `GOCACHE` 是沙盒外 `go env GOMODCACHE` / `go env GOCACHE` 的值(通常 `~/go/pkg/mod`、`~/Library/Caches/go-build`),不是暫存目錄,所以模組只有第一次下載。取不到時停止,不改用暫存目錄。goose CLI 與測試都用本機 Go 工具鏈,不在 Docker 裡跑。
+- **go / goose 在 `env -i` 沙盒**:只有 `PATH`、`HOME=<tmp>/<name>/home`、`TMPDIR=<tmp>/<name>/gotmp`、`GOCACHE`、`GOMODCACHE`、`GOTOOLCHAIN=local`、`GOFLAGS=-mod=readonly`、`PGPASSFILE=/dev/null`、`PGSERVICEFILE=/dev/null`、Go 下載變數(`GOPROXY`、`GOSUMDB`、`GOPRIVATE`、`GONOSUMDB`、`GONOPROXY`、`GOINSECURE`,值取自沙盒外的 `go env`,保留 `go env -w` 的設定)與 `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`,加上呼叫時用 `--env` 明確給的變數。shell 的 `DATABASE_URL`、`TEST_*`、`PG*`、`GOOSE_*` 一律不繼承。`--env` 的值是 `postgres://` 時要過守門;其他 URL、含 `host=` / `hostaddr=` / `@` 的值,或名稱像連線設定(不分大小寫:`PG*`、`*DATABASE*`、`*DSN*`、`*DB*`、`*HOST*`、`*_URL`、`*_URI`)但值不是 URL → 結束碼 4。
+- **Go 快取用使用者真正的**(使用者 2026-11-22 決定):沙盒的 `GOMODCACHE` / `GOCACHE` 是沙盒外 `go env GOMODCACHE` / `go env GOCACHE` 的值(通常 `~/go/pkg/mod`、`~/Library/Caches/go-build`),不是暫存目錄,所以模組只有第一次下載。取不到時停止,不改用暫存目錄。沙盒的 HOME 是暫存目錄,讀不到 `~/.netrc`、`~/.gitconfig`:私有模組要事先在模組快取裡,否則下載失敗(記為環境缺口)。goose CLI 與測試都用本機 Go 工具鏈,不在 Docker 裡跑。
 - **專案唯讀**:掛載一律 `readonly`;goose 只讀專案的 `*.sql`(複製到暫存目錄);`GOFLAGS=-mod=readonly` 不改 go.mod / go.sum;goose CLI 編到 `<tmp>/<name>/bin/`(`GOBIN` 在暫存目錄,不是全域安裝)。
 - **容器**:只操作 label `dbrev=<name>` 且名稱前綴 `dbrev-<name>-` 的容器;資料在 tmpfs(有 `size=`),沒有 volume;只綁 `127.0.0.1` 隨機埠。`pg.sh up` 失敗或中斷時 trap 刪容器;locks / race 結束時取消自己的 backend、收掉背景程序;goose / gotest 刪自己的暫存子目錄。
 - `gotest.sh` 會掃 `*_test.go` 裡寫死的連線字串並警告(例如寫死 `localhost:5432`);能否排除由使用者判斷(db-reviewer 判 BLOCKED)。

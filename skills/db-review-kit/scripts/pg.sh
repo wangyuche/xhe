@@ -114,6 +114,7 @@ case "$CMD" in
       for x in $STATE_RANDOM; do [ "${x%%=*}" = "$pv" ] && pw="${x#*=}"; done
       for kv in ${ENVS[@]+"${ENVS[@]}"}; do [ "${kv%%=*}" = "$pv" ] && pw="${kv#*=}"; done
       [ -n "$pw" ] || { cleanup_fail; die "--role $rs:$pv 不在 --env-random / --env 裡" 2; }
+      case "$r$pw" in *[!A-Za-z0-9_-]*) cleanup_fail; die "--role $rs:角色名稱與密碼只能是英數、底線、連字號(秘密請用 --env-random)" 2 ;; esac
       ROLES="$ROLES $r=$pw"
     done
     DBS="postgres"

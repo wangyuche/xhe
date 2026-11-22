@@ -28,7 +28,7 @@ def main(path, elapsed):
                 raw.append(line)
                 continue
             act = ev.get("Action")
-            pkg = ev.get("Package") or ev.get("ImportPath") or ""
+            pkg = ev.get("Package") or (ev.get("ImportPath") or "").split(" [", 1)[0]
             test = ev.get("Test")
             if act in ("output", "build-output"):
                 outputs.setdefault((pkg, test), []).append(ev.get("Output", ""))
