@@ -184,10 +184,10 @@ function centroidX(img, b) {
 
 export function density1x(dw, dh, frames = 1, want = 2) {
   let d = Math.min(want, 2048 / Math.max(dw, dh));
-  const base = +(Math.floor(dw * want) / dw).toFixed(4); // 沒受 2048 限制時的值(只差寬取整),低於它才算 lowered
+  const base = +(Math.floor(dw * want + 1e-9) / dw).toFixed(4); // 沒受 2048 限制時的值(只差寬取整),低於它才算 lowered
   for (let i = 0; i < 200; i++) {
     // 寬取整後,印出的 density = 寬 ÷ 顯示寬,高也用同一個 density 算(validate 用 round(顯示 × density) 比對)
-    const W = Math.floor(dw * d), dens = +(W / dw).toFixed(4), H = Math.round(dh * dens);
+    const W = Math.floor(dw * d + 1e-9), dens = +(W / dw).toFixed(4), H = Math.round(dh * dens);
     const { columns, rows } = sheetLayout(frames, W);
     // lowered:實際 density 低於要求(needs 指定或預設 2),agent 要列在已知限制;< 1 時 agent BLOCKED
     if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows, ...(dens < base - 1e-4 ? { lowered: true } : {}) };

@@ -34,12 +34,13 @@ skills:
 ## 工作流程
 
 ### 第 0 步(完成條件:全部通過,或回 BLOCKED;不改任何檔案)
+遊戲素材模式的順序:1 → 2 → 6 → 4 → 5 → 7(先驗證 needs 與檔案存在,再讀檔與估算;第 6 步不通過的項目全部記下,到第 7 步一起列出)。
 1. `mkdir -p <tmp>`(暫存目錄,不在專案內);簡報有模式所需欄位;`git rev-parse --show-toplevel` 成功;`git status --porcelain > <tmp>/git.base`。
 2. `node <kit>/scripts/comfy.mjs check > <tmp>/check.json`:成功,記下 `consistency_methods` 與 `workflows_available`。角色一致只能用 `consistency_methods` 列的方法與它的 `workflows`;`unsupported_consistency`(例如 IP-Adapter)是主機有、但 kit 沒有骨架的方法,不能用,也不要自己組 workflow。
 3. 風格試作且參考有網址:`node -v` ≥ 22,Google Chrome 存在。
 4. 一般 / 角色定裝 / 風格定稿 / 遊戲素材(有圖類素材或 bgm 時):讀 `art/STYLE.md`;一般模式另依需求文字比對各 `character.md` 的名稱與別名,讀出涉及的角色;遊戲素材依 needs 的 `character` 欄位。涉及的角色都讀 `character.md` 並 Read `ref.png`。
 5. 預估生成次數(圖與音訊,只算首次;去背在同一 workflow 不另計);超過 40 → BLOCKED;超過 30 時回報提醒「重出可能讓總數達 40 上限」。
-6. 遊戲素材:`node <kit>/schemas/validate.mjs needs <needs 路徑>` 通過;之後每個圖類項目跑 `sprite.mjs density`:`background` / `tile` 以外(sprite、frames、ui)算出 density < 1 → BLOCKED(政策:1x 檔案不得小於顯示尺寸,否則比顯示還糊;請遊戲端減少格數或縮小顯示尺寸),`background` / `tile` 允許 < 1(全螢幕背景本來就受 2048 上限),列在已知限制;有圖類素材或 bgm 時 `art/STYLE.md` 存在(bgm 的 tags 取它的氛圍);有透明圖類素材時 `background_removal` 不是空的(只有 opaque 背景 / 地圖塊時不需要);有角色的素材,該角色的 `ref.png` 與 `character.md` 都存在;有音訊時 `node <kit>/scripts/audio.mjs tools` 通過且 `audio_models` 有對應的 sfx / bgm;這次 needs 實際會用到的骨架都在 `workflows_available`:透明無角色 `qwen-t2i-sprite`、透明有角色 `qwen-edit-1ref-sprite`、不透明用 STYLE.md (a) 組的文生圖骨架(`qwen-t2i` / `flux-t2i` / `zimage-t2i`;(a) 組是 `qwen-t2i-canny`、需要參考圖的骨架或沒寫骨架時,改用 `workflows_available` 裡的 `qwen-t2i`,再沒有就 BLOCKED)、sfx `stable-audio-sfx`、bgm `ace-step-bgm`。透明素材的骨架只支援 Qwen 家族:check 沒有 Qwen-Image(無角色)或 Qwen-Image-Edit(有角色)的模型 → BLOCKED。
+6. 遊戲素材:`node <kit>/schemas/validate.mjs needs <needs 路徑>` 通過;之後每個圖類項目跑 `sprite.mjs density`:`background` / `tile` 以外(sprite、frames、ui)算出 density < 1 → 該項**跳過**並在回報列出原因(政策:1x 檔案不得小於顯示尺寸,否則比顯示還糊;請遊戲端減少格數或縮小顯示尺寸),其他素材照做;`background` / `tile` 允許 < 1(全螢幕背景本來就受 2048 上限),列在已知限制;有圖類素材或 bgm 時 `art/STYLE.md` 存在(bgm 的 tags 取它的氛圍);有透明圖類素材時 `background_removal` 不是空的(只有 opaque 背景 / 地圖塊時不需要);有角色的素材,該角色的 `ref.png` 與 `character.md` 都存在;有音訊時 `node <kit>/scripts/audio.mjs tools` 通過且 `audio_models` 有對應的 sfx / bgm;這次 needs 實際會用到的骨架都在 `workflows_available`:透明無角色 `qwen-t2i-sprite`、透明有角色 `qwen-edit-1ref-sprite`、不透明用 STYLE.md (a) 組的文生圖骨架(`qwen-t2i` / `flux-t2i` / `zimage-t2i`;(a) 組是 `qwen-t2i-canny`、需要參考圖的骨架或沒寫骨架時,改用 `workflows_available` 裡的 `qwen-t2i`,再沒有就 BLOCKED)、sfx `stable-audio-sfx`、bgm `ace-step-bgm`。透明素材的骨架只支援 Qwen 家族:check 沒有 Qwen-Image(無角色)或 Qwen-Image-Edit(有角色)的模型 → BLOCKED;不透明素材要走 Qwen 備援(見下方「遊戲素材」第 4 點)但 check `defaults` 沒有 `qwen_unet` / `qwen_clip` / `qwen_vae` → BLOCKED。
 7. 逐條檢查「遇到以下情況要停下來」,同時成立的全部列出。
 
 ### 風格試作(完成條件:2–4 張 + manifest,回 BLOCKED)
@@ -150,5 +151,5 @@ skills:
 - 需求要求仿製既有作品或真實人物。
 - 風格試作沒有風格描述,或描述互相矛盾。
 - 預估生成次數(圖與音訊,首次)超過 40。
-- 遊戲素材:簡報沒有 needs 路徑、needs 不合 schema;圖類素材需要透明但 `background_removal` 為空;圖類素材或 bgm 但 `art/STYLE.md` 不存在;有 `character` 的素材但該角色沒有 `ref.png` 或 `character.md`;需要音訊但 `audio.mjs tools` 失敗或 `audio_models` 沒有對應模型;這次要用的骨架不在 `workflows_available`;透明素材但 check 沒有對應的 Qwen 模型;`background` / `tile` 以外的圖類素材 `sprite.mjs density` 算出 density < 1。
+- 遊戲素材:簡報沒有 needs 路徑、needs 不合 schema;圖類素材需要透明但 `background_removal` 為空;圖類素材或 bgm 但 `art/STYLE.md` 不存在;有 `character` 的素材但該角色沒有 `ref.png` 或 `character.md`;需要音訊但 `audio.mjs tools` 失敗或 `audio_models` 沒有對應模型;這次要用的骨架不在 `workflows_available`;透明素材但 check 沒有對應的 Qwen 模型;不透明素材要走 Qwen 備援但 check `defaults` 沒有 Qwen-Image 模型。(`background` / `tile` 以外的圖類素材 density < 1 不停,該項跳過並列出。)
 - 風格試作完成(請使用者選)。

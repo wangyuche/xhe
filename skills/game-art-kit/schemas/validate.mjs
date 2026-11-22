@@ -84,7 +84,7 @@ function semanticItem(kind, a, i, root, errs) {
     }
     if (kind === 'needs' && a.width && a.height && a.density) {
       // 和 sprite.mjs density 同樣取整:寬無條件捨去、高用實際 density 四捨五入
-      const W = Math.floor(a.width * a.density), H = Math.round(a.height * (W / a.width)), n = a.frames?.count ?? 1;
+      const W = Math.floor(a.width * a.density + 1e-9), H = Math.round(a.height * (W / a.width)), n = a.frames?.count ?? 1;
       const cols = Math.max(1, Math.min(n, Math.floor(2048 / W))), rows = Math.ceil(n / cols);
       if (Math.max(W, H) > 2048 || H * rows > 2048) errs.push(`${p}: 顯示尺寸 × density 超過 2048(PX-RES-01);降低 density 或不指定(交給 sprite.mjs density 算)`);
     }
