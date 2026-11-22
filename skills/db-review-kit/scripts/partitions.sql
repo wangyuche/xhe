@@ -27,7 +27,7 @@ ORDER BY 1, 4;
 CREATE TEMP VIEW dbrev_runway AS
 WITH b AS (
   SELECT i.inhparent AS parent,
-         (regexp_match(pg_get_expr(c.relpartbound, c.oid), 'TO \(''([^'']+)''\)'))[1] AS upper_txt
+         (regexp_match(pg_get_expr(c.relpartbound, c.oid), 'TO [(]''([^'']+)''[)]'))[1] AS upper_txt
   FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
   JOIN pg_partitioned_table pt ON pt.partrelid = i.inhparent AND pt.partstrat = 'r'
 )

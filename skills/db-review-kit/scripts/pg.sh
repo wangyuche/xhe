@@ -83,7 +83,7 @@ case "$CMD" in
     done
     STATE_RANDOM=""
     for v in ${RANDOMS[@]+"${RANDOMS[@]}"}; do
-      case "$v" in ""|*[!A-Za-z0-9_]*) die "--env-random 名稱不合法:$v" 2 ;; esac
+      case "$v" in ""|*[!A-Za-z0-9_]*) die "--env-random 名稱不合法:$v" 2 ;; PGDATA|POSTGRES_USER) die "$v 不能用 --env-random 設定" 2 ;; esac
       [ "$v" = "POSTGRES_PASSWORD" ] && continue   # always random already
       val="$(rand_hex 16)"; RUNARGS+=(-e "$v=$val"); STATE_RANDOM="$STATE_RANDOM $v=$val"
     done

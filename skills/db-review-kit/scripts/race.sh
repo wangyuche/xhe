@@ -36,7 +36,8 @@ case "$LT" in *[0-9]ms|*[0-9]s|*[0-9]min) ;; *) die "--lock-timeout 要帶單位
 printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式例:10s" 2
 lt_ms=$(printf '%s' "$LT" | awk '/ms$/{print $0+0; next} /min$/{print ($0+0)*60000; next} {print ($0+0)*1000}')
 [ "$lt_ms" -gt 1000 ] || die "--lock-timeout 要大於 deadlock_timeout(1s),否則 deadlock 會被當成 lock timeout" 2
-# SETUP / A / B are checked whole; CHECK only up to its LAST "=>" (the rest is the expected text, never sent to psql)
+# SETUP / A / B are checked whole; CHECK only up to its LAST "=>" (the rest is the expected text, never sent to psql).
+# The check is per raw line (no cross-line lexing), so lines sent to different sessions cannot hide each other.
 bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' || true; grep -E '^CHECK:' "$SCRIPT" | sed -E 's/^CHECK:[[:space:]]*//; s/(.*)=>.*$/\1/' || true; } \
   | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
   || die "腳本裡有不允許的 psql 指令($bad),拒絕" 4

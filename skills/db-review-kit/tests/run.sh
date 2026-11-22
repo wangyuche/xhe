@@ -300,7 +300,7 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
-for q in "\\echo it's
+for q in 'SELECT 1 \echo $$ \! id' "SELECT E'a\\nb';" "\\echo it's
 \\! id
 \\echo '" "\\echo 'a\\'' \\! id" '\echo $a$ \! id $a$' '\set x `id`' '\echo -- \! id' "-- don't do this
 \! id
@@ -312,6 +312,9 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad2.txt" --dsn A="$MIG" --dsn 
 printf '%s\n' 'A: BEGIN;' 'A: UPDATE fx.accounts SET name = name WHERE false' > "$WORK/race-nosemi.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-nosemi.txt" --dsn A="$MIG" --dsn B="$MIG" --check-dsn "$SU" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:A/B 行沒有分號 → 用法錯誤" || bad "race 無分號" "$o"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'check-dsn' && ok "race.sh:A/B 不同角色且 check DSN 不是 superuser → 拒絕" || bad "race check-dsn 權限" "$o"
+printf '%s\n' "A: SELECT 'x;" 'B: SELECT 1 \! touch /tmp/pwn;' > "$WORK/race-bad3.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad3.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:跨 session 的未閉合引號藏不住 \\!" || bad "race 跨 session" "$o"
+o="$(bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" -- -dir "$FX/migrations" fix 2>&1)"; [ $? -eq 2 ] && ok "goose.sh run:goose 旗標 / fix / create → 拒絕(不寫專案檔)" || bad "goose run 旗標" "$o"
 printf '%s\n' 'A: \c host=10.0.0.5 dbname=prod' > "$WORK/race-bad.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:腳本裡有 \\c → 拒絕" || bad "race \\c" "$o"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$MIG" --lock-timeout 500ms 2>&1)"; [ $? -eq 2 ] && ok "race.sh:--lock-timeout ≤ 1s → 用法錯誤" || bad "race lock-timeout" "$o"

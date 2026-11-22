@@ -98,6 +98,8 @@ case "$SUB" in
   run)
     [ -n "$TABLE" ] && [ -n "$DSN" ] || die "run 需要 --table 與 --dsn" 2
     [ $# -ge 1 ] || die "run 需要 -- <goose 指令>" 2
+    for a in "$@"; do case "$a" in -*) die "goose.sh run 不接受 goose 旗標($a);-dir / -table 由 kit 設定" 2 ;; esac; done
+    case "$1" in create|fix) die "goose.sh run 不執行會寫檔的指令($1)" 2 ;; esac
     load_state "$NAME"; verify_container "$NAME"; guard_dsns "$DSN"
     goose_cmd "$DSN" "$@"
     ;;

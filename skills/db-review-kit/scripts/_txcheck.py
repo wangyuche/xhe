@@ -5,7 +5,8 @@ Removed first (so they never count): comments, string literals (incl. E'' backsl
 dollar-quoted bodies ($$…$$, $tag$…$tag$) and SQL-standard bodies (BEGIN ATOMIC … END, CASE … END nested).
 Any backslash left outside those is a psql meta-command (\\g, \\c, \\gexec …) and is refused.
 Usage: _txcheck.py            (check stdin)
-       _txcheck.py --connect  (psql scripts: allow only \\if \\set \\echo \\pset \\gset … ; refuse \\c \\! \\o \\copy \\i …)
+       _txcheck.py --connect  (psql scripts: a backslash only as one allowed meta-command at line start, or a trailing
+                               \\gset; refuse \\c \\! \\o \\copy \\i …, backticks, and backslashes in SQL text)
 """
 import re
 import sys
@@ -110,32 +111,26 @@ def main():
     if "--connect" in sys.argv[1:]:
         allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
-        # 1) Lines starting with a backslash are psql meta-commands; psql parses their arguments up to end of line with
-        #    its own rules, so validate each line on its own (exactly one backslash, allowed command, no backtick) and
-        #    then remove it, so a stray quote in it cannot hide later lines from the SQL scan.
-        sql_lines = []
+        # psql's own lexer decides where a meta-command starts, and emulating it has proven fragile. So in script mode a
+        # backslash is only accepted in two exact shapes, checked per raw line (no SQL lexing involved):
+        #   - a line that starts with an allowed meta-command and has exactly one backslash and no backtick;
+        #   - an SQL line ending in "\\gset [prefix]" with exactly one backslash.
+        # Any other backslash (in SQL text, literals, comments) is refused: write chr(92) instead.
         for line in raw.splitlines():
             st = line.lstrip()
-            if not st.startswith("\\"):
-                sql_lines.append(line)
+            if "\\" not in line:
                 continue
-            cmd = re.match(r"\\([A-Za-z!?]*)", st).group(1)
-            if line.count("\\") > 1 or "`" in line or cmd not in allowed:
-                print("psql meta-command not allowed: " + st[:60])
+            if "`" in line or line.count("\\") != 1:
+                print("backslash / backtick not allowed here: " + st[:60])
                 return 1
-            sql_lines.append("")
-        # 2) SQL lines: psql's SQL lexer does carry quotes across lines, like strip(); comments are kept (stricter).
-        text = strip("\n".join(sql_lines), keep_comments=True)
-        if "`" in text:
-            print("backtick not allowed: " + next(l for l in text.splitlines() if "`" in l).strip()[:60])
-            return 1
-        m = re.search(r"\\([A-Za-z!?]*)", text)
-        if m:   # a meta-command after SQL on the same line (e.g. SELECT 1 \\g |sh): only allowed ones, still one per line
-            for mm in re.finditer(r"\\([A-Za-z!?]*)", text):
-                if mm.group(1) not in allowed:
-                    line = text[text.rfind("\n", 0, mm.start()) + 1:].split("\n", 1)[0]
-                    print("psql meta-command not allowed: \\" + mm.group(1) + " (" + line.strip()[:60] + ")")
+            if st.startswith("\\"):
+                cmd = re.match(r"\\([A-Za-z!?]*)", st).group(1)
+                if cmd not in allowed:
+                    print("psql meta-command not allowed: " + st[:60])
                     return 1
+            elif not re.search(r"\\gset(\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$", line):
+                print("backslash in an SQL line is only allowed as a trailing \\gset: " + st[:60])
+                return 1
         return 0
     text = strip(raw)
     if "\\" in text:

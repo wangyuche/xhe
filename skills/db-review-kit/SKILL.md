@@ -30,7 +30,8 @@ bash <kit>/scripts/pg.sh up <name> --image <設定的映像> \
 #   init 腳本失敗或容器提早結束:印最後 40 行 log、刪容器、結束碼 1。同名容器已存在:結束碼 1(先 gc)
 bash <kit>/scripts/pg.sh dsn <name> <角色> <庫> [--options '-c mj.allow_data_down=on']
 bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c …]   # SQL 從 stdin(容器內 psql,看不到主機檔案,用 < 檔案)
-#   不接受連線參數(-d -h -p -U);psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv
+#   不接受連線參數(-d -h -p -U);反斜線只能出現在「行首的一個允許指令」或「行尾的 \gset」,
+#   SQL 文字裡的反斜線(含 E'' 字串)一律拒絕(改用 chr(92));psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv
 #   (\c、\!、\o、\g |…、\copy、\i 等 → 結束碼 4;seed.sh --file 同樣)
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
 bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄)
@@ -103,6 +104,8 @@ bash <kit>/scripts/gotest.sh <name> --dir <模組目錄> --tags integration \
 - 暫存根目錄與 `<name>/` 必須是目前使用者擁有的一般目錄(0700),`state.env` 與 goose 執行檔也要是自己的;否則結束碼 4(Linux 共用 `/tmp` 時防止別人預放檔案)。
 - `explain.sh` 的查詢只能是一個語句。
 - `gotest.sh` 會掃 `*_test.go` 裡寫死的連線字串並警告(任何 `postgres://…`、`host=…`、`localhost:5432` / `127.0.0.1:5432`);能否排除由使用者判斷(db-reviewer 判 BLOCKED)。
+
+**網路限制(腳本擋不住)**:暫存容器在 Docker 預設 bridge 網路,能連外。DSN 守門只管 kit 自己的連線;被審的 SQL 以 superuser 執行時,`dblink`、`postgres_fdw`、`COPY … FROM PROGRAM` 仍可能連到別的主機。db-reviewer 審到這類語句時不在容器實測,改推導並標明。
 
 腳本擋不住的(文字規則,由 db-reviewer 遵守):不讀 `.env` / secret、不用 `kubectl` / `gcloud` / `cnpg`、不 `go get` / `go mod tidy`。
 
