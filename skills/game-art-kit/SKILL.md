@@ -27,7 +27,7 @@ node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
 #   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 180)。預設值已符合下面的規則。兩者相加要比呼叫端(例如 Bash 工具,最長 600 秒)的逾時
-#   少 180 秒以上(時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
+#   少 180 秒以上(送出前查 `/object_info` 上限 15 秒;時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
 #   → <目錄>/<檔名>.png(去背骨架是 RGBA)或 <檔名>.<伺服器給的音訊副檔名>(通常 .flac)、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);
 #     印 {"status":"ok","seconds":…,"files":[{file,width,height,channels} 或 {file,kind:"audio",bytes}]}
 #   逾時印 {"status":"timeout","reason":"run|queue|total","seconds":<設定的上限>,"elapsed":<實際秒數>}
@@ -83,4 +83,4 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 ## 遊戲素材介面(`schemas/`)
 
-`needs.schema.json`(遊戲端寫 `assets.needs.json`)與 `assets.schema.json`(美術寫 `art/assets/assets.json`)。重點:`width` / `height` 是設計座標的**顯示尺寸**;1x 檔案 = 顯示 × `density`(圖示 / 按鈕 / 角色預設 2,背景與全螢幕類取 `min(2, 2048 ÷ 顯示最長邊)`);`frames` 的尺寸是單格;音訊只有 `durationSec` / `loop`;`nineSlice1x` = `nineSlice` × density 四捨五入;`review` 一律先寫 `pending`。完整定義見 `agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」。
+`needs.schema.json`(遊戲端寫 `assets.needs.json`)與 `assets.schema.json`(美術寫 `art/assets/assets.json`)。重點:`width` / `height` 是設計座標的**顯示尺寸**;1x 檔案 = 顯示 × `density`(預設 `min(2, 2048 ÷ 顯示最長邊)`:小素材為 2,任何類型的 1x 都不超過 2048);`frames` 的尺寸是單格;音訊只有 `durationSec` / `loop`;`nineSlice1x` = `nineSlice` × density 四捨五入;`review` 一律先寫 `pending`。完整定義見 `agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」。

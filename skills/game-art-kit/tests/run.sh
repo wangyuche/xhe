@@ -130,8 +130,8 @@ echo 'see http://comfy/view' > "$W/s/b.md"; o="$(C scrub-check "$W/s" --url http
 # 8. 遊戲素材模式:去背、音訊、雲端節點、sprite.mjs、audio.mjs、介面 schema
 c="$(C check)"
 echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const bg=d.background_removal;const w=d.workflows_available;
-const ok=bg.length===1&&bg[0].node==="RMBG"&&bg[0].models.join()==="RMBG-2.0"&&d.audio_models.sfx.length===1&&d.audio_models.bgm.length===1&&w["qwen-t2i-sprite"]&&w["qwen-edit-1ref-sprite"]&&w["stable-audio-sfx"]&&w["ace-step-bgm"]&&d.defaults.sfx_clip==="t5gemma_b_b_ul2.safetensors";process.exit(ok?0:1)' \
-  && ok "check:本機去背只列模型檔存在的選項(BEN 只有 model.py 不列)、音訊模型與 sprite / 音訊骨架可用" || bad "check 去背 / 音訊" "$c"
+const ok=bg.length===1&&bg[0].node==="RMBG"&&bg[0].models.join()==="RMBG-2.0"&&d.audio_models.sfx.length===1&&d.audio_models.bgm.length===1&&w["qwen-t2i-sprite"]&&w["qwen-edit-1ref-sprite"]&&w["stable-audio-sfx"]&&w["ace-step-bgm"]&&d.defaults.sfx_clip==="t5gemma_b_b_ul2.safetensors"&&d.defaults.bgm_ckpt==="ace_step_1.5_turbo_aio.safetensors";process.exit(ok?0:1)' \
+  && ok "check:本機去背只列檔案齊全的選項(BEN / BEN2 缺檔不列)、音訊模型(ACE-Step 只配 1.5)與 sprite / 音訊骨架可用" || bad "check 去背 / 音訊" "$c"
 P3=$((PORT - 9000))
 FAKE_NO_RMBG=1 FAKE_NO_AUDIO=1 node "$K/tests/fake-comfy.mjs" "$P3" "$W/req3.log" > "$W/fake3.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake3.out" 2>/dev/null && break; sleep 0.1; done
@@ -191,6 +191,14 @@ o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui.png" --width 96 --height 240 --margin 
   && o3="$(S check "$W/sp/ui.png" --width 96 --height 240 --full-bleed)" && ok "sprite.mjs fit --margin 0(UI / 九宮格):不留透明邊,check --full-bleed 通過" || bad "sprite margin 0" "$o $o2 $o3"
 o="$(S check "$W/sp/ui.png" --width 96 --height 240)"; [ $? -eq 1 ] && ok "sprite.mjs check:不加 --full-bleed 時貼邊的 UI 不通過外框檢查" || bad "sprite full-bleed 對照" "$o"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui2.png" --width 240 --height 100 --margin 0 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '比例' && ok "sprite.mjs fit --margin 0:比例差太多 → 失敗(不拉伸變形)" || bad "sprite margin 0 比例" "$o"
+node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; d[o] = 90; d[o + 3] = (x >= 100 && x < 200 && y >= 100 && y < 380) ? 255 : 3; }
+writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/noisy.png"
+o="$(S info "$W/sp/noisy.png")" && echo "$o" | grep -q '"bbox":{"x":100,"y":100,"w":100,"h":280}' && o2="$(S fit "$W/sp/noisy.png" --out "$W/sp/noisy-fit.png" --width 120 --height 160)" && o3="$(S check "$W/sp/noisy-fit.png" --width 120 --height 160)" \
+  && ok "sprite.mjs:去背殘留的低 alpha 雜訊(< 8)不算主體" || bad "sprite 低 alpha 雜訊" "$o $o2 $o3"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/big.png" --width 2400 --height 1600 --margin 0 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'PX-RES-01' && ok "sprite.mjs fit:1x 超過 2048 → 結束碼 2(提示 density 上限)" || bad "sprite 2048 上限" "$o"
 mkdir -p "$W/lnk"; ln -s "$K" "$W/lnk/kit"
 o="$(node "$W/lnk/kit/scripts/sprite.mjs" check "$W/sp/dirty.png" --width 300 --height 400)"; rc=$?
 o2="$(node "$W/lnk/kit/schemas/validate.mjs" needs "$W/sp/dirty.png")"; rc2=$?
@@ -232,6 +240,7 @@ if A tools >/dev/null 2>&1; then
   ffmpeg -v error -y -f lavfi -i "sine=f=220:d=6.5,volume=0.5" -f lavfi -i "sine=f=330:d=6.5,volume=0.3" -filter_complex "[0][1]amix=inputs=2,aformat=sample_rates=48000:channel_layouts=stereo" "$W/au/music.wav"
   o="$(A process "$W/au/music.wav" --type bgm --duration 6 --loop --out "$W/au" --name bgm.stage1)" && echo "$o" | grep -q '"loop":true' \
     && o2="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --loop)" && ok "audio.mjs bgm:交叉淡化循環、−18 LUFS、接縫檢查通過" || bad "audio bgm loop" "$o $o2"
+  o="$(A process "$W/au/click.wav" --type bgm --duration 0.3 --out "$W/au" --name x 2>&1)"; [ $? -eq 2 ] && ok "audio.mjs:配樂短於 0.4 秒 → 結束碼 2" || bad "audio 短配樂" "$o"
   o="$(A process "$W/au/music.wav" --type bgm --duration 6.3 --loop --out "$W/au" --name x 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'duration + 1' && ok "audio.mjs:--loop 輸入不夠長 → 結束碼 2 並提示生成長度" || bad "audio loop 太短" "$o"
   o="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 20)"; [ $? -eq 1 ] && echo "$o" | grep -q '長度' && ok "audio.mjs check:長度不符 → 不通過" || bad "audio check 長度" "$o"
   ffmpeg -v error -y -f lavfi -i "sine=f=440:d=2,volume=8" "$W/au/loud.ogg"; ffmpeg -v error -y -f lavfi -i "sine=f=440:d=2,volume=8" "$W/au/loud.m4a"
@@ -255,6 +264,8 @@ echo '{"version":1,"assets":[{"id":"sfx.click","type":"sfx","group":"ui","files"
 o="$(V assets "$W/v/a3.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'assets\[1\]: 缺少 lufs' && ! echo "$o" | grep -q 'assets\[0\]' && ok "schema:短音效 normalized: peak 不需要 lufs,一般音訊仍必填" || bad "schema normalized" "$o"
 echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"ui.x","type":"ui","group":"l","purpose":"x","width":10,"height":10,"nineSlice":20},{"id":"a.b","type":"sfx","group":"l","purpose":"x","durationSec":1}]}' > "$W/v/crash.json"
 o="$(V needs "$W/v/crash.json" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '"ok":false' && echo "$o" | grep -q 'nineSlice: 應為 array' && ok "schema:型別錯誤只回報錯誤,不丟例外" || bad "schema 型別錯誤崩潰" "$o"
+echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"a.b","group":"l","purpose":"x","width":10,"height":10}]}' > "$W/v/notype.json"
+o="$(V needs "$W/v/notype.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '缺少 type' && ! echo "$o" | grep -q 'durationSec' && ok "schema:缺 type 只報缺 type,不疊出矛盾的錯誤" || bad "schema 缺 type" "$o"
 
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束

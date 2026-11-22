@@ -23,7 +23,7 @@ let MODELS = {
   diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors'],
   text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5gemma_b_b_ul2.safetensors'],
   vae: ['qwen_image_vae.safetensors', 'ae.safetensors'], loras: ['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'],
-  checkpoints: NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors'], controlnet: [], clip_vision: [], style_models: [],
+  checkpoints: NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors', 'ace_step_v1_3.5b.safetensors'], controlnet: [], clip_vision: [], style_models: [],
   // RMBG-2.0 檔案齊全;BEN 少權重檔、BEN2 少 BEN2.py → 不應列出
   rmbg: NO_RMBG ? [] : ['RMBG-2.0/model.safetensors', 'RMBG-2.0/config.json', 'RMBG-2.0/birefnet.py', 'RMBG-2.0/BiRefNet_config.py', 'RMBG-2.0/.cache/x.metadata', 'BEN/model.py', 'BEN2/BEN2_Base.pth'].map(f => f.replace(/\//g, SEP)), background_removal: [],
 };

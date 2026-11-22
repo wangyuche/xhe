@@ -106,6 +106,7 @@ function family(name) {
   if (/sdxl|(^|[_-])xl([_.-])|pony|illustrious/.test(n)) return 'sdxl';
   if (/sd.?1\.?5|v1-5/.test(n)) return 'sd15';
   if (/stable.?audio/.test(n)) return 'stable-audio';
+  if (/ace.?step.?(v)?1[._]5/.test(n)) return 'ace-step-1.5';
   if (/ace.?step/.test(n)) return 'ace-step';
   return '未知';
 }
@@ -135,7 +136,7 @@ async function check() {
     // Stable Audio 3 配 t5gemma;Stable Audio Open 配 t5-base(同家族才配對)
     sfx_ckpt: pick(models.checkpoints, /stable.?audio.?3.*sfx/) ?? pick(models.checkpoints, /stable.?audio.?3/) ?? pick(models.checkpoints, /stable.?audio.?open/),
     sfx_clip: null,
-    bgm_ckpt: pick(models.checkpoints, /ace.?step/),
+    bgm_ckpt: pick(models.checkpoints, /ace.?step.?(v)?1[._]5/),
   };
   // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
   // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
@@ -196,7 +197,7 @@ async function check() {
     unsupported_background_removal: unsupportedBg,
     audio_models: {
       sfx: workflows['stable-audio-sfx'] ? [d.sfx_ckpt] : [],
-      bgm: workflows['ace-step-bgm'] ? models.checkpoints.filter(n => /ace.?step/i.test(n)) : [],
+      bgm: workflows['ace-step-bgm'] ? [d.bgm_ckpt] : [],
     },
     workflows_available: workflows,
     defaults: d,
@@ -292,7 +293,8 @@ async function run() {
   const cloudByName = classes.filter(c => CLOUD.test(c));
   if (cloudByName.length) die(`workflow 含雲端 API 節點,不能用:${cloudByName.join(', ')}`, 2);
   {
-    const oi = await json('/object_info', { timeoutMs: 60000 });
+    // 15 秒上限(計入呼叫端的時間預算,見 SKILL.md)
+    const oi = await json('/object_info', { timeoutMs: 15000 });
     if (oi.__status) die(`/object_info 回 HTTP ${oi.__status}`, 3);
     const api = classes.filter(c => oi[c]?.api_node === true);
     if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);

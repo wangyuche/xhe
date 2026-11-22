@@ -74,7 +74,7 @@ skills:
 
 ### 遊戲素材(完成條件:needs 每項都在 assets.json,或列為跳過 / 失敗)
 1. 產出目錄:原圖、下載的音訊、manifest、workflow 放 `art/out/<日期>-assets/`;交付檔放 `art/assets/<group>/<id>.png`、`art/assets/<group>/<id>.ogg` 與 `.m4a`。assets.json 已有同 id、簡報沒寫「重做 <id>」→ 跳過並列出。
-2. 尺寸:1x = 顯示尺寸(needs 的 `width` / `height`)× density。density 照 needs;沒寫時有 `character` 或 `ui` / `sprite` 類為 2,`background` / `tile` 取 `min(2, 2048 ÷ 顯示最長邊)`。生成解析度選和 1x 同比例、長邊約 1024 的 16 倍數(例如 1x 240×320 → 768×1024)。
+2. 尺寸:1x = 顯示尺寸(needs 的 `width` / `height`)× density。density 照 needs;沒寫時取 `min(2, 2048 ÷ 顯示最長邊)`(小素材就是 2;任何類型的 1x 都不超過 2048,PX-RES-01)。生成解析度選和 1x 同比例、長邊約 1024 的 16 倍數(例如 1x 240×320 → 768×1024)。
 3. **透明素材**(`sprite` / `frames` / `ui`,且 `opaque` 不是 true):
    - 沒有角色:`qwen-t2i-sprite`;有 `character`:上傳 ref,用 `qwen-edit-1ref-sprite`(`the character in image 1, <姿勢>`)。`bg_model` 用 `background_removal[0].models` 第一個(優先 `RMBG-2.0`)。提示詞 = STYLE.md 正向基底 + 角色提示詞 + 素材內容 + `plain flat light grey background, single subject, full body, centered`(UI:`flat game UI element, front view, centered`)。
    - `node <kit>/scripts/sprite.mjs fit <下載的 png>... --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高> --align <有 character 用 bottom,否則 center>`;`frames` 把同一動作的所有格一次給 fit(同一縮放比例,印出 columns)。**`ui` 類(尤其有 `nineSlice`)加 `--margin 0`**:裁邊後等比放滿 1x、不留透明邊,切線才對齊圖的邊緣;裁切後比例和 1x 差超過 3% 會失敗(結束碼 1),換 seed 或調整提示詞重出(算一次重出)。

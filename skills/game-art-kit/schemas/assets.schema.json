@@ -44,12 +44,12 @@
         "review": { "enum": ["pending", "approved"] }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "$ref": "#/$defs/imageType" } } },
+        { "if": { "properties": { "type": { "$ref": "#/$defs/imageType" } }, "required": ["type"] },
           "then": { "required": ["width", "height", "density", "anchor"], "forbidden": ["durationSec", "loop", "lufs", "normalized"] } },
-        { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } } },
+        { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } }, "required": ["type"] },
           "then": { "required": ["durationSec"], "forbidden": ["width", "height", "density", "frames", "anchor", "nineSlice", "nineSlice1x", "tileable", "opaque", "character"] } },
-        { "if": { "properties": { "normalized": { "const": "peak" } }, "required": ["normalized"] }, "then": { "forbidden": ["lufs"] }, "else": { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } } }, "then": { "required": ["lufs"] } } },
-        { "if": { "properties": { "type": { "const": "frames" } } }, "then": { "required": ["frames"] }, "else": { "forbidden": ["frames"] } },
+        { "if": { "properties": { "normalized": { "const": "peak" } }, "required": ["normalized"] }, "then": { "forbidden": ["lufs"] }, "else": { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } }, "required": ["type"] }, "then": { "required": ["lufs"] } } },
+        { "if": { "properties": { "type": { "const": "frames" } }, "required": ["type"] }, "then": { "required": ["frames"] }, "else": { "forbidden": ["frames"] } },
         { "if": { "required": ["nineSlice"] }, "then": { "required": ["nineSlice1x"] } }
       ]
     }

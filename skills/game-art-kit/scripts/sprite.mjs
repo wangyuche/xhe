@@ -65,9 +65,14 @@ export function decodePng(buf) {
       const s = (j) => sample(y, x * ch + j);
       if (ch === 1 || ch === 2) { const g = s(0); rgba[o] = rgba[o + 1] = rgba[o + 2] = g; rgba[o + 3] = ch === 2 ? s(1) : 255; }
       else { rgba[o] = s(0); rgba[o + 1] = s(1); rgba[o + 2] = s(2); rgba[o + 3] = ch === 4 ? s(3) : 255; }
+      // 灰階 / RGB 的 tRNS 色鍵:等於該色的像素透明
+      if (trns && (ct === 0 || ct === 2)) {
+        const key = (j) => trns.readUInt16BE(j * 2) >> (depth === 16 ? 8 : 0);
+        if (ct === 0 ? s(0) === key(0) : s(0) === key(0) && s(1) === key(1) && s(2) === key(2)) rgba[o + 3] = 0;
+      }
     }
   }
-  return { width: w, height: h, data: rgba, hasAlpha: ct === 4 || ct === 6 || (ct === 3 && !!trns) };
+  return { width: w, height: h, data: rgba, hasAlpha: ct === 4 || ct === 6 || !!trns };
 }
 
 export function encodePng({ width: w, height: h, data }) {
@@ -80,10 +85,12 @@ export function encodePng({ width: w, height: h, data }) {
 
 const blank = (w, h) => ({ width: w, height: h, data: Buffer.alloc(w * h * 4) });
 
-// alpha > 0 的外接矩形(沒有就 null)
+// 主體 = alpha ≥ ALPHA_MIN(去背遮罩邊緣常留下 alpha 1–7 的雜訊,不算主體)
+export const ALPHA_MIN = 8;
+// 主體的外接矩形(沒有就 null)
 export function bbox(img, x0 = 0, y0 = 0, w = img.width, h = img.height) {
   let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
-  for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (img.data[(y * img.width + x) * 4 + 3] > 0) {
+  for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (img.data[(y * img.width + x) * 4 + 3] >= ALPHA_MIN) {
     if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
   }
   return maxX < 0 ? null : { x: minX - x0, y: minY - y0, w: maxX - minX + 1, h: maxY - minY + 1 };
@@ -125,6 +132,7 @@ export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
 export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
+  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);density 要取 min(2, 2048 ÷ 顯示最長邊)`);
   if (m === 0 && imgs.length === 1) {
     const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1);
     // 不留邊時只能等比:裁切後的比例和 W×H 差超過 3% 就失敗(拉伸會讓邊框粗細不一、九宮格切線對不上),請用相同比例重出
@@ -138,17 +146,26 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
   const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
+  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);density 要取 min(2, 2048 ÷ 顯示最長邊)`);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
   imgs.forEach((im, i) => {
     const b = boxes[i], dw = Math.max(1, Math.round(b.w * s)), dh = Math.max(1, Math.round(b.h * s));
     const cell = resample(im, b.x, b.y, b.w, b.h, dw, dh);
     const cx = (i % columns) * W, cy = Math.floor(i / columns) * H;
+    // 水平:以主體的 alpha 加權重心置中(伸出手腳時身體不會左右跳),超出格子就貼齊邊界
     // 底部對齊:腳底離下緣 3 px(在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
-    const dx = cx + Math.round((W - dw) / 2), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
+    const gx = centroidX(im, b) * s;
+    const dx = cx + Math.min(W - dw, Math.max(0, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
     blit(sheet, cell, dx, dy);
   });
   return { sheet, columns, rows, scale: s, margin: m };
+}
+
+function centroidX(img, b) {
+  let sum = 0, wsum = 0;
+  for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const a = img.data[(y * img.width + x) * 4 + 3]; if (a >= ALPHA_MIN) { sum += (x - b.x + 0.5) * a; wsum += a; } }
+  return wsum ? sum / wsum : b.w / 2;
 }
 
 export function cover(img, W, H) {
@@ -167,8 +184,8 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
     let cover = 0, border = 0, borderN = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const a = img.data[((y0 + y) * img.width + x0 + x) * 4 + 3];
-      if (a > 0) cover++;
-      if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2) { borderN++; if (a > 0) border++; }
+      if (a >= ALPHA_MIN) cover++;
+      if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2) { borderN++; if (a >= ALPHA_MIN) border++; }
     }
     const b = bbox(img, x0, y0, W, H);
     const f = { frame: i + 1, coverage: +(cover / (W * H)).toFixed(3), border: +(border / borderN).toFixed(4), baseline: b ? b.y + b.h : null, height: b?.h ?? 0 };
@@ -212,7 +229,7 @@ if (isMain) {
     const load = (f) => { let b; try { b = readFileSync(f); } catch (e) { die(`讀不到 ${f}:${e.message}`); } return decodePng(b); };
     if (cmd === 'info') {
       const img = load(pos[0] ?? die('用法:info <png>'));
-      const b = bbox(img); let cover = 0; for (let i = 3; i < img.data.length; i += 4) if (img.data[i] > 0) cover++;
+      const b = bbox(img); let cover = 0; for (let i = 3; i < img.data.length; i += 4) if (img.data[i] >= ALPHA_MIN) cover++;
       console.log(JSON.stringify({ width: img.width, height: img.height, hasAlpha: img.hasAlpha, coverage: +(cover / (img.width * img.height)).toFixed(3), bbox: b }));
     } else if (cmd === 'fit') {
       if (!pos.length) die('用法:fit <in.png>... --out <out.png> --width W --height H');

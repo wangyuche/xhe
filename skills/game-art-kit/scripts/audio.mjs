@@ -86,6 +86,7 @@ function process_(input, { type, dur, out, name, loop }) {
     // 響度:先量,算增益;增益後 true peak 超過 −1.5 就降增益(響度可能因此低於目標,check 會判斷範圍)
     const m0 = measure(stage1);
     const short = duration(stage1) < SHORT;
+    if (short && type === 'bgm') die('配樂短於 0.4 秒,不合理;請確認 duration', 2);
     if (!short && !(m0.lufs > -69)) die('量不到響度(靜音?)', 1);
     if (short && !(m0.truePeak > -60)) die('太短而且幾乎沒有聲音', 1);
     // 短於 0.4 秒量不到整體響度(ebur128 至少要一個 400 ms 區塊):改用峰值正規化到 −3 dBTP
@@ -110,6 +111,14 @@ function process_(input, { type, dur, out, name, loop }) {
     ff(['-i', norm, '-c:a', 'libopus', '-b:a', type === 'bgm' ? '128k' : '96k', ogg]);
     ff(['-i', norm, '-c:a', 'aac', '-b:a', type === 'bgm' ? '160k' : '128k', '-movflags', '+faststart', m4a]);
     if (loopState) { const s = seam(norm); if (s > 6) loopState = 'approx'; }
+    // 編碼(Opus / AAC)可能讓取樣間峰值上升:量編碼後的檔案,超過 −1 dBTP 就降增益重編(最多 2 次)
+    for (let i = 0; i < 2; i++) {
+      const over = Math.max(measure(ogg).truePeak ?? -99, measure(m4a).truePeak ?? -99) - (TP_MAX - 0.2);
+      if (!(over > 0)) break;
+      const fix = join(tmp, 'g.wav'); ff(['-i', norm, '-af', `volume=${(-over).toFixed(2)}dB`, fix]); renameSync(fix, norm); applied -= over;
+      ff(['-i', norm, '-c:a', 'libopus', '-b:a', type === 'bgm' ? '128k' : '96k', ogg]);
+      ff(['-i', norm, '-c:a', 'aac', '-b:a', type === 'bgm' ? '160k' : '128k', '-movflags', '+faststart', m4a]);
+    }
     const files = [];
     for (const f of [ogg, m4a]) { const dst = join(out, f.split('/').pop()); try { renameSync(f, dst); } catch { copyFileSync(f, dst); } files.push(dst); }
     const m = measure(files[0]);
