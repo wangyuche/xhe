@@ -15,7 +15,7 @@
 //        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
 //        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%(主體 = alpha ≥ 8)、
-//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
+//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、外緣白框:主體外緣(alpha ≥ 128 且鄰接透明)近白像素(RGB 皆 ≥ 215)≤ 30%(外緣 ≥ 20 px 才判斷)、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
 //        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
@@ -206,6 +206,20 @@ export function cover(img, W, H, exact = false) {
   return resample(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, W, H);
 }
 
+// 白色貼紙外框:主體外緣(alpha ≥ 128 且上下左右任一鄰居 alpha < 8)中近白像素的比例。
+// 校準(2026-11-22 MahjongParty):有白框的原圖 0.69–1.00,乾淨的 ≤ 0.07。
+const HALO_MAX = 0.3, HALO_MIN_EDGE = 20;
+export function whiteHalo(img, x0 = 0, y0 = 0, w = img.width, h = img.height) {
+  const d = img.data, a = (x, y) => (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) ? 0 : d[(y * img.width + x) * 4 + 3];
+  let edge = 0, white = 0;
+  for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) {
+    const o = (y * img.width + x) * 4; if (d[o + 3] < 128) continue;
+    if (a(x - 1, y) >= ALPHA_MIN && a(x + 1, y) >= ALPHA_MIN && a(x, y - 1) >= ALPHA_MIN && a(x, y + 1) >= ALPHA_MIN) continue;
+    edge++; if (Math.min(d[o], d[o + 1], d[o + 2]) >= 215) white++;
+  }
+  return { edge, ratio: edge ? +(white / edge).toFixed(3) : 0 };
+}
+
 export function checkImage(img, { width: W, height: H, frames = 1, columns, opaque = false, tileable = false, character = false, fullBleed = false }) {
   const errs = [], info = [];
   const cols = columns ?? (frames > 1 ? sheetLayout(frames, W).columns : 1), rows = Math.ceil(frames / cols);
@@ -224,11 +238,13 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
       if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2) { borderN++; if (a >= ALPHA_MIN) border++; }
     }
     const b = bbox(img, x0, y0, W, H);
-    const f = { frame: i + 1, coverage: +(cover / (W * H)).toFixed(3), border: +(border / borderN).toFixed(4), baseline: b ? b.y + b.h : null, height: b?.h ?? 0 };
+    const halo = opaque || fullBleed ? null : whiteHalo(img, x0, y0, W, H);
+    const f = { frame: i + 1, coverage: +(cover / (W * H)).toFixed(3), border: +(border / borderN).toFixed(4), baseline: b ? b.y + b.h : null, height: b?.h ?? 0, ...(halo ? { halo: halo.ratio } : {}) };
     info.push(f);
     if (!opaque) {
       if (f.coverage < 0.1 || (!fullBleed && f.coverage > 0.9)) errs.push(`第 ${i + 1} 格主體覆蓋率 ${(f.coverage * 100).toFixed(1)}%(應 10–90%)`);
       if (!fullBleed && f.border >= 0.01) errs.push(`第 ${i + 1} 格外框 2 px 內有 ${(f.border * 100).toFixed(2)}% 不透明像素(應 < 1%;去背殘留或主體貼邊)`);
+      if (halo && halo.edge >= HALO_MIN_EDGE && halo.ratio > HALO_MAX) errs.push(`第 ${i + 1} 格主體外緣 ${(halo.ratio * 100).toFixed(0)}% 是近白像素(應 ≤ ${HALO_MAX * 100}%;白色貼紙外框):重出時正向提示詞拿掉 sticker / sticker art,改寫 game item art, no white contour,負向加 sticker, white outline, white contour, white halo`);
     }
   }
   if (character && frames > 1 && !opaque) {

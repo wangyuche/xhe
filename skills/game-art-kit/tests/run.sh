@@ -192,6 +192,14 @@ o="$(S fit "$W/sp/f1.png" "$W/sp/f2.png" "$W/sp/f3.png" "$W/sp/f4.png" "$W/sp/f1
 mk2 "$W/sp/dirty.png" 50 40 300 1 1
 o="$(S check "$W/sp/dirty.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '外框' && ok "sprite.mjs check:外框有殘留 → 不通過" || bad "sprite 外框殘留" "$o"
 o="$(S check "$W/o/q1.png" --width 96 --height 64)"; [ $? -eq 1 ] && echo "$o" | grep -q 'alpha' && ok "sprite.mjs check:沒有 alpha → 不通過" || bad "sprite 沒有 alpha" "$o"
+node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; const inO = x >= 46 && x < 254 && y >= 46 && y < 380, inI = x >= 50 && x < 250 && y >= 50 && y < 376;
+  if (inO) { const c = inI ? [90, 160, 90] : [250, 250, 250]; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; } }
+writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/halo.png"
+o="$(S check "$W/sp/halo.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && echo "$o" | grep -q 'sticker' \
+  && o2="$(S check "$W/sp/one.png" --width 120 --height 160)" && ok "sprite.mjs check:主體外緣一圈白色貼紙框 → 不通過並提示改提示詞;沒有白框的照常通過" || bad "sprite 白框" "$o ${o2:-}"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/foot8.png" --width 120 --height 160 --foot 8)" && o2="$(S info "$W/sp/foot8.png")" && echo "$o2" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.bbox.y+d.bbox.h===152?0:1)' \
   && o3="$(S info "$W/sp/one.png")" && echo "$o3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.bbox.y+d.bbox.h===157?0:1)' && ok "sprite.mjs fit --foot 8:主體離下緣 8 px(不給時預設 3 px)" || bad "sprite --foot" "$o ${o2:-} ${o3:-}"
 o="$(S check "$W/sp/one.png" --width 100 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '尺寸' && ok "sprite.mjs check:尺寸不符 → 不通過" || bad "sprite 尺寸" "$o"
