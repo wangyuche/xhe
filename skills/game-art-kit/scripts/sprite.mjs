@@ -8,7 +8,8 @@
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
 //   node sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]
 //        算 1x 尺寸:density 預設 2,往下調到單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
-//        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組)
+//        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組);
+//        因 2048 上限把 density 調到低於要求(--density 或預設 2)時另加 "lowered":true(只是寬取整的差異不算)
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
@@ -183,12 +184,13 @@ function centroidX(img, b) {
 
 export function density1x(dw, dh, frames = 1, want = 2) {
   let d = Math.min(want, 2048 / Math.max(dw, dh));
+  const base = +(Math.floor(dw * want) / dw).toFixed(4); // 沒受 2048 限制時的值(只差寬取整),低於它才算 lowered
   for (let i = 0; i < 200; i++) {
     // 寬取整後,印出的 density = 寬 ÷ 顯示寬,高也用同一個 density 算(validate 用 round(顯示 × density) 比對)
     const W = Math.floor(dw * d), dens = +(W / dw).toFixed(4), H = Math.round(dh * dens);
     const { columns, rows } = sheetLayout(frames, W);
     // lowered:實際 density 低於要求(needs 指定或預設 2),agent 要列在已知限制;< 1 時 agent BLOCKED
-    if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows, ...(dens < want - 1e-4 ? { lowered: true } : {}) };
+    if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows, ...(dens < base - 1e-4 ? { lowered: true } : {}) };
     d *= 0.98;
   }
   die('找不到合適的 density(顯示尺寸太大)');
