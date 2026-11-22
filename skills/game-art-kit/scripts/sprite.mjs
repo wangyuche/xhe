@@ -6,6 +6,9 @@
 //        裁掉透明邊 → 同一個縮放比例(以最大的那張為準,確保每張都放得下)→ 置中 / 底部對齊補到 W×H。
 //        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
+//   node sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]
+//        算 1x 尺寸:density 預設 min(2, …) 取到讓單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
+//        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組)
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景、地圖塊):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
@@ -171,6 +174,17 @@ function centroidX(img, b) {
   return wsum ? sum / wsum : b.w / 2;
 }
 
+export function density1x(dw, dh, frames = 1, want = 2) {
+  let d = Math.min(want, 2048 / Math.max(dw, dh));
+  for (let i = 0; i < 200; i++) {
+    const W = Math.floor(dw * d), H = Math.floor(dh * d);
+    const { columns, rows } = sheetLayout(frames, W);
+    if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: +(W / dw).toFixed(4), width: W, height: H, columns, rows };
+    d *= 0.98;
+  }
+  die('找不到合適的 density(顯示尺寸太大)');
+}
+
 export function cover(img, W, H) {
   const s = Math.max(W / img.width, H / img.height), sw = W / s, sh = H / s;
   return resample(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, W, H);
@@ -243,6 +257,10 @@ if (isMain) {
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, encodePng(r.sheet));
       console.log(JSON.stringify({ file: out, width: r.sheet.width, height: r.sheet.height, frames: pos.length, columns: r.columns, rows: r.rows, scale: +r.scale.toFixed(4), margin: r.margin }));
+    } else if (cmd === 'density') {
+      const frames = flags.frames != null ? int('frames') : 1; if (frames > 8) die('frames 最多 8');
+      const want = flags.density != null ? Number(flags.density) : 2; if (!(want > 0 && want <= 2)) die('--density 要在 0–2');
+      console.log(JSON.stringify(density1x(int('width'), int('height'), frames, want)));
     } else if (cmd === 'cover') {
       const out = flags.out ?? die('缺 --out');
       const r = cover(load(pos[0] ?? die('用法:cover <in.png> --out <out.png> --width W --height H')), int('width'), int('height'));
@@ -256,7 +274,7 @@ if (isMain) {
       const { errs, info } = checkImage(img, { width: int('width'), height: int('height'), frames, columns: flags.columns != null ? int('columns') : undefined, opaque: !!flags.opaque, tileable: !!flags.tileable, character: !!flags.character, fullBleed: !!flags['full-bleed'] });
       console.log(JSON.stringify({ ok: errs.length === 0, errors: errs, frames: info }));
       process.exit(errs.length ? 1 : 0);
-    } else die('用法:sprite.mjs info | fit | cover | check(見檔頭)');
+    } else die('用法:sprite.mjs info | density | fit | cover | check(見檔頭)');
   } catch (e) {
     console.error(`錯誤:${e instanceof Fail ? e.message : e?.stack || e}`);
     process.exit(e instanceof Fail ? e.code : 2);

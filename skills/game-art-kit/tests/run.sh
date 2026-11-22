@@ -202,6 +202,8 @@ writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$
 o="$(S info "$W/sp/noisy.png")" && echo "$o" | grep -q '"bbox":{"x":100,"y":100,"w":100,"h":280}' && o2="$(S fit "$W/sp/noisy.png" --out "$W/sp/noisy-fit.png" --width 120 --height 160)" && o3="$(S check "$W/sp/noisy-fit.png" --width 120 --height 160)" \
   && ok "sprite.mjs:去背殘留的低 alpha 雜訊(< 8)不算主體" || bad "sprite 低 alpha 雜訊" "$o $o2 $o3"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/big.png" --width 2400 --height 1600 --margin 0 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'PX-RES-01' && ok "sprite.mjs fit:1x 超過 2048 → 結束碼 2(提示 density 上限)" || bad "sprite 2048 上限" "$o"
+o="$(S density --width 300 --height 400 --frames 8)" && echo "$o" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.width*d.columns<=2048&&d.height*d.rows<=2048&&d.density<2&&Number.isInteger(d.width)?0:1)' \
+  && o2="$(S density --width 120 --height 160)" && echo "$o2" | grep -q '"density":2,"width":240,"height":320' && ok "sprite.mjs density:8 格大動作自動降 density 讓 sheet ≤ 2048、小素材為 2、1x 為整數" || bad "sprite density" "$o $o2"
 mkdir -p "$W/lnk"; ln -s "$K" "$W/lnk/kit"
 o="$(node "$W/lnk/kit/scripts/sprite.mjs" check "$W/sp/dirty.png" --width 300 --height 400)"; rc=$?
 o2="$(node "$W/lnk/kit/schemas/validate.mjs" needs "$W/sp/dirty.png")"; rc2=$?
@@ -245,6 +247,9 @@ if A tools >/dev/null 2>&1; then
     && o2="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --loop)" && ok "audio.mjs bgm:交叉淡化循環、−18 LUFS、接縫檢查通過" || bad "audio bgm loop" "$o $o2"
   o="$(A process "$W/au/click.wav" --type bgm --duration 0.3 --out "$W/au" --name x 2>&1)"; [ $? -eq 2 ] && ok "audio.mjs:配樂短於 0.4 秒 → 結束碼 2" || bad "audio 短配樂" "$o"
   o="$(A process "$W/au/music.wav" --type bgm --duration 6.3 --loop --out "$W/au" --name x 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'duration + 1' && ok "audio.mjs:--loop 輸入不夠長 → 結束碼 2 並提示生成長度" || bad "audio loop 太短" "$o"
+  printf 'not audio' > "$W/au/broken.wav"
+  o="$(A process "$W/au/broken.wav" --type sfx --duration 1 --out "$W/au" --name b 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '失敗\|讀不了' && ! echo "$o" | grep -q '靜音' && ok "audio.mjs:損壞的檔案 → 結束碼 2(不誤報成靜音)" || bad "audio 損壞檔案" "$o"
+  o="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --approx 2>&1)"; [ $? -eq 2 ] && o2="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --loop --approx)" && ok "audio.mjs check --approx:要配 --loop;接縫只回報" || bad "audio --approx" "$o $o2"
   o="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 20)"; [ $? -eq 1 ] && echo "$o" | grep -q '長度' && ok "audio.mjs check:長度不符 → 不通過" || bad "audio check 長度" "$o"
   ffmpeg -v error -y -f lavfi -i "sine=f=440:d=2,volume=8" "$W/au/loud.ogg"; ffmpeg -v error -y -f lavfi -i "sine=f=440:d=2,volume=8" "$W/au/loud.m4a"
   o="$(A check "$W/au/loud.ogg" "$W/au/loud.m4a" --type sfx --duration 3)"; [ $? -eq 1 ] && echo "$o" | grep -q 'true peak' && ok "audio.mjs check:削波 / 過大聲 → 不通過" || bad "audio check 削波" "$o"
@@ -269,6 +274,10 @@ echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"ui.x","type
 o="$(V needs "$W/v/crash.json" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '"ok":false' && echo "$o" | grep -q 'nineSlice: 應為 array' && ok "schema:型別錯誤只回報錯誤,不丟例外" || bad "schema 型別錯誤崩潰" "$o"
 echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"a.b","group":"l","purpose":"x","width":10,"height":10}]}' > "$W/v/notype.json"
 o="$(V needs "$W/v/notype.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '缺少 type' && ! echo "$o" | grep -q 'durationSec' && ok "schema:缺 type 只報缺 type,不疊出矛盾的錯誤" || bad "schema 缺 type" "$o"
+echo '{"version":1,"assets":[{"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":100,"frameHeight":160,"columns":4},"source":"out/x/manifest.json#r","review":"pending"},{"id":"sfx.l","type":"sfx","group":"table","files":["table/sfx.l.ogg","table/sfx.l.m4a"],"durationSec":1,"lufs":-16,"loop":true,"source":"out/x/manifest.json#l","review":"pending"}]}' > "$W/v/fw.json"
+o="$(V assets "$W/v/fw.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'frameWidth' && echo "$o" | grep -q 'assets\[1\]: 不可有 loop' && ok "schema:frames 尺寸要等於顯示 × density、音效不可有 loop" || bad "schema frames / sfx loop" "$o"
+cp "$W/sp/one.png" "$W/v/table/hero.run.png"
+o="$(V assets "$W/v/assets.json" --root "$W/v" 2>&1)"; echo "$o" | grep -q 'hero.run.png 實際 120×160,應為 480×160' && ok "schema --root:PNG 實際尺寸要等於 1x(sheet)" || bad "schema --root PNG 尺寸" "$o"
 
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束

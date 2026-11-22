@@ -7,7 +7,8 @@
 //        短於 0.4 秒(量不到整體響度)改以峰值正規化到 −3 dBTP,輸出 normalized: "peak"、lufs: null
 //        bgm:裁到 duration(--loop:輸入至少要 duration + 0.5 秒,頭尾 0.5 秒交叉淡化成可循環)→ −18 LUFS、≤ −1.5 dBTP
 //        輸出 <name>.ogg(Opus)與 <name>.m4a(AAC),印 {"files":[…],"durationSec":…,"lufs":…,"truePeak":…,"loop":true|false|"approx"}
-//   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm --duration <秒> [--loop] [--peak]
+//   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm --duration <秒> [--loop [--approx]] [--peak]
+//        --approx:process 輸出 loop: "approx" 的配樂,接縫只回報不判失敗
 //        兩檔都在、長度(sfx ≤ duration + 0.05;bgm 與 duration 差 ≤ 0.5)、非靜音(RMS > −50 dBFS)、
 //        無削波(true peak ≤ −1 dBTP)、響度(sfx −20 至 −12、bgm −20 至 −16 LUFS;--peak(process 輸出 normalized: peak 的短音效)不檢查)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
 //        印 {"ok":…,"errors":[…],"measure":{…}};不通過結束碼 1。
@@ -47,6 +48,7 @@ const duration = (f) => Number(sh('ffprobe', ['-v', 'error', '-show_entries', 'f
 // ebur128 量整體響度與 true peak;astats 量 RMS
 export function measure(f, filter = '') {
   const r = sh('ffmpeg', ['-hide_banner', '-nostdin', '-nostats', '-i', f, '-af', `${filter ? filter + ',' : ''}ebur128=peak=true,astats=measure_perchannel=none:measure_overall=RMS_level+Peak_level`, '-f', 'null', '-'], { allowFail: true });
+  if (r.status !== 0) die(`ffmpeg 讀不了 ${f}(檔案損壞或格式不支援):${(r.stderr || '').trim().split('\n').slice(-2).join(' ')}`);
   const t = r.stderr;
   const sum = t.slice(t.lastIndexOf('Summary:'));
   const num = (re, s = sum) => { const m = re.exec(s); return !m ? null : m[1] === '-inf' ? -Infinity : Number(m[1]); };
@@ -135,7 +137,7 @@ export function seam(f) {
   return Math.abs(head - tail);
 }
 
-export function check([ogg, m4a], { type, dur, loop, peak }) {
+export function check([ogg, m4a], { type, dur, loop, peak, approx }) {
   const errs = [], measureOut = {};
   for (const f of [ogg, m4a]) if (!f || !existsSync(f)) errs.push(`找不到 ${f}`);
   if (!/\.ogg$/.test(ogg ?? '') || !/\.m4a$/.test(m4a ?? '')) errs.push('要給 .ogg 與 .m4a 各一');
@@ -152,7 +154,7 @@ export function check([ogg, m4a], { type, dur, loop, peak }) {
   }
   if (loop) {
     const s = seam(ogg); measureOut.seamDb = isFinite(s) ? +s.toFixed(2) : null;
-    if (!(s <= 6)) errs.push(`循環接縫 RMS 差 ${measureOut.seamDb} dB(應 ≤ 6;assets.json 改標 loop: "approx")`);
+    if (!(s <= 6)) { if (approx) measureOut.loop = 'approx'; else errs.push(`循環接縫 RMS 差 ${measureOut.seamDb} dB(應 ≤ 6;process 已標 approx 的加 --approx)`); }
   }
   return { errs, measure: measureOut };
 }
@@ -163,13 +165,14 @@ if (isMain) {
   try {
     const [cmd, ...rest] = process.argv.slice(2);
     const flags = {}, pos = [];
-    for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (a === '--loop' || a === '--peak') flags[a.slice(2)] = true; else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else pos.push(a); }
+    for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (['--loop', '--peak', '--approx'].includes(a)) flags[a.slice(2)] = true; else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else pos.push(a); }
     const opts = () => {
       const type = flags.type; if (!['sfx', 'bgm'].includes(type)) die('--type 要 sfx 或 bgm');
       const dur = Number(flags.duration); if (!(dur > 0 && dur <= 600)) die('--duration 要是 0–600 的秒數');
       if (flags.loop && type !== 'bgm') die('--loop 只用於 bgm');
       if (flags.peak && type !== 'sfx') die('--peak 只用於 sfx');
-      return { type, dur, loop: !!flags.loop, peak: !!flags.peak };
+      if (flags.approx && !flags.loop) die('--approx 要和 --loop 一起用');
+      return { type, dur, loop: !!flags.loop, peak: !!flags.peak, approx: !!flags.approx };
     };
     if (cmd === 'tools') { const e = tools(); console.log(JSON.stringify({ ok: !e.length, errors: e })); process.exit(e.length ? 2 : 0); }
     const te = tools(); if (te.length) die(te.join(';'));

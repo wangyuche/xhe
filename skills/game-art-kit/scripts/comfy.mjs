@@ -307,7 +307,8 @@ async function run() {
   {
     // 節點旗標:優先用 check 存下的快取(1 小時內、同一個位址),沒有才抓 /object_info(上限 60 秒,見 SKILL.md 的時間預算)
     let oi = readNodeFlags();
-    if (!oi) {
+    // 快取裡沒有的節點(check 之後才裝的)一律重抓,不當成安全
+    if (!oi || classes.some(c => !(c in oi))) {
       const full = await json('/object_info', { timeoutMs: 60000 });
       if (full.__status) die(`/object_info 回 HTTP ${full.__status}`, 3);
       oi = writeNodeFlags(full);

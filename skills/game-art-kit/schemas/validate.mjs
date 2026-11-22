@@ -85,6 +85,10 @@ function semantic(kind, obj, root, errs) {
       if (exts !== 'm4a,ogg') errs.push(`${p}: 音訊應恰好有 .ogg 與 .m4a 各一`);
     }
     for (const f of files) if (!f.startsWith(`${a.group}/`)) errs.push(`${p}: 檔案 ${f} 應放在 ${a.group}/ 下`);
+    if (a.frames && a.width && a.density) {
+      const fw = a.frames.frameWidth, fh = a.frames.frameHeight;
+      if (Math.abs(fw - a.width * a.density) > 1 || Math.abs(fh - a.height * a.density) > 1) errs.push(`${p}: frames.frameWidth/frameHeight ${fw}×${fh} 應為顯示 × density(約 ${Math.round(a.width * a.density)}×${Math.round(a.height * a.density)})`);
+    }
     if (a.frames) {
       const { count, columns, frameWidth, frameHeight } = a.frames;
       if (columns > count) errs.push(`${p}: frames.columns 不可大於 count`);
@@ -99,6 +103,16 @@ function semantic(kind, obj, root, errs) {
       const abs = resolve(root, f);
       if (!abs.startsWith(resolve(root) + sep)) errs.push(`${p}: 檔案路徑 ${f} 跑出 root`);
       else if (!existsSync(abs) || !statSync(abs).isFile()) errs.push(`${p}: 檔案不存在 ${f}`);
+      else if (f.endsWith('.png') && a.width && a.density) {
+        // 實際 PNG 尺寸 = 1x(frames 是整張 sheet)
+        const b = readFileSync(abs);
+        if (b.length >= 24 && b.toString('ascii', 1, 4) === 'PNG') {
+          const w = b.readUInt32BE(16), h = b.readUInt32BE(20);
+          const fw = a.frames ? a.frames.frameWidth * a.frames.columns : Math.round(a.width * a.density);
+          const fh = a.frames ? a.frames.frameHeight * Math.ceil(a.frames.count / a.frames.columns) : Math.round(a.height * a.density);
+          if (Math.abs(w - fw) > 1 || Math.abs(h - fh) > 1) errs.push(`${p}: ${f} 實際 ${w}×${h},應為 ${fw}×${fh}`);
+        } else errs.push(`${p}: ${f} 不是 PNG`);
+      }
     }
   });
 }

@@ -34,6 +34,7 @@ node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --
 node <kit>/scripts/comfy.mjs pngsize <圖>              # {"width":…,"height":…}
 node <kit>/scripts/comfy.mjs scrub-check <目錄>        # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1
 node <kit>/scripts/sheet.mjs <spec.json> <輸出.png>    # 拼分鏡表 / 標註表(格式見檔頭)
+node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]   # 整數 1x 尺寸 + 實際 density(單格與 sheet 都 ≤ 2048)
 node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center] [--margin 0]
 #   裁透明邊 → 同一動作各格用同一縮放比例 → 角色底部對齊(腳底離下緣 3 px)/ 其他置中補到 1x 尺寸;--margin 0(單張 UI / 九宮格)等比放滿,比例差 > 3% 失敗 → 多格拼 sheet(橫向,寬超過 2048 換行);印 columns / rows
 node <kit>/scripts/sprite.mjs cover <背景.png> --out <id>.png --width <1x 寬> --height <1x 高>   # 不透明素材:等比蓋滿再置中裁切
@@ -42,7 +43,7 @@ node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> 
 node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
 #   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
 #   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
-node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm --duration <秒> [--loop] [--peak]
+node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm --duration <秒> [--loop [--approx]] [--peak]
 #   長度、非靜音(RMS > −50 dBFS)、true peak ≤ −1 dBTP、響度(sfx −20~−12、bgm −20~−16 LUFS)、接縫 RMS 差 ≤ 6 dB(--loop)
 node <kit>/schemas/validate.mjs needs|assets <檔案.json> [--root <art/assets>]   # 遊戲素材介面 schema 驗證(--root 檢查檔案存在)
 bash <kit>/tests/run.sh                                # 離線自我測試(假 ComfyUI)

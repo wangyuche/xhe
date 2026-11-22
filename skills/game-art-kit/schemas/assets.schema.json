@@ -50,6 +50,7 @@
           "then": { "required": ["durationSec"], "forbidden": ["width", "height", "density", "frames", "anchor", "nineSlice", "nineSlice1x", "tileable", "opaque", "character"] } },
         { "if": { "properties": { "normalized": { "const": "peak" } }, "required": ["normalized"] }, "then": { "forbidden": ["lufs"] }, "else": { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } }, "required": ["type"] }, "then": { "required": ["lufs"] } } },
         { "if": { "properties": { "type": { "const": "frames" } }, "required": ["type"] }, "then": { "required": ["frames"] }, "else": { "forbidden": ["frames"] } },
+        { "if": { "properties": { "type": { "const": "sfx" } }, "required": ["type"] }, "then": { "forbidden": ["loop"] } },
         { "if": { "required": ["nineSlice"] }, "then": { "required": ["nineSlice1x"] } }
       ]
     }
