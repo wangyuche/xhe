@@ -22,3 +22,5 @@ const multiOk = new Text({
 const q = s.replace(/'/g, '');
 /** e.g. label.text = 'Hello'(regex 之後的文件註解,不算) */
 el.textContent = t(LANDSCAPE ? 'common.rotate' : 'common.rotatePortrait');
+const nested2 = `${n ? `x` : ''}`;
+// label.text = 'Commented after nested template'

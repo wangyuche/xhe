@@ -12,17 +12,29 @@ const pending: Array<() => void> = [];
 
 export const audioUnlocked = (): boolean => unlocked;
 
+/**
+ * 解鎖:瀏覽器只把 pointerup / click / keydown(Escape 除外)算成使用者手勢(觸控的 pointerdown 不算)。
+ * 每次手勢都試 resume,直到 AudioContext 真的是 running 才算解鎖(第一次被拒也會在下一次手勢重試)。
+ */
 export function startAudioUnlock(): void {
-  const unlock = (): void => {
+  const unlock = (e: Event): void => {
     if (unlocked) return;
-    unlocked = true;
-    ctx = new AudioContext();
-    if (!isPaused()) void ctx.resume();
-    else void ctx.suspend(); // 暫停中(背景、旋轉提示)解鎖:等恢復時才出聲
-    for (const fn of pending.splice(0)) fn();
+    if (e instanceof KeyboardEvent && e.key === 'Escape') return;
+    ctx ??= new AudioContext();
+    if (isPaused()) return; // 暫停中(背景、旋轉提示)不解鎖,恢復後的下一次手勢再試
+    void ctx.resume().then(() => {
+      if (unlocked || ctx!.state !== 'running') return;
+      unlocked = true;
+      for (const fn of pending.splice(0)) fn();
+    }, () => {});
   };
-  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, unlock, { once: false, capture: true });
-  onPauseChange((paused) => { if (ctx) void (paused ? ctx.suspend() : ctx.resume()); });
+  for (const ev of ['pointerup', 'click', 'keydown']) window.addEventListener(ev, unlock, { capture: true });
+  onPauseChange((paused) => { if (ctx && unlocked) void (paused ? ctx.suspend() : ctx.resume()); });
+}
+
+/** 群組卸載時丟掉它的解碼快取(BGM 解碼後很大)。 */
+export function forgetAudio(url: string): void {
+  buffers.delete(url);
 }
 
 function pick(src: Src): string {

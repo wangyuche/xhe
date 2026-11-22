@@ -9,7 +9,7 @@ import { join, resolve } from 'node:path';
 const [dirArg, ...rest] = process.argv.slice(2);
 if (!dirArg) { console.error('用法:node check-early.mjs <專案目錄> [--dist dist] [--boot a,b]'); process.exit(2); }
 const dir = resolve(dirArg);
-const opt = (n, d) => { const i = rest.indexOf(n); return i >= 0 ? rest[i + 1] : d; };
+const opt = (n, d) => { const i = rest.indexOf(n); if (i < 0) return d; if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) { console.error(`${n} 需要值`); process.exit(2); } return rest[i + 1]; };
 const dist = resolve(dir, opt('--dist', 'dist'));
 const mf = join(dist, '.vite/manifest.json');
 if (!existsSync(mf)) { console.error(`找不到 ${mf}(先 vite build,並在 vite.config 設 build.manifest: true)`); process.exit(2); }

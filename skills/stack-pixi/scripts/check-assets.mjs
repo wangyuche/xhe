@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 const [dirArg, ...rest] = process.argv.slice(2);
 if (!dirArg) { console.error('用法:node check-assets.mjs <專案目錄> [--budgets <md>] [--art <dir>]'); process.exit(2); }
 const dir = resolve(dirArg);
-const opt = (n, d) => { const i = rest.indexOf(n); return i >= 0 ? rest[i + 1] : d; };
+const opt = (n, d) => { const i = rest.indexOf(n); if (i < 0) return d; if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) { console.error(`${n} 需要值`); process.exit(2); } return rest[i + 1]; };
 const budgetsFile = resolve(dir, opt('--budgets', 'docs/performance-budgets.md'));
 const artOpt = opt('--art');
 const art = artOpt ? resolve(dir, artOpt) : undefined; // 和 --budgets 一樣相對專案目錄
@@ -24,6 +24,7 @@ function dims(file) {
   const b = Buffer.alloc(statSync(file).size);
   const n = readSync(fd, b, 0, b.length, 0);
   closeSync(fd);
+  if (n < 24) return undefined; // 空檔或截斷
   if (b.readUInt32BE(0) === 0x89504e47) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
   if (b[0] === 0xff && b[1] === 0xd8) {
     for (let i = 2; i < n - 9;) {

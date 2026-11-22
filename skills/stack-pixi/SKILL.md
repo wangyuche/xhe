@@ -84,7 +84,7 @@ paths: ["**/src/scenes/**/*.ts", "**/src/core/**/*.ts", "**/src/components/**/*.
 - **PX-TEST-01(MUST)** 驗收情境的測試名稱以情境編號開頭(`SHOP-S1 …`);元件層級 = Vitest(`src/**/*.test.ts`,node 環境),E2E = Playwright。
 - **PX-TEST-02(MUST)** E2E 用 a11y 層的選擇器(DOM id、role、`[title=]`);觸控 / 滑鼠座標從 Pixi 物件 bounds 計算,不寫死;測試模式 `?a11y=1` 一開始就啟用 a11y 層。
 - **PX-TEST-03(MUST)** E2E 尺寸:1920×1080、1024×768@2x、844×390@3x,加專案額外尺寸(`E2E_EXTRA_SIZES`);直式 390×844@3x 檢查旋轉提示;任何 `pageerror` / `console.error` 就失敗。
-- **PX-TEST-04(MUST)** 截圖寫暫存(`SHOTS_DIR`),不進 git;驗證完刪除。
+- **PX-TEST-04(MUST)** 截圖寫暫存(`SHOTS_DIR`),不進 git;回報後由主 agent 刪除(agent 自己不刪,主 agent 要看)。
 
 ## 新專案
 ```bash
@@ -115,11 +115,11 @@ node <skill>/scripts/check-early.mjs <project> [--dist dist] [--boot boot,shared
 都印一行 JSON(`ok`、違規清單),違規結束碼 1、用法錯誤 2。
 
 ## 驗證順序(骨架專案)
-1. `npm run typecheck`、`npx vitest run`(本地已安裝的工具;不要讓 npx 自動下載:`npm exec --no -- vitest run`)、`npm run build`。
+1. `npm run typecheck`、`npm exec --no -- vitest run`(只用本地已安裝的工具,不讓 npx 自動下載)、`npm run build`。
 2. 四個檢查腳本。
-3. E2E:`serve.sh <name>-dev <project> 5173 -- npm run dev`,`PORT=<serve.sh 回的埠> npx playwright test`;要後端時照專案方式啟動,結束 teardown;`stop.sh`。
+3. E2E:`serve.sh <name>-dev <project> 5173 -- npm run dev`,`PORT=<serve.sh 回的埠> npm exec --no -- playwright test`;要後端時照專案方式啟動,結束 teardown;`stop.sh`。
 4. 效能:`vite build --outDir <暫存>`,`serve.sh <name>-dist <project> 4175 -- node scripts/serve-dist.mjs <暫存>`,
-   `PORT=<埠> PERF_VIEW=desktop npx playwright test -c tests/perf/playwright.perf.config.ts first-screen scene-switch`,再 `PERF_VIEW=phone` 跑一次;soak 單獨跑(超過 540 秒用 Bash 背景執行)。每次 Bash 呼叫前估算 5 ×(可互動 + 等待)+ 啟動 ≤ 540 秒。
+   `PORT=<埠> PERF_VIEW=desktop npm exec --no -- playwright test -c tests/perf/playwright.perf.config.ts first-screen scene-switch`,再 `PERF_VIEW=phone` 跑一次;soak 單獨跑(超過 540 秒用 Bash 背景執行)。每次 Bash 呼叫前估算 5 ×(可互動 + 等待)+ 啟動 ≤ 540 秒。
 5. 資源釋放:`cycleLeak`(進出 4 次,第 3、4 次不可多於第 2 次;Pixi 8 的 GC 會延遲釋放 GPU 資源,快照前 fixture 會強制跑一次 `renderer.gc.run()`)、`drawsDuring` = 0。
 
 ## 已驗證的坑

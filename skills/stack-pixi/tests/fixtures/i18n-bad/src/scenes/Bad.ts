@@ -18,3 +18,5 @@ const deep = new Text({ style: { fill: { color: 0xffffff } }, text: 'Deep style'
 const pos = new Text('Positional text');
 status.text = won ? 'You win' : 'You lose';
 log.text += 'Game over';
+const nested = `${n ? `x` : ''}`;
+btn.accessibleTitle = 'After nested template';

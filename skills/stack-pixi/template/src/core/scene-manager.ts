@@ -54,9 +54,14 @@ export class SceneManager {
     return this.current?.name;
   }
 
+  private pending?: SceneName;
+
   go(name: SceneName): Promise<void> {
+    // 連點同一個按鈕:同一個場景已在切換中或已是目前場景就不重複切換
+    if (this.pending === name || (!this.pending && this.current?.name === name)) return this.queue.catch(() => {});
+    this.pending = name;
     // 前一次切換失敗不能卡住之後的切換:佇列先吞掉錯誤再接下一個
-    const run = this.queue.catch(() => {}).then(() => this.swap(name));
+    const run = this.queue.catch(() => {}).then(() => this.swap(name)).finally(() => { if (this.pending === name) this.pending = undefined; });
     this.queue = run;
     return run;
   }

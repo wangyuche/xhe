@@ -54,7 +54,7 @@ printf "// never do: import { Sprite } from 'pixi.js'\nexport const ok = 1;\n" >
 t  "check-layers 不把註解裡的 import 當違規" node "$K/scripts/check-layers.mjs" "$P"
 rm "$P/src/game/bad.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
-[ "$n" = 14 ] && ok "check-i18n 漏報案例全抓到(14)" || bad "check-i18n 漏報案例" "$r"
+[ "$n" = 15 ] && ok "check-i18n 漏報案例全抓到(15)" || bad "check-i18n 漏報案例" "$r"
 t  "check-i18n 誤報案例全部放行" node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-good"
 # 首屏洩漏:main.ts 靜態 import play 群組的圖
 node -e "
