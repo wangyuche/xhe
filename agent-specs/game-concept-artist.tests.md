@@ -12,6 +12,11 @@
 - 情境 6 PASS(作者在暫存 repo 實跑):hero.idle、ui.btn、sfx.jump 都過 check;assets.json schema(含 `--root`)通過;scrub-check hits=0;變動只在 art/;ui.btn 第一次中間畫了臉,依規則重出 1 次。
 - 獨立測試者(唯讀走查):情境 7、8 PASS;情境 6 判缺口,實際執行證明 agent 指令少了 sprite 骨架必填的 `negative`、`anchor` 預設、配樂的 `bpm` / `timesignature` / `keyscale`、素材模式的重出與 40 次上限、sprite 用哪組模型、同日第二次素材派工會被「輸出目錄已存在」擋下 → 已補進 agent 本體與 SKILL.md。
 
+2026-11-22 情境 9 實跑(暫存 repo,實機 ComfyUI;專案 STYLE.md 用 MahjongParty lobby 的):
+- 9C BLOCKED:旗標混入其他遊戲截圖 → 整個停下,上傳「無」,未連 ComfyUI,git 狀態與基準相同。
+- 9A PASS:只上傳旗標列的 coin-t6.png(manifest refs 1 筆),`qwen-edit-1ref-sprite`;`fit --foot 8` 基線 352;check 白框 0(halo_edge 3120)。
+- 9B ISSUES(符合預期):沒有旗標 → 上傳「無」,用 `qwen-t2i-sprite`;3 次都出白框(47% / 77% / 98%)被 check 擋下,回報列出「需要旗標 + 建議路徑」。附帶發現:重出時先 fit 到交付路徑才 check,失敗圖曾覆寫交付檔(agent 自行還原;記入 RULES 待辦)。
+
 kit 的機械檢查由 `skills/game-art-kit/tests/run.sh`(離線,假 ComfyUI)與 `--live`(實機 1 張小圖)負責。
 實測一律在 `$TMPDIR` 的暫存 git repo,測完刪除;ComfyUI 端只用 temp 與 PreviewImage,跑完刪 history。
 ComfyUI 位址由本機 `~/.config/game-art-kit/config` 提供,不寫在派工提示。
