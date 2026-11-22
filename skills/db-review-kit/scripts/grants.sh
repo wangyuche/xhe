@@ -12,7 +12,8 @@
 #   "can insert at least one column". To check full / specific column INSERT use insert(c1,c2,…).
 # "ok" means the privilege check passed: success, or a later integrity / data error (23xxx / 22xxx, e.g. NOT NULL on
 # INSERT … DEFAULT VALUES; 0A000 "referenced in a foreign key" for truncate). Any other error (42P01 missing table, 28P01 login failed …) is reported as error(<code>).
-# Each check is its own connection (a real login; ALTER ROLE … SET applies). Nothing is committed.
+# Each check is its own connection (a real login as that role; ALTER ROLE … SET applies except statement_timeout /
+# lock_timeout, which the kit sets per session). Nothing is committed.
 # Output: PASS/FAIL lines, then `grants total=… pass=… fail=…`. Exit 1 if any FAIL, 4 if a DSN is not this container.
 source "$(dirname "$0")/_common.sh"
 
@@ -66,7 +67,18 @@ while IFS= read -r line || [ -n "$line" ]; do
   stmt="$(stmt_for "$obj" "$act")" || die "matrix 第 $LN 行不認得的動作:$act" 2
   out="$(printf 'BEGIN;\n%s;\nROLLBACK;\n' "$stmt" | psql_dsn "$dsn" -q 2>&1)" && rc=0 || rc=$?
   code="$(echo "$out" | sed -n 's/^\(psql:[^ ]* \)\{0,1\}ERROR: *\([0-9A-Z]\{5\}\):.*/\2/p' | head -1)"
-  msg="$(echo "$out" | grep -m1 'ERROR' | sed 's/^psql:[^ ]* //' | cut -c1-160 || true)"
+  # connection-time errors: "psql: error: … FATAL:  42501: permission denied for database …"
+  [ -n "$code" ] || code="$(echo "$out" | sed -n 's/.*FATAL: *\([0-9A-Z]\{5\}\):.*/\1/p' | head -1)"
+  # libpq connection failures usually print no SQLSTATE: map the standard server messages
+  if [ -z "$code" ] && echo "$out" | grep -q '^psql: error:'; then
+    case "$out" in
+      *"permission denied for database"*) code=42501 ;;
+      *"does not exist"*database*|*database*"does not exist"*) code=3D000 ;;
+      *"password authentication failed"*) code=28P01 ;;
+      *role*"does not exist"*|*"is not permitted to log in"*|*"no pg_hba.conf entry"*) code=28000 ;;
+    esac
+  fi
+  msg="$(echo "$out" | grep -m1 -E 'ERROR|FATAL' | sed 's/^psql:[^ ]* //' | cut -c1-160 || true)"
   if [ $rc -eq 0 ] && [ -z "$code" ]; then got="ok"
   elif [ -z "$code" ]; then got="error(?)"; msg="$(echo "$out" | head -2 | tr '\n' ' ' | cut -c1-160)"
   else

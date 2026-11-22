@@ -113,12 +113,18 @@ until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name 
 done
 (printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$SQL" \
   | psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out") & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
-sleep 0.5
+wait_lock() { # <session> : until it waits on a lock (max 5 s)
+  local i=0
+  until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>/dev/null)" = 1 ]; do
+    i=$((i + 1)); [ $i -lt 50 ] || return 0; sleep 0.1
+  done
+}
+wait_lock ddl
 PROBE_PID=""
 if [ -n "$PROBE" ]; then
   (printf "SET application_name = 'dbrev-lock-probe';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$PROBE" \
     | psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out") & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
-  sleep 0.5
+  wait_lock probe
 fi
 SNAP="$(printf "%s\n" \
   "WITH s AS (SELECT pid, application_name AS sess, state, wait_event_type, wait_event FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-%')" \

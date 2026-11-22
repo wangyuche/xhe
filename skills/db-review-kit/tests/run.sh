@@ -56,6 +56,7 @@ if command -v go >/dev/null 2>&1; then
 else skip "沙盒 GOMODCACHE(沒有 go)"; fi
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'DATABASE_URL=host=10.0.0.1 dbname=x'" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && ok "隔離:DB 類變數不是 URL(keyword DSN)→ 拒絕(結束碼 4)" || bad "keyword DSN 應拒絕" "rc=$rc $o"
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 for kv in 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
@@ -234,7 +235,7 @@ echo "$o" | grep -q '^step 4 B (waiting → finished): 23505' && echo "$o" | tai
 
 BADB="$(echo "$APP" | sed 's#/fx_test?#/fx_nope?#')"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$BADB" --check-dsn "$SU" --step-wait 0.5 2>&1)"; rc=$?
-echo "$o" | tail -1 | grep -q '"connect":1' && echo "$o" | grep -q 'session B connect failed: .*fx_nope' && echo "$o" | grep -q '^step 6 B (.*→ never-finished)' && [ $rc -ne 141 ] \
+echo "$o" | tail -1 | grep -q '"errors":{"23505":1,"connect":1}\|"errors":{"connect":1' && echo "$o" | grep -q 'session B connect failed: .*fx_nope' && echo "$o" | grep -q '^step 6 B (.*→ never-finished)' && [ $rc -ne 141 ] \
   && ok "race.sh:session B 連線失敗(資料庫不存在)→ 不被 SIGPIPE 中斷,回報連線失敗,B 的步驟標 never-finished" || bad "race session 結束" "rc=$rc $o"
 
 # ---------- seed / explain ----------
@@ -250,11 +251,19 @@ echo "$o" | grep -q 'Buffers: shared' && echo "$o" | tail -1 | grep -q '"runs":8
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.ledger" --runs 3 --target-ms 0.0001 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:p95 超過 --target-ms → 結束碼 1" || bad "explain target" "rc=$rc $o"
 
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT * FROM fx.no_such_table" --runs 2 2>&1)"; rc=$?
+[ $rc -eq 1 ] && ok "explain.sh:SQL 錯誤 → 結束碼 1(不會被當成 Docker 沒開的 3)" || bad "explain SQL 錯誤結束碼" "rc=$rc $o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--target-ms 不是數字 → 用法錯誤" || bad "explain target 格式" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--runs 0 → 用法錯誤(不會假通過)" || bad "explain runs 0" "$o"
 printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q.sql" --runs 3 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"runs":3' && ok "explain.sh:查詢檔最後一行是 -- 註解也能跑" || bad "explain 註解結尾" "rc=$rc $o"
 o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 10 --batch 0 --col "amount=g" 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--batch 0 → 用法錯誤(不會無限迴圈)" || bad "seed batch 0" "$o"
+echo 'REVOKE CONNECT ON DATABASE fx_test FROM fx_app;' | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
+printf 'app | fx.accounts | select(id) | 42501\n' > "$WORK/gc.txt"
+o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/gc.txt" --dsn app="$APP" 2>&1)"; rc=$?
+echo 'GRANT CONNECT ON DATABASE fx_test TO fx_app;' | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
+[ $rc -eq 0 ] && echo "$o" | grep -q 'expect=42501 got=42501' && ok "grants.sh:沒有 CONNECT 時連線階段的 FATAL 42501 也能比對" || bad "grants FATAL" "rc=$rc $o"
 printf 'app | fx.accounts | select\n' > "$WORK/g3.txt"
 o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/g3.txt" --dsn app="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '格式錯誤' && ok "grants.sh:只有 3 欄 → 格式錯誤" || bad "grants 3 欄" "$o"
 o="$(DOCKER_HOST=tcp://192.0.2.1:2375 bash "$S/pg.sh" psql "$N" "$SU" -c 'SELECT 1' 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:建立後 DOCKER_HOST 改成遠端 → 也拒絕(結束碼 4)" || bad "psql 非本機 docker" "$o"

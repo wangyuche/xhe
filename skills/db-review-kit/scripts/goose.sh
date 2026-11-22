@@ -8,7 +8,7 @@
 # roundtrip: up-to <version before --from> → up-to <--to> → down-to <before> with STRICT_DSN (a guarded destructive
 #   Down should be rejected) → if rejected, down-to <before> with ALLOW_DSN → up-to <--to>. Last line is a JSON summary.
 # Only *.sql files are copied to a tmp dir and migrated; the project directory is never touched. goose runs with
-# -env none (it would otherwise load ./.env) from the tmp dir, under env -i with GOFLAGS=-mod=readonly GOTOOLCHAIN=local.
+# -env none when supported (newer goose would otherwise load ./.env) from the tmp dir, under env -i with GOFLAGS=-mod=readonly GOTOOLCHAIN=local.
 # --module: directory holding go.mod (default: nearest go.mod above MIGDIR). Exit: 1 failure, 2 usage, 4 refused.
 source "$(dirname "$0")/_common.sh"
 
@@ -37,11 +37,11 @@ if [ -z "$MODULE" ]; then
   [ -f "$d/go.mod" ] || die "找不到 go.mod;用 --module 指定" 2
   MODULE="$d"
 fi
-GOOSE_VER="$(awk '$1=="github.com/pressly/goose/v3"{print $2; exit} $1=="require" && $2=="github.com/pressly/goose/v3"{print $3; exit}' "$MODULE/go.mod")"
-[ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;goose 版本無法判定" 1
-case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
 grep -qE '^[[:space:]]*(replace[[:space:]]+)?github\.com/pressly/goose/v3([[:space:]]+v[^ ]+)?[[:space:]]*=>' "$MODULE/go.mod" \
   && die "go.mod 對 goose 有 replace;kit 只會編上游版本,行為可能不同 → goose 相關實測標缺口" 1
+GOOSE_VER="$(awk '$1=="github.com/pressly/goose/v3" && $3!="=>"{print $2; exit} $1=="require" && $2=="github.com/pressly/goose/v3"{print $3; exit}' "$MODULE/go.mod")"
+[ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;goose 版本無法判定" 1
+case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
 
 DIR="$(name_dir "$NAME")"; mkdir -p "$DIR/bin"
 WORK="$(mktemp -d "$DIR/goose.XXXXXX")"
@@ -56,6 +56,8 @@ if [ ! -x "$GOOSE" ]; then
   mv "$WORK/gobin/goose" "$GOOSE"
 fi
 echo "goose=$GOOSE_VER (from $MODULE/go.mod)" >&2
+# -env (skip loading ./.env) exists only in newer goose CLIs; older ones never load .env, so the flag is just omitted.
+ENVFLAG=(); "$GOOSE" -h 2>&1 | grep -q -- '-env string' && ENVFLAG=(-env none)
 
 # Copy only versioned *.sql (read-only use of the project dir).
 mkdir -p "$WORK/mig"
@@ -66,14 +68,14 @@ GOMIG="$(cd "$MIGDIR" && ls | grep -E '^[0-9]+_.*\.go$' | grep -v '_test\.go$' |
 goose_cmd() { # <dsn> <goose args...>
   local dsn="$1"; shift
   local d2; d2="$(dsnpy opts "$dsn" "-c statement_timeout=${GOOSE_STATEMENT_TIMEOUT:-300s}")"
-  (cd "$WORK" && run_iso "$NAME" -- "$GOOSE" -env none -dir "$WORK/mig" -table "$TABLE" postgres "$d2" "$@")
+  (cd "$WORK" && run_iso "$NAME" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" -table "$TABLE" postgres "$d2" "$@")
 }
 
 versions() { ls "$WORK/mig" | sed -n 's/^\([0-9][0-9]*\)_.*\.sql$/\1/p' | while read -r v; do echo $((10#$v)); done | sort -n; }
 
 case "$SUB" in
   validate)
-    (cd "$WORK" && run_iso "$NAME" -- "$GOOSE" -env none -dir "$WORK/mig" validate)
+    (cd "$WORK" && run_iso "$NAME" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" validate)
     ;;
   run)
     [ -n "$TABLE" ] && [ -n "$DSN" ] || die "run 需要 --table 與 --dsn" 2

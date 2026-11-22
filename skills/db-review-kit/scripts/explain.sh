@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$DSN" ] && [ -n "$Q" ] || die "需要 --dsn 與 --query / --file" 2
 case "$RUNS" in *[!0-9]*|""|0) die "--runs 要是 ≥ 1 的整數" 2 ;; esac
+[ -z "$TARGET" ] || printf '%s' "$TARGET" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--target-ms 要是數字(毫秒)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"
 Q="$(printf '%s' "$Q" | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"

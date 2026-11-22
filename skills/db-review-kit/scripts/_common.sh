@@ -70,6 +70,8 @@ guard_dsns() {
 
 # Run psql inside the container against a guarded host DSN.
 # Kit defaults for statement_timeout / lock_timeout come first in `options`, so a DSN that sets its own wins.
+# Note: startup options override ALTER ROLE … SET for these two settings; to observe a role's own timeout,
+# put the same value in the DSN options (pg.sh dsn … --options '-c lock_timeout=1s').
 # usage: psql_dsn <dsn> [psql args...]   (SQL from stdin unless -c/-f given)
 psql_dsn() {
   local dsn="$1"; shift
@@ -77,14 +79,18 @@ psql_dsn() {
   local idsn
   idsn="$(dsnpy opts "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT}")"
   idsn="$(dsnpy internal "$idsn")"
+  # psql exits 3 on a script error with ON_ERROR_STOP; map it to 1 (3 means "Docker not running" in this kit).
+  local prc=0
   if [ -n "${PSQL_MERGE_STDERR:-}" ]; then
     # docker exec forwards stdout and stderr on separate channels (their relative order is lost); merge inside the container.
     docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null \
-      sh -c 'exec psql "$@" 2>&1' psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@"
+      sh -c 'exec psql "$@" 2>&1' psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
   else
     docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null \
-      psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@"
+      psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
   fi
+  [ $prc -ne 3 ] || prc=1
+  return $prc
 }
 
 # ---------- isolated environment for go / goose ----------
@@ -134,7 +140,7 @@ check_extra_env() {
     ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
     # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
     case "$ku" in
-      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GO*) die "$k 是隔離環境自己設定的變數,不能用 --env 覆寫" 4 ;;
+      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GOFLAGS|GOTOOLCHAIN|GOCACHE|GOMODCACHE|GOPATH|GOBIN|GOROOT|GOENV|GOWORK|GOPROXY|GOSUMDB|GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE|GOTMPDIR) die "$k 是隔離環境自己設定的變數,不能用 --env 覆寫" 4 ;;
     esac
     case "$v" in
       postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v"; continue ;;
