@@ -219,13 +219,9 @@ const HALO_MAX = 0.3, HALO_MIN_EDGE = 20, HALO_RING = 3, HALO_WHITE = 238;
 export function whiteHalo(img, x0 = 0, y0 = 0, w = img.width, h = img.height) {
   const d = img.data, A = (x, y) => d[((y0 + y) * img.width + x0 + x) * 4 + 3];
   const dist = new Int16Array(w * h).fill(-1), q = [];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = y * w + x;
-    if (A(x, y) < ALPHA_MIN) dist[i] = 0;
-    else if (x === 0 || y === 0 || x === w - 1 || y === h - 1) dist[i] = 1; // 格子外當透明
-    else continue;
-    q.push(i);
-  }
+  // 兩段放入佇列:先放全部距離 0(透明),再放距離 1(貼格子邊的不透明;格子外當透明),BFS 才是依距離遞增
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (A(x, y) < ALPHA_MIN) { dist[i] = 0; q.push(i); } }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (dist[i] < 0 && (x === 0 || y === 0 || x === w - 1 || y === h - 1)) { dist[i] = 1; q.push(i); } }
   for (let k = 0; k < q.length; k++) {
     const i = q[k], x = i % w, y = (i - x) / w;
     if (dist[i] >= HALO_RING) continue;

@@ -106,7 +106,8 @@
 |---|---|---|
 | 透明素材不能帶白色貼紙外框(提示詞不寫 sticker / sticker art) | 檢查(kit `sprite.mjs check` 外圈接近純白 > 30% 不通過,錯誤訊息附改法;`--full-bleed` 的 UI 不在檢查範圍,僅文字要求看圖)+ 測試(kit tests 白框 ×3、淺灰外圈、白色主體) | 2026-11-22 MahjongParty ticketpack-t5、bundlepack-t2~t6、VIP 卡多輪白框,靠人眼發現;已交付的 ticketpack-t5 現在會被擋下 |
 | 底部留白依簡報(例如對齊既有素材的 8 px)用 `fit --foot`,不手動補像素 | 結構(kit `sprite.mjs fit --foot`)+ 測試(kit tests「--foot 8」) | 2026-11-22 MahjongParty 四輪都 fit 成 H-5 再補 5 列透明 |
-| 非角色參考圖(現有素材、先前生成的圖)只能上傳簡報旗標「使用者授權上傳參考圖」列出的檔案;沒旗標時回報列出建議路徑 | 旗標 + 測試(tests 情境 9,待實跑)+ 限制條文 | 2026-11-22 MahjongParty ticketpack-t5、vippack-gold 兩次停下等主 agent 轉問 |
+| 非角色參考圖(現有素材、先前生成的圖)只能上傳簡報旗標「使用者授權上傳參考圖」列出的檔案;沒旗標時回報列出建議路徑 | 旗標 + 測試(tests 情境 9,2026-11-22 實跑:9A / 9B / 9C 的旗標行為都符合預期;9B 另發現重出覆寫交付檔,已改流程,見下一條)+ 限制條文 | 2026-11-22 MahjongParty ticketpack-t5、vippack-gold 兩次停下等主 agent 轉問 |
+| 遊戲素材的交付檔(圖、背景、音訊)一律先產生在這次產出目錄的暫存區(`art/out/<本次產出目錄名>/stage/<group>/`),通過後用 kit `deliver.mjs` 全有或全無交付;沒通過的項目 assets.json 不動(不讓失敗的產出覆寫已交付的檔) | 結構(kit `deliver.mjs`:複製 / 換檔 / 驗證任一步失敗全部還原)+ 測試(kit tests deliver ×21)+ 文字(工作流程「遊戲素材」第 1 點);只發生 1 次;例外直接加入:會遺失已交付素材;使用者 2026-11-22 看過改動清單(含這條修正)後指示「全部補完」 | 2026-11-22 情境 9B 實跑:失敗圖覆寫 shop.chest.png,agent 自行還原 |
 
 ## 協調者(agent-forge multi-agent)
 
@@ -116,7 +117,7 @@
 
 ## 待辦(暫緩)
 
-只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。
+只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。例外:使用者明確指示直接加入,或錯誤會遺失資料且使用者看過改動清單同意時,不等第二次(規則表要寫明理由)。
 
 | 項目 | 發生紀錄 | 再發生時的做法 |
 |---|---|---|
@@ -133,3 +134,14 @@
 | game-concept-artist 錢幣上出現 $ / 字形 | 2026-11-22 MahjongParty ticketpack-t5 三次都有 $(同一輪;之後加負向 dollar sign / text 就沒再出現) | 再發生時,STYLE.md 負向基底固定加 dollar sign, currency symbol, text, kanji,或 check 加 OCR 類檢查 |
 | game-frontend-owner 在既有專案 `check-assets` / `check-early` 回 layout absent、沒有 cycleLeak 工具 | 2026-11-22 MahjongParty rt-lobby,改用專案自己的同等測試與手寫 soak | 再發生時,stack-pixi 檢查腳本支援既有專案的 layout 設定或提供 soak 工具 |
 | frontend-owner 說明只寫 Next.js,實際用在 Vite + React 後台 | 2026-11-22 MahjongParty rt-admin,照現有慣例完成,E2E 只能 mock 模式 | 再發生時,description 改「React(Next.js 或 Vite)」並在工作流程分支 |
+
+## review 待查(還沒實際發生過)
+
+code review 找到、但還沒有真的出事的潛在問題。**實際發生第一次時,移到上面的「待辦」**(那時才算第 1 次),不要把這裡的紀錄當成第 1 次。
+
+| 項目 | 來源 | 實際發生時的做法 |
+|---|---|---|
+| `--foot` 大於 3 時 anchor [0.5, 1] 會讓物件浮起 foot / density 顯示 px | 2026-11-22 xhe PR #32 第 5 輪 review | assets.json 記 foot 偏移或依 foot 算 anchor y |
+| 有 `character` 又列在參考圖旗標時要兩張參考,規格只寫一張 | 同上 | 定好優先序(角色 ref 優先)或加 `qwen-edit-2ref` 骨架說明 |
+| 白色或很淺的非滿版 `ui`(白色按鈕、白框風角色)會被白框檢查擋下 | 同上 | 文件寫明這類素材加 `--allow-white-edge`,或 `ui` 類略過白框檢查 |
+| 外圈不到 20 px 的小圖不做白框檢查,但輸出沒有提示 | 同上 | `check` 在 halo_edge < 20 時輸出提示,請 agent 看圖 |
