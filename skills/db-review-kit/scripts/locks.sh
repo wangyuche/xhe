@@ -41,6 +41,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$DSN" ] && [ -n "$SQL" ] || die "需要 --dsn 與 --sql / --file / --goose-up" 2
+# The DDL runs between BEGIN and ROLLBACK; transaction control inside it would make it permanent.
+if printf '%s\n' "$SQL" "$HOLD" "$PROBE" | sed 's/--.*$//' | grep -Eiq '(^|;)[[:space:]]*(COMMIT|END|ROLLBACK|BEGIN|START[[:space:]]+TRANSACTION|SAVEPOINT|RELEASE|PREPARE[[:space:]]+TRANSACTION)([[:space:];]|$)'; then
+  die "SQL 裡有交易控制語句(COMMIT / BEGIN / ROLLBACK …),locks.sh 無法保證 ROLLBACK,拒絕" 2
+fi
 case "$HOLD_S" in *[!0-9]*|"") die "--hold-seconds 要是整數秒" 2 ;; esac
 if [ -n "$HOLD" ]; then
   # Monitoring polls through docker exec (~0.3–1 s each); the DDL / probe must keep waiting long enough to be observed.

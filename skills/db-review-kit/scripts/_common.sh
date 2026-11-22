@@ -73,6 +73,9 @@ verify_container() {
   local name="$1" label
   label="$(docker inspect -f '{{ index .Config.Labels "dbrev" }}' "$CONTAINER" 2>/dev/null || true)"
   [ "$label" = "$name" ] || die "容器 $CONTAINER 不存在或 label dbrev 不是 $name" 4
+  # the host port must still be the one in state.env (host-side clients — goose, go test — connect through it)
+  [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = true ] || die "容器 $CONTAINER 沒有在執行" 1
+  docker port "$CONTAINER" 5432/tcp 2>/dev/null | grep -qx "127.0.0.1:$PORT" || die "容器 $CONTAINER 的埠已不是 127.0.0.1:$PORT(被重建 / 重啟?),先 pg.sh rm 再 up" 4
 }
 
 # Guard: every DSN must point at 127.0.0.1:<this container's port>. Exit 4 on failure.

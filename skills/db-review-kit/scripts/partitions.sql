@@ -1,5 +1,6 @@
 -- Partition checks: layout, runway, partition ACL vs parent, foreign keys that affect DETACH. Read-only.
--- Run through pg.sh (stdin), as a role that can read the catalogs (superuser recommended):
+-- Run through pg.sh (stdin) as a superuser (it creates TEMP views, which needs the TEMP privilege; projects that
+-- REVOKE ALL ON DATABASE … FROM PUBLIC take that away from other roles):
 --   bash <kit>/scripts/pg.sh psql <name> <dsn> -v min_runway_days=30 < <kit>/scripts/partitions.sql
 -- Variables: min_runway_days (default 30). Needs PostgreSQL >= 16 (pg_input_is_valid).
 -- Last line: partitions_summary parents=… runway_violations=… acl_mismatches=… missing_default=…

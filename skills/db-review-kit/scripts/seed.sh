@@ -41,7 +41,9 @@ if [ -n "$FILE" ]; then
 fi
 
 [ -n "$TABLE" ] && [ -n "$ROWS" ] && [ ${#COLS[@]} -gt 0 ] || die "需要 --file,或 --table、--rows、--col" 2
-for x in "$ROWS" "$BATCH"; do case "$x" in ""|*[!0-9]*|0) die "--rows / --batch 要是 ≥ 1 的整數" 2 ;; esac; done
+for x in "$ROWS" "$BATCH"; do case "$x" in ""|*[!0-9]*) die "--rows / --batch 要是 ≥ 1 的整數" 2 ;; esac; done
+ROWS=$((10#$ROWS)); BATCH=$((10#$BATCH))
+[ "$ROWS" -ge 1 ] && [ "$BATCH" -ge 1 ] || die "--rows / --batch 要是 ≥ 1 的整數" 2
 case "$TABLE" in *[!A-Za-z0-9_.\"]*) die "--table 只能是 schema.table" 2 ;; esac
 names=""; exprs=""
 for c in "${COLS[@]}"; do

@@ -31,6 +31,8 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$SCRIPT" ] && [ -n "$DSN_A" ] && [ -n "$DSN_B" ] || die "需要 --script、--dsn A=…、--dsn B=…" 2
 [ -n "$CHK" ] || CHK="$DSN_A"
+bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:space:]]*$//' | grep -vE '^[0-9]+(\.[0-9]+)?$' | head -1 || true)"
+[ -z "$bad_sleep$(grep -E '^SLEEP:[[:space:]]*$' "$SCRIPT" || true)" ] || die "SLEEP: 的值要是秒數(例如 0.5):${bad_sleep:-空白}" 2
 printf '%s' "$STEP_WAIT" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--step-wait 要是秒數(例如 1 或 0.5)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN_A" "$DSN_B" "$CHK"
@@ -104,14 +106,14 @@ while IFS='|' read -r i s st sql; do
   f="$W/a.out"; [ "$s" = B ] && f="$W/b.out"
   if grep -qx "__DBREV_STEP_${i}__" "$f"; then fin=finished; else fin="never-finished"; fi
   e="$(seg_errors "$f" "$i")"
-  [ -n "$e" ] && echo "$e" | grep -oE '^[0-9A-Z]{5}' >> "$W/codes"
+  if [ -n "$e" ]; then echo "$e" | tr ';' '\n' | sed 's/^ *//' | grep -oE '^[0-9A-Z]{5}' >> "$W/codes" || true; fi
   if [ -z "$e" ] && [ "$fin" != finished ]; then e="no result (session ended; see trailing errors)"; fi
   echo "step $i $s ($st → $fin): ${e:-ok}"
 done < "$W/steps"
 # errors after the last marker (e.g. at session end)
 for s in A B; do f="$W/a.out"; [ $s = B ] && f="$W/b.out"
   tail_err="$(awk '/^__DBREV_STEP_[0-9]+__$/{buf=""; next} /^psql: error:/{next} /(ERROR|FATAL): +[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]:/{sub(/^.*(ERROR|FATAL): +/,""); buf=buf (buf?"; ":"") $0} END{print buf}' "$f")"
-  [ -z "$tail_err" ] || { echo "session $s trailing: $tail_err"; echo "$tail_err" | grep -oE '^[0-9A-Z]{5}' >> "$W/codes"; }
+  [ -z "$tail_err" ] || { echo "session $s trailing: $tail_err"; echo "$tail_err" | tr ';' '\n' | sed 's/^ *//' | grep -oE '^[0-9A-Z]{5}' >> "$W/codes" || true; }
   # connection failures carry no SQLSTATE in psql's output ("psql: error: … FATAL: …")
   conn_err="$(grep -m1 '^psql: error:' "$f" | cut -c1-200 || true)"
   [ -z "$conn_err" ] || { echo "session $s connect failed: $conn_err"; echo connect >> "$W/codes"; }

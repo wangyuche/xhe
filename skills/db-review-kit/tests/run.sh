@@ -173,6 +173,9 @@ echo "$o" | grep -q '| fx.accounts | ShareRowExclusiveLock | writes' && echo "$o
 printf -- '-- +goose Up\nDROP TABLE IF EXISTS fx.no_such_table;\nCREATE INDEX IF NOT EXISTS accounts_pkey ON fx.accounts (id);\n' > "$WORK/notice.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/notice.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && ! echo "$o" | grep -q 'NOTICE' && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:DDL 的 NOTICE 不會被當成鎖" || bad "locks NOTICE" "rc=$rc $o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE TABLE fx.tmp_c (i int); COMMIT;' 2>&1)"; rc=$?
+gone2="$(echo "SELECT to_regclass('fx.tmp_c') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+[ $rc -eq 2 ] && [ "$gone2" = t ] && ok "locks.sh:SQL 含 COMMIT → 拒絕,沒有留下物件" || bad "locks COMMIT" "rc=$rc gone=$gone2 $o"
 printf -- '-- +goose NO TRANSACTION\n-- +goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS x ON fx.accounts (name);\n' > "$WORK/nt.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.accounts ADD COLUMN x int' 2>&1)"; rc=$?
 echo "$o" | grep -q '| fx.accounts | AccessExclusiveLock | reads+writes' && echo "$o" | tail -1 | grep -q '"access_exclusive":1' && [ $rc -eq 0 ] \
@@ -277,12 +280,14 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; 
 printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q.sql" --runs 3 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"runs":3' && ok "explain.sh:查詢檔最後一行是 -- 註解也能跑" || bad "explain 註解結尾" "rc=$rc $o"
-o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 10 --batch 0 --col "amount=g" 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--batch 0 → 用法錯誤(不會無限迴圈)" || bad "seed batch 0" "$o"
+for b in 0 00 000; do
+  o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 10 --batch $b --col "amount=g" 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--batch $b → 用法錯誤(不會無限迴圈)" || bad "seed batch $b" "$o"
+done
 echo 'REVOKE CONNECT ON DATABASE fx_test FROM fx_app;' | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
 printf 'app | fx.accounts | select(id) | 42501\n' > "$WORK/gc.txt"
 o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/gc.txt" --dsn app="$APP" 2>&1)"; rc=$?
 echo 'GRANT CONNECT ON DATABASE fx_test TO fx_app;' | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
-[ $rc -eq 0 ] && echo "$o" | grep -q 'expect=42501 got=42501' && ok "grants.sh:沒有 CONNECT 時連線階段的 FATAL 42501 也能比對" || bad "grants FATAL" "rc=$rc $o"
+[ $rc -eq 1 ] && echo "$o" | grep -q 'expect=42501 got=connect(42501)' && ok "grants.sh:沒有 CONNECT 時記為 connect(42501),不會冒充表層級的 42501" || bad "grants FATAL" "rc=$rc $o"
 printf 'app | fx.accounts | select\n' > "$WORK/g3.txt"
 o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/g3.txt" --dsn app="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '格式錯誤' && ok "grants.sh:只有 3 欄 → 格式錯誤" || bad "grants 3 欄" "$o"
 o="$(DOCKER_HOST=tcp://192.0.2.1:2375 bash "$S/pg.sh" psql "$N" "$SU" -c 'SELECT 1' 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:建立後 DOCKER_HOST 改成遠端 → 也拒絕(結束碼 4)" || bad "psql 非本機 docker" "$o"

@@ -4,7 +4,7 @@
 #   explain.sh <name> --dsn DSN (--query 'SQL' | --file F) [--runs 20] [--target-ms 50]
 #
 # Exactly one statement: ';' is not allowed anywhere except one trailing ';' (even inside literals / comments;
-# rewrite such literals, e.g. chr(59)). Every run is wrapped in BEGIN … ROLLBACK, so DML under test changes nothing. Timing comes from
+# rewrite such literals, e.g. chr(59)). Every run is wrapped in BEGIN … ROLLBACK, so DML under test leaves no rows (sequence / identity values still advance). Timing comes from
 # EXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON): Planning Time + Execution Time, excluding network and client.
 # One warm-up run is excluded. Last line: JSON {"runs":…,"p50_ms":…,"p95_ms":…,"max_ms":…,"target_ms":…,"ok":…}.
 # Exit 1 if --target-ms is given and p95 exceeds it.
@@ -25,7 +25,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$DSN" ] && [ -n "$Q" ] || die "需要 --dsn 與 --query / --file" 2
-case "$RUNS" in *[!0-9]*|""|0) die "--runs 要是 ≥ 1 的整數" 2 ;; esac
+case "$RUNS" in *[!0-9]*|"") die "--runs 要是 ≥ 1 的整數" 2 ;; esac
+RUNS=$((10#$RUNS)); [ "$RUNS" -ge 1 ] || die "--runs 要是 ≥ 1 的整數" 2
 [ -z "$TARGET" ] || printf '%s' "$TARGET" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--target-ms 要是數字(毫秒)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"

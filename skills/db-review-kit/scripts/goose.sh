@@ -66,6 +66,9 @@ mkdir -p "$WORK/mig"
 for f in "$MIGDIR"/*.sql; do [ -e "$f" ] && cp "$f" "$WORK/mig/"; done
 GOMIG="$(cd "$MIGDIR" && ls | grep -E '^[0-9]+_.*\.go$' | grep -v '_test\.go$' || true)"
 [ -z "$GOMIG" ] || echo "注意:有 Go migration(goose CLI 不會執行):$(echo $GOMIG)" >&2
+gomig_in_range() { # <lo> <hi> -> names of Go migrations with lo <= version <= hi
+  local f v; for f in $GOMIG; do v=$((10#${f%%_*})); if [ "$v" -ge "$1" ] && [ "$v" -le "$2" ]; then echo "$f"; fi; done; return 0
+}
 
 goose_cmd() { # <dsn> <goose args...>
   local dsn="$1"; shift
@@ -132,8 +135,10 @@ case "$SUB" in
       else up2="not-run"; fi
     else down_strict="not-run"; up2="not-run"; fi
     FINAL="$(cur_version)"
+    GOGAP="$(gomig_in_range "$BEFORE" "$TO" | tr '\n' ' ')"
+    if [ -n "$GOGAP" ]; then echo "缺口:範圍內有 Go migration 沒被 goose CLI 執行:$GOGAP" >&2; reject_msg="${reject_msg:+$reject_msg; }GAP: Go migrations not run: $GOGAP"; fi
     OK=false
-    [ "$up1" = "ok" ] && [ "$up2" = "ok" ] && [ "$FINAL" = "$TO" ] && OK=true
+    [ -z "$GOGAP" ] && [ "$up1" = "ok" ] && [ "$up2" = "ok" ] && [ "$FINAL" = "$TO" ] && OK=true
     python3 -I -c 'import json,sys
 k=["before","from","to","up","down_no_flag","down_with_flag","up_again","final_version","reject_message"]
 d=dict(zip(k,sys.argv[1:10])); d["ok"]=sys.argv[10]=="true"

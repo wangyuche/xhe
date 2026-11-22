@@ -7,7 +7,8 @@
 #   <label> | <object> | <action> | <expect>
 #   action: select | select(c1,c2) | insert | insert(c1,c2) | update(c1,c2) | delete | truncate | sql:<statement>
 #           (sql: may use {obj} for the object; '|' inside the statement is fine)
-#   expect: ok | 42501 | <other SQLSTATE>
+#   expect: ok | 42501 | <other SQLSTATE> | connect(42501)   (connect(…) = denied at login, e.g. no CONNECT privilege;
+#           it never matches a table / column level 42501)
 #   bare `select` (SELECT 1 …) also names no columns: it passes with SELECT on ANY one column; use select(c1,…) or
 #   sql:SELECT * FROM {obj} LIMIT 0 to prove table-wide SELECT.
 #   bare `insert` (DEFAULT VALUES) names no columns, so PostgreSQL accepts INSERT on ANY one column: it proves only
@@ -73,6 +74,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   out="$(printf 'BEGIN;\n%s;\nROLLBACK;\n' "$stmt" | psql_dsn "$dsn" -q 2>&1)" && rc=0 || rc=$?
   code="$(echo "$out" | sed -n 's/^\(psql:[^ ]* \)\{0,1\}ERROR: *\([0-9A-Z]\{5\}\):.*/\2/p' | head -1)"
   # connection-time errors: "psql: error: … FATAL:  42501: permission denied for database …"
+  CONN=""; if echo "$out" | grep -q '^psql: error:'; then CONN=1; fi
   [ -n "$code" ] || code="$(echo "$out" | sed -n 's/.*FATAL: *\([0-9A-Z]\{5\}\):.*/\1/p' | head -1)"
   # libpq connection failures usually print no SQLSTATE: map the standard server messages
   if [ -z "$code" ] && echo "$out" | grep -q '^psql: error:'; then
@@ -88,7 +90,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   elif [ -z "$code" ]; then got="error(?)"; msg="$(echo "$out" | head -2 | tr '\n' ' ' | cut -c1-160)"
   else
     case "$code" in
-      42501) got="42501" ;;
+      42501) if [ -n "$CONN" ]; then got="connect(42501)"; else got="42501"; fi ;;
       22*|23*) got="ok($code)" ;;
       0A000) if [ "$act" = truncate ]; then got="ok($code)"; else got="error($code)"; fi ;;  # FK check runs after the privilege check
       *) got="error($code)" ;;
