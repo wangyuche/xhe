@@ -104,6 +104,15 @@ function readCache() {
 }
 const readNodeFlags = () => readCache()?.flags ?? null;
 
+// RMBG 每個模型需要的完整檔案(缺任何一個,第一次用到時會在主機上下載 → 不列);不認得的模型不列
+const RMBG_FILES = {
+  'RMBG-2.0': ['model.safetensors', 'config.json', 'birefnet.py', 'BiRefNet_config.py'],
+  INSPYRENET: ['inspyrenet.safetensors'],
+  BEN: ['BEN_Base.pth', 'model.py'],
+  BEN2: ['BEN2_Base.pth', 'BEN2.py'],
+};
+const rmbgComplete = (files) => { const set = new Set(files.map(f => f.toLowerCase())); return Object.keys(RMBG_FILES).filter(o => RMBG_FILES[o].every(f => set.has(`${o}/${f}`.toLowerCase()))); };
+
 // ---------- check ----------
 const MODEL_DIRS = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras', 'controlnet', 'clip_vision', 'style_models', 'ipadapter'];
 function family(name) {
@@ -158,17 +167,10 @@ async function check() {
   // Windows 主機回傳反斜線路徑,統一成 /
   const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : []);
   const opts = (node) => { const m = oi[node]?.input?.required?.model; return Array.isArray(m?.[0]) ? m[0] : []; };
-  // 每個模型需要的完整檔案(缺任何一個,RMBG 第一次用到時會在主機上下載 → 不列);不認得的模型不列
-  const RMBG_FILES = {
-    'RMBG-2.0': ['model.safetensors', 'config.json', 'birefnet.py', 'BiRefNet_config.py'],
-    INSPYRENET: ['inspyrenet.safetensors'],
-    BEN: ['BEN_Base.pth', 'model.py'],
-    BEN2: ['BEN2_Base.pth', 'BEN2.py'],
-  };
-  const fileSet = new Set(rmbgFiles.map(f => f.toLowerCase()));
   const bg = [];
   if (has('RMBG')) {
-    const ms = opts('RMBG').filter(o => RMBG_FILES[o] && RMBG_FILES[o].every(f => fileSet.has(`${o}/${f}`.toLowerCase())));
+    const ok = rmbgComplete(rmbgFiles);
+    const ms = opts('RMBG').filter(o => ok.includes(o));
     if (ms.length) bg.push({ node: 'RMBG', models: ms });
   }
   const bgOk = bg.length > 0 && has('InvertMask') && has('JoinImageWithAlpha');
@@ -303,7 +305,8 @@ async function run() {
   const { meta, graph, vals } = fill(skel, flags.set);
   if (Object.values(graph).some(n => /^Save(Image|Audio|Video|Animated|WEBM|Latent)/.test(n?.class_type ?? ''))) die('workflow 不可用 Save* 節點(會寫進伺服器 output/);圖用 PreviewImage、音訊用 PreviewAudio', 2);
   // 雲端 API 節點(付費、把內容送到外部):名稱黑名單 + /object_info 的 api_node 旗標,一律拒絕
-  const CLOUD = /^(Bria|Recraft|Stability|ElevenLabs|OpenAI|Gemini|Kling|Luma|Runway|Ideogram|Pika|Minimax|Tripo|Moonvalley|Vidu|Rodin|Pixverse|Veo|Flux(Pro|Kontext(Pro|Max)))/;
+  // 名稱只擋規格點名的雲端服務(其他雲端節點靠 /object_info 的 api_node 旗標;不用通用字首,避免誤擋本機節點)
+  const CLOUD = /^(Bria|Recraft|Stability)[A-Z]\w*Node$|^(Bria|Recraft)\w*$/;
   const classes = [...new Set(Object.values(graph).map(n => n?.class_type).filter(Boolean))];
   const cloudByName = classes.filter(c => CLOUD.test(c));
   if (cloudByName.length) die(`workflow 含雲端 API 節點,不能用:${cloudByName.join(', ')}`, 2);
@@ -325,8 +328,14 @@ async function run() {
     const rmbgUsed = Object.values(graph).filter(n => n?.class_type === 'RMBG').map(n => n.inputs?.model);
     if (rmbgUsed.length) {
       const c = readCache();
-      const ok = c && c.rmbg && Date.now() - (c.rmbgT ?? 0) < 3600000 ? c.rmbg : null;
-      if (!ok) die('用到 RMBG 但沒有 check 的結果(或超過 1 小時);先跑 comfy.mjs check', 2);
+      let ok = c && c.rmbg && Date.now() - (c.rmbgT ?? 0) < 3600000 ? c.rmbg : null;
+      if (!ok) {
+        // 超過 1 小時(長批次)或沒有快取:自己重查 /models/rmbg(很快),不必中斷批次
+        const files = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : null);
+        if (!files) die('查不到 /models/rmbg;先跑 comfy.mjs check', 2);
+        ok = rmbgComplete(files);
+        writeNodeFlags(oi, ok, Date.now());
+      }
       const bad = rmbgUsed.filter(m => !ok.includes(m));
       if (bad.length) die(`RMBG 模型 ${bad.join(', ')} 不在主機上檔案齊全的清單(${ok.join(', ') || '無'});用了會讓主機自動下載`, 2);
     }

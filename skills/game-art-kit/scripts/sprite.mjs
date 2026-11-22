@@ -204,7 +204,10 @@ export function cover(img, W, H, exact = false) {
 export function checkImage(img, { width: W, height: H, frames = 1, columns, opaque = false, tileable = false, character = false, fullBleed = false }) {
   const errs = [], info = [];
   const cols = columns ?? (frames > 1 ? sheetLayout(frames, W).columns : 1), rows = Math.ceil(frames / cols);
-  if (!opaque && !img.hasAlpha) errs.push('沒有 alpha 通道(應為透明 PNG)');
+  // 要真的有透明像素(色彩類型是 RGBA 不夠:去背失敗時整張還是不透明)
+  // --full-bleed 的 UI 可以剛好填滿(例如方形面板),只要求 RGBA
+  if (!opaque && fullBleed && !img.hasAlpha) errs.push('沒有 alpha 通道(應為透明 PNG)');
+  if (!opaque && !fullBleed) { let t = 0; for (let i = 3; i < img.data.length; i += 4) if (img.data[i] < ALPHA_MIN) { t++; break; } if (!img.hasAlpha || !t) errs.push('沒有透明像素(alpha 全不透明;去背失敗?應為透明 PNG)'); }
   if (img.width !== W * cols || img.height !== H * rows) errs.push(`尺寸 ${img.width}×${img.height},應為 ${W * cols}×${H * rows}`);
   if (img.width !== W * cols || img.height !== H * rows) return { errs, info };
   for (let i = 0; i < frames; i++) {

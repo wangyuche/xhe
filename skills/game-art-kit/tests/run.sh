@@ -153,6 +153,8 @@ r="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name sp1 "${QS[@]}
 r="$(C run "$K/workflows/qwen-edit-1ref-sprite.json" --out "$W/a" --name sp2 "${QS[@]}" --set width=64 --set height=64 --set 'ref1=r.png [temp]' --set bg_model=RMBG-2.0)" && echo "$r" | grep -q '"channels":4' \
   && ok "qwen-edit-1ref-sprite:角色一致 + 去背" || bad "qwen-edit-1ref-sprite" "$r"
 o="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name spx "${QS[@]}" --set width=64 --set height=64 --set bg_model=BEN2 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'BEN2' && ok "run:RMBG 模型不在 check 確認檔案齊全的清單 → 拒絕(避免主機自動下載)" || bad "run RMBG 模型檢查" "$o"
+node -e 'const fs=require("fs");const d=process.argv[1];for(const f of fs.readdirSync(d)){const p=d+"/"+f;const c=JSON.parse(fs.readFileSync(p));c.rmbgT=Date.now()-2*3600e3;fs.writeFileSync(p,JSON.stringify(c))}' "$GAK_CACHE_DIR"
+r="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name spold "${QS[@]}" --set width=64 --set height=64 --set bg_model=RMBG-2.0 2>&1)" && echo "$r" | grep -q '"status":"ok"' && ok "run:RMBG 清單超過 1 小時(長批次)時自己重查 /models/rmbg,不中斷" || bad "run RMBG 清單過期" "$r"
 SA=(--set ckpt=s --set clip=t --set prompt=boing --set negative=music --set seconds=3 --set seed=1 --set steps=8 --set cfg=6 --set sampler=euler --set scheduler=simple)
 r="$(C run "$K/workflows/stable-audio-sfx.json" --out "$W/a" --name sfx "${SA[@]}")" && [ -s "$W/a/sfx.wav" ] && echo "$r" | grep -q '"kind":"audio"' \
   && ok "stable-audio-sfx:下載 PreviewAudio 的音訊(副檔名照伺服器)" || bad "stable-audio-sfx" "$r"
@@ -223,6 +225,8 @@ mk2 "$W/sp/tile.png" 0 0 400 0 0
 o="$(S cover "$W/sp/tile.png" --out "$W/sp/cov.png" --width 200 --height 100)" && [ "$(C pngsize "$W/sp/cov.png")" = '{"width":200,"height":100}' ] && S check "$W/sp/cov.png" --width 200 --height 100 --opaque >/dev/null \
   && ok "sprite.mjs cover:不透明素材等比蓋滿裁切到 1x" || bad "sprite cover" "$o"
 o="$(S cover "$W/sp/tile.png" --out "$W/sp/cov2.png" --width 200 --height 100 --exact 2>&1)"; [ $? -eq 1 ] && o2="$(S cover "$W/sp/tile.png" --out "$W/sp/cov3.png" --width 150 --height 200 --exact)" && ok "sprite.mjs cover --exact:比例不同失敗、同比例整張縮放(地圖塊不裁邊)" || bad "sprite cover --exact" "$o $o2"
+node --input-type=module -e 'import { decodePng, encodePng } from "'"$K"'/scripts/sprite.mjs"; import { readFileSync, writeFileSync } from "node:fs"; const i = decodePng(readFileSync(process.argv[1])); for (let p = 3; p < i.data.length; p += 4) i.data[p] = 255; writeFileSync(process.argv[2], encodePng(i));' "$W/sp/one.png" "$W/sp/solid.png"
+o="$(S check "$W/sp/solid.png" --width 120 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '透明像素' && ok "sprite.mjs check:RGBA 但完全不透明(去背失敗)→ 不通過" || bad "sprite 全不透明 RGBA" "$o"
 head -c 200 "$W/sp/f1.png" > "$W/sp/trunc.png"; o="$(S info "$W/sp/trunc.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '不完整\|損壞' && ok "sprite.mjs:截斷的 PNG → 結束碼 2" || bad "sprite 截斷 PNG" "$o"
 o="$(S check "$W/sp/tile.png" --width 300 --height 400 --opaque --tileable)" && ok "sprite.mjs check:均勻地圖塊可平鋪" || bad "sprite tileable 均勻" "$o"
 node --input-type=module -e '
