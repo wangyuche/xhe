@@ -183,6 +183,8 @@ function centroidX(img, b) {
 }
 
 export function density1x(dw, dh, frames = 1, want = 2) {
+  if (!Number.isFinite(want) || want <= 0) die(`--density 要是正數(收到 ${want})`);
+  if (Math.floor(dw * want + 1e-9) < 1) die(`--density ${want} 太小:顯示寬 ${dw} × density 不到 1 px`);
   // 寬取整(無條件捨去)後,印出的 density = 寬 ÷ 顯示寬(4 位小數),高用同一個 density 四捨五入(validate 同樣算法)
   const size = (W) => { const dens = +(W / dw).toFixed(4); return { W, dens, H: Math.round(dh * dens) }; };
   const base = size(Math.floor(dw * want + 1e-9)).dens; // 沒受 2048 限制時的值,低於它才算 lowered
@@ -190,7 +192,7 @@ export function density1x(dw, dh, frames = 1, want = 2) {
   for (let W = Math.floor(Math.min(dw * want, dw * 2048 / Math.max(dw, dh)) + 1e-9); W >= 1; W--) {
     const { dens, H } = size(W);
     const { columns, rows } = sheetLayout(frames, W);
-    // lowered:實際 density 低於要求(needs 指定或預設 2),agent 列在已知限制;< 1 時 sprite/frames/ui 跳過,background/tile 允許(見 agent)
+    // lowered:實際 density 低於要求(needs 指定或預設 2),agent 列在已知限制;< 1 時透明素材跳過、不透明素材允許(見 agent)
     if (H >= 1 && W * columns <= 2048 && H <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows, ...(dens < base - 1e-4 ? { lowered: true } : {}) };
   }
   die('找不到合適的 density(顯示尺寸太大)');
