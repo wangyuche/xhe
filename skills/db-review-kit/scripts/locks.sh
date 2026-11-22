@@ -136,7 +136,7 @@ fi
 
 # ---- hold mode ----
 ST_HOLD="$((HOLD_S + 20))s"
-(printf "SET application_name = 'dbrev-lock-${RID}-hold';\nBEGIN;\n%s\n;\nSELECT pg_sleep(%s);\nROLLBACK;\n" "$HOLD" "$HOLD_S" \
+(printf "SET application_name = 'dbrev-lock-${RID}-hold';\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\nSELECT pg_sleep(%s);\nROLLBACK;\n" "$HOLD" "$HOLD_S" \
   | ST_OVERRIDE="$ST_HOLD" psql_dsn "$HOLD_DSN" -qAt > "$WORK/hold.out" 2>&1) & PIDS="$PIDS $!"
 i=0
 until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-${RID}-hold' AND wait_event = 'PgSleep';\n" | psql_dsn "$MON" -qAt 2>/dev/null)" = "1" ]; do
@@ -159,7 +159,7 @@ OBSERVED=true
 wait_lock ddl || OBSERVED=false
 PROBE_PID=""
 if [ -n "$PROBE" ]; then
-  (printf "SET application_name = 'dbrev-lock-${RID}-probe';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$PROBE" \
+  (printf "SET application_name = 'dbrev-lock-${RID}-probe';\nSET lock_timeout = '%s';\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\nROLLBACK;\n" "$LT" "$PROBE" \
     | { set +e; psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out"; }) & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
   wait_lock probe || OBSERVED=false
 fi
@@ -184,16 +184,20 @@ outcome() { # file -> ok | timeout(55P03) | error(code)
   else echo "error(${c:-?})"; fi
 }
 DDL_RES="$(outcome "$WORK/ddl.out")"
-if [ "$DDL_RES" = ok ]; then
-  txb="$(grep -m1 '^__DBREV_TX_BEGIN__' "$WORK/ddl.out" || true)"; txe="$(grep '^__DBREV_TX_END__' "$WORK/ddl.out" | tail -1 || true)"
-  [ -n "$txb" ] && [ "${txb#__DBREV_TX_BEGIN__}" = "${txe#__DBREV_TX_END__}" ] || DDL_RES="committed(transaction ended inside the SQL)"
-fi
+tx_ended() { # <outfile> : 0 if the SQL ended our transaction (txid before / after differ) or reached its end marker with another txid
+  local b e; b="$(grep -m1 '^__DBREV_TX_BEGIN__' "$1" || true)"; e="$(grep '^__DBREV_TX_END__' "$1" | tail -1 || true)"
+  [ -n "$e" ] && [ "${b#__DBREV_TX_BEGIN__}" != "${e#__DBREV_TX_END__}" ]
+}
+if [ "$DDL_RES" = ok ] && { ! grep -q '^__DBREV_TX_END__' "$WORK/ddl.out" || tx_ended "$WORK/ddl.out"; }; then DDL_RES="committed(transaction ended inside the SQL)"; fi
+HOLD_TX=ok; ! tx_ended "$WORK/hold.out" || HOLD_TX="committed(transaction ended inside the hold SQL)"
+PROBE_TX=ok; [ -z "$PROBE" ] || ! tx_ended "$WORK/probe.out" || PROBE_TX="committed(transaction ended inside the probe SQL)"
 PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"
 echo "### outcomes"; echo "ddl: $DDL_RES $(grep -m1 ERROR "$WORK/ddl.out" || true)"
 [ -z "$PROBE" ] || echo "probe: $PROBE_RES $(grep -m1 ERROR "$WORK/probe.out" || true)"
 by() { echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | awk -F'|' -v s="dbrev-lock-$RID-$1" -v pre="dbrev-lock-$RID-" '$1==s{gsub(pre,"",$5); print $5}'; }
 # ok = the DDL (and probe) were seen waiting on a lock; otherwise the hold did not conflict or the run failed.
 OKV=$OBSERVED; case "$DDL_RES" in error*|connect-failed|committed*) OKV=false ;; esac
+[ "$HOLD_TX" = ok ] && [ "$PROBE_TX" = ok ] || { OKV=false; echo "注意:$HOLD_TX $PROBE_TX — 暫存庫已被改,後續實測請重建" >&2; }
 printf '{"mode":"hold","ddl":"%s","ddl_blocked_by":"%s","probe":"%s","probe_blocked_by":"%s","observed":%s,"ok":%s}\n' \
   "$DDL_RES" "$(by ddl)" "$PROBE_RES" "$(by probe)" "$OBSERVED" "$OKV"
 [ "$OKV" = true ]

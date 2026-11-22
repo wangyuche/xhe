@@ -64,13 +64,7 @@ case "$CMD" in
     ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"
     SUPERPASS="$(rand_hex 16)"
     PULLED=""
-    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; fi
-    # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
-    # anonymous on-disk volume is created and --tmpfs-size really caps the data.
-    VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
-    [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
-    TMPFS_ARGS=(); for v in $VOLS; do TMPFS_ARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
-    RUNARGS=(-d --label "dbrev=$NAME" "${TMPFS_ARGS[@]}" --shm-size 256m -p "127.0.0.1::5432"
+    RUNARGS=(-d --label "dbrev=$NAME" --shm-size 256m -p "127.0.0.1::5432"
              -e "POSTGRES_USER=$SUPERUSER" -e "POSTGRES_PASSWORD=$SUPERPASS")
     for m in ${MOUNTS[@]+"${MOUNTS[@]}"}; do
       src="${m%%:*}"; rest="${m#*:}"; dest="${rest%%:*}"; mode=""
@@ -94,6 +88,13 @@ case "$CMD" in
       [ "${kv%%=*}" != PGDATA ] || die "PGDATA 不能用 --env 改(資料必須在映像宣告的 VOLUME,也就是 tmpfs 上)" 2
       RUNARGS+=(-e "$kv")
     done
+    # pull only after every argument check passed (a failed check must not leave a pulled image behind)
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; fi
+    # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
+    # anonymous on-disk volume is created and --tmpfs-size really caps the data.
+    VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
+    [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
+    for v in $VOLS; do RUNARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
     CONTAINER="dbrev-$NAME-$(rand_hex 3)"
     START=$(date +%s)
     cleanup_fail() {
@@ -172,11 +173,14 @@ case "$CMD" in
     NAME="${1:-}"; check_name "$NAME"; DSN="${2:?用法:pg.sh psql <name> <dsn> [psql args]}"; shift 2
     load_state "$NAME"; verify_container "$NAME"
     # Only output / variable flags: connection options (-d -h -p -U, a second DSN) could leave the container.
-    ARGS=(); CMDS=""
+    ARGS=(); CMDS=""; VNAMES=""
     while [ $# -gt 0 ]; do
       case "$1" in
         -[qAtX]|-[qAtX][qAtX]|-[qAtX][qAtX][qAtX]|-[qAtX][qAtX][qAtX][qAtX]) ARGS+=("$1"); shift ;;
-        -F|-v|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;
+        -v) [ $# -ge 2 ] || die "-v 需要 name=value" 2
+            printf '%s' "$2" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[^\\`]*$' || die "-v 的值不能含反斜線或反引號:$2" 2
+            VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; ARGS+=("$1" "$2"); shift 2 ;;
+        -F|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;
         -c) [ $# -ge 2 ] || die "-c 需要 SQL" 2; CMDS="$CMDS$2
 "; ARGS+=("$1" "$2"); shift 2 ;;
         *) die "pg.sh psql 只接受 -q -A -t -X -F -v -P -c(不接受連線參數):$1" 2 ;;
@@ -184,7 +188,7 @@ case "$CMD" in
     done
     D="$(name_dir "$NAME")"; IN="$(mktemp "$D/psql-in.XXXXXX")"; trap 'rm -f "$IN"' EXIT
     if [ -n "$CMDS" ]; then : > "$IN"; else cat > "$IN"; fi
-    bad="$(printf '%s' "$CMDS" | cat - "$IN" | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
+    bad="$(printf '%s' "$CMDS" | cat - "$IN" | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect --vars "${VNAMES:-}")" \
       || die "SQL 裡有 \\c / \\connect / \\!($bad),會離開本容器的連線,拒絕" 4
     psql_dsn "$DSN" ${ARGS[@]+"${ARGS[@]}"} < "$IN"
     ;;
@@ -206,7 +210,8 @@ case "$CMD" in
     n=0
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "刪除容器 $c 失敗" 1; echo "removed container=$c"; n=$((n + 1)); done
     # the image is removed too when this kit pulled it for this name and no other container uses it
-    if [ -n "$PURGE" ] && [ -n "$PULLED" ] && [ -n "$IMAGE" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then
+    # (always, not only with --purge: the state file that remembers it is deleted here)
+    if [ -n "$PULLED" ] && [ -n "$IMAGE" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then
       docker image rm "$IMAGE" >/dev/null 2>&1 && echo "removed image=$IMAGE(本次拉的)"
     fi
     [ $n -gt 0 ] || echo "not-found name=$NAME"
@@ -218,8 +223,11 @@ case "$CMD" in
     NAME="${1:-}"; check_name "$NAME"
     require_local_docker
     n=0
+    sf="$(state_file "$NAME")"; PULLED=""; IMAGE=""
+    if [ -f "$sf" ] && [ -O "$sf" ]; then PULLED="$(sed -n "s/^PULLED='\(.*\)'$/\1/p" "$sf")"; IMAGE="$(sed -n "s/^IMAGE='\(.*\)'$/\1/p" "$sf")"; fi
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "殘留容器 $c 刪不掉" 1; n=$((n + 1)); done
-    rm -f "$(state_file "$NAME")"
+    if [ -n "$PULLED" ] && [ -n "$IMAGE" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then docker image rm "$IMAGE" >/dev/null 2>&1 && echo "removed image=$IMAGE(上次拉的)"; fi
+    rm -f "$sf"
     left="$(list_ours "$NAME" | wc -l | tr -d ' ')"
     echo "gc name=$NAME removed=$n remaining=$left"
     [ "$left" = "0" ] || exit 1

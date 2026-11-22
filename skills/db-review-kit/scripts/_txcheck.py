@@ -117,6 +117,9 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
+    if re.search(r"\bU&['\"]", raw, re.I):
+        print("U& escapes are not allowed (they hide identifiers and literals from this check)")
+        return 1
     # an actual change of these GUCs (SET / RESET / ALTER … SET / set_config with that name), not every set_config call
     if re.search(r"(standard_conforming_strings|escape_string_warning)", raw, re.I) or \
             re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)", raw, re.I):
@@ -126,6 +129,18 @@ def main():
     if "--connect" in sys.argv[1:]:
         allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
+        # psql re-lexes a bare :name value as if typed (so a value holding "\\c host=…" would run). In SQL lines only
+        # :'name' / :"name" (quoted, safe) or a bare :name set by a validated -v (--vars) or a plain \\set are allowed.
+        vars_ok = set(v for v in (sys.argv[sys.argv.index("--vars") + 1].split(",") if "--vars" in sys.argv else []) if v)
+        for line in raw.splitlines():
+            m = re.match(r"\s*\\set\s+([A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z0-9_.:+-]*\s*$", line)
+            if m:
+                vars_ok.add(m.group(1))
+        sql_only = strip("\n".join(l for l in raw.splitlines() if not l.lstrip().startswith("\\")))
+        for vm in re.finditer(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", sql_only):
+            if vm.group(1) not in vars_ok:
+                print("bare :%s in SQL (re-lexed by psql); use :'%s' or pass it with -v" % (vm.group(1), vm.group(1)))
+                return 1
         # psql's own lexer decides where a meta-command starts, and emulating it has proven fragile. So in script mode a
         # backslash is only accepted in two exact shapes, checked per raw line (no SQL lexing involved):
         #   - a line that starts with an allowed meta-command and has exactly one backslash and no backtick;

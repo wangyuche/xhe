@@ -335,6 +335,9 @@ printf '%s\n' "A: SELECT set_config('app.tenant_id', '1', false);" "B: SELECT 1;
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-sc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 0 ] && ok "race.sh:一般的 set_config('app.…') 可以用" || bad "race set_config" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$APP" --query "SELECT balance FROM fx.accounts" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
+o="$(printf ':x\n' | bash "$S/pg.sh" psql "$N" "$SU" -v 'x=\c host=10.0.0.5 dbname=prod' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值含反斜線 → 拒絕" || bad "psql -v backslash" "$o"
+o="$(printf "SELECT chr(92)||'! id' AS x \\gset\n:x\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 變數再以 :x 執行 → 拒絕" || bad "psql gset :x" "$o"
+o="$(printf "SELECT :'v'::int + :n AS s;\n" | bash "$S/pg.sh" psql "$N" "$SU" -qAt -v v=1 -v n=2 2>&1)"; [ "$o" = 3 ] && ok "pg.sh psql:-v 給的 :n 與 :'v' 可以用" || bad "psql -v 變數" "$o"
 o="$(printf 'SELECT 1 \\g |sh\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\g |cmd 等不在允許清單的 psql 指令 → 拒絕" || bad "psql \\g pipe" "$o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_n (i int); /* a /* b */ ' */ COMMIT; -- '" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:巢狀註解後的 COMMIT 也會被抓到" || bad "locks 巢狀註解" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SET work_mem='1MB'; SELECT 1" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:多個語句 → 用法錯誤" || bad "explain 多語句" "$o"

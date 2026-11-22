@@ -89,7 +89,7 @@ start_session() { # <label> <dsn> <fifo> <out>
 }
 start_session A "$DSN_A" "$W/a.fifo" "$W/a.out" & PA=$!
 start_session B "$DSN_B" "$W/b.fifo" "$W/b.out" & PB=$!
-exec 7>"$W/a.fifo"; exec 8>"$W/b.fifo"
+exec 7<>"$W/a.fifo"; exec 8<>"$W/b.fifo"   # read-write open never blocks, even if a session died before opening its FIFO
 trap '' PIPE   # a session whose psql already exited must not kill the script on the next write;
 # FIFO writes use /usr/bin/printf: bash's builtin keeps a failed write buffered and flushes it into the next redirect
 ENDED_A=""; ENDED_B=""

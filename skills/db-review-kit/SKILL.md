@@ -31,8 +31,9 @@ bash <kit>/scripts/pg.sh up <name> --image <設定的映像> \
 bash <kit>/scripts/pg.sh dsn <name> <角色> <庫> [--options '-c mj.allow_data_down=on']
 bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c …]   # SQL 從 stdin(容器內 psql,看不到主機檔案,用 < 檔案)
 #   不接受連線參數(-d -h -p -U);反斜線只能出現在「行首的一個允許指令」或「行尾的 \gset」,
-#   SQL 文字裡的反斜線(含 E'' 字串)一律拒絕(改用 chr(92));psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv
+#   SQL 文字裡的反斜線(含 E'' 字串)一律拒絕(改用 chr(92));psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv \conninfo \encoding
 #   (\c、\!、\o、\g |…、\copy、\i 等 → 結束碼 4;seed.sh --file 同樣)
+#   SQL 裡的裸 :name 只能是 -v 給的或 \set 設成一般值的變數(psql 會把值當成輸入重新解析);:'name' / :"name" 可用;-v 的值不能含反斜線
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
 bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄;映像是這次 up 拉的且沒有其他容器在用時一併刪除)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0

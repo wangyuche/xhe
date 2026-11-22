@@ -13,12 +13,13 @@ source "$(dirname "$0")/_common.sh"
 usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
 NAME="$1"; check_name "$NAME"; shift
-DSN=""; FILE=""; VARS=(); TABLE=""; ROWS=""; COLS=(); BATCH=100000
+DSN=""; FILE=""; VARS=(); VNAMES=""; TABLE=""; ROWS=""; COLS=(); BATCH=100000
 while [ $# -gt 0 ]; do
   case "$1" in
     --dsn) DSN="${2:?}"; shift 2 ;;
     --file) FILE="${2:?}"; shift 2 ;;
-    --var) VARS+=(-v "${2:?}"); shift 2 ;;
+    --var) printf '%s' "${2:?}" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[^\\`]*$' || die "--var 的值不能含反斜線或反引號:$2" 2
+           VARS+=(-v "$2"); VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; shift 2 ;;
     --table) TABLE="${2:?}"; shift 2 ;;
     --rows) ROWS="${2:?}"; shift 2 ;;
     --col) COLS+=("${2:?}"); shift 2 ;;
@@ -36,7 +37,7 @@ export ST_OVERRIDE=300s
 
 if [ -n "$FILE" ]; then
   [ -f "$FILE" ] || die "--file 不存在:$FILE" 2
-  bad="$(python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect < "$FILE")" || die "種子腳本有 \\c / \\connect / \\!($bad),拒絕" 4
+  bad="$(python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect --vars "${VNAMES:-}" < "$FILE")" || die "種子腳本有 \\c / \\connect / \\!($bad),拒絕" 4
   psql_dsn "$DSN" -q ${VARS[@]+"${VARS[@]}"} < "$FILE"
   echo "seed file=$FILE seconds=$(( $(date +%s) - START )) tmpfs_free_mb_after=$(free_mb)"
   exit 0
