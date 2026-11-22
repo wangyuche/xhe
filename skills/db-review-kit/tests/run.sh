@@ -157,6 +157,8 @@ o="$(bash "$S/pg.sh" guard "$N" "$APP" "${APP}&host=db.internal" 2>&1)"; rc=$?
 
 # ---------- goose ----------
 if ! command -v go >/dev/null 2>&1; then skip "goose.sh(沒有 go)"; skip "gotest.sh(沒有 go)"; else
+mkdir -p "$WORK/mig-seed" && cp "$FX"/migrations/*.sql "$WORK/mig-seed/" && echo 'SELECT 1;' > "$WORK/mig-seed/seed.sql"
+o="$(bash "$S/goose.sh" "$N" validate --dir "$WORK/mig-seed" --module "$FX" 2>&1)"; [ $? -eq 0 ] && echo "$o" | grep -q '略過非 migration 檔:seed.sql' && ok "goose.sh:migrations 目錄裡的 seed.sql 等非 migration 檔被略過" || bad "goose 非 migration 檔" "$o"
 o="$(bash "$S/goose.sh" "$N" validate --dir "$FX/migrations" 2>&1)"; [ $? -eq 0 ] && ok "goose.sh validate(版本取自 go.mod:$(echo "$o" | sed -n 's/^goose=\([^ ]*\).*/\1/p'))" || bad "goose validate" "$o"
 o="$(DATABASE_URL=postgres://evil@10.255.255.1/x GOOSE_DBSTRING=postgres://evil@10.255.255.1/x bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --dsn-allow "$MIGA" --from 3 2>&1)"; rc=$?
 j="$(echo "$o" | tail -1)"
@@ -326,6 +328,9 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.acc
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1; /* note */" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:分號後的 /* */ 註解不算第二個語句" || bad "explain 區塊註解" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --env POSTGRES_INITDB_WALDIR=/wal 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:POSTGRES_INITDB_WALDIR → 拒絕(WAL 也要在 tmpfs)" || bad "WALDIR" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --role app 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--role 格式錯誤在啟動容器前就拒絕" || bad "pg role 早檢查" "$o"
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME:/h" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount 家目錄 → 拒絕" || bad "mount HOME" "$o"
+printf '%s\n' 'A: SELECT 1;' 'b: SELECT 1;' > "$WORK/race-lc.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-lc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:不認得的行(小寫 b:)→ 用法錯誤" || bad "race 未知行" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --tmpfs-size 0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:--tmpfs-size 0 → 拒絕(size=0 是沒有上限)" || bad "tmpfs 0" "$o"
 mkdir -p "$DB_REVIEW_KIT_TMP/image.lock" && echo 999999 > "$DB_REVIEW_KIT_TMP/image.lock/pid"
 echo "dbrev-selftest-nonexistent:0" > "$DB_REVIEW_KIT_TMP/pulled-images"   # makes gc take the lock

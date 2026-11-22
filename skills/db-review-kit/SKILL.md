@@ -19,7 +19,7 @@ bash <kit>/scripts/pg.sh check
 
 # 暫存 PostgreSQL(依專案設定的 Bootstrap 照抄 compose 的 db 服務:去掉資料 volume、秘密改隨機)
 bash <kit>/scripts/pg.sh up <name> --image <設定的映像> \
-  [--mount <專案路徑>:<容器路徑>]...      # 一律唯讀(帶 :rw 結束碼 4);來源要存在
+  [--mount <專案路徑>:<容器路徑>]...      # 一律唯讀(帶 :rw 結束碼 4);來源要是存在的一般檔案或目錄,不能是 socket / device、/ 或家目錄
   [--env K=V]...                          # 非秘密(例 POSTGRES_INITDB_ARGS=…)
   [--env-random NAME ...]                 # 秘密:每個給 32 位隨機 hex
   [--role <登入角色>=<密碼變數>]...        # 印出這個角色的 DSN(密碼取自 --env-random / --env)

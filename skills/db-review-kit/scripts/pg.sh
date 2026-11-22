@@ -86,7 +86,13 @@ case "$CMD" in
       case "$dest" in /*) ;; *) die "--mount 的 DEST 要是容器內絕對路徑:$dest" 2 ;; esac
       case "$src$dest" in *,*|*=*) die "--mount 的路徑不能含 , 或 =(docker --mount 會誤判):$m" 2 ;; esac
       [ -e "$src" ] || die "--mount 來源不存在:$src" 1
-      abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+      # only regular files / directories; never sockets or devices (docker.sock …), never / or $HOME or a parent of it
+      [ -f "$src" ] || [ -d "$src" ] || die "--mount 來源要是一般檔案或目錄(不接受 socket / device):$src" 4
+      if [ -d "$src" ]; then abs="$(cd "$src" && pwd -P)"; else abs="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"; fi
+      [ ! -S "$abs" ] && [ ! -c "$abs" ] && [ ! -b "$abs" ] || die "--mount 來源不能是 socket / device:$abs" 4
+      hp="$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")"
+      case "$hp/" in "$abs"/*|"$abs/") die "--mount 不能掛 / 或家目錄(或其上層):$abs" 4 ;; esac
+      [ "$abs" != "/" ] || die "--mount 不能掛 /" 4
       RUNARGS+=(--mount "type=bind,source=$abs,target=$dest,readonly")
     done
     STATE_RANDOM=""

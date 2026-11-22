@@ -69,7 +69,14 @@ if [ -n "$HOLD" ]; then
   [ "$LT_S" -ge 3 ] || die "--hold 模式的 --lock-timeout 至少 3s(太短時監看還沒拍到就已逾時)" 2
   [ "$HOLD_S" -gt "$LT_S" ] || die "--hold-seconds 要大於 --lock-timeout" 2
   # with a probe, the DDL must still be waiting after it was observed and the probe was started and observed
-  [ -z "$PROBE" ] || [ "$LT_S" -ge 5 ] || die "有 --probe 時 --lock-timeout 至少 5s(監看 DDL 再啟動 probe 需要時間)" 2
+  # the SQL's own SET LOCAL lock_timeout (common in goose Up sections) wins inside the transaction: use the shorter one
+  own="$(printf '%s\n' "$SQL" | grep -oiE "set[[:space:]]+local[[:space:]]+lock_timeout[[:space:]]*(=|to)[[:space:]]*'?[0-9]+(ms|s|min)?'?" | tail -1 \
+         | grep -oiE "[0-9]+(ms|s|min)?" | tail -1 || true)"
+  if [ -n "$own" ]; then
+    own_s=$(printf '%s' "$own" | awk '/ms$/{v=$0+0; print int((v+999)/1000); next} /min$/{print ($0+0)*60; next} /s$/{print $0+0; next} {v=$0+0; print int((v+999)/1000)}')
+    if [ "$own_s" -lt "$LT_S" ]; then echo "注意:SQL 自己的 SET LOCAL lock_timeout = $own(比 --lock-timeout 短,以它為準)" >&2; LT_S="$own_s"; fi
+  fi
+  [ -z "$PROBE" ] || [ "$LT_S" -ge 5 ] || die "有 --probe 時有效的 lock_timeout 至少 5s(目前 ${LT_S}s;migration 自己設較短時,改不帶 --probe 觀察 DDL 被擋,probe 的排隊改推導)" 2
 else
   [ -n "$LT" ] || LT="2s"
 fi

@@ -42,6 +42,8 @@ bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]
   || { trc=$?; die "腳本不允許:$bad" "$trc"; }
 nosemi="$(grep -E '^(A|B):' "$SCRIPT" | sed -E 's/;[[:space:]]*--[^;]*$/;/; s/[[:space:]]+$//' | grep -vE ';$' | head -1 || true)"
 [ -z "$nosemi" ] || die "A: / B: 的每一行都要以 ; 結尾(否則 psql 會先印標記、語句卻還沒送出):$nosemi" 2
+unknown="$(grep -vE '^[[:space:]]*($|#)|^(SETUP|A|B|SLEEP|CHECK):' "$SCRIPT" | head -1 || true)"
+[ -z "$unknown" ] || die "不認得的腳本行(只接受 SETUP: / A: / B: / SLEEP: / CHECK:、空行、# 註解):$unknown" 2
 nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
 [ -z "$nocmp" ] || die "CHECK 行要寫成 CHECK: <sql> => <預期>:$nocmp" 2
 bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:space:]]*$//' | grep -vE '^[0-9]+(\.[0-9]+)?$' | head -1 || true)"

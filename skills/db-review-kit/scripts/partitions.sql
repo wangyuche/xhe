@@ -36,6 +36,10 @@ SELECT parent::regclass AS parent,
        round(extract(epoch FROM (max(upper_txt::timestamptz) - now())) / 86400.0, 1) AS runway_days
 FROM b
 WHERE upper_txt IS NOT NULL AND pg_input_is_valid(upper_txt, 'timestamptz')
+  -- parents with a MAXVALUE upper bound or a DEFAULT partition never run out of range: not part of the runway check
+  AND NOT EXISTS (SELECT 1 FROM pg_partitioned_table pt2 WHERE pt2.partrelid = b.parent AND pt2.partdefid <> 0)
+  AND NOT EXISTS (SELECT 1 FROM pg_inherits i2 JOIN pg_class c2 ON c2.oid = i2.inhrelid
+                  WHERE i2.inhparent = b.parent AND pg_get_expr(c2.relpartbound, c2.oid) ~* 'TO [(]MAXVALUE')
 GROUP BY parent;
 SELECT r.*, (r.runway_days < :'min_runway_days'::numeric) AS below_minimum, :'min_runway_days'::numeric AS min_runway_days
 FROM dbrev_runway r ORDER BY 1;
