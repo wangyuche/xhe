@@ -117,7 +117,9 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
-    if re.search(r"conforming|escape_string|set_config", raw, re.I):
+    # an actual change of these GUCs (SET / RESET / ALTER … SET / set_config with that name), not every set_config call
+    if re.search(r"(standard_conforming_strings|escape_string_warning)", raw, re.I) or \
+            re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)", raw, re.I):
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
         return 1

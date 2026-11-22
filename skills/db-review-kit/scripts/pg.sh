@@ -96,7 +96,11 @@ case "$CMD" in
     done
     CONTAINER="dbrev-$NAME-$(rand_hex 3)"
     START=$(date +%s)
-    cleanup_fail() { docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")"; }
+    cleanup_fail() {
+      docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")"
+      # an image this up pulled is removed again when nothing else uses it
+      if [ -n "${PULLED:-}" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then docker image rm "$IMAGE" >/dev/null 2>&1 || true; fi
+    }
     UP_OK=""
     trap '[ -n "$UP_OK" ] || cleanup_fail' EXIT
     trap 'exit 130' INT TERM

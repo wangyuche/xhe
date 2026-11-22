@@ -69,7 +69,7 @@ o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silen
 o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?options=-c%20standard_conforming_strings%3Doff')"; [ $? -eq 4 ] && ok "guard:DSN options 改 standard_conforming_strings → 拒絕" || bad "guard scs" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_ARGS=--report=json' 'NOTIFY=ci@example.com' 'SUPER=superuser=on'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:--report=json、email 這類值不誤擋" || bad "誤擋 report/email" "$o"
-for kv in 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
+for kv in 'FX_TARGET=localhost:5432/devdb' 'GOTOOLDIR=/x' 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
 done
@@ -328,6 +328,11 @@ printf '%s\n' 'A: \c host=10.0.0.5 dbname=prod' > "$WORK/race-bad.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:腳本裡有 \\c → 拒絕" || bad "race \\c" "$o"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$MIG" --lock-timeout 500ms 2>&1)"; [ $? -eq 2 ] && ok "race.sh:--lock-timeout ≤ 1s → 用法錯誤" || bad "race lock-timeout" "$o"
 o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 1 --col 'amount=1; COMMIT' 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--col 含分號 / 交易控制 → 拒絕" || bad "seed col" "$o"
+o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 1 --col 'amount=1 -- label' 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--col 含註解 → 拒絕" || bad "seed col 註解" "$o"
+printf 'app | pg_catalog.pg_class | sql:SELECT relname FROM {obj} LIMIT 0 -- columns ok | ok\n' > "$WORK/gcm.txt"
+o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/gcm.txt" --dsn app="$APP" 2>&1)"; [ $? -eq 0 ] && ok "grants.sh:sql: 結尾有 -- 註解也能正確判定" || bad "grants 註解結尾" "$o"
+printf '%s\n' "A: SELECT set_config('app.tenant_id', '1', false);" "B: SELECT 1;" > "$WORK/race-sc.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-sc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 0 ] && ok "race.sh:一般的 set_config('app.…') 可以用" || bad "race set_config" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$APP" --query "SELECT balance FROM fx.accounts" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
 o="$(printf 'SELECT 1 \\g |sh\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\g |cmd 等不在允許清單的 psql 指令 → 拒絕" || bad "psql \\g pipe" "$o"

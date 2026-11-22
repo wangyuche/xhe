@@ -54,7 +54,9 @@ stmt_for() { # <object> <action>
       echo "UPDATE $obj SET $(echo "$cols" | awk -F, '{for(i=1;i<=NF;i++){gsub(/ /,"",$i); printf "%s%s = DEFAULT", (i>1?", ":""), $i}}') WHERE false" ;;
     delete) echo "DELETE FROM $obj WHERE false" ;;
     truncate) echo "TRUNCATE $obj" ;;
-    sql:*) local s="${act#sql:}"; echo "${s//\{obj\}/"$obj"}" ;;
+    sql:*) local s="${act#sql:}" r=""   # replace {obj} with a loop: ${s//…/…} quoting differs between bash 3.2 and 5.2
+      while case "$s" in *"{obj}"*) true ;; *) false ;; esac; do r="$r${s%%"{obj}"*}$obj"; s="${s#*"{obj}"}"; done
+      echo "$r$s" ;;
     *) return 1 ;;
   esac
 }
@@ -74,7 +76,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$stmt" in *";"*|*\\*) die "matrix 第 $LN 行:sql: 只能是一個語句,不能含分號或反斜線" 2 ;; esac
   bad="$(printf '%s\n' "$stmt" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" \
     || die "matrix 第 $LN 行有交易控制語句或 psql 指令($bad),無法保證 ROLLBACK" 2
-  out="$(printf 'BEGIN;\n%s;\nROLLBACK;\n' "$stmt" | psql_dsn "$dsn" -q 2>&1)" && rc=0 || rc=$?
+  out="$(printf 'BEGIN;\n%s\n;\nROLLBACK;\n' "$stmt" | psql_dsn "$dsn" -q 2>&1)" && rc=0 || rc=$?   # ';' on its own line: a trailing -- comment cannot swallow it
   code="$(echo "$out" | sed -n 's/^\(psql:[^ ]* \)\{0,1\}ERROR: *\([0-9A-Z]\{5\}\):.*/\2/p' | head -1)"
   # connection-time errors: "psql: error: … FATAL:  42501: permission denied for database …"
   CONN=""; if echo "$out" | grep -q '^psql: error:'; then CONN=1; fi

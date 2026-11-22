@@ -162,7 +162,8 @@ check_extra_env() {
     ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
     # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
     case "$ku" in
-      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GOFLAGS|GOTOOLCHAIN|GOROOT|GOPATH|GOBIN|GOENV|GOAUTH|GOPROXY|GOSUMDB|GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE|GOCACHE|GOMODCACHE|GOWORK|GOTMPDIR|GOVCS|GOEXPERIMENT|GODEBUG|GOOS|GOARCH|GOAMD64|GOARM|GOARM64|GO386|GOMIPS|GOMIPS64|GOPPC64|GORISCV64|GOWASM|GOTELEMETRY|GOTELEMETRYDIR|GOCOVERDIR|GOGC|GOMAXPROCS|GOMEMLIMIT|GOTRACEBACK|GOFIPS140|GCCGO|GCCGOTOOLDIR|GOCACHEPROG|GOPACKAGESDRIVER|GOFLAGS_*|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
+      GOOSE_*|GOOGLE_*|GORM_*) ;;   # project libraries' variables (goose, Google client libs, gorm)
+      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GO*|GCCGO*|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
         die "$k 是隔離環境 / 工具鏈會執行的變數,不能用 --env 覆寫" 4 ;;
     esac
     case "$v" in
@@ -175,7 +176,7 @@ check_extra_env() {
     if printf '%s' "$v" | grep -Eqi '(^|[[:space:]])(host|hostaddr|dbname|user|port|service|sslmode|password)[[:space:]]*='; then
       die "$k 的值看起來是 libpq 連線字串,拒絕" 4
     fi
-    if printf '%s' "$v" | grep -Eq '^([A-Za-z][A-Za-z0-9.-]*|[0-9]+(\.[0-9]+){3}|\[[0-9A-Fa-f:]+\]):[0-9]{2,5}$'; then
+    if printf '%s' "$v" | grep -Eq '^([A-Za-z][A-Za-z0-9.-]*|[0-9]+(\.[0-9]+){3}|\[[0-9A-Fa-f:]+\]):[0-9]{2,5}([/?].*)?$'; then
       die "$k 的值看起來是 主機:埠,拒絕" 4
     fi
     # Connection-looking names (whole _-separated tokens, so REPORT_DIR / FEEDBACK are fine) must carry a guarded URL.

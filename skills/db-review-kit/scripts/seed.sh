@@ -56,7 +56,7 @@ for c in "${COLS[@]}"; do
 done
 probe_sql="$(printf 'INSERT INTO %s (%s) SELECT %s FROM generate_series(1, 1) AS g' "$TABLE" "$names" "$exprs")"
 bad="$(printf '%s\n' "$probe_sql" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" || die "--col 運算式有交易控制或 psql 指令($bad),拒絕" 2
-case "$exprs" in *";"*) die "--col 運算式不能含分號" 2 ;; esac
+case "$exprs" in *";"*|*"--"*|*"/*"*) die "--col 運算式不能含分號或註解" 2 ;; esac
 from=1; b=0
 while [ "$from" -le "$ROWS" ]; do
   to=$((from + BATCH - 1)); [ "$to" -le "$ROWS" ] || to="$ROWS"
