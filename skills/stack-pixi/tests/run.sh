@@ -25,6 +25,7 @@ t  "new-pixi 建骨架 + npm ci(--net ws --iframe)" bash "$K/scripts/new-pixi.sh
 tf "--check:budgets 未填時失敗" bash "$K/scripts/new-pixi.sh" --check "$P"
 repl "$P/docs/performance-budgets.md" __FCP__ 3000 __INTERACTIVE__ 15000 __TBT__ 1000 __SCENE__ 5000 __BOOT__ 400 __ROUNDS__ 5 __HEAP__ 50 __NODES__ 20 __LISTENERS__ 10 __OBJECTS__ 0
 t  "--check:填好後通過" bash "$K/scripts/new-pixi.sh" --check "$P"
+printf '| interactive_ms | 1 |\n' >> "$P/docs/performance-budgets.md"   # 「最新實測」節的數字不可蓋掉門檻
 t  "--check:相對路徑也可以" bash -c "cd '$W' && bash '$K/scripts/new-pixi.sh' --check client"
 t  "design.ts 寫入 1920×1080" grep -q 'width: 1920, height: 1080' "$P/src/config/design.ts"
 t  "--net ws / --iframe 模組已加入" test -f "$P/src/services/net/WsTransport.ts" -a -f "$P/src/services/iframe/bridge.ts"
@@ -69,12 +70,14 @@ await sharp({create:{width:480,height:160,channels:4,background:{r:255,g:200,b:0
 await sharp({create:{width:2048,height:1152,channels:3,background:'#246'}}).png().toFile('$A/title/bg.title.png');
 })()"
 printf 'OggS-fake' > "$A/play/sfx.hit.ogg"; printf 'm4a-fake' > "$A/play/sfx.hit.m4a"
+printf 'OggS-fake' > "$A/play/sfx.tick.ogg"; printf 'm4a-fake' > "$A/play/sfx.tick.m4a"
 cat > "$A/assets.json" <<'JSON'
 {"version":1,"assets":[
  {"id":"hero.idle","type":"sprite","group":"play","files":["play/hero.idle.png"],"width":120,"height":160,"density":2,"anchor":[0.5,1],"character":"hero","source":"out/x/manifest.json#hero.idle.png","review":"pending"},
  {"id":"hero.run","type":"frames","group":"play","files":["play/hero.run.png"],"width":80,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":3,"fps":10,"frameWidth":160,"frameHeight":160,"columns":3},"source":"out/x/manifest.json#hero.run.png","review":"pending"},
  {"id":"bg.title","type":"background","group":"title","files":["title/bg.title.png"],"width":1920,"height":1080,"density":1.0666666666666667,"anchor":[0,0],"opaque":true,"source":"out/x/manifest.json#bg.title.png","review":"pending"},
- {"id":"sfx.hit","type":"sfx","group":"play","files":["play/sfx.hit.ogg","play/sfx.hit.m4a"],"durationSec":0.5,"lufs":-16,"source":"out/x/manifest.json#sfx.hit.ogg","review":"pending"}
+ {"id":"sfx.hit","type":"sfx","group":"play","files":["play/sfx.hit.ogg","play/sfx.hit.m4a"],"durationSec":0.5,"lufs":-16,"source":"out/x/manifest.json#sfx.hit.ogg","review":"pending"},
+ {"id":"sfx.tick","type":"sfx","group":"play","files":["play/sfx.tick.ogg","play/sfx.tick.m4a"],"durationSec":0.2,"normalized":"peak","source":"out/x/manifest.json#sfx.tick.ogg","review":"pending"}
 ]}
 JSON
 python3 - docs/performance-budgets.md <<'PY'
@@ -88,6 +91,7 @@ t  "build-assets 產生 1x / 0.5x 與 manifest" node scripts/build-assets.mjs --
 t  "產出:sprite AVIF + PNG 兩級、背景 JPG、音效複製" test -f src/assets/play/hero.idle@1x.avif -a -f src/assets/play/hero.idle@0.5x.png -a -f src/assets/title/bg.title@1x.jpg -a -f src/assets/play/sfx.hit.ogg
 t  "0.5x 尺寸 = 一半(進位成偶數)" node -e "const s=require('sharp');s('src/assets/play/hero.idle@0.5x.png').metadata().then(m=>process.exit(m.width===120&&m.height===160?0:1))"
 t  "frames 的 0.5x sheet 剛好一半(480→240)" node -e "const s=require('sharp');s('src/assets/play/hero.run@0.5x.png').metadata().then(m=>process.exit(m.width===240&&m.height===80?0:1))"
+t  "短音效 normalized: peak(沒有 lufs)也接受" test -f src/assets/play/sfx.tick.ogg -a -f src/assets/play/sfx.tick.m4a
 t  "manifest 記錄 frames 與顯示尺寸" node -e "const m=require('./src/assets/play/manifest.json');const r=m.assets['hero.run'];process.exit(r.frames.columns===3&&r.width===80&&m.assets['sfx.hit'].files.m4a?0:1)"
 t  "check-assets 通過(含 --art)" node "$K/scripts/check-assets.mjs" "$P" --art "$A"
 t  "接上素材後 build 與 check-early 仍通過" bash -c "npm run build >/dev/null 2>&1 && node '$K/scripts/check-early.mjs' '$P'"

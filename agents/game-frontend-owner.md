@@ -52,7 +52,7 @@ skills:
 - **測試**:元件情境 → Vitest,名稱以情境編號開頭(`SHOP-S2 disables buy …`);E2E 情境 → Playwright,名稱以編號開頭,用 stack-pixi fixture(`openContext`、`gotoReady`、`press` / `tap` / `click`、`a11y`、`shot`、`waitMark`、`cycleLeak`、`drawsDuring`)。可以多加,不能少。
 - **素材**:
   - 有 `art/assets/assets.json`(新專案)→ `npm run assets -- --src <art/assets>`;程式只用 id / alias 取素材(`acquireGroup`、`texture`、`frameTextures`、`audioSrc`)。既有專案照專案自己的素材建置腳本。
-  - 尺寸:needs 與 manifest 的 `width` / `height` 是設計座標的顯示尺寸;美術交的 1x PNG = 顯示 × density(預設 2,單張或整張 frames sheet 超過 2048 時自動降低,以 game-art-kit `sprite.mjs density` 的輸出為準)。顯示時一律 `setSize(manifest 的 width, height)`,不用貼圖本身尺寸。
+  - 尺寸:needs 與 manifest 的 `width` / `height` 是設計座標的顯示尺寸;美術交的 1x PNG = 顯示 × density(預設 2,單張或整張 frames sheet 超過 2048 時自動降低,以 game-art-kit `sprite.mjs density` 的輸出為準)。sprite / frames / ui 的 density 會低於 1 時美術會跳過該項:needs 裡減少格數或縮小顯示尺寸。顯示時一律 `setSize(manifest 的 width, height)`,不用貼圖本身尺寸。
   - 缺的素材:用 `Graphics` 佔位(色彩取 STYLE.md),寫進 `<可寫路徑>/assets.needs.json`(`design` 填設計解析度,尺寸是顯示尺寸),`node <schemas>/validate.mjs needs <檔案>` 通過;回報附絕對路徑。
 - 新依賴(名稱、版本、理由)只限簡報同意的;設定檔改動逐一列在回報。
 
