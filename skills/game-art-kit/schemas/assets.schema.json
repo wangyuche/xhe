@@ -1,0 +1,58 @@
+{
+  "$comment": "game-concept-artist 遊戲素材模式寫 art/assets/assets.json;game-frontend-owner 讀。width/height 是顯示尺寸;1x 檔案 = 顯示 × density。音訊有 lufs;短於 0.4 秒的音效以峰值正規化,改寫 normalized: peak、不寫 lufs。驗證:node <kit>/schemas/validate.mjs assets <檔案>(加 --root art/assets 會檢查檔案存在)",
+  "type": "object",
+  "required": ["version", "assets"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" }, "uniqueBy": "id" }
+  },
+  "$defs": {
+    "imageType": { "enum": ["sprite", "frames", "tile", "background", "ui"] },
+    "audioType": { "enum": ["sfx", "bgm"] },
+    "asset": {
+      "type": "object",
+      "required": ["id", "type", "group", "files", "source", "review"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$" },
+        "type": { "enum": ["sprite", "frames", "tile", "background", "ui", "sfx", "bgm"] },
+        "group": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "purpose": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9.-]*\\.(png|ogg|m4a)$" }, "minItems": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "density": { "type": "number", "minimum": 0.01, "maximum": 2 },
+        "frames": {
+          "type": "object", "required": ["count", "fps", "frameWidth", "frameHeight", "columns"], "additionalProperties": false,
+          "properties": {
+            "count": { "type": "integer", "minimum": 2, "maximum": 8 }, "fps": { "type": "number", "minimum": 1, "maximum": 60 },
+            "frameWidth": { "type": "integer", "minimum": 1 }, "frameHeight": { "type": "integer", "minimum": 1 }, "columns": { "type": "integer", "minimum": 1, "maximum": 8 }
+          }
+        },
+        "anchor": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1 }, "minItems": 2, "maxItems": 2 },
+        "nineSlice": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 4, "maxItems": 4 },
+        "nineSlice1x": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 4, "maxItems": 4 },
+        "tileable": { "type": "boolean" },
+        "opaque": { "type": "boolean" },
+        "character": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0, "maximum": 600 },
+        "loop": { "enum": [true, false, "approx"] },
+        "lufs": { "type": "number", "minimum": -70, "maximum": 0 },
+        "normalized": { "enum": ["lufs", "peak"] },
+        "source": { "type": "string", "pattern": "^out/[^/]+/manifest\\.json#.+$" },
+        "review": { "enum": ["pending", "approved"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "$ref": "#/$defs/imageType" } }, "required": ["type"] },
+          "then": { "required": ["width", "height", "density", "anchor"], "forbidden": ["durationSec", "loop", "lufs", "normalized"] } },
+        { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } }, "required": ["type"] },
+          "then": { "required": ["durationSec"], "forbidden": ["width", "height", "density", "frames", "anchor", "nineSlice", "nineSlice1x", "tileable", "opaque", "character"] } },
+        { "if": { "properties": { "normalized": { "const": "peak" } }, "required": ["normalized"] }, "then": { "forbidden": ["lufs"] }, "else": { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } }, "required": ["type"] }, "then": { "required": ["lufs"] } } },
+        { "if": { "properties": { "type": { "const": "frames" } }, "required": ["type"] }, "then": { "required": ["frames"] }, "else": { "forbidden": ["frames"] } },
+        { "if": { "properties": { "type": { "const": "sfx" } }, "required": ["type"] }, "then": { "forbidden": ["loop"] } },
+        { "if": { "required": ["nineSlice"] }, "then": { "required": ["nineSlice1x"] } }
+      ]
+    }
+  }
+}

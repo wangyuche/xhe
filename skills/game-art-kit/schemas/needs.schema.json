@@ -1,0 +1,53 @@
+{
+  "$comment": "game-frontend-owner 寫 <可寫路徑>/assets.needs.json;game-concept-artist 遊戲素材模式讀。尺寸是設計座標下的顯示尺寸。驗證:node <kit>/schemas/validate.mjs needs <檔案>",
+  "type": "object",
+  "required": ["version", "design", "needs"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "design": {
+      "type": "object", "required": ["width", "height"], "additionalProperties": false,
+      "properties": { "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 } }
+    },
+    "needs": { "type": "array", "items": { "$ref": "#/$defs/need" }, "uniqueBy": "id" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$" },
+    "group": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "imageType": { "enum": ["sprite", "frames", "tile", "background", "ui"] },
+    "audioType": { "enum": ["sfx", "bgm"] },
+    "need": {
+      "type": "object",
+      "required": ["id", "type", "group", "purpose"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["sprite", "frames", "tile", "background", "ui", "sfx", "bgm"] },
+        "group": { "$ref": "#/$defs/group" },
+        "purpose": { "type": "string", "minLength": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "density": { "type": "number", "minimum": 1, "maximum": 2 },
+        "frames": {
+          "type": "object", "required": ["count", "fps"], "additionalProperties": false,
+          "properties": { "count": { "type": "integer", "minimum": 2, "maximum": 8 }, "fps": { "type": "number", "minimum": 1, "maximum": 60 } }
+        },
+        "anchor": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1 }, "minItems": 2, "maxItems": 2 },
+        "nineSlice": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 4, "maxItems": 4 },
+        "tileable": { "type": "boolean" },
+        "opaque": { "type": "boolean" },
+        "character": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0, "maximum": 600 },
+        "loop": { "type": "boolean" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "$ref": "#/$defs/imageType" } }, "required": ["type"] },
+          "then": { "required": ["width", "height"], "forbidden": ["durationSec", "loop"] } },
+        { "if": { "properties": { "type": { "$ref": "#/$defs/audioType" } }, "required": ["type"] },
+          "then": { "required": ["durationSec"], "forbidden": ["width", "height", "density", "frames", "anchor", "nineSlice", "tileable", "opaque", "character"] } },
+        { "if": { "properties": { "type": { "const": "frames" } }, "required": ["type"] }, "then": { "required": ["frames"] }, "else": { "forbidden": ["frames"] } },
+        { "if": { "properties": { "type": { "const": "sfx" } }, "required": ["type"] }, "then": { "forbidden": ["loop"] } }
+      ]
+    }
+  }
+}
