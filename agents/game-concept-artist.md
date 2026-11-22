@@ -75,9 +75,9 @@ skills:
 6. 寫 `manifest.json`。累計生成數(含重出、試作)達 40 張就停止,已完成的保留,回 ISSUES。
 
 ### 遊戲素材(完成條件:needs 每項都在 assets.json,或列為跳過 / 失敗)
-1. 產出目錄:原圖、下載的音訊、manifest、workflow 放 `art/out/<日期>-assets/`(用不加 `-p` 的 `mkdir art/out/<日期>-assets` 建立,失敗(已存在)就依序試 `-2`、`-3`…,第一個建立成功的就是這次的;不要先檢查再建,兩個同時開始的任務才不會挑到同一個;不 BLOCKED;以下稱「本次產出目錄」,manifest、workflow、assets.json 的 `source` 都用它);交付檔放 `art/assets/<group>/<id>.png`、`art/assets/<group>/<id>.ogg` 與 `.m4a`(檔名是完整 id,例如 `shop.chest` → `art/assets/shop/shop.chest.png`)。assets.json 已有同 id、簡報沒寫「重做 <id>」→ 跳過並列出。**交付檔一律先產生在暫存區 `<stage>` = `art/out/<本次產出目錄名>/stage/<group>/`**(重出時才不會被失敗的產出覆寫已交付的檔;本次產出目錄每次執行都是新的,所以暫存區不會沿用舊檔、也不會和同時在跑的任務共用。指令裡一律寫出完整路徑,不要靠 shell 變數):
+1. 產出目錄:原圖、下載的音訊、manifest、workflow 放 `art/out/<日期>-assets/`(先 `mkdir -p art/out`,再用不加 `-p` 的 `mkdir art/out/<日期>-assets` 建立;只有錯誤是「已存在」(File exists)時才依序試 `-2`、`-3`…,其他錯誤照實回報;第一個建立成功的就是這次的,不要先檢查再建;不 BLOCKED;以下稱「本次產出目錄」,manifest、workflow、assets.json 的 `source` 都用它);交付檔放 `art/assets/<group>/<id>.png`、`art/assets/<group>/<id>.ogg` 與 `.m4a`(檔名是完整 id,例如 `shop.chest` → `art/assets/shop/shop.chest.png`)。assets.json 已有同 id、簡報沒寫「重做 <id>」→ 跳過並列出。**交付檔一律先產生在暫存區 `<stage>` = `art/out/<本次產出目錄名>/stage/<group>/`**(重出時才不會被失敗的產出覆寫已交付的檔;本次產出目錄每次執行都是新的,所以暫存區不會沿用舊檔。同一個 repo 不支援同時跑兩個遊戲素材任務(會同時改 assets.json)。指令裡一律寫出完整路徑,不要靠 shell 變數):
    - `fit` / `cover` / `audio.mjs process` 的 `--out` 都指向 `<stage>`(三支腳本都會自己建資料夾),`sprite.mjs check` / `audio.mjs check` 也一律對 `<stage>` 的檔案跑。
-   - 某一項的機器檢查與看圖(含動作格外觀比對、UI 不可有臉等規則)全部通過後,**只複製這一項 assets.json `files` 列的檔案**:`mkdir -p art/assets/<group> && cp <stage>/<id>.png art/assets/<group>/`(音訊是 `<id>.ogg` 與 `<id>.m4a`),不要用 `<stage>/*`。沒通過的不複製,既有交付檔不動。
+   - 某一項的機器檢查與看圖(含動作格外觀比對、UI 不可有臉等規則;音訊沒有看圖,`audio.mjs check` 通過即可)全部通過後,**只複製這一項 assets.json `files` 列的檔案**:`mkdir -p art/assets/<group> && cp <stage>/<id>.png art/assets/<group>/`(音訊是 `<id>.ogg` 與 `<id>.m4a`),不要用 `<stage>/*`。沒通過的不複製,既有交付檔不動。
    - assets.json 只更新**實際複製了的項目**;沒通過的項目保留原本的 assets.json 內容(新項目就不寫)。`files` 寫相對 `art/assets/` 的路徑(例如 `shop/shop.chest.png`)。
    - 回 ISSUES / BLOCKED 或達生成上限時,一樣先把已全部通過的項目複製完,並照第 8 點寫 assets.json、跑 validate,再收尾。
    - 收尾(第 8 點之後、「結束」之前):`rm -rf art/out/<本次產出目錄名>/stage`(只刪這次的暫存區,交付檔已在 art/assets/)。
