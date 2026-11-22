@@ -56,7 +56,7 @@ if command -v go >/dev/null 2>&1; then
 else skip "沙盒 GOMODCACHE(沒有 go)"; fi
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'DATABASE_URL=host=10.0.0.1 dbname=x'" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && ok "隔離:DB 類變數不是 URL(keyword DSN)→ 拒絕(結束碼 4)" || bad "keyword DSN 應拒絕" "rc=$rc $o"
-for kv in 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
+for kv in 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
 done
@@ -242,6 +242,13 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.led
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:p95 超過 --target-ms → 結束碼 1" || bad "explain target" "rc=$rc $o"
 
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--runs 0 → 用法錯誤(不會假通過)" || bad "explain runs 0" "$o"
+printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q.sql" --runs 3 2>&1)"; rc=$?
+[ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"runs":3' && ok "explain.sh:查詢檔最後一行是 -- 註解也能跑" || bad "explain 註解結尾" "rc=$rc $o"
+o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 10 --batch 0 --col "amount=g" 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--batch 0 → 用法錯誤(不會無限迴圈)" || bad "seed batch 0" "$o"
+printf 'app | fx.accounts | select\n' > "$WORK/g3.txt"
+o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/g3.txt" --dsn app="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '格式錯誤' && ok "grants.sh:只有 3 欄 → 格式錯誤" || bad "grants 3 欄" "$o"
+o="$(DOCKER_HOST=tcp://192.0.2.1:2375 bash "$S/pg.sh" psql "$N" "$SU" -c 'SELECT 1' 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:建立後 DOCKER_HOST 改成遠端 → 也拒絕(結束碼 4)" || bad "psql 非本機 docker" "$o"
 
 # ---------- partitions ----------
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -v min_runway_days=100000 < "$S/partitions.sql" 2>&1)"

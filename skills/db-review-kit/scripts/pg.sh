@@ -52,6 +52,7 @@ case "$CMD" in
         *) die "未知參數:$1" 2 ;;
       esac
     done
+    case "$SUPERUSER" in ""|*[!A-Za-z0-9_-]*) die "--superuser 只能是英數、底線、連字號" 2 ;; esac
     [ -n "$IMAGE" ] || die "--image 必填(依專案設定,例如 compose 的 db 映像)" 2
     case "$IMAGE" in *postgres*|*postgis*|*pgvector*|*timescale*) ;; *) die "映像看起來不是 PostgreSQL:$IMAGE" 2 ;; esac
     case "$TMPFS_SIZE" in *[!0-9kmgKMG]*|"") die "--tmpfs-size 格式例:512m、2g" 2 ;; esac

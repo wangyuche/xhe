@@ -30,8 +30,8 @@ guard_dsns "$DSN"
 Q="$(printf '%s' "$Q" | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
 
 echo "### plan: EXPLAIN (ANALYZE, BUFFERS)"
-printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q
-SCRIPT="$(i=0; while [ $i -le "$RUNS" ]; do printf 'BEGIN;\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON) %s;\nROLLBACK;\n' "$Q"; i=$((i + 1)); done)"
+printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q
+SCRIPT="$(i=0; while [ $i -le "$RUNS" ]; do printf 'BEGIN;\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON) %s\n;\nROLLBACK;\n' "$Q"; i=$((i + 1)); done)"
 TIMES="$(printf '%s\n' "$SCRIPT" | psql_dsn "$DSN" -qAt | awk '
   /^Planning Time:/ { p = $3 }
   /^Execution Time:/ { n++; if (n > 1) printf "%.3f\n", p + $3 }')"

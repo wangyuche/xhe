@@ -8,6 +8,8 @@
 #   action: select | select(c1,c2) | insert | insert(c1,c2) | update(c1,c2) | delete | truncate | sql:<statement>
 #           (sql: may use {obj} for the object; '|' inside the statement is fine)
 #   expect: ok | 42501 | <other SQLSTATE>
+#   bare `insert` (DEFAULT VALUES) names no columns, so PostgreSQL accepts INSERT on ANY one column: it proves only
+#   "can insert at least one column". To check full / specific column INSERT use insert(c1,c2,…).
 # "ok" means the privilege check passed: success, or a later integrity / data error (23xxx / 22xxx, e.g. NOT NULL on
 # INSERT … DEFAULT VALUES; 0A000 "referenced in a foreign key" for truncate). Any other error (42P01 missing table, 28P01 login failed …) is reported as error(<code>).
 # Each check is its own connection (a real login; ALTER ROLE … SET applies). Nothing is committed.
@@ -54,10 +56,12 @@ TOTAL=0; PASSN=0; FAILN=0; LN=0
 while IFS= read -r line || [ -n "$line" ]; do
   LN=$((LN + 1))
   case "$(trim "$line")" in ""|"#"*) continue ;; esac
+  seps="$(printf '%s' "$line" | tr -cd '|' | wc -c | tr -d ' ')"
+  [ "$seps" -ge 3 ] || die "matrix 第 $LN 行格式錯誤(要 4 欄,用 | 分隔):$line" 2
   label="$(trim "${line%%|*}")"; rest="${line#*|}"
   obj="$(trim "${rest%%|*}")"; rest="${rest#*|}"
   expect="$(trim "${rest##*|}")"; act="$(trim "${rest%|*}")"
-  [ -n "$label" ] && [ -n "$obj" ] && [ -n "$act" ] && [ -n "$expect" ] && [ "$act" != "$rest" ] || die "matrix 第 $LN 行格式錯誤:$line" 2
+  [ -n "$label" ] && [ -n "$obj" ] && [ -n "$act" ] && [ -n "$expect" ] || die "matrix 第 $LN 行格式錯誤:$line" 2
   dsn="$(dsn_for "$label")" || die "matrix 第 $LN 行的 label $label 沒有對應 --dsn" 2
   stmt="$(stmt_for "$obj" "$act")" || die "matrix 第 $LN 行不認得的動作:$act" 2
   out="$(printf 'BEGIN;\n%s;\nROLLBACK;\n' "$stmt" | psql_dsn "$dsn" -q 2>&1)" && rc=0 || rc=$?

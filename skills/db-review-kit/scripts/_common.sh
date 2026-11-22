@@ -45,6 +45,7 @@ require_local_docker() {
 
 # Load state written by `pg.sh up`: CONTAINER PORT IMAGE SUPERUSER SUPERPASS DBS ROLES
 load_state() {
+  require_local_docker
   local f; f="$(state_file "$1")"
   [ -f "$f" ] || die "找不到 $1 的容器狀態($f);先 pg.sh up $1" 1
   # shellcheck disable=SC1090
@@ -121,8 +122,9 @@ iso_base_env() {
   return 0
 }
 
-# Extra variables explicitly passed by the caller must be DSNs that pass the guard,
-# or plain values whose names do not look DB-related.
+# Extra variables explicitly passed by the caller must be DSNs that pass the guard, or plain values that neither
+# look like a connection target (host=, @, host:port, other URLs) nor sit under a connection-looking name.
+# This is a heuristic backstop: pass only the DSN variables the project's tests read.
 check_extra_env() {
   local kv k v
   for kv in "$@"; do
@@ -133,10 +135,10 @@ check_extra_env() {
     case "$v" in
       postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v" ;;
       *://*) die "$k 的值是非 postgres 的 URL,拒絕" 4 ;;
-      *host=*|*hostaddr=*|*@*) die "$k 的值看起來是連線設定(host= / @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
+      *host=*|*hostaddr=*|*@*|*[A-Za-z0-9.]:[0-9]*|*\[*\]:[0-9]*) die "$k 的值看起來是連線設定(host= / @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
       *)
         case "$ku" in
-          PG*|*DATABASE*|*DSN*|*_URL|*_URI|*DB*|*HOST*) [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4 ;;
+          PG*|*DATABASE*|*DSN*|*_URL|*_URI|*DB*|*HOST*|*POSTGRES*|*ADDR*|*PORT*|*SERVER*|*SOCKET*) [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4 ;;
         esac ;;
     esac
   done

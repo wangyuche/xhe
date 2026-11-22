@@ -38,7 +38,7 @@ mkdir -p "$(name_dir "$NAME")"
 W="$(mktemp -d "$(name_dir "$NAME")/race.XXXXXX")"
 PA=""; PB=""
 cleanup() {
-  exec 7>&- 2>/dev/null || true; exec 8>&- 2>/dev/null || true
+  { exec 7>&- 8>&-; } 2>/dev/null || true
   local p k
   for p in $PA $PB; do
     k=0; while kill -0 "$p" 2>/dev/null && [ $k -lt 40 ]; do sleep 0.25; k=$((k + 1)); done
@@ -87,7 +87,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     SLEEP:*) sleep "$(echo "${line#SLEEP:}" | tr -d ' ')" ;;
   esac
 done < "$SCRIPT"
-exec 7>&- 2>/dev/null || true; exec 8>&- 2>/dev/null || true
+{ exec 7>&- 8>&-; } 2>/dev/null || true
 k=0; while { kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; } && [ $k -lt 160 ]; do sleep 0.25; k=$((k + 1)); done
 
 # Attribute each ERROR to the step whose marker follows it in that session's output.
