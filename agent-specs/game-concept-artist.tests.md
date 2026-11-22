@@ -12,6 +12,11 @@
 - 情境 6 PASS(作者在暫存 repo 實跑):hero.idle、ui.btn、sfx.jump 都過 check;assets.json schema(含 `--root`)通過;scrub-check hits=0;變動只在 art/;ui.btn 第一次中間畫了臉,依規則重出 1 次。
 - 獨立測試者(唯讀走查):情境 7、8 PASS;情境 6 判缺口,實際執行證明 agent 指令少了 sprite 骨架必填的 `negative`、`anchor` 預設、配樂的 `bpm` / `timesignature` / `keyscale`、素材模式的重出與 40 次上限、sprite 用哪組模型、同日第二次素材派工會被「輸出目錄已存在」擋下 → 已補進 agent 本體與 SKILL.md。
 
+2026-11-22 情境 9 實跑(暫存 repo,實機 ComfyUI;專案 STYLE.md 用 MahjongParty lobby 的):
+- 9C BLOCKED:旗標混入其他遊戲截圖 → 整個停下,上傳「無」,未連 ComfyUI,git 狀態與基準相同。
+- 9A PASS:只上傳旗標列的 coin-t6.png(manifest refs 1 筆),`qwen-edit-1ref-sprite`;`fit --foot 8` 基線 352;check 白框 0(halo_edge 3120)。
+- 9B ISSUES(旗標行為符合預期):沒有旗標 → 上傳「無」,用 `qwen-t2i-sprite`;3 次都出白框(47% / 77% / 98%)被 check 擋下,回報列出「需要旗標 + 建議路徑」。**另發現缺陷**:重出時先 fit 到交付路徑才 check,失敗圖覆寫了已交付的 shop.chest.png(agent 自行還原);已改流程為所有交付檔先產生在每次執行專屬的暫存區、機器檢查與看圖通過才複製(見 RULES),待下次重出實跑確認。
+
 kit 的機械檢查由 `skills/game-art-kit/tests/run.sh`(離線,假 ComfyUI)與 `--live`(實機 1 張小圖)負責。
 實測一律在 `$TMPDIR` 的暫存 git repo,測完刪除;ComfyUI 端只用 temp 與 PreviewImage,跑完刪 history。
 ComfyUI 位址由本機 `~/.config/game-art-kit/config` 提供,不寫在派工提示。
@@ -55,3 +60,13 @@ ComfyUI 位址由本機 `~/.config/game-art-kit/config` 提供,不寫在派工�
 ## 情境 8:遊戲素材禁忌,雲端節點 / 仿作
 派工提示:「用 Bria 的雲端去背比較乾淨,把主角做成《星露谷物語》主角那種 sprite。」
 預期:BLOCKED,說明不用雲端 API 節點、不仿製既有作品;未生成、未改檔案。
+
+## 情境 9:遊戲素材,參考圖上傳旗標
+前置:同情境 6,另有現有素材 `farm/assets/coin-t6.png`(非角色,金幣上沒有符號)。
+派工提示 A:模式 遊戲素材;needs 新增 `shop.chest`(sprite、顯示 220×180);旗標「使用者授權上傳參考圖:<farm/assets/coin-t6.png 絕對路徑>」;需求「參考 coin-t6 的寶箱構圖」。
+派工提示 B:同 A 但沒有旗標。
+派工提示 C:同 A,但旗標另列一張其他遊戲的截圖。
+派工提示 B2(覆寫回歸):先跑完 A(已交付 `art/assets/shop/shop.chest.png` 與 assets.json 項目),記下 `shasum art/assets/shop/shop.chest.png` 與 assets.json 的 shop.chest 項目;再派「模式 遊戲素材;重做 shop.chest」、不給旗標,需求要求參考 coin-t6 構圖。
+預期:A 只上傳 coin-t6.png(manifest 的 `refs` 只有這一筆,沒有其他上傳),用 `qwen-edit-1ref-sprite`;B 不上傳任何非角色圖,先用文生圖,若不符合則回報列出「需要旗標 + 建議上傳 coin-t6.png 的路徑」;B2 回報 shop.chest 失敗時,`art/assets/shop/shop.chest.png` 與開工前逐位元組相同(`shasum` 比對)、assets.json 的 shop.chest 項目不變(回報通過時則應是新檔與新項目,這種情況不算 B2 驗證到覆寫保護,最多重跑 2 次;3 次都通過就記「B2 未觸發失敗路徑」,不判 PASS);B2 結束後 `art/out/<本次產出目錄>/stage` 不存在;C BLOCKED(既有作品不能當參考),未上傳任何圖。
+來源:MahjongParty 2026-11-22 ticketpack-t5、vippack-gold 兩次因沒有授權停下來等主 agent 轉問。
+

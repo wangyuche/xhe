@@ -192,6 +192,39 @@ o="$(S fit "$W/sp/f1.png" "$W/sp/f2.png" "$W/sp/f3.png" "$W/sp/f4.png" "$W/sp/f1
 mk2 "$W/sp/dirty.png" 50 40 300 1 1
 o="$(S check "$W/sp/dirty.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '外框' && ok "sprite.mjs check:外框有殘留 → 不通過" || bad "sprite 外框殘留" "$o"
 o="$(S check "$W/o/q1.png" --width 96 --height 64)"; [ $? -eq 1 ] && echo "$o" | grep -q 'alpha' && ok "sprite.mjs check:沒有 alpha → 不通過" || bad "sprite 沒有 alpha" "$o"
+node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; const inO = x >= 46 && x < 254 && y >= 46 && y < 380, inI = x >= 50 && x < 250 && y >= 50 && y < 376;
+  if (inO) { const c = inI ? [90, 160, 90] : [250, 250, 250]; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; } }
+writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/halo.png" || bad "白框測試圖產生失敗(halo)" ""
+o="$(S check "$W/sp/halo.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && echo "$o" | grep -q 'sticker' \
+  && o2="$(S check "$W/sp/one.png" --width 120 --height 160)" && ok "sprite.mjs check:主體外緣一圈白色貼紙框 → 不通過並提示改提示詞;沒有白框的照常通過" || bad "sprite 白框" "$o ${o2:-}"
+for m in soft soft200 white; do node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const [out, mode] = process.argv.slice(1); const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+const r = (x, y, x0, y0, x1, y1) => x >= x0 && x < x1 && y >= y0 && y < y1;
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4;
+  if (mode === "white") { if (r(x, y, 50, 50, 250, 376)) { d[o] = d[o + 1] = d[o + 2] = 245; d[o + 3] = 255; } continue; }
+  if (r(x, y, 44, 44, 256, 382)) { d[o] = d[o + 1] = d[o + 2] = 250; d[o + 3] = r(x, y, 46, 46, 254, 380) ? 255 : (mode === "soft200" ? 200 : 60);
+    if (r(x, y, 50, 50, 250, 376)) { d[o] = 90; d[o + 1] = 160; d[o + 2] = 90; } } }
+writeFileSync(out, encodePng({ width: W, height: H, data: d }));' "$W/sp/$m.png" "$m" || bad "白框測試圖產生失敗($m)" ""; done
+o="$(S check "$W/sp/soft.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && ok "sprite.mjs check:白框外有半透明羽化邊(alpha 60)也抓得到" || bad "sprite 羽化白框" "$o"
+o="$(S check "$W/sp/soft200.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && ok "sprite.mjs check:白框外有 alpha 200 的過渡邊也抓得到" || bad "sprite 過渡邊白框" "$o"
+o="$(S check "$W/sp/white.png" --width 300 --height 400)"; rc=$?; o2="$(S check "$W/sp/white.png" --width 300 --height 400 --allow-white-edge)" && [ $rc -eq 1 ] && ok "sprite.mjs check:白色主體預設不通過,加 --allow-white-edge 通過" || bad "sprite allow-white-edge" "rc=$rc $o ${o2:-}"
+node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; const r = (x0, y0, x1, y1) => x >= x0 && x < x1 && y >= y0 && y < y1;
+  if (r(46, 46, 254, 380)) { const inner = r(50, 50, 250, 376); d[o] = inner ? 200 : 228; d[o + 1] = inner ? 170 : 228; d[o + 2] = inner ? 60 : 228; d[o + 3] = 255; } }
+writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/greyaa.png" || bad "白框測試圖產生失敗(greyaa)" ""
+o="$(S check "$W/sp/greyaa.png" --width 300 --height 400)" && echo "$o" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.frames[0].halo_edge>=20?0:1)' && ok "sprite.mjs check:淺灰(RGB 228)不透明外圈有算進外圈、但不算白框" || bad "sprite 淺灰外圈誤判" "$o"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 100 2>&1)"; [ $? -eq 2 ] && ok "sprite.mjs fit --foot:超過 (H − margin) / 2 → 結束碼 2(主體不會被縮到幾 px)" || bad "sprite --foot 上限" "$o"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 200 2>&1)"; r1=$?; o2="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 1 2>&1)"; r2=$?
+o3="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 8 --align center 2>&1)"; r3=$?; o4="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 96 --height 240 --margin 0 --foot 8 2>&1)"; r4=$?
+[ $r1 -eq 2 ] && [ $r2 -eq 2 ] && [ $r3 -eq 2 ] && [ $r4 -eq 2 ] && ok "sprite.mjs fit --foot:太大 / 小於 2 / 搭配置中或 --margin 0 → 結束碼 2" || bad "sprite --foot 驗證" "$r1 $r2 $r3 $r4 $o $o2 $o3 $o4"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/foot8.png" --width 120 --height 160 --foot 8)" && o2="$(S info "$W/sp/foot8.png")" && echo "$o2" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.bbox.y+d.bbox.h===152?0:1)' \
+  && o3="$(S info "$W/sp/one.png")" && echo "$o3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.bbox.y+d.bbox.h===157?0:1)' && ok "sprite.mjs fit --foot 8:主體離下緣 8 px(不給時預設 3 px)" || bad "sprite --foot" "$o ${o2:-} ${o3:-}"
 o="$(S check "$W/sp/one.png" --width 100 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '尺寸' && ok "sprite.mjs check:尺寸不符 → 不通過" || bad "sprite 尺寸" "$o"
 o="$(S fit "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" --out "$W/sp/x.png" --width 64 --height 64 2>&1)"; [ $? -eq 2 ] && ok "sprite.mjs fit:超過 8 格 → 結束碼 2" || bad "sprite 9 格" "$o"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui.png" --width 96 --height 240 --margin 0)" && o2="$(S info "$W/sp/ui.png")" && echo "$o2" | grep -q '"bbox":{"x":0,"y":0,"w":96,"h":240}' \
@@ -273,6 +306,46 @@ o="$(V needs "$W/v/bad.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '缺少 fram
 cp "$W/sp/run.png" "$W/v/table/hero.run.png"; printf 'x' > "$W/v/table/sfx.jump.ogg"
 echo '{"version":1,"assets":[{"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":120,"frameHeight":160,"columns":4},"character":"farmer","source":"out/20261122-assets/manifest.json#hero-run","review":"pending"},{"id":"sfx.jump","type":"sfx","group":"table","files":["table/sfx.jump.ogg","table/sfx.jump.m4a"],"durationSec":0.8,"lufs":-16,"source":"out/20261122-assets/manifest.json#sfx-jump","review":"pending"}]}' > "$W/v/assets.json"
 o="$(V assets "$W/v/assets.json")" && ok "schema:合法 assets 通過" || bad "schema assets 合法" "$o"
+# deliver.mjs:stage → art/assets 全有或全無
+D() { node "$K/scripts/deliver.mjs" "$@"; }
+dl_reset() { rm -rf "$W/dl"; mkdir -p "$W/dl/assets/table" "$W/dl/stage/table"; printf 'OLDOGG' > "$W/dl/assets/table/sfx.jump.ogg"; printf 'OLDM4A' > "$W/dl/assets/table/sfx.jump.m4a"
+  echo '{"version":1,"assets":[{"id":"sfx.jump","type":"sfx","group":"table","files":["table/sfx.jump.ogg","table/sfx.jump.m4a"],"durationSec":0.8,"lufs":-16,"source":"out/a/manifest.json#old","review":"pending"}]}' > "$W/dl/assets/assets.json"
+  cp "$W/dl/assets/assets.json" "$W/dl/old.json"; printf 'NEWOGG' > "$W/dl/stage/table/sfx.jump.ogg"; printf 'NEWM4A' > "$W/dl/stage/table/sfx.jump.m4a"
+  sed 's/#old/#new/' "$W/dl/old.json" > "$W/dl/new.json"; }
+dl_old() { [ "$(cat "$W/dl/assets/table/sfx.jump.ogg")$(cat "$W/dl/assets/table/sfx.jump.m4a")" = OLDOGGOLDM4A ] && cmp -s "$W/dl/assets/assets.json" "$W/dl/old.json" && [ -z "$(ls -A "$W/dl/assets/table" | grep -v '^sfx.jump.ogg$' | grep -v '^sfx.jump.m4a$')" ] && [ -z "$(ls -A "$W/dl/assets" | grep -v '^table$' | grep -v '^assets.json$')" ]; }
+dl_reset; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a)" \
+  && [ "$(cat "$W/dl/assets/table/sfx.jump.ogg")$(cat "$W/dl/assets/table/sfx.jump.m4a")" = NEWOGGNEWM4A ] && grep -q '#new' "$W/dl/assets/assets.json" && [ -z "$(ls -A "$W/dl/assets/table" | grep -v -e '^sfx.jump.ogg$' -e '^sfx.jump.m4a$')" ] \
+  && ok "deliver.mjs:兩個檔與 assets.json 一起換上,不留暫存 / 備份檔" || bad "deliver 正常" "$o $(ls -A "$W/dl/assets/table")"
+dl_reset; rm "$W/dl/stage/table/sfx.jump.m4a"; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a)"; [ $? -eq 1 ] && dl_old && ok "deliver.mjs:stage 少一個音訊檔 → 結束碼 1,交付檔與 assets.json 不動" || bad "deliver 少檔" "$o"
+for at in copy place; do dl_reset; o="$(DELIVER_TEST=1 DELIVER_FAIL_AT=$at D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a)"; [ $? -eq 1 ] && dl_old && ok "deliver.mjs:$at 階段失敗 → 已還原(舊檔、舊 assets.json、沒有殘留)" || bad "deliver 失敗還原 $at" "$o $(ls -A "$W/dl/assets/table")"; done
+dl_reset; echo '{"version":1,"assets":[{"id":"sfx.jump","type":"sfx","group":"table","files":["table/sfx.jump.ogg","table/sfx.jump.m4a"],"durationSec":0.8,"source":"x","review":"pending"}]}' > "$W/dl/new.json"
+o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a)"; [ $? -eq 2 ] && echo "$o" | grep -q '格式不通過' && dl_old && ok "deliver.mjs:新 assets.json 格式不通過 → 結束碼 2,什麼都不動" || bad "deliver 格式失敗" "$o"
+dl_reset; o="$(DELIVER_TEST=1 DELIVER_FAIL_AT=validate D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a)"; [ $? -eq 1 ] && dl_old && ok "deliver.mjs:換檔後檢查失敗 → 全部還原" || bad "deliver 換檔後失敗" "$o"
+dl_reset; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.ogg 2>&1)"; [ $? -eq 2 ] && dl_old && ok "deliver.mjs:同一個檔列兩次 → 結束碼 2,舊檔不動" || bad "deliver 重複" "$o"
+dl_reset; cp "$W/sp/f1.png" "$W/dl/stage/table/other.png"; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/other.png 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '沒有任何項目的 files' && dl_old && ok "deliver.mjs:交付的檔沒列在新 assets.json → 結束碼 2" || bad "deliver 未列檔" "$o"
+# 模擬換檔中途被砍:新 ogg 已換上、舊檔在備份、日誌 placing
+dl_reset; mv "$W/dl/assets/table/sfx.jump.ogg" "$W/dl/assets/table/sfx.jump.ogg.deliver-9.bak"; printf 'NEWOGG' > "$W/dl/assets/table/sfx.jump.ogg"; printf 'NEWM4A' > "$W/dl/assets/table/sfx.jump.m4a.deliver-9"
+echo '{"state":"placing","entries":[{"dest":"table/sfx.jump.ogg","tmp":"table/sfx.jump.ogg.deliver-9","bak":"table/sfx.jump.ogg.deliver-9.bak","placed":true},{"dest":"table/sfx.jump.m4a","tmp":"table/sfx.jump.m4a.deliver-9","bak":null,"placed":false}],"jsonTmp":"assets.json.deliver-9","jsonBak":"assets.json.deliver-9.bak","createdDirs":[]}' > "$W/dl/assets/.deliver-journal.json"
+o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a 2>&1)"; rc=$?
+o2="$(D --recover --assets "$W/dl/assets")"; [ $rc -eq 2 ] && echo "$o" | grep -q -- '--recover' && echo "$o2" | grep -q '"recovered":true' && dl_old && ok "deliver.mjs:上次中斷留下日誌 → 拒絕;--recover 依日誌把舊檔換回、清掉殘留" || bad "deliver recover" "$o | $o2 | $(ls -A "$W/dl/assets/table")"
+dl_reset; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '沒有一起交付' && dl_old && ok "deliver.mjs:有變更的音訊項目只交付 .ogg → 結束碼 2(要和 .m4a 一起)" || bad "deliver 部分項目" "$o"
+dl_reset; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg TABLE/sfx.jump.ogg 2>&1)"; [ $? -eq 2 ] && dl_old && ok "deliver.mjs:路徑只差大小寫也算重複" || bad "deliver 大小寫" "$o"
+dl_reset; python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));a=d["assets"][0];d["assets"][0]={k:a[k] for k in reversed(list(a))};json.dump(d,open(sys.argv[2],"w"))' "$W/dl/old.json" "$W/dl/reorder.json"
+python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));d["assets"].append({"id":"sfx.new","type":"sfx","group":"table","files":["table/sfx.new.ogg","table/sfx.new.m4a"],"durationSec":0.5,"lufs":-16,"source":"out/a/manifest.json#new","review":"pending"});json.dump(d,open(sys.argv[2],"w"))' "$W/dl/reorder.json" "$W/dl/add.json"
+printf A > "$W/dl/stage/table/sfx.new.ogg"; printf B > "$W/dl/stage/table/sfx.new.m4a"
+o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/add.json" table/sfx.new.ogg table/sfx.new.m4a)" && [ "$(cat "$W/dl/assets/table/sfx.jump.ogg")" = OLDOGG ] && ok "deliver.mjs:沒變的項目只是鍵順序不同,不算變更" || bad "deliver 鍵順序" "$o"
+rm -rf "$W/dl1"; mkdir -p "$W/dl1/stage/shop" "$W/dl1/assets"; printf N > "$W/dl1/stage/shop/shop.x.ogg"; printf M > "$W/dl1/stage/shop/shop.x.m4a"
+echo '{"version":1,"assets":[{"id":"shop.x","type":"sfx","group":"shop","files":["shop/shop.x.ogg","shop/shop.x.m4a"],"durationSec":0.5,"lufs":-16,"source":"out/a/manifest.json#x","review":"pending"}]}' > "$W/dl1/new.json"
+for at in copy validate; do o="$(DELIVER_TEST=1 DELIVER_FAIL_AT=$at D --stage "$W/dl1/stage" --assets "$W/dl1/assets" --json "$W/dl1/new.json" shop/shop.x.ogg shop/shop.x.m4a)"; [ $? -eq 1 ] && [ -z "$(ls -A "$W/dl1/assets")" ] && ok "deliver.mjs:第一次交付、新 group,$at 失敗 → assets 目錄回到空的(沒留空資料夾、沒留 assets.json)" || bad "deliver 首次交付還原 $at" "$o $(ls -AR "$W/dl1/assets")"; done
+dl_reset; echo '{"version":1,"assets":[]}' > "$W/dl/empty.json"; printf A > "$W/dl/stage/table/sfx.new.ogg"; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/empty.json" table/sfx.new.ogg 2>&1)"; [ $? -eq 2 ] && dl_old && ok "deliver.mjs:新 assets.json 少了既有項目 → 結束碼 2" || bad "deliver 掉項目" "$o"
+dl_reset; printf '{"state":"pla' > "$W/dl/assets/.deliver-journal.json"; o="$(D --recover --assets "$W/dl/assets" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '讀不出來' && ok "deliver.mjs:日誌損壞時 --recover 回結束碼 1 並說明人工處理方式" || bad "deliver 日誌損壞" "$o"; rm -f "$W/dl/assets/.deliver-journal.json"
+dl_reset; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/old.json" table/sfx.jump.ogg table/sfx.jump.m4a 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '沒有變更' && dl_old && ok "deliver.mjs:換檔但項目沒更新(source / review 沒改)→ 結束碼 2" || bad "deliver 未更新項目" "$o"
+dl_reset; python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));d["assets"].append({"id":"legacy.bg","type":"sfx","group":"table","files":["table/legacy-bad-name.ogg","table/legacy-bad-name.m4a"],"durationSec":0.5,"lufs":-16,"source":"out/a/manifest.json#l","review":"approved"});json.dump(d,open(sys.argv[2],"w"))' "$W/dl/old.json" "$W/dl/assets/assets.json"; cp "$W/dl/assets/assets.json" "$W/dl/old.json"; sed 's/#old/#new/' "$W/dl/old.json" > "$W/dl/new.json"
+o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" table/sfx.jump.ogg table/sfx.jump.m4a)" && echo "$o" | grep -q '舊項目不符合目前格式' && ok "deliver.mjs:沒動到的舊項目不符合格式 → 只警告、照常交付" || bad "deliver 舊項目格式" "$o"
+dl_reset; python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));d["assets"].append({"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":120,"frameHeight":160,"columns":4},"source":"out/a/manifest.json#h","review":"pending"});json.dump(d,open(sys.argv[2],"w"))' "$W/dl/old.json" "$W/dl/sz.json"; cp "$W/sp/one.png" "$W/dl/stage/table/hero.run.png"
+o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/sz.json" table/hero.run.png 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'stage 的檔案驗證不通過' && dl_old && ok "deliver.mjs:stage 的 PNG 尺寸和 assets.json 不符 → 交付前擋下,什麼都不換" || bad "deliver 尺寸" "$o"
+dl_reset; echo null > "$W/dl/bad.json"; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/bad.json" table/sfx.jump.ogg 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '格式不對' && ok "deliver.mjs:--json 是 null → 結束碼 2" || bad "deliver null json" "$o"
+dl_reset; o="$(D --stage "$W/dl/stage" --assets "$W/dl/assets" --json "$W/dl/new.json" ../escape.png 2>&1)"; [ $? -eq 2 ] && ok "deliver.mjs:相對路徑含 .. → 結束碼 2" || bad "deliver 路徑" "$o"
 o="$(V assets "$W/v/assets.json" --root "$W/v")"; [ $? -eq 1 ] && echo "$o" | grep -q 'sfx.jump.m4a' && ok "schema:--root 檢查檔案存在(缺 m4a)" || bad "schema --root" "$o"
 echo '{"version":1,"assets":[{"id":"ui.btn","type":"ui","group":"lobby","files":["lobby/ui.btn.png"],"width":200,"height":80,"density":2,"anchor":[0.5,0.5],"nineSlice":[20,20,20,20],"nineSlice1x":[20,20,20,20],"source":"out/x/manifest.json#b","review":"pending"},{"id":"bgm.a","type":"bgm","group":"lobby","files":["lobby/bgm.a.ogg"],"durationSec":60,"lufs":-18,"source":"out/x/manifest.json#a","review":"pending"},{"id":"sfx.z","type":"sfx","group":"lobby","files":["lobby/sfx.z.ogg","lobby/sfx.z.m4a"],"durationSec":1,"lufs":-16,"source":"out/x/manifest.json#z","review":"done"}]}' > "$W/v/a2.json"
 o="$(V assets "$W/v/a2.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'nineSlice1x 應為 \[40,40,40,40\]' && echo "$o" | grep -q '.ogg 與 .m4a' && echo "$o" | grep -q 'review' && ok "schema:nineSlice1x = nineSlice × density、音訊雙格式、review 值" || bad "schema assets 錯誤" "$o"

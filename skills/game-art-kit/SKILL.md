@@ -35,11 +35,14 @@ node <kit>/scripts/comfy.mjs pngsize <圖>              # {"width":…,"height":
 node <kit>/scripts/comfy.mjs scrub-check <目錄>        # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1
 node <kit>/scripts/sheet.mjs <spec.json> <輸出.png>    # 拼分鏡表 / 標註表(格式見檔頭)
 node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]   # 整數 1x 尺寸 + 實際 density(單格與 sheet 都 ≤ 2048)
-node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center] [--margin 0]
-#   裁透明邊 → 同一動作各格用同一縮放比例 → 角色底部對齊(腳底離下緣 3 px)/ 其他置中補到 1x 尺寸;--margin 0(單張 UI / 九宮格)等比放滿,比例差 > 3% 失敗 → 多格拼 sheet(橫向,寬超過 2048 換行);印 columns / rows
+node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center] [--margin 0] [--foot px]
+#   裁透明邊 → 同一動作各格用同一縮放比例 → 角色底部對齊(腳底離下緣 3 px;簡報要求和既有素材對齊時用 --foot,例如 --foot 8,範圍 2 ~ (H − margin) / 2;同一動作的所有格要在同一次 fit 用同一個 --foot)/ 其他置中補到 1x 尺寸;--margin 0(單張 UI / 九宮格)等比放滿,比例差 > 3% 失敗 → 多格拼 sheet(橫向,寬超過 2048 換行);印 columns / rows
 node <kit>/scripts/sprite.mjs cover <背景.png> --out <id>.png --width <1x 寬> --height <1x 高> [--exact]   # 不透明素材:等比蓋滿再置中裁切;地圖塊加 --exact(同比例、不裁切)
-node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> [--frames N --columns C] [--character] [--opaque] [--tileable] [--full-bleed]
-#   有 alpha、尺寸、每格覆蓋率 10–90%、外框 2 px 不透明 < 1%(--full-bleed:fit --margin 0 的 UI 不查外框與覆蓋率上限)、各格基線差 ≤ 2 px / 高度差 ≤ 10%(--character)、平鋪邊緣差 ≤ 8(--tileable)
+node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> [--frames N --columns C] [--character] [--opaque] [--tileable] [--full-bleed] [--allow-white-edge]
+#   有 alpha、尺寸、每格覆蓋率 10–90%、外框 2 px 不透明 < 1%(--full-bleed:fit --margin 0 的 UI 不查外框與覆蓋率上限)、外緣白框 ≤ 30%(白色貼紙外框;主體本身是白色或很淺的顏色(白票、雲、銀白物件)時加 --allow-white-edge,並在回報說明)、各格基線差 ≤ 2 px / 高度差 ≤ 10%(--character)、平鋪邊緣差 ≤ 8(--tileable)
+node <kit>/scripts/deliver.mjs --stage <stage 根目錄> --assets art/assets --json <新的 assets.json> <相對 art/assets 的檔案>...
+#   stage → art/assets 全有或全無交付(有交付日誌,提交前失敗全部還原,結束碼 1);有變更的項目 files 要全部一起交付;
+#   上次中斷留下日誌時先 node <kit>/scripts/deliver.mjs --recover --assets art/assets
 node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
 #   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
 #   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
