@@ -100,6 +100,9 @@ bash <skill>/scripts/new-pixi.sh --check <目錄>     # 骨架齊全、budgets �
 - 美術交 `art/assets/assets.json` + 1x 原圖(schema:`game-art-kit/schemas/assets.schema.json`)。缺的素材由本專案寫 `assets.needs.json`(`needs.schema.json`;尺寸是設計座標下的顯示尺寸),驗證:`node scripts/schemas/validate.mjs needs assets.needs.json`。
 - `npm run assets -- --src <art/assets>`:驗證 → 每個群組產生 `src/assets/<group>/<id>@1x|@0.5x.avif` + `.png`(`opaque` 改 `.jpg`)、音訊複製、`manifest.json`(顯示尺寸、anchor、nineSlice、frames 格資訊)→ 檢查 KB 預算。產出進 git。
 - frames 不另出 spritesheet JSON:格資訊(count、fps、frameWidth、frameHeight、columns,貼圖單位 = 1x px)寫在 manifest,`frameTextures()` 切格(hash 後的檔名無法被 spritesheet JSON 的 `meta.image` 參照)。
+- 顯示時一律用 manifest 的 `width` / `height`(顯示尺寸)`setSize()`,不要用貼圖本身的尺寸(0.5x 進位成偶數後,貼圖邏輯尺寸可能和 1x 差 1–3 px)。
+- 級別在每次切換場景、載入群組前依「轉到正確方向後」的畫面重算;Pixi 內部 alias 是 `<id>#<級別>`,`texture(id)` 取目前載入的那一份。
+- BGM:`playSfx(src, { loop: true })` 回傳停止函式,場景 `destroy()` 要呼叫(PX-LIFE-01)。
 - 缺素材時用 `Graphics` 佔位,把 id 列進 `assets.needs.json`。
 
 ## 檢查腳本(既有專案也可用;專案已有同等檢查時用專案的)

@@ -48,7 +48,7 @@ tf "check-layers 抓到 pixi.js 子路徑" node "$K/scripts/check-layers.mjs" "$
 tf "vitest no-pixi 測試也擋" npx --no vitest run src/game/no-pixi.test.ts
 rm "$P/src/game/bad.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
-[ "$n" = 9 ] && ok "check-i18n 漏報案例全抓到(9,含多行)" || bad "check-i18n 漏報案例" "$r"
+[ "$n" = 10 ] && ok "check-i18n 漏報案例全抓到(10,含多行與 glob 字串)" || bad "check-i18n 漏報案例" "$r"
 t  "check-i18n 誤報案例全部放行" node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-good"
 # 首屏洩漏:main.ts 靜態 import play 群組的圖
 node -e "

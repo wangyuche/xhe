@@ -46,6 +46,19 @@ describe('WsTransport', () => {
     expect(timers).toHaveLength(0);
     expect(states.at(-1)).toBe('expired');
   });
+  it('reports expired after three rejected resumes', () => {
+    const { sockets, timers, states } = setup();
+    sockets[0]!.onopen?.({});
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ t: 'welcome', sessionToken: 'S' }) });
+    for (let i = 0; i < 5; i++) {
+      sockets.at(-1)!.onclose?.({ code: 1008 });
+      if (states.at(-1) === 'expired') break;
+      timers.at(-1)!.fn();
+      sockets.at(-1)!.onopen?.({});
+    }
+    expect(states.at(-1)).toBe('expired');
+    expect(sockets).toHaveLength(4); // 第一次連線 + 3 次 resume
+  });
   it('stops reconnecting on a fatal close code', () => {
     const { sockets, timers, states } = setup([4001]);
     sockets[0]!.onclose?.({ code: 4001 });

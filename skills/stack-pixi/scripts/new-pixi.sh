@@ -57,7 +57,7 @@ done
 [[ $DESIGN =~ ^([0-9]{3,4})x([0-9]{3,4})$ ]] || die "--design 必填,格式 1920x1080"
 W=${BASH_REMATCH[1]}; H=${BASH_REMATCH[2]}
 if [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then die "$DIR 已有檔案(只建新專案)"; fi
-[ -n "$NAME" ] || NAME=$(basename "$(cd "$(dirname "$DIR")" 2>/dev/null && pwd)/$(basename "$DIR")" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+[ -n "$NAME" ] || NAME=$(basename "$(cd "$(dirname "$DIR")" 2>/dev/null && pwd)/$(basename "$DIR")" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/^-*//')
 [[ $NAME =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "--name 只能用小寫英數與 -"
 [ -n "$TITLE" ] || TITLE=$NAME
 case $TITLE in *[\<\>\&\"\'\\\|]*) die "--title 不可含 < > & \" ' \\ |" ;; esac
@@ -81,5 +81,5 @@ repl "$DIR/src/config/design.ts" __DESIGN_W__ "$W" __DESIGN_H__ "$H"
 if [ $INSTALL = 1 ]; then
   (cd "$DIR" && npm ci --no-audit --no-fund --loglevel=error)
 fi
-echo "{\"ok\":true,\"dir\":\"$DIR\",\"design\":\"${W}x${H}\",\"net\":\"${NET:-none}\",\"iframe\":$([ $IFRAME = 1 ] && echo true || echo false)}"
+node -e 'const [dir,design,net,iframe]=process.argv.slice(1);console.log(JSON.stringify({ok:true,dir,design,net,iframe:iframe==="1"}))' "$DIR" "${W}x${H}" "${NET:-none}" "$IFRAME"
 echo "下一步:填 docs/performance-budgets.md 的 __佔位__(依簡報;推定值標「(推定)」),再跑 new-pixi.sh --check" >&2

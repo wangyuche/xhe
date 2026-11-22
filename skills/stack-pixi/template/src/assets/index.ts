@@ -22,9 +22,16 @@ const manifests = import.meta.glob<Manifest>('./*/manifest.json', { import: 'def
 const urls = import.meta.glob<string>(['./*/*.avif', './*/*.png', './*/*.jpg', './*/*.ogg', './*/*.m4a'], { query: '?url', import: 'default' });
 
 let tier: Tier = '1x';
+/** 選素材級別;之後載入的群組用新級別(已載入的群組不受影響,下次載入才換)。 */
 export function setTier(cover: number, dpr: number): void {
   tier = chooseTier(cover, dpr);
 }
+/** Pixi 內部 alias = `<id>#<級別>`:換級別時是不同的貼圖,不會拿到舊級別的快取。 */
+const aliasOf = (id: string, t: Tier): string => `${id}#${t}`;
+/** id → 目前載入中的 alias(texture(id) 用)。 */
+const current = new Map<string, string>();
+/** 還在進行的 unload(重新載入同一個 alias 前要等它完成,避免拿到即將被 destroy 的貼圖)。 */
+const unloading = new Map<string, Promise<void>>();
 
 const loaded = new Map<string, { count: number; aliases: string[]; manifest: Manifest; audio: Map<string, { ogg: string; m4a: string }> }>();
 /** 載入中的群組被 acquire / release 的淨次數(載入完成後併入 count;歸零就直接 release)。 */
@@ -74,12 +81,16 @@ async function loadGroup(group: string): Promise<void> {
       audio.set(id, { ogg, m4a });
       return;
     }
-    const fallback = a.files[`${tier}.png`] ?? a.files[`${tier}.jpg`];
-    const src = await Promise.all([url(group, a.files[`${tier}.avif`]!), url(group, fallback!)]); // PX-FMT-01:Pixi 依支援度選 avif / 備援
-    if (!added.has(id) && !Assets.cache.has(id)) { Assets.add({ alias: id, src }); added.add(id); }
-    aliases.push(id);
+    const t = tier;
+    const alias = aliasOf(id, t);
+    const fallback = a.files[`${t}.png`] ?? a.files[`${t}.jpg`];
+    const src = await Promise.all([url(group, a.files[`${t}.avif`]!), url(group, fallback!)]); // PX-FMT-01:Pixi 依支援度選 avif / 備援
+    await unloading.get(alias);
+    if (!added.has(alias) && !Assets.cache.has(alias)) { Assets.add({ alias, src }); added.add(alias); }
+    current.set(id, alias);
+    aliases.push(alias);
   }));
-  if (aliases.length) await Assets.load(aliases.filter((id) => !Assets.cache.has(id)));
+  if (aliases.length) await Assets.load(aliases.filter((al) => !Assets.cache.has(al)));
   for (const id of aliases) aliasRefs.set(id, (aliasRefs.get(id) ?? 0) + 1);
   loaded.set(group, { count: 0, aliases, manifest, audio });
 }
@@ -93,7 +104,10 @@ export function releaseGroup(group: string): void {
     const n = (aliasRefs.get(id) ?? 1) - 1;
     if (n > 0) { aliasRefs.set(id, n); continue; }
     aliasRefs.delete(id);
-    if (Assets.cache.has(id)) void Assets.unload(id).catch(() => {});
+    if (Assets.cache.has(id)) {
+      const p = Assets.unload(id).catch(() => {}).finally(() => unloading.delete(id));
+      unloading.set(id, p);
+    }
   }
 }
 
@@ -101,7 +115,10 @@ export function releaseGroup(group: string): void {
 export function entry(group: string, id: string): ManifestEntry | undefined {
   return loaded.get(group)?.manifest.assets[id];
 }
-export const texture = (id: string): Texture | undefined => (Assets.cache.has(id) ? Assets.get<Texture>(id) : undefined);
+export const texture = (id: string): Texture | undefined => {
+  const alias = current.get(id);
+  return alias && Assets.cache.has(alias) ? Assets.get<Texture>(alias) : undefined;
+};
 export const audioSrc = (group: string, id: string): { ogg: string; m4a: string } | undefined => loaded.get(group)?.audio.get(id);
 
 /** frames:用 manifest 的格資訊切出各格(貼圖單位 = 1x px,與檔案級別無關)。 */

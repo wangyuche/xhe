@@ -42,12 +42,18 @@ function load(src: Src): Promise<AudioBuffer> {
   return p;
 }
 
-export function playSfx(src: Src | undefined, opts: { loop?: boolean } = {}): void {
-  if (!src) return;
+/**
+ * 播放音效 / BGM,回傳停止函式(PX-LIFE-01:場景 destroy 時要呼叫,BGM 才不會殘留或重疊)。
+ * 未解鎖時:一般音效直接略過;loop(BGM)排隊等第一次手勢。
+ */
+export function playSfx(src: Src | undefined, opts: { loop?: boolean } = {}): () => void {
+  if (!src) return () => {};
+  let stopped = false;
+  let node: AudioBufferSourceNode | undefined;
   const run = (): void => {
     void load(src).catch(() => undefined).then((buf) => {
-      if (!buf) return;
-      const node = ctx!.createBufferSource();
+      if (!buf || stopped) return;
+      node = ctx!.createBufferSource();
       node.buffer = buf;
       node.loop = !!opts.loop;
       node.connect(ctx!.destination);
@@ -55,5 +61,12 @@ export function playSfx(src: Src | undefined, opts: { loop?: boolean } = {}): vo
     });
   };
   if (unlocked) run();
-  else if (opts.loop) pending.push(run); // BGM 等手勢後再下載與播放
+  else if (opts.loop) pending.push(run);
+  return () => {
+    stopped = true;
+    const i = pending.indexOf(run);
+    if (i >= 0) pending.splice(i, 1);
+    try { node?.stop(); } catch { /* 已停止 */ }
+    node?.disconnect();
+  };
 }

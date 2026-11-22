@@ -14,7 +14,7 @@ test('perf first screen', async ({ browser }) => {
       const watch = () => {
         const el = document.getElementById('loading');
         if (!el) return requestAnimationFrame(watch);
-        const check = () => { if (el.hidden && !w.__interactiveAt) w.__interactiveAt = performance.now(); };
+        const check = () => { if (el.hidden && !w.__interactiveAt) { w.__interactiveAt = performance.now(); w.__onInteractive?.(); } };
         new MutationObserver(check).observe(el, { attributes: true, attributeFilter: ['hidden'] });
         check();
       };
@@ -23,6 +23,7 @@ test('perf first screen', async ({ browser }) => {
     await throttle(page);
     let bytes = 0;
     let interactive = false;
+    await page.exposeFunction('__onInteractive', () => { interactive = true; }); // 可互動當下就停止計入,不等下一次輪詢
     page.on('requestfinished', async (r) => {
       if (interactive) return;
       try { const s = await r.sizes(); bytes += s.responseBodySize + s.responseHeadersSize; } catch { /* 已關閉 */ }

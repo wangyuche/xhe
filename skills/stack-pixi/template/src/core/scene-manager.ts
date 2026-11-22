@@ -1,5 +1,6 @@
 import type { Application, Container } from 'pixi.js';
-import { acquireGroup, releaseGroup } from '../assets';
+import { acquireGroup, releaseGroup, setTier } from '../assets';
+import { LANDSCAPE } from '../config/design';
 import { computeFit, type Fit } from './layout';
 import { watchModalDialogs } from './modal-guard';
 import { readSafeArea } from './safe-area';
@@ -52,6 +53,10 @@ export class SceneManager {
 
   private async swap(name: SceneName): Promise<void> {
     const def = SCENES[name];
+    // 素材級別用「轉到正確方向後」的畫面算(直式開機的橫式遊戲,旋轉後也拿 1x)
+    const { width, height } = this.app.screen;
+    const [w, h] = LANDSCAPE ? [Math.max(width, height), Math.min(width, height)] : [Math.min(width, height), Math.max(width, height)];
+    setTier(computeFit(w, h, readSafeArea()).scale, window.devicePixelRatio);
     const acquired = acquireGroup(def.group);
     let scene: Scene;
     try {

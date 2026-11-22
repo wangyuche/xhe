@@ -35,6 +35,7 @@ export class WsTransport {
   private open = false;
   private stopped = false;
   private helloSent = false;
+  private resumeFails = 0;
 
   constructor(private readonly o: WsOptions) {}
 
@@ -59,7 +60,7 @@ export class WsTransport {
     const ws = (this.o.create ?? ((u) => new WebSocket(u) as unknown as WsLike))(this.o.url);
     this.ws = ws;
     ws.onopen = () => {
-      if (this.sessionToken) ws.send(JSON.stringify({ t: 'resume', sessionToken: this.sessionToken }));
+      if (this.sessionToken) { ws.send(JSON.stringify({ t: 'resume', sessionToken: this.sessionToken })); this.resumeFails++; }
       else {
         ws.send(JSON.stringify({ t: 'hello', launchToken: this.o.launchToken }));
         this.helloSent = true;
@@ -71,6 +72,7 @@ export class WsTransport {
       if (m.t === 'welcome') {
         if (typeof m.sessionToken === 'string') this.sessionToken = m.sessionToken;
         this.attempt = 0;
+        this.resumeFails = 0;
         this.open = true;
         this.o.onState?.('open');
       }
@@ -83,7 +85,8 @@ export class WsTransport {
         this.stopped = true;
         return this.o.onState?.('fatal');
       }
-      if (this.helloSent && !this.sessionToken) {
+      // resume 連續 3 次都沒拿到 welcome(session 已失效)→ 同樣要新的 launch token
+      if ((this.helloSent && !this.sessionToken) || this.resumeFails >= 3) {
         this.stopped = true; // launch token 已用掉,重送 hello 一定被拒
         return this.o.onState?.('expired');
       }

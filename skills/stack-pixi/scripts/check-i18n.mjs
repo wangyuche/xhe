@@ -23,6 +23,25 @@ const SINKS = [
   new RegExp(String.raw`\bsetAttribute\(\s*['"](?:aria-label|aria-description|aria-roledescription|aria-valuetext|title|placeholder)['"]\s*,\s*` + LIT),
   new RegExp(String.raw`(?<![\w.])(?:alert|confirm|prompt)\(\s*` + LIT),
 ];
+// 把註解換成等長空白(保留換行與位移);會跳過字串與樣板字串裡的 // 與 /*
+function stripComments(src) {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i], n = src[i + 1];
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) { if (src[j] === '\\') j++; else if (c !== '`' && src[j] === '\n') break; j++; }
+      out += src.slice(i, j + 1); i = j + 1;
+    } else if (c === '/' && n === '/') {
+      let j = src.indexOf('\n', i); if (j < 0) j = src.length;
+      out += ' '.repeat(j - i); i = j;
+    } else if (c === '/' && n === '*') {
+      let j = src.indexOf('*/', i + 2); j = j < 0 ? src.length : j + 2;
+      out += src.slice(i, j).replace(/[^\n]/g, ' '); i = j;
+    } else { out += c; i++; }
+  }
+  return out;
+}
 const hasLetters = (lit) => /\p{L}/u.test(lit.slice(1, -1).replace(/\$\{[^}]*\}/g, ''));
 
 const out = [];
@@ -35,8 +54,7 @@ const walk = (p) => {
     const text = readFileSync(full, 'utf8');
     const lines = text.split('\n');
     // 整個檔案一起比對(多行的 new Text({ … text: … }) 也抓得到);整行註解換成等長空白,保留位移
-    const blank = (m) => m.replace(/[^\n]/g, ' ');
-    const code = text.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
+    const code = stripComments(text);
     const starts = [0];
     for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
     const lineOf = (off) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1; } return lo; };
