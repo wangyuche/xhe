@@ -96,15 +96,16 @@ psql_dsn() {
   QUIET_GUARD=1 guard_dsns "$dsn"
   local idsn
   idsn="$(dsnpy opts "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT}")"
-  idsn="$(dsnpy internal "$idsn")"
+  # inside the container 127.0.0.1 is trusted: drop the password so it never appears in `ps` / docker exec argv
+  idsn="$(dsnpy nopass "$(dsnpy internal "$idsn")")"
   # psql exits 3 on a script error with ON_ERROR_STOP; map it to 1 (3 means "Docker not running" in this kit).
   local prc=0
   if [ -n "${PSQL_MERGE_STDERR:-}" ]; then
     # docker exec forwards stdout and stderr on separate channels (their relative order is lost); merge inside the container.
-    docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null \
+    docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/nonexistent/dbrev-pgpass PGSERVICEFILE=/dev/null \
       sh -c 'exec psql "$@" 2>&1' psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
   else
-    docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null \
+    docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/nonexistent/dbrev-pgpass PGSERVICEFILE=/dev/null \
       psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
   fi
   [ $prc -ne 3 ] || prc=1

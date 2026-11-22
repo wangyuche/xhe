@@ -37,7 +37,13 @@ case "$Q" in *";"*) die "--query / --file 只能放一個語句(EXPLAIN 只會�
 bad="$(printf '%s\n' "$Q" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" || die "查詢裡有交易控制或 psql 指令($bad),無法保證 ROLLBACK" 2
 
 echo "### plan: EXPLAIN (ANALYZE, BUFFERS)"
-printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q
+PLAN="$(printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q 2>&1)" && PRC=0 || PRC=$?
+printf '%s\n' "$PLAN"
+if [ $PRC -ne 0 ]; then
+  python3 -I -c 'import json,sys; print(json.dumps({"runs_completed": 0, "ok": False, "error": sys.argv[1]}, ensure_ascii=False))' \
+    "$(printf '%s\n' "$PLAN" | grep -m1 -E 'ERROR' | cut -c1-200 || true)"
+  exit 1
+fi
 SCRIPT="$(i=0; while [ $i -le "$RUNS" ]; do printf 'BEGIN;\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON) %s\n;\nROLLBACK;\n' "$Q"; i=$((i + 1)); done)"
 RAW="$(printf '%s\n' "$SCRIPT" | psql_dsn "$DSN" -qAt 2>&1)" && PRC=0 || PRC=$?
 TIMES="$(printf '%s\n' "$RAW" | awk '

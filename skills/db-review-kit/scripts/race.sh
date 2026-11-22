@@ -32,6 +32,12 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$SCRIPT" ] && [ -n "$DSN_A" ] && [ -n "$DSN_B" ] || die "需要 --script、--dsn A=…、--dsn B=…" 2
 [ -n "$CHK" ] || CHK="$DSN_A"
+case "$LT" in *[0-9]ms|*[0-9]s|*[0-9]min) ;; *) die "--lock-timeout 要帶單位,例如 10s" 2 ;; esac
+printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式例:10s" 2
+lt_ms=$(printf '%s' "$LT" | awk '/ms$/{print $0+0; next} /min$/{print ($0+0)*60000; next} {print ($0+0)*1000}')
+[ "$lt_ms" -gt 1000 ] || die "--lock-timeout 要大於 deadlock_timeout(1s),否則 deadlock 會被當成 lock timeout" 2
+bad="$(grep -E '^(SETUP|A|B|CHECK):' "$SCRIPT" | sed -E 's/^(SETUP|A|B|CHECK):[[:space:]]*//; s/=>.*$//' | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
+  || die "腳本裡有不允許的 psql 指令($bad),拒絕" 4
 nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
 [ -z "$nocmp" ] || die "CHECK 行要寫成 CHECK: <sql> => <預期>:$nocmp" 2
 bad_sleep="$(grep -E '^SLEEP:' "$SCRIPT" | sed 's/^SLEEP:[[:space:]]*//;s/[[:space:]]*$//' | grep -vE '^[0-9]+(\.[0-9]+)?$' | head -1 || true)"

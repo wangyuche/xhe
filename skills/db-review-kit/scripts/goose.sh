@@ -78,7 +78,8 @@ gomig_in_range() { # <lo> <hi> -> names of Go migrations with lo <= version <= h
 goose_cmd() { # <dsn> <goose args...>
   local dsn="$1"; shift
   local d2; d2="$(dsnpy opts "$dsn" "-c statement_timeout=${GOOSE_STATEMENT_TIMEOUT:-300s}")"
-  (cd "$WORK" && run_iso "$NAME" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" -table "$TABLE" postgres "$d2" "$@")
+  # DSN via GOOSE_DBSTRING in the isolated env (not argv, so the password is not visible in `ps`)
+  (cd "$WORK" && run_iso "$NAME" GOOSE_DRIVER=postgres GOOSE_DBSTRING="$d2" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" -table "$TABLE" "$@")
 }
 
 versions() { ls "$WORK/mig" | sed -n 's/^\([0-9][0-9]*\)_.*\.sql$/\1/p' | while read -r v; do echo $((10#$v)); done | sort -n; }

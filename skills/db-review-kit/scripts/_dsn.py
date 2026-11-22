@@ -115,6 +115,13 @@ def main(argv):
             merged = " ".join([extra] + existing).strip()
             print(up.urlunsplit(p._replace(query=join_query(rest + [("options", merged)]))))
             return 0
+        if cmd == "nopass":
+            p, _, _, q = parse(args[0])
+            userinfo, _, hostport = p.netloc.rpartition("@")
+            user = userinfo.split(":", 1)[0]
+            rest = [(k, v) for k, v in q if k.lower() != "password"]
+            print(up.urlunsplit(p._replace(netloc=(user + "@" if user else "") + hostport, query=join_query(rest))))
+            return 0
         if cmd == "mask":
             print(mask(args[0]))
             return 0

@@ -14,10 +14,14 @@ TX = re.compile(r"^(COMMIT|END|ROLLBACK|ABORT|BEGIN|START\s+TRANSACTION|SAVEPOIN
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def strip(sql):
+def strip(sql, keep_comments=False):
     out, i, n = [], 0, len(sql)
     while i < n:
         c = sql[i]
+        if keep_comments and (sql.startswith("--", i) or sql.startswith("/*", i)):
+            out.append(c)
+            i += 1
+            continue
         if sql.startswith("--", i):
             j = sql.find("\n", i)
             i = n if j < 0 else j
@@ -88,8 +92,14 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
-    text = strip(raw)
     if "--connect" in sys.argv[1:]:
+        # psql does not treat "--" as a comment inside meta-command arguments, so keep comments here (stricter);
+        # only SQL literals / dollar bodies are removed. Backticks run shell commands in meta-command arguments.
+        text = strip(raw, keep_comments=True)
+        if "`" in text:
+            line = next(l for l in text.splitlines() if "`" in l)
+            print("backtick (shell command) not allowed: " + line.strip()[:60])
+            return 1
         # psql scripts may use only these meta-commands (no \\c, \\!, \\o, \\g |cmd, \\copy, \\i, \\setenv …)
         allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
@@ -102,6 +112,7 @@ def main():
                 print("psql meta-command not allowed: \\" + cmd + " (" + line.strip()[:60] + ")")
                 return 1
         return 0
+    text = strip(raw)
     if "\\" in text:
         line = next(l for l in text.splitlines() if "\\" in l)
         print("psql meta-command: " + line.strip()[:80])
