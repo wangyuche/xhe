@@ -44,14 +44,24 @@ export class SceneManager {
   }
 
   go(name: SceneName): Promise<void> {
-    this.queue = this.queue.then(() => this.swap(name));
-    return this.queue;
+    // 前一次切換失敗不能卡住之後的切換:佇列先吞掉錯誤再接下一個
+    const run = this.queue.catch(() => {}).then(() => this.swap(name));
+    this.queue = run;
+    return run;
   }
 
   private async swap(name: SceneName): Promise<void> {
     const def = SCENES[name];
-    const [mod] = await Promise.all([def.load(), acquireGroup(def.group)]);
-    const scene: Scene = mod.default({ app: this.app, go: (n) => this.go(n) });
+    const acquired = acquireGroup(def.group);
+    let scene: Scene;
+    try {
+      const [mod] = await Promise.all([def.load(), acquired]);
+      scene = mod.default({ app: this.app, go: (n) => this.go(n) });
+    } catch (e) {
+      // 載入或建立失敗:已取得的素材群組要還回去(參考計數)
+      await acquired.then(() => releaseGroup(def.group), () => {});
+      throw e;
+    }
     const prev = this.current;
     this.app.stage.addChild(scene.root);
     this.current = { name, scene };

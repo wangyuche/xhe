@@ -12,3 +12,7 @@ document.querySelector('[title="Start"]');
 label.text = 'v1.2.3'; // i18n-ignore: version string, not translated
 // i18n-ignore: brand name stays in English
 title.text = 'MahjongParty';
+const multiOk = new Text({
+  style: { fill: 0xffffff },
+  text: t('play.now'),
+});

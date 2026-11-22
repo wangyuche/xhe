@@ -60,6 +60,7 @@ for (const [group, list] of groups) {
       const meta = await sharp(src).metadata();
       const expectW = a.frames ? a.frames.frameWidth * a.frames.columns : Math.round(a.width * a.density);
       const expectH = a.frames ? a.frames.frameHeight * Math.ceil(a.frames.count / a.frames.columns) : Math.round(a.height * a.density);
+      if (a.frames && (a.frames.frameWidth % 2 || a.frames.frameHeight % 2)) die(`${a.id}:frameWidth / frameHeight 要是偶數(0.5x 才能剛好一半、格子不偏移)`);
       if (meta.width !== expectW || meta.height !== expectH) die(`${a.id}:1x 應為 ${expectW}×${expectH}(顯示 × density),實際 ${meta.width}×${meta.height}`);
       for (const tier of ['1x', '0.5x']) {
         const w = tier === '1x' ? meta.width : half(meta.width);

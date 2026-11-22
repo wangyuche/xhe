@@ -7,3 +7,7 @@ const o = { accessibleHint: 'Opens the shop' };
 dlg.setAttribute('aria-label', 'Close dialog');
 alert('Connection lost');
 const b = new BitmapText({ style: {}, text: '準備開始' });
+const multi = new Text({
+  style: { fill: 0xffffff },
+  text: 'Game over',
+});

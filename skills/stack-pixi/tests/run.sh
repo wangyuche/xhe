@@ -23,6 +23,7 @@ t  "new-pixi 建骨架 + npm ci(--net ws --iframe)" bash "$K/scripts/new-pixi.sh
 tf "--check:budgets 未填時失敗" bash "$K/scripts/new-pixi.sh" --check "$P"
 sed -i '' -e 's/__FCP__/3000/;s/__INTERACTIVE__/15000/;s/__TBT__/1000/;s/__SCENE__/5000/;s/__BOOT__/400/;s/__ROUNDS__/5/;s/__HEAP__/50/;s/__NODES__/20/;s/__LISTENERS__/10/;s/__OBJECTS__/0/' "$P/docs/performance-budgets.md"
 t  "--check:填好後通過" bash "$K/scripts/new-pixi.sh" --check "$P"
+t  "--check:相對路徑也可以" bash -c "cd '$W' && bash '$K/scripts/new-pixi.sh' --check client"
 t  "design.ts 寫入 1920×1080" grep -q 'width: 1920, height: 1080' "$P/src/config/design.ts"
 t  "--net ws / --iframe 模組已加入" test -f "$P/src/services/net/WsTransport.ts" -a -f "$P/src/services/iframe/bridge.ts"
 t  "lockfile 鎖 pixi 8.23.0" node -e "process.exit(require('$P/package-lock.json').packages['node_modules/pixi.js'].version==='8.23.0'?0:1)"
@@ -43,7 +44,7 @@ tf "check-layers 抓到 src/game import pixi" node "$K/scripts/check-layers.mjs"
 tf "vitest no-pixi 測試也擋" npx --no vitest run src/game/no-pixi.test.ts
 rm "$P/src/game/bad.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
-[ "$n" = 8 ] && ok "check-i18n 漏報案例全抓到(8)" || bad "check-i18n 漏報案例" "$r"
+[ "$n" = 9 ] && ok "check-i18n 漏報案例全抓到(9,含多行)" || bad "check-i18n 漏報案例" "$r"
 t  "check-i18n 誤報案例全部放行" node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-good"
 # 首屏洩漏:main.ts 靜態 import play 群組的圖
 node -e "
@@ -106,6 +107,8 @@ npx --no vite build --outDir "$W/dist" >/dev/null 2>&1
 head -c 368640 /dev/urandom > "$W/dist/blob.bin"
 out=$(bash "$WK/serve.sh" "$N-dist" "$P" 4175 -- node scripts/serve-dist.mjs "$W/dist" 2>&1); PORT_DIST=$(echo "$out" | sed -n 's/.*port=\([0-9]*\).*/\1/p')
 if [ -n "$PORT_DIST" ]; then
+  t "serve-dist 壞掉的網址回 400 且伺服器還活著" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:$PORT_DIST/%E0%A4%A')\" = 400 ] && curl -sf -o /dev/null http://127.0.0.1:$PORT_DIST/index.html"
+  t "serve-dist 擋住 dist 以外的路徑" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' --path-as-is 'http://127.0.0.1:$PORT_DIST/..%2F..%2Fetc%2Fhosts')\" != 200 ]"
   t "serve-dist gzip 壓縮 JS" bash -c "curl -s -H 'Accept-Encoding: gzip' -o /dev/null -w '%header{content-encoding}' http://127.0.0.1:$PORT_DIST/index.html | grep -q gzip"
   cat > tests/perf/zz-worker.perf.spec.ts <<'TS'
 import { expect, test } from '@playwright/test';

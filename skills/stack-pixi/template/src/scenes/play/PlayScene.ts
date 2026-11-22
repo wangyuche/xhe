@@ -108,6 +108,8 @@ class PlayScene implements Scene {
   destroy(): void {
     this.ctx.app.ticker.remove(this.tick);
     this.dialog.removeEventListener('cancel', this.onCancel);
+    (document.getElementById('result-again') as HTMLButtonElement).onclick = null;
+    (document.getElementById('result-close') as HTMLButtonElement).onclick = null;
     if (this.dialog.open) this.dialog.close();
     this.root.destroy({ children: true });
   }

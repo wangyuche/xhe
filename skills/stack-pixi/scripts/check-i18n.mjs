@@ -32,15 +32,25 @@ const walk = (p) => {
     const rel = relative(src, full);
     if (statSync(full).isDirectory()) { if (f !== 'node_modules' && !(rel === 'i18n')) walk(full); continue; }
     if (!/\.tsx?$/.test(f) || /\.test\.tsx?$/.test(f)) continue;
-    const lines = readFileSync(full, 'utf8').split('\n');
-    lines.forEach((l, i) => {
-      if (/\/\/\s*i18n-ignore:\s*\S/.test(l) || /\/\/\s*i18n-ignore:\s*\S/.test(lines[i - 1] ?? '')) return;
-      const code = l.replace(/^\s*\/\/.*$/, '');
-      for (const re of SINKS) {
-        const m = re.exec(code);
-        if (m && hasLetters(m[1])) { out.push({ file: relative(dir, full), line: i + 1, text: l.trim() }); break; }
+    const text = readFileSync(full, 'utf8');
+    const lines = text.split('\n');
+    // 整個檔案一起比對(多行的 new Text({ … text: … }) 也抓得到);整行註解換成等長空白,保留位移
+    const code = text.replace(/^[ \t]*\/\/.*$/gm, (m) => ' '.repeat(m.length));
+    const starts = [0];
+    for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
+    const lineOf = (off) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1; } return lo; };
+    const seen = new Set();
+    for (const re of SINKS) {
+      const g = new RegExp(re.source, 'g');
+      for (const m of code.matchAll(g)) {
+        if (!hasLetters(m[1])) continue;
+        const li = lineOf(m.index + m[0].length - m[1].length); // 字串常值所在行
+        const ignored = [li, li - 1].some((k) => /\/\/\s*i18n-ignore:\s*\S/.test(lines[k] ?? ''));
+        if (ignored || seen.has(li)) continue;
+        seen.add(li);
+        out.push({ file: relative(dir, full), line: li + 1, text: lines[li].trim() });
       }
-    });
+    }
   }
 };
 walk(src);

@@ -39,6 +39,13 @@ describe('WsTransport', () => {
     const { t } = setup();
     expect(t.send({ t: 'move' })).toBe(false);
   });
+  it('does not resend a used launch token when the socket drops before welcome', () => {
+    const { sockets, timers, states } = setup();
+    sockets[0]!.onopen?.({});
+    sockets[0]!.onclose?.({ code: 1006 });
+    expect(timers).toHaveLength(0);
+    expect(states.at(-1)).toBe('expired');
+  });
   it('stops reconnecting on a fatal close code', () => {
     const { sockets, timers, states } = setup([4001]);
     sockets[0]!.onclose?.({ code: 4001 });

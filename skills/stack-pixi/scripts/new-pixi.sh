@@ -20,6 +20,7 @@ HEADINGS=(首屏 場景切換 傳輸量 長時間遊玩 素材預算 例外 最�
 check() {
   local d=$1 bad=0
   [ -d "$d" ] || die "--check:$d 不存在"
+  d=$(cd "$d" && pwd)
   for f in "${REQUIRED[@]}"; do [ -f "$d/$f" ] || { echo "缺少 $f"; bad=1; }; done
   for d2 in src/scenes src/game src/services; do [ -d "$d/$d2" ] || { echo "缺少 $d2/"; bad=1; }; done
   if [ -f "$d/docs/performance-budgets.md" ]; then
@@ -31,7 +32,7 @@ check() {
   fi
   if [ -f "$d/src/config/design.ts" ] && grep -q '__DESIGN' "$d/src/config/design.ts"; then echo "design.ts 未填設計解析度"; bad=1; fi
   if [ -f "$d/package.json" ]; then
-    node -e "const p=require('$d/package.json');const v=(p.dependencies||{})['pixi.js']||'';if(!/^\D*8\./.test(v)){console.log('pixi.js 不是 8.x:'+v);process.exit(1)}" || bad=1
+    node -e "const p=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const v=(p.dependencies||{})['pixi.js']||'';if(!/^\D*8\./.test(v)){console.log('pixi.js 不是 8.x:'+v);process.exit(1)}" "$d/package.json" || bad=1
   fi
   if [ $bad = 0 ]; then echo '{"ok":true}'; else echo '{"ok":false}'; exit 1; fi
 }
@@ -65,6 +66,7 @@ mkdir -p "$DIR"
 cp -R "$KIT/template/." "$DIR/"
 rm -rf "$DIR/optional"
 mv "$DIR/gitignore" "$DIR/.gitignore"
+mkdir -p "$DIR/scripts/schemas"
 cp "$SCHEMAS/validate.mjs" "$SCHEMAS/assets.schema.json" "$SCHEMAS/needs.schema.json" "$DIR/scripts/schemas/"
 if [ "$NET" = ws ]; then mkdir -p "$DIR/src/services/net"; cp "$KIT/template/optional/net/"* "$DIR/src/services/net/"; fi
 if [ $IFRAME = 1 ]; then mkdir -p "$DIR/src/services/iframe"; cp "$KIT/template/optional/iframe/"* "$DIR/src/services/iframe/"; fi

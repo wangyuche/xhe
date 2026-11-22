@@ -1,6 +1,7 @@
 /**
  * WebSocket 連線(PX-NET-01,`new-pixi.sh --net ws` 加入;放 src/services/net/,純邏輯不 import pixi):
  * - 第一則送 {t:'hello', launchToken};伺服器回 {t:'welcome', sessionToken} 後,重連改送 {t:'resume', sessionToken}。
+ * - launch token 是一次性的:hello 已送出、還沒拿到 session token 就斷線 → 狀態 'expired' 並停止(呼叫端要取新的 launch token 重建)。
  * - 斷線重連:指數退避 min(10 s, 500 ms × 2^n),收到 welcome 歸零;FATAL 錯誤碼停止重連。
  * - 斷線期間 send() 丟棄(回 false),不排隊;重連後由伺服器送完整快照(onMessage 收到 snapshot 自行重建狀態)。
  * - token 不放 Web storage、不印 console(PX-SEC-01)。
@@ -18,7 +19,7 @@ export interface WsOptions {
   url: string;
   launchToken: string;
   onMessage: (m: Msg) => void;
-  onState?: (s: 'connecting' | 'open' | 'closed' | 'fatal') => void;
+  onState?: (s: 'connecting' | 'open' | 'closed' | 'fatal' | 'expired') => void;
   /** 收到這些 close code 就不再重連(例如 token 無效)。 */
   fatalCodes?: number[];
   create?: (url: string) => WsLike;
@@ -33,6 +34,7 @@ export class WsTransport {
   private attempt = 0;
   private open = false;
   private stopped = false;
+  private helloSent = false;
 
   constructor(private readonly o: WsOptions) {}
 
@@ -57,7 +59,11 @@ export class WsTransport {
     const ws = (this.o.create ?? ((u) => new WebSocket(u) as unknown as WsLike))(this.o.url);
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(JSON.stringify(this.sessionToken ? { t: 'resume', sessionToken: this.sessionToken } : { t: 'hello', launchToken: this.o.launchToken }));
+      if (this.sessionToken) ws.send(JSON.stringify({ t: 'resume', sessionToken: this.sessionToken }));
+      else {
+        ws.send(JSON.stringify({ t: 'hello', launchToken: this.o.launchToken }));
+        this.helloSent = true;
+      }
     };
     ws.onmessage = (ev) => {
       let m: Msg;
@@ -76,6 +82,10 @@ export class WsTransport {
       if (this.o.fatalCodes?.includes(ev.code)) {
         this.stopped = true;
         return this.o.onState?.('fatal');
+      }
+      if (this.helloSent && !this.sessionToken) {
+        this.stopped = true; // launch token 已用掉,重送 hello 一定被拒
+        return this.o.onState?.('expired');
       }
       this.o.onState?.('closed');
       (this.o.schedule ?? setTimeout)(() => this.connect(), backoffMs(this.attempt++));

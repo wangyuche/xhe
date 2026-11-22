@@ -27,6 +27,8 @@ export function setTier(cover: number, dpr: number): void {
 }
 
 const loaded = new Map<string, { count: number; aliases: string[]; manifest: Manifest; audio: Map<string, { ogg: string; m4a: string }> }>();
+/** 每個 alias 被幾個已載入群組使用(PX-LOAD-04:跨群組共用的貼圖,計數歸零才 unload)。 */
+const aliasRefs = new Map<string, number>();
 const pendingLoads = new Map<string, Promise<void>>();
 
 async function url(group: string, file: string): Promise<string> {
@@ -62,12 +64,11 @@ async function loadGroup(group: string): Promise<void> {
     }
     const fallback = a.files[`${tier}.png`] ?? a.files[`${tier}.jpg`];
     const src = [await url(group, a.files[`${tier}.avif`]!), await url(group, fallback!)]; // PX-FMT-01:Pixi 依支援度選 avif / 備援
-    if (!Assets.cache.has(id)) {
-      Assets.add({ alias: id, src });
-      aliases.push(id);
-    }
+    if (!Assets.cache.has(id) && !aliasRefs.has(id)) Assets.add({ alias: id, src });
+    aliases.push(id);
   }
-  if (aliases.length) await Assets.load(aliases);
+  if (aliases.length) await Assets.load(aliases.filter((id) => !Assets.cache.has(id)));
+  for (const id of aliases) aliasRefs.set(id, (aliasRefs.get(id) ?? 0) + 1);
   loaded.set(group, { count: 0, aliases, manifest, audio });
 }
 
@@ -75,7 +76,12 @@ export function releaseGroup(group: string): void {
   const cur = loaded.get(group);
   if (!cur || --cur.count > 0) return;
   loaded.delete(group);
-  for (const id of cur.aliases) if (Assets.cache.has(id)) void Assets.unload(id).catch(() => {});
+  for (const id of cur.aliases) {
+    const n = (aliasRefs.get(id) ?? 1) - 1;
+    if (n > 0) { aliasRefs.set(id, n); continue; }
+    aliasRefs.delete(id);
+    if (Assets.cache.has(id)) void Assets.unload(id).catch(() => {});
+  }
 }
 
 /** 取素材資訊;沒有(缺素材)回 undefined,呼叫端畫 Graphics 佔位並把 id 列進 assets.needs.json。 */

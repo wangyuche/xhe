@@ -1,4 +1,4 @@
-import { onPauseChange } from './pause';
+import { isPaused, onPauseChange } from './pause';
 
 /**
  * 音訊(PX-FMT-07):ogg(Opus)優先,不支援就 m4a(AAC)。第一次使用者手勢後才建立 AudioContext 與下載 BGM(首屏不含 BGM)。
@@ -17,7 +17,8 @@ export function startAudioUnlock(): void {
     if (unlocked) return;
     unlocked = true;
     ctx = new AudioContext();
-    void ctx.resume();
+    if (!isPaused()) void ctx.resume();
+    else void ctx.suspend(); // 暫停中(背景、旋轉提示)解鎖:等恢復時才出聲
     for (const fn of pending.splice(0)) fn();
   };
   for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, unlock, { once: false, capture: true });
@@ -32,8 +33,11 @@ function load(src: Src): Promise<AudioBuffer> {
   const url = pick(src);
   let p = buffers.get(url);
   if (!p) {
-    p = fetch(url).then((r) => r.arrayBuffer()).then((b) => ctx!.decodeAudioData(b));
+    p = fetch(url)
+      .then((r) => { if (!r.ok) throw new Error(`audio ${r.status}: ${url}`); return r.arrayBuffer(); })
+      .then((b) => ctx!.decodeAudioData(b));
     buffers.set(url, p);
+    p.catch(() => buffers.delete(url)); // 失敗不快取,下次再試
   }
   return p;
 }
@@ -41,7 +45,8 @@ function load(src: Src): Promise<AudioBuffer> {
 export function playSfx(src: Src | undefined, opts: { loop?: boolean } = {}): void {
   if (!src) return;
   const run = (): void => {
-    void load(src).then((buf) => {
+    void load(src).catch(() => undefined).then((buf) => {
+      if (!buf) return;
       const node = ctx!.createBufferSource();
       node.buffer = buf;
       node.loop = !!opts.loop;

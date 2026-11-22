@@ -24,8 +24,10 @@ http.createServer((req, res) => {
     req.pipe(p);
     return;
   }
-  let file = path.join(dir, decodeURIComponent(new URL(req.url, 'http://x').pathname));
-  if (!file.startsWith(dir)) { res.writeHead(403); res.end(); return; }
+  let rel;
+  try { rel = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); res.end(); return; }
+  let file = path.join(dir, rel);
+  if (file !== dir && !file.startsWith(dir + path.sep)) { res.writeHead(403); res.end(); return; }
   if (file.endsWith(path.sep) || file === dir) file = path.join(file, 'index.html');
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
   const ext = path.extname(file);
