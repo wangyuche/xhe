@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" href="data:," />
+    <title>__TITLE__</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #101418; overflow: hidden; }
+      #app { position: fixed; inset: 0; touch-action: none; }
+      .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+        color: #f2f2f2; font: 600 20px/1.4 system-ui, sans-serif; background: #101418; text-align: center; padding: 24px; }
+      .overlay[hidden] { display: none; }
+      .overlay button, dialog button { font: 600 18px system-ui, sans-serif; min-width: 120px; min-height: 44px; border-radius: 8px; border: 0; padding: 8px 20px; }
+      dialog { border: 0; border-radius: 12px; padding: 24px; min-width: 260px; font: 18px/1.5 system-ui, sans-serif; touch-action: pan-y; overscroll-behavior: contain; }
+      dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="loading" class="overlay" role="progressbar" aria-busy="true">
+      <!-- 靜態 SVG:HTML 解析完就有 First Contentful Paint,不必等 JS(文字由 main.ts 從 i18n 填) -->
+      <svg width="48" height="48" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="#2f7df6" stroke-width="6" stroke-dasharray="90 40" /></svg>
+      <span id="loading-text"></span>
+    </div>
+    <div id="rotate" class="overlay" hidden></div>
+    <div id="error" class="overlay" role="alert" hidden><p id="error-msg"></p><button id="error-reload" type="button"></button></div>
+    <div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
+    <div id="sr-alert" class="sr-only" role="alert"></div>
+    <dialog id="result-dialog" aria-labelledby="result-title">
+      <h2 id="result-title"></h2>
+      <p id="result-body"></p>
+      <button id="result-again" type="button"></button>
+      <button id="result-close" type="button"></button>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

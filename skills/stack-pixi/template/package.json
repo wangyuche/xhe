@@ -1,0 +1,27 @@
+{
+  "name": "__NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port ${PORT:-5173} --strictPort --host 127.0.0.1",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "perf": "playwright test -c tests/perf/playwright.perf.config.ts",
+    "assets": "node scripts/build-assets.mjs",
+    "serve:dist": "node scripts/serve-dist.mjs"
+  },
+  "dependencies": {
+    "pixi.js": "8.23.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/node": "26.6.6",
+    "sharp": "0.35.5",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
+  }
+}
