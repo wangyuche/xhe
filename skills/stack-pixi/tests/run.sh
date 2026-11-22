@@ -71,6 +71,13 @@ tc 3 "check-early:沒有 src/assets/early.ts 也沒給 --boot → layout absent"
 t  "check-early:給 --boot 就照常檢查" node "$K/scripts/check-early.mjs" "$X" --dist "$X/dist" --boot login
 tc 3 "check-assets:沒有任何 <group>/manifest.json → layout absent" node "$K/scripts/check-assets.mjs" "$X"
 r=$(node "$K/scripts/check-assets.mjs" "$X"); [ "$(jget "$r" 'j.layout')" = absent ] && ok "check-assets layout absent 印 layout: absent" || bad "check-assets layout 欄位" "$r"
+tc 1 "check-assets layout absent 時 --art 仍驗證(有錯結束碼 1)" node "$K/scripts/check-assets.mjs" "$X" --art art
+tc 2 "check-early --boot 空值 → 用法錯誤" node "$K/scripts/check-early.mjs" "$X" --dist "$X/dist" --boot ""
+# 骨架專案(有 src/assets/early.ts)把結構弄壞 = 違規(1),不是 layout absent
+echo "export const BOOT_GROUPS: readonly string[] = ['boot'];" > "$X/src/assets/early.ts"
+tc 1 "check-assets:骨架專案刪掉所有 manifest → 違規" node "$K/scripts/check-assets.mjs" "$X"
+rm "$X/dist/.vite/manifest.json"
+tc 1 "check-early:骨架專案關掉 build.manifest → 違規" node "$K/scripts/check-early.mjs" "$X" --dist "$X/dist"
 rm -rf "$X"
 echo "import { Sprite } from 'pixi.js'; export const s = Sprite;" > "$P/src/game/bad.ts"
 tf "check-layers 抓到 src/game import pixi" node "$K/scripts/check-layers.mjs" "$P"
@@ -159,6 +166,10 @@ repl docs/performance-budgets.md '| title | 300 | 100 |' '| title | 0.1 | 100 |'
 tf "build-assets 超過 KB 預算就失敗" node scripts/build-assets.mjs --src "$A"
 t  "超過預算時既有產出不變(title 仍是舊的 manifest)" grep -q bg.title src/assets/title/manifest.json
 tf "check-assets 超過 KB 預算就失敗" node "$K/scripts/check-assets.mjs" "$P"
+node "$K/scripts/check-assets.mjs" "$P" > "$W/budget-base.json"
+tc 0 "check-assets --baseline:預算超標但沒有變大 → 既有" node "$K/scripts/check-assets.mjs" "$P" --baseline "$W/budget-base.json"
+node -e "const f='$W/budget-base.json';const j=JSON.parse(require('fs').readFileSync(f));j.errors=j.errors.map(e=>e.replace(/AVIF [\d.]+ KB/,'AVIF 0.01 KB'));require('fs').writeFileSync(f,JSON.stringify(j))"
+tc 1 "check-assets --baseline:預算超標而且比基準更大 → 新增" node "$K/scripts/check-assets.mjs" "$P" --baseline "$W/budget-base.json"
 repl docs/performance-budgets.md '| title | 0.1 | 100 |' '| title | 300 | 100 |'
 node -e "const f='$A/assets.json';const d=JSON.parse(require('fs').readFileSync(f));d.assets[0].width=121;require('fs').writeFileSync('$W/bad.json',JSON.stringify(d))"; cp "$A/assets.json" "$W/good.json"; cp "$W/bad.json" "$A/assets.json"
 tf "build-assets 1x 尺寸不等於顯示 × density 就失敗" node scripts/build-assets.mjs --src "$A"
@@ -205,7 +216,7 @@ TS
   out=$(bash "$WK/serve.sh" "$N-soak" "$P" 4190 -- node "$K/scripts/bg-job.mjs" -- env PERF_BASE_URL="http://127.0.0.1:$PORT_DIST" PERF_RUNS=1 PERF_VIEW=desktop PERF_RESULTS_DIR="$W/perf" PERF_OUTPUT_DIR="$W/perf-out" node_modules/.bin/playwright test -c tests/perf/playwright.perf.config.ts soak 2>&1)
   PORT_SOAK=$(echo "$out" | sed -n 's/.*port=\([0-9]*\).*/\1/p'); st=""
   if [ -n "$PORT_SOAK" ]; then
-    for _ in $(seq 1 300); do st=$(curl -s "http://127.0.0.1:$PORT_SOAK/"); echo "$st" | grep -q '"state":"done"' && break; sleep 1; done
+    for _ in $(seq 1 600); do st=$(curl -s "http://127.0.0.1:$PORT_SOAK/"); echo "$st" | grep -q '"state":"done"' && break; sleep 1; done
     [ "$(jget "$st" 'j.state + ":" + j.code')" = "done:0" ] && ok "soak 經 serve.sh + bg-job 背景執行並結束碼 0" || bad "soak(bg-job)" "$st $(tail -20 "$WEB_DEV_KIT_TMP/$N-soak/server.log")"
   else bad "啟動 bg-job" "$out"; fi
   bash "$WK/stop.sh" "$N-soak" >/dev/null 2>&1

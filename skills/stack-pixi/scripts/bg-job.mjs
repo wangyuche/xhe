@@ -14,17 +14,21 @@ const port = Number(process.env.PORT);
 if (!cmd.length || !Number.isInteger(port) || port <= 0) { console.error(USAGE); process.exit(2); }
 
 const status = { state: 'running', code: null, signal: null, startedAt: new Date().toISOString(), endedAt: null, cmd };
-const env = { ...process.env };
-delete env.PORT;
-const child = spawn(cmd[0], cmd.slice(1), { env, stdio: ['ignore', 'inherit', 'inherit'] });
-child.on('error', (e) => { console.error(`bg-job: 無法執行 ${cmd[0]}:${e.message}`); Object.assign(status, { state: 'done', code: 127, endedAt: new Date().toISOString() }); });
-child.on('exit', (code, signal) => { Object.assign(status, { state: 'done', code, signal, endedAt: new Date().toISOString() }); console.log(`bg-job: done code=${code} signal=${signal}`); });
-
-createServer((req, res) => {
+let child;
+const server = createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify(status));
-}).listen(port, '127.0.0.1');
+});
+// 埠拿不到就整個失敗,子指令還沒啟動
+server.on('error', (e) => { console.error(`bg-job: 無法監聽 ${port}:${e.message}`); if (child && status.state === 'running') child.kill('SIGTERM'); process.exit(1); });
+server.listen(port, '127.0.0.1', () => {
+  const env = { ...process.env };
+  delete env.PORT;
+  child = spawn(cmd[0], cmd.slice(1), { env, stdio: ['ignore', 'inherit', 'inherit'] });
+  child.on('error', (e) => { console.error(`bg-job: 無法執行 ${cmd[0]}:${e.message}`); Object.assign(status, { state: 'done', code: 127, endedAt: new Date().toISOString() }); });
+  child.on('exit', (code, signal) => { Object.assign(status, { state: 'done', code, signal, endedAt: new Date().toISOString() }); console.log(`bg-job: done code=${code} signal=${signal}`); });
+});
 
-const stop = () => { if (status.state === 'running') child.kill('SIGTERM'); process.exit(0); };
+const stop = () => { if (child && status.state === 'running') child.kill('SIGTERM'); process.exit(0); };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);

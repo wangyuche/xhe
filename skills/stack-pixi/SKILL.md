@@ -12,7 +12,7 @@ paths: ["**/src/scenes/**/*.ts", "**/src/core/**/*.ts", "**/src/components/**/*.
 1. 專案自己的規則文件(例如 `docs/architecture/code-review-rules/`、budgets 文件、`CLAUDE.md`)比這裡嚴格或專案特有的,照專案;專案的例外條款(EX-n)照它寫的條件。
 2. 這裡的 PX 規則:**MUST** 不可違反(違反就是 code review Blocker,退回時引用編號);**SHOULD** 不做要寫理由。
 3. 每個專案不同的數值(效能門檻、素材 KB 預算、設計解析度)不寫在規則裡,放專案的 `docs/performance-budgets.md`。
-- 編號只能新增、不能改號或改意義。MahjongParty lobby 已引用(`git grep -ho 'PX-[A-Z0-9]*-[0-9]*'`,加上 `PX-FMT-01 / 02` 這種斜線寫法):ARCH-01/02、FMT-01/02/06/07、LIFE-01–03、LOAD-01/03/05/06、PERF-03–06、RES-01–03;意義照 `agent-specs/game-frontend-owner.md` 的對照表。
+- 編號只能新增、不能改號或改意義(lobby 引用的意義為準;唯一例外是下方 2026-11-22 的改號紀錄:修正初版誤用保留號與多加的意義,舊號不再使用)。MahjongParty lobby 已引用(`git grep -ho 'PX-[A-Z0-9]*-[0-9]*'`,加上 `PX-FMT-01 / 02` 這種斜線寫法):ARCH-01/02、FMT-01/02/06/07、LIFE-01–03、LOAD-01/03/05/06、PERF-03–06、RES-01–03;意義照 `agent-specs/game-frontend-owner.md` 的對照表。
 - **保留不用**的號碼(lobby 引用過或可能用過、但意義不明,不得另定意義):FMT-02–05、LOAD-02、LOAD-04、PERF-01、PERF-02。新規則從各類別「lobby 引用過的最大號 + 1」開始。
 - 改號紀錄(2026-11-22,PR #28 的初版誤用了保留號):LOAD-02 → **LOAD-07**、LOAD-04 → **LOAD-08**、PERF-01 → **PERF-08**、PERF-02 → **PERF-09**;舊版 LOAD-01 的「只從 SceneManager 動態 import」拆成 **LOAD-09**、LOAD-06 的「BGM 不在第一次手勢前下載」拆成 **LOAD-10**、RES-01 的 density 公式拆成 **RES-04**、級別公式拆成 **RES-05**、FMT-01 的 JPG 備援拆成 **FMT-08**。
 
@@ -124,9 +124,9 @@ node <skill>/scripts/check-i18n.mjs <project> [--src src] [--baseline <json>]
 node <skill>/scripts/check-assets.mjs <project> [--budgets docs/performance-budgets.md] [--art <art/assets>] [--baseline <json>]
 node <skill>/scripts/check-early.mjs <project> --dist <暫存>/dist [--boot boot,shared] [--baseline <json>]   # 先 vite build --outDir <暫存>/dist
 ```
-- 都印一行 JSON。結束碼:**0** 通過、**1** 有新增違規、**2** 用法錯誤(含選項缺值、`--dist` 目錄不存在 = 還沒建置)、**3** `"layout":"absent"`(只有 check-assets / check-early:專案沒有 stack-pixi 的結構——沒有任何 `src/assets/<group>/manifest.json`、vite 沒開 `build.manifest`、沒有 `src/assets/early.ts` 也沒給 `--boot`)。3 不是違規:改用專案自己的同等檢查,沒有就列為規則落差。
+- 都印一行 JSON。結束碼:**0** 通過、**1** 有新增違規、**2** 用法錯誤(含選項缺值、`--dist` 目錄不存在 = 還沒建置)、**3** `"layout":"absent"`(只有 check-assets / check-early,而且只在**沒有 `src/assets/early.ts`** 的既有專案:沒有任何 `src/assets/<group>/manifest.json`、vite 沒開 `build.manifest`、沒給 `--boot`;有 `early.ts` 的骨架專案缺這些結構是違規 1)。3 不是違規:改用專案自己的同等檢查,沒有就列為規則落差。
 - `--paths`:`src/core` 會 import pixi,不要列。既有專案用專案**實際強制**的路徑(例如專案自己的 `no-pixi.test.ts` 涵蓋的資料夾),不照文件推測。
-- **`--baseline <json>`**:給同一支腳本在改動前的輸出。每筆違規有 `key`(check-layers / check-i18n:`檔案|正規化後的該行文字`,不含行號;check-early:素材路徑去掉 hash;check-assets:錯誤訊息的數字換成 `#`)。基準已有的移到 `existing`、不算失敗;只有新增的 key(或同一個 key 次數變多)才結束碼 1。既有專案的既有違規不擋 PASS,靠這個區分。
+- **`--baseline <json>`**:給同一支腳本在改動前的輸出。每筆違規有 `key`(check-layers / check-i18n:`檔案|正規化後的該行文字`,不含行號;check-early:素材路徑去掉 hash;check-assets:錯誤訊息完全相同,KB 預算超標以群組 + 級別比對且 KB 不得比基準大)。基準已有的移到 `existing`、不算失敗;只有新增的 key(或同一個 key 次數變多)才結束碼 1。既有專案的既有違規不擋 PASS,靠這個區分。
 - `bg-job.mjs`:讓不是伺服器的長時間指令(soak)也經 web-dev-kit `serve.sh` 背景執行:
   `bash <kit>/scripts/serve.sh <name>-soak <project> 4190 -- node <skill>/scripts/bg-job.mjs -- env PERF_BASE_URL=http://127.0.0.1:<dist 埠> … node_modules/.bin/playwright test -c tests/perf/playwright.perf.config.ts soak`;
   `curl -s http://127.0.0.1:<port>/` 回 `{"state":"running"|"done","code":…}`,結束後 `bash <kit>/scripts/stop.sh <name>-soak`。子指令的環境變數不含 `PORT`。

@@ -76,7 +76,7 @@ PixiJS 遊戲前端工程師(owner,正式版):主 agent 把一個遊戲或遊戲
      - **測試輸出位置**:專案測試設定寫死專案內輸出路徑(lobby `SHOTS='tests/e2e/screenshots'`、`outputDir: './tests/e2e/test-results'`、`tests/perf/results`)且被 gitignore → 允許,結束時刪掉這次新出現的並列在回報;沒被 gitignore → BLOCKED。
      - **stack-pixi 結構是否存在**:沒有的(`<group>/manifest.json`、`src/assets/early.ts`、vite `build.manifest`、`cycleLeak` 等 fixture)找專案的同等檢查或測試(lobby `src/assets/early-groups.test.ts`、`drawsDuring`、TC-22-59 的貼圖計數),沒有就列規則落差。
   6. 讀 `art/STYLE.md`(沒有就用中性灰佔位並註明)、`art/assets/assets.json`(有的話)。
-  7. **基準**(只寫暫存):web-dev-kit `scope.sh snapshot <name>`;`git status --porcelain --ignored` 的 `!!` 清單存成 `<tmp>/ignored.base`;既有專案跑 `check-layers`、`check-i18n`、`check-assets` 把輸出存成 `<tmp>/baseline/*.json`(結束碼 1 在基準是正常的,代表既有違規)。逐條檢查「停止並詢問的情況」。
+  7. **基準**(只寫暫存):web-dev-kit `scope.sh snapshot <name>`;`git ls-files -o -i --exclude-standard -- . ':(exclude)node_modules' ':(exclude)**/node_modules/**' | sort`(逐檔)存成 `<tmp>/ignored.base`;既有專案跑 `check-layers`、`check-i18n`、`check-assets` 把輸出存成 `<tmp>/baseline/*.json`(結束碼 1 在基準是正常的,代表既有違規)。逐條檢查「停止並詢問的情況」。
 - **新專案**:`stack-pixi/scripts/new-pixi.sh <可寫路徑> --design 1920x1080 [--net ws] [--iframe]` 建骨架(`--help` 印用法;目錄只有 `.git` 也可以)(依賴版本由 lockfile 鎖定),`new-pixi.sh --check` 檢查骨架齊全。骨架:
   - `src/core/`(Application 單例、scene manager、pause 狀態與原因、announce、modal guard、input modality、safe area、context lost 畫面)、`src/config/design.ts`、`src/scenes/<name>/`(各自動態 import、一個 chunk)、`src/components/a11y.ts`(唯一碰 `_accessibleDiv` 的入口)、`src/game/`、`src/services/`、`src/i18n/en.ts`(typed key + `t()`)、`src/assets/`(群組、early-boot 白名單與洩漏測試)。
   - `index.html`:`#app`(`touch-action: none`)、`#loading`、`#rotate`、`#sr-status`(`role=status`)、`#sr-alert`(`role=alert`)、面板用原生 `<dialog>`。
@@ -111,7 +111,7 @@ PixiJS 遊戲前端工程師(owner,正式版):主 agent 把一個遊戲或遊戲
      - 首屏:FCP、可互動時間(`#loading` 隱藏)、可互動前傳輸量(`requestfinished` 加總)、TBT。場景切換:點擊到 `<scene>:ready` performance mark。長時間遊玩:N 輪(專案定義)前後的 heap、DOM 節點、監聽數、場景物件數;超過 540 秒的經 `serve.sh <name>-soak <專案> <埠> -- node <stack-pixi>/scripts/bg-job.mjs -- <playwright 指令>` 背景執行(bg-job 在 serve.sh 的埠回報 `{"state","code"}`,輪詢到 done 後 `stop.sh`),分段寫 jsonl。
      - 門檻用專案 budgets;「不得退步」的基準讀 budgets 的最新實測(欄或小節),沒有就 `git archive $(cat <tmp>/base.sha) | tar -x -C <tmp>/base/`(只讀,不碰 `.git`)安裝、建置到 `<tmp>/base-dist` 後量一次,結束刪除。
   6. 資源釋放(新增或修改場景 / 面板時;既有專案用專案的同等測試,沒有就列規則落差):`cycleLeak` 進出 4 次,以第 2 次之後為基準,第 3、4 次非 null 的 `managedTextures`、GL buffer、stage 物件數不增加(專案另有容許值照專案);`drawsDuring` 用覆寫 `visibilityState` + `visibilitychange` 觸發暫停,draw call 為 0。測試模式固定 `preference: 'webgl'`。
-  7. 結束:每個用過的 serve.sh 名稱都 `<web-dev-kit>/scripts/stop.sh`;`git status --porcelain --ignored` 和 `<tmp>/ignored.base` 比對,刪掉基準之後新出現的專案內輸出(第 0 步允許的測試輸出目錄、意外產生的 `dist/` 等;`node_modules/` 除外)並列在回報;`scope.sh check <name> --exclude <排除路徑>… <可寫路徑…>` out=0;`secret-scan.sh`;刪除暫存建置資料夾。
+  7. 結束:每個用過的 serve.sh 名稱都 `<web-dev-kit>/scripts/stop.sh`;同一個指令和 `<tmp>/ignored.base` 比對(`comm -13`),只刪基準之後新出現的專案內輸出檔案(第 0 步允許的測試輸出目錄、意外產生的 `dist/` 等;`node_modules/` 除外)並列在回報;`scope.sh check <name> --exclude <排除路徑>… <可寫路徑…>` out=0;`secret-scan.sh`;刪除暫存建置資料夾。
 - **回報**:狀態與模式;指令結果;情境對照表(編號、層級、測試名稱、各尺寸結果;非前端情境另列);截圖路徑與逐張描述;效能指標與門檻,或略過理由;資源釋放結果;**MUST 對照表**(這次碰到的每條 PX MUST → 證據:腳本、測試名稱或檔案:行;沒有自動證據寫「人工檢視」與位置);素材(使用、佔位、`review: pending`、needs 絕對路徑);規則落差;需人工驗證;推定值;已知限制。
 
 ## 不做什麼

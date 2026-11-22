@@ -46,7 +46,7 @@ skills:
 6. **基準**(只寫 `<tmp>`;既有專案沒有 `node_modules` 時可以先 `npm ci`):
    ```bash
    bash <kit>/scripts/scope.sh snapshot <name>
-   git status --porcelain --ignored | sed -n 's/^!! //p' | sort > <tmp>/ignored.base
+   git ls-files -o -i --exclude-standard -- . ':(exclude)node_modules' ':(exclude)**/node_modules/**' | sort > <tmp>/ignored.base   # 在 repo 根目錄執行;逐檔列出(已存在的 gitignore 目錄裡新增的檔案也比得出來)
    node <pixi>/scripts/check-layers.mjs <專案> [--paths <實際強制的資料夾>] > <tmp>/baseline/layers.json
    node <pixi>/scripts/check-i18n.mjs <專案> > <tmp>/baseline/i18n.json
    node <pixi>/scripts/check-assets.mjs <專案> > <tmp>/baseline/assets.json   # 結束碼 3 = 沒有 stack-pixi 素材結構,改用專案的同等檢查
@@ -99,7 +99,7 @@ node <pixi>/scripts/check-early.mjs <專案> --dist <tmp>/dist
 - **資源釋放**(新增或修改場景 / 面板時):新專案用 E2E 的 `cycleLeak`(進出 4 次,第 3、4 次的非 null `managedTextures`、GL buffer、stage 物件數不多於第 2 次;專案另有容許值照專案)與 `drawsDuring` = 0;既有專案用專案的同等測試(例如 lobby `drawsDuring`、TC-22-59 的貼圖計數),沒有就列規則落差。
 - **收尾**(任何步驟中止時也要做):
   1. 每個用過的 serve.sh 名稱都 `bash <kit>/scripts/stop.sh <name>-…`(`-dev`、`-dist`、`-soak`、專案用的其他名稱);後端照簡報方式 teardown。
-  2. 專案內的新輸出:`git status --porcelain --ignored | sed -n 's/^!! //p' | sort | comm -13 <tmp>/ignored.base -` 列出基準之後新出現的 gitignore 路徑;第 0 步允許的測試輸出目錄刪掉並列在回報;其他(例如 `dist/`、`tests/perf/results/`)也刪掉,並在回報說明是哪個指令產生的(違反「輸出只放 `<tmp>`」,下次改用暫存路徑)。`node_modules/` 不刪。
+  2. 專案內的新輸出:在 repo 根目錄 `git ls-files -o -i --exclude-standard -- . ':(exclude)node_modules' ':(exclude)**/node_modules/**' | sort | comm -13 <tmp>/ignored.base -` 逐檔列出基準之後新出現的 gitignore 檔案;只刪這些檔案(與因此變空的目錄),第 0 步允許的測試輸出目錄裡的列在回報;其他(例如 `dist/`、`tests/perf/results/`)也刪掉,並在回報說明是哪個指令產生的(違反「輸出只放 `<tmp>`」,下次改用暫存路徑)。`node_modules/` 不刪。
   3. `bash <kit>/scripts/scope.sh check <name> [--exclude <排除路徑>]… <可寫路徑…>`(排除路徑下的變動算 OUT;OUT 只能是 0)。
   4. `bash <kit>/scripts/secret-scan.sh <name>`。
   5. 刪除 `<tmp>/dist`、`<tmp>/base`、`<tmp>/base-dist`、`<tmp>/perf-out`、`<tmp>/e2e`(截圖、perf 結果、基準 JSON 留給主 agent)。
