@@ -2,7 +2,7 @@
 # Lock observation for a DDL (always rolled back).
 #
 #   locks.sh <name> --dsn DSN (--sql 'DDL' | --file F | --goose-up MIGRATION.sql) [--lock-timeout 2s]
-#            [--hold-dsn DSN --hold 'SQL' [--hold-seconds 8]] [--probe-dsn DSN --probe 'SQL'] [--monitor-dsn DSN]
+#            [--hold-dsn DSN --hold 'SQL' [--hold-seconds 10]] [--probe-dsn DSN --probe 'SQL'] [--monitor-dsn DSN]
 #
 # Default mode: BEGIN; <DDL>; list the relation locks this transaction holds; ROLLBACK. Each lock is printed with
 #   what it blocks (reads+writes / writes / ddl-only), from PostgreSQL's lock conflict table.
@@ -48,6 +48,7 @@ for part in "$SQL" "$HOLD" "$PROBE"; do
     || die "SQL 裡有交易控制語句或 psql 指令($bad),locks.sh 無法保證 ROLLBACK,拒絕" 2
 done
 case "$HOLD_S" in *[!0-9]*|"") die "--hold-seconds 要是整數秒" 2 ;; esac
+[ -z "$LT" ] || printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)?$' || die "--lock-timeout 格式例:2s、500ms" 2
 if [ -n "$HOLD" ]; then
   # Monitoring polls through docker exec (~0.3–1 s each); the DDL / probe must keep waiting long enough to be observed.
   [ -n "$LT" ] || LT="5s"

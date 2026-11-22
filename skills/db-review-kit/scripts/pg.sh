@@ -164,7 +164,22 @@ case "$CMD" in
   psql)
     NAME="${1:-}"; check_name "$NAME"; DSN="${2:?用法:pg.sh psql <name> <dsn> [psql args]}"; shift 2
     load_state "$NAME"; verify_container "$NAME"
-    psql_dsn "$DSN" "$@"
+    # Only output / variable flags: connection options (-d -h -p -U, a second DSN) could leave the container.
+    ARGS=(); CMDS=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -[qAtX]|-[qAtX][qAtX]|-[qAtX][qAtX][qAtX]|-[qAtX][qAtX][qAtX][qAtX]) ARGS+=("$1"); shift ;;
+        -F|-v|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;
+        -c) [ $# -ge 2 ] || die "-c 需要 SQL" 2; CMDS="$CMDS$2
+"; ARGS+=("$1" "$2"); shift 2 ;;
+        *) die "pg.sh psql 只接受 -q -A -t -X -F -v -P -c(不接受連線參數):$1" 2 ;;
+      esac
+    done
+    D="$(name_dir "$NAME")"; IN="$(mktemp "$D/psql-in.XXXXXX")"; trap 'rm -f "$IN"' EXIT
+    if [ -n "$CMDS" ]; then : > "$IN"; else cat > "$IN"; fi
+    bad="$(printf '%s' "$CMDS" | cat - "$IN" | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
+      || die "SQL 裡有 \\c / \\connect / \\!($bad),會離開本容器的連線,拒絕" 4
+    psql_dsn "$DSN" ${ARGS[@]+"${ARGS[@]}"} < "$IN"
     ;;
 
   guard)

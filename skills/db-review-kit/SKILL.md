@@ -29,7 +29,8 @@ bash <kit>/scripts/pg.sh up <name> --image <設定的映像> \
 #   dsn role=<角色> db=<庫> url=postgres://…@127.0.0.1:<埠>/<庫>?sslmode=disable   (superuser 永遠有,密碼隨機)
 #   init 腳本失敗或容器提早結束:印最後 40 行 log、刪容器、結束碼 1。同名容器已存在:結束碼 1(先 gc)
 bash <kit>/scripts/pg.sh dsn <name> <角色> <庫> [--options '-c mj.allow_data_down=on']
-bash <kit>/scripts/pg.sh psql <name> <dsn> [psql 參數]      # SQL 從 stdin(容器內 psql,看不到主機檔案,用 < 檔案)
+bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c …]   # SQL 從 stdin(容器內 psql,看不到主機檔案,用 < 檔案)
+#   不接受連線參數(-d -h -p -U);SQL 裡有 \c / \connect / \! → 結束碼 4
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
 bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0

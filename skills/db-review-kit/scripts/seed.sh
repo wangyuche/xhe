@@ -35,6 +35,7 @@ export ST_OVERRIDE=300s
 
 if [ -n "$FILE" ]; then
   [ -f "$FILE" ] || die "--file 不存在:$FILE" 2
+  bad="$(python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect < "$FILE")" || die "種子腳本有 \\c / \\connect / \\!($bad),拒絕" 4
   psql_dsn "$DSN" -q ${VARS[@]+"${VARS[@]}"} < "$FILE"
   echo "seed file=$FILE seconds=$(( $(date +%s) - START )) tmpfs_free_mb_after=$(free_mb)"
   exit 0

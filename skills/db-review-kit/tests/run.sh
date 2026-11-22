@@ -175,8 +175,11 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/notice.sql" 2>&1)"; 
 printf '%s\n' "CREATE FUNCTION fx.tmp_f() RETURNS trigger LANGUAGE plpgsql AS \$\$" "BEGIN" "  IF NEW.balance < 0 THEN RAISE EXCEPTION 'neg'; END IF;" "  RETURN CASE WHEN true THEN NEW END;" "END;" "\$\$;" > "$WORK/fn.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --file "$WORK/fn.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:plpgsql 函式裡的 BEGIN / END / CASE … END 不算交易控制" || bad "locks 函式本體" "rc=$rc $o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE FUNCTION fx.tmp_g(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN x > 0 THEN 1 ELSE 0 END; END' 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ok "locks.sh:BEGIN ATOMIC … END 函式本體不算交易控制" || bad "locks BEGIN ATOMIC" "rc=$rc $o"
 for q in 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
-\c fx_test'; do
+\c fx_test' 'CREATE TABLE fx.tmp_e (i int) \g
+COMMIT' "SELECT E'a\\'b'; COMMIT;"; do
   o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "$q" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:ABORT / psql 指令 → 拒絕" || bad "locks ABORT/meta" "$o"
 done
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE TABLE fx.tmp_c (i int); COMMIT;' 2>&1)"; rc=$?
@@ -281,6 +284,10 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT * FROM fx.no_such_ta
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--target-ms 不是數字 → 用法錯誤" || bad "explain target 格式" "$o"
 printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q2.sql" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:結尾分號後面接註解行也算一個語句" || bad "explain 分號+註解" "$o"
+printf 'UPDATE fx.accounts SET balance = 0 \\g\nCOMMIT\n' > "$WORK/q3.sql"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:查詢裡有 \\g → 拒絕" || bad "explain meta" "$o"
+o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
+o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SET work_mem='1MB'; SELECT 1" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:多個語句 → 用法錯誤" || bad "explain 多語句" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--runs 0 → 用法錯誤(不會假通過)" || bad "explain runs 0" "$o"
 printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"

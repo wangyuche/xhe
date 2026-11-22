@@ -108,14 +108,16 @@ while IFS='|' read -r i s st sql; do
   f="$W/a.out"; [ "$s" = B ] && f="$W/b.out"
   if grep -qx "__DBREV_STEP_${i}__" "$f"; then fin=finished; else fin="never-finished"; fi
   e="$(seg_errors "$f" "$i")"
-  if [ -n "$e" ]; then echo "$e" | tr ';' '\n' | sed 's/^ *//' | grep -oE '^[0-9A-Z]{5}' >> "$W/codes" || true; fi
   if [ -z "$e" ] && [ "$fin" != finished ]; then e="no result (session ended; see trailing errors)"; fi
   echo "step $i $s ($st → $fin): ${e:-ok}"
 done < "$W/steps"
 # errors after the last marker (e.g. at session end)
 for s in A B; do f="$W/a.out"; [ $s = B ] && f="$W/b.out"
   tail_err="$(awk '/^__DBREV_STEP_[0-9]+__$/{buf=""; next} /^psql: error:/{next} /(ERROR|FATAL): +[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]:/{sub(/^.*(ERROR|FATAL): +/,""); buf=buf (buf?"; ":"") $0} END{print buf}' "$f")"
-  [ -z "$tail_err" ] || { echo "session $s trailing: $tail_err"; echo "$tail_err" | tr ';' '\n' | sed 's/^ *//' | grep -oE '^[0-9A-Z]{5}' >> "$W/codes" || true; }
+  [ -z "$tail_err" ] || echo "session $s trailing: $tail_err"
+  # count every SQLSTATE once, straight from the session output (not from joined message text)
+  { grep -E '(ERROR|FATAL): +[0-9A-Z]{5}:' "$f" || true; } | { grep -v '^psql: error:' || true; } \
+    | sed -E 's/.*(ERROR|FATAL): +([0-9A-Z]{5}):.*/\2/' >> "$W/codes"
   # connection failures carry no SQLSTATE in psql's output ("psql: error: … FATAL: …")
   conn_err="$(grep -m1 '^psql: error:' "$f" | cut -c1-200 || true)"
   [ -z "$conn_err" ] || { echo "session $s connect failed: $conn_err"; echo connect >> "$W/codes"; }

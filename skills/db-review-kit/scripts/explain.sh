@@ -34,6 +34,7 @@ guard_dsns "$DSN"
 Q="$(printf '%s\n' "$Q" | awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && (l[n] ~ /^[[:space:]]*$/ || l[n] ~ /^[[:space:]]*--/)) n--; for (i = 1; i <= n; i++) print l[i] }' \
      | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
 case "$Q" in *";"*) die "--query / --file 只能放一個語句(EXPLAIN 只會套在第一個)" 2 ;; esac
+bad="$(printf '%s\n' "$Q" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" || die "查詢裡有交易控制或 psql 指令($bad),無法保證 ROLLBACK" 2
 
 echo "### plan: EXPLAIN (ANALYZE, BUFFERS)"
 printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q
@@ -54,6 +55,6 @@ echo "$TIMES" | sort -n | awk -v runs="$RUNS" -v target="$TARGET" '
     if (NR == 0) { print "{\"runs\":0,\"ok\":false}"; exit 1 }
     i50 = int((NR * 50 + 99) / 100); i95 = int((NR * 95 + 99) / 100)
     ok = (target == "" || v[i95] <= target + 0) ? "true" : "false"
-    printf "{\"runs\":%d,\"p50_ms\":%.3f,\"p95_ms\":%.3f,\"max_ms\":%.3f,\"target_ms\":%s,\"ok\":%s}\n", NR, v[i50], v[i95], v[NR], (target == "" ? "null" : target), ok
+    printf "{\"runs\":%d,\"p50_ms\":%.3f,\"p95_ms\":%.3f,\"max_ms\":%.3f,\"target_ms\":%s,\"ok\":%s}\n", NR, v[i50], v[i95], v[NR], (target == "" ? "null" : sprintf("%g", target + 0)), ok
     exit (ok == "true") ? 0 : 1
   }'

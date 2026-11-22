@@ -135,7 +135,7 @@ case "$SUB" in
       else up2="not-run"; fi
     else down_strict="not-run"; up2="not-run"; fi
     FINAL="$(cur_version)"
-    GOGAP="$(gomig_in_range "$BEFORE" "$TO" | tr '\n' ' ')"
+    GOGAP="$(gomig_in_range 0 "$TO" | tr '\n' ' ')"   # Go migrations at or below TO are all skipped by the CLI
     if [ -n "$GOGAP" ]; then echo "缺口:範圍內有 Go migration 沒被 goose CLI 執行:$GOGAP" >&2; reject_msg="${reject_msg:+$reject_msg; }GAP: Go migrations not run: $GOGAP"; fi
     OK=false
     [ -z "$GOGAP" ] && [ "$up1" = "ok" ] && [ "$up2" = "ok" ] && [ "$FINAL" = "$TO" ] && OK=true
