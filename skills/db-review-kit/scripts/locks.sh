@@ -107,7 +107,7 @@ if [ -z "$HOLD" ]; then
         | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
   if [ $rc -ne 0 ]; then
     echo "$out" | tail -5 >&2
-    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","ok":False,"error":sys.argv[1]},ensure_ascii=False))' \
+    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","ok":False,"error":sys.argv[1]},ensure_ascii=False,separators=(",",":")))' \
       "$(echo "$out" | grep -m1 -oE '[0-9A-Z]{5}: .{0,120}' || true)"
     exit 1
   fi

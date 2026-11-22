@@ -17,7 +17,7 @@ skip() { echo "SKIP  $1"; SKIP=$((SKIP + 1)); }
 PULLED=""
 cleanup() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    for c in $(docker ps -a --filter "label=dbrev=$N" --format '{{.Names}}') $(docker ps -a --filter "label=dbrev=$N-old" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1; done
+    for c in $(docker ps -a --filter "label=dbrev=$N" --format '{{.Names}}') $(docker ps -a --filter "label=dbrev=$N-old" --format '{{.Names}}') $(docker ps -a --filter "label=dbrev=$N-scram" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1; done
     [ -n "$PULLED" ] && docker image rm "$IMAGE" >/dev/null 2>&1
   fi
   rm -rf "$WORK"
@@ -288,6 +288,8 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.led
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT * FROM fx.no_such_table" --runs 2 2>&1)"; rc=$?
 [ $rc -eq 1 ] && ok "explain.sh:SQL 錯誤 → 結束碼 1(不會被當成 Docker 沒開的 3)" || bad "explain SQL 錯誤結束碼" "rc=$rc $o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--target-ms 不是數字 → 用法錯誤" || bad "explain target 格式" "$o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.accounts; -- hot path" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:同一行分號後的註解不算第二個語句" || bad "explain 同行註解" "$o"
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --timeout 2m 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--timeout 不是秒數 → 用法錯誤(不啟動容器)" || bad "pg timeout" "$o"
 printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q2.sql" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:結尾分號後面接註解行也算一個語句" || bad "explain 分號+註解" "$o"
 printf 'UPDATE fx.accounts SET balance = 0 \\g\nCOMMIT\n' > "$WORK/q3.sql"
@@ -295,7 +297,9 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
-for q in '\set x `id`' '\echo -- \! id'; do
+for q in '\set x `id`' '\echo -- \! id' "-- don't do this
+\! id
+SELECT 'x';"; do
   o="$(printf '%s\n' "$q" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:$q → 拒絕" || bad "psql $q" "$o"
 done
 printf '%s\n' 'A: \c host=10.0.0.5 dbname=prod' > "$WORK/race-bad.txt"
@@ -303,7 +307,7 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad.txt" --dsn A="$MIG" --dsn B
 o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$MIG" --lock-timeout 500ms 2>&1)"; [ $? -eq 2 ] && ok "race.sh:--lock-timeout ≤ 1s → 用法錯誤" || bad "race lock-timeout" "$o"
 o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 1 --col 'amount=1; COMMIT' 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--col 含分號 / 交易控制 → 拒絕" || bad "seed col" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$APP" --query "SELECT balance FROM fx.accounts" 2>&1)"; rc=$?
-[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok": false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
+[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
 o="$(printf 'SELECT 1 \\g |sh\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\g |cmd 等不在允許清單的 psql 指令 → 拒絕" || bad "psql \\g pipe" "$o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_n (i int); /* a /* b */ ' */ COMMIT; -- '" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:巢狀註解後的 COMMIT 也會被抓到" || bad "locks 巢狀註解" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SET work_mem='1MB'; SELECT 1" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:多個語句 → 用法錯誤" || bad "explain 多語句" "$o"
@@ -352,6 +356,15 @@ fi
 
 GIT_AFTER="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
 [ "$GIT_BEFORE" = "$GIT_AFTER" ] && ok "fixture 專案檔案沒有被改動(git status 前後相同;go.mod / go.sum 未被改寫)" || bad "fixture 被改動" "$GIT_AFTER"
+
+# ---------- scram on 127.0.0.1 inside the container: psql still authenticates (password via env, not argv) ----------
+o="$(bash "$S/pg.sh" up "$N-scram" --image "$IMAGE" --tmpfs-size 256m --env "POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 --auth-local=scram-sha-256" 2>&1)"; rc=$?
+if [ $rc -eq 0 ]; then
+  DS="$(bash "$S/pg.sh" dsn "$N-scram" postgres postgres)"
+  o2="$(echo "SELECT 'scram-ok';" | bash "$S/pg.sh" psql "$N-scram" "$DS" -At 2>&1)"
+  [ "$o2" = scram-ok ] && ok "psql:bootstrap 要求 scram 時也能連(密碼經 docker exec 環境變數傳入)" || bad "scram psql" "$o2"
+else bad "scram 容器啟動" "$o"; fi
+bash "$S/pg.sh" rm "$N-scram" --purge >/dev/null 2>&1
 
 # ---------- older image (VOLUME /var/lib/postgresql/data): only when already present locally, never pulled ----------
 OLD_IMAGE="${DB_REVIEW_KIT_TEST_OLD_IMAGE:-postgres:17}"

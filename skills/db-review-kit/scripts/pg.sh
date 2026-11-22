@@ -56,7 +56,8 @@ case "$CMD" in
     case "$SUPERUSER" in ""|*[!A-Za-z0-9_-]*) die "--superuser 只能是英數、底線、連字號" 2 ;; esac
     [ -n "$IMAGE" ] || die "--image 必填(依專案設定,例如 compose 的 db 映像)" 2
     case "$IMAGE" in *postgres*|*postgis*|*pgvector*|*timescale*) ;; *) die "映像看起來不是 PostgreSQL:$IMAGE" 2 ;; esac
-    case "$TMPFS_SIZE" in *[!0-9kmgKMG]*|"") die "--tmpfs-size 格式例:512m、2g" 2 ;; esac
+    printf '%s' "$TMPFS_SIZE" | grep -Eq '^[0-9]+[kmgKMG]?$' || die "--tmpfs-size 格式例:512m、2g" 2
+    printf '%s' "$TIMEOUT" | grep -Eq '^[0-9]+$' && [ "$TIMEOUT" -ge 1 ] || die "--timeout 要是秒數" 2
     require_local_docker
     [ -z "$(list_ours "$NAME")" ] || die "已有 dbrev-$NAME-* 容器;先 pg.sh gc $NAME" 1
 

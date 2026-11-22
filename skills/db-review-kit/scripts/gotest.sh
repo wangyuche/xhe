@@ -47,7 +47,8 @@ ARGS=(test -json -v -count=1 -timeout "$TMO")
 [ -n "$TAGS" ] && ARGS+=(-tags "$TAGS")
 [ -n "$RUN" ] && ARGS+=(-run "$RUN")
 [ -n "$PAR" ] && ARGS+=(-p "$PAR")
-cleanup() { rm -rf "$D/gotmp"; }
+ISO_TMPDIR="$(mktemp -d "$D/gotmp.XXXXXX")"; export ISO_TMPDIR
+cleanup() { rm -rf "$ISO_TMPDIR"; }
 trap cleanup EXIT
 echo "go ${ARGS[*]} ${PKGS[*]}  (dir=$MOD, log=$LOG)" >&2
 START=$(date +%s)

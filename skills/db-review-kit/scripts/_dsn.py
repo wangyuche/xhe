@@ -126,9 +126,10 @@ def main(argv):
             print(mask(args[0]))
             return 0
         if cmd == "field":
-            p, host, port, _ = parse(args[0])
+            p, host, port, q = parse(args[0])
             f = args[1]
             val = {"user": up.unquote(p.username or ""), "db": up.unquote(p.path.lstrip("/")),
+                   "password": up.unquote(p.password or "") or next((v for k, v in q if k.lower() == "password"), ""),
                    "port": str(port or ""), "host": host}.get(f)
             if val is None:
                 print("unknown field " + f, file=sys.stderr)

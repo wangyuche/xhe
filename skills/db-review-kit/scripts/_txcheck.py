@@ -18,9 +18,21 @@ def strip(sql, keep_comments=False):
     out, i, n = [], 0, len(sql)
     while i < n:
         c = sql[i]
-        if keep_comments and (sql.startswith("--", i) or sql.startswith("/*", i)):
-            out.append(c)
-            i += 1
+        if keep_comments and sql.startswith("--", i):
+            j = sql.find("\n", i)          # copy the whole line comment verbatim (quotes in it mean nothing)
+            j = n if j < 0 else j
+            out.append(sql[i:j]); i = j
+            continue
+        if keep_comments and sql.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if sql.startswith("/*", j):
+                    depth += 1; j += 2
+                elif sql.startswith("*/", j):
+                    depth -= 1; j += 2
+                else:
+                    j += 1
+            out.append(sql[i:j]); i = j
             continue
         if sql.startswith("--", i):
             j = sql.find("\n", i)

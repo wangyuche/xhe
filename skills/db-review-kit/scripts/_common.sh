@@ -96,18 +96,18 @@ psql_dsn() {
   QUIET_GUARD=1 guard_dsns "$dsn"
   local idsn
   idsn="$(dsnpy opts "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT}")"
-  # inside the container 127.0.0.1 is trusted: drop the password so it never appears in `ps` / docker exec argv
+  # The password travels as PGPASSWORD in docker exec's environment (taken from this process via `-e PGPASSWORD`),
+  # never in argv, so `ps` does not show it; it still works when the bootstrap requires scram on 127.0.0.1.
+  local pw; pw="$(dsnpy field "$idsn" password)"
   idsn="$(dsnpy nopass "$(dsnpy internal "$idsn")")"
   # psql exits 3 on a script error with ON_ERROR_STOP; map it to 1 (3 means "Docker not running" in this kit).
   local prc=0
-  if [ -n "${PSQL_MERGE_STDERR:-}" ]; then
-    # docker exec forwards stdout and stderr on separate channels (their relative order is lost); merge inside the container.
-    docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/nonexistent/dbrev-pgpass PGSERVICEFILE=/dev/null \
-      sh -c 'exec psql "$@" 2>&1' psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
-  else
-    docker exec -i "$CONTAINER" env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSFILE=/nonexistent/dbrev-pgpass PGSERVICEFILE=/dev/null \
-      psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
-  fi
+  local redir=""; [ -z "${PSQL_MERGE_STDERR:-}" ] || redir=" 2>&1"
+  # docker exec forwards stdout and stderr on separate channels (their relative order is lost); PSQL_MERGE_STDERR
+  # merges them inside the container. PGPASSWORD is expanded by the container shell, not placed in host argv.
+  PGPASSWORD="$pw" docker exec -i -e PGPASSWORD "$CONTAINER" sh -c \
+    'exec env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSWORD="$PGPASSWORD" PGPASSFILE=/nonexistent/dbrev-pgpass PGSERVICEFILE=/dev/null psql "$@"'"$redir" \
+    psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose "$idsn" "$@" || prc=$?
   [ $prc -ne 3 ] || prc=1
   return $prc
 }
@@ -120,7 +120,8 @@ PROXY_VARS="HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy"
 # Prints KEY=VALUE lines of the isolated base environment (one per line).
 iso_base_env() {
   local name="$1" d; d="$(name_dir "$name")"
-  mkdir -p "$d/home" "$d/gotmp"
+  local tmp="${ISO_TMPDIR:-$d/gotmp}"   # per-run TMPDIR when the caller sets ISO_TMPDIR (parallel runs on one <name>)
+  mkdir -p "$d/home" "$tmp"
   local gocache gomodcache v val
   # The user's real Go caches (resolved outside the sandbox), so modules download only the first time.
   # Never a temp dir: if go cannot report them, stop instead of silently re-downloading everything.
@@ -128,7 +129,7 @@ iso_base_env() {
   [ -n "$gocache" ] && [ -n "$gomodcache" ] || { echo "錯誤:go env GOCACHE / GOMODCACHE 取不到(go 沒安裝?)" >&2; return 1; }
   echo "PATH=$PATH"
   echo "HOME=$d/home"
-  echo "TMPDIR=$d/gotmp"
+  echo "TMPDIR=$tmp"
   echo "GOCACHE=$gocache"
   echo "GOMODCACHE=$gomodcache"
   echo "GOTOOLCHAIN=local"

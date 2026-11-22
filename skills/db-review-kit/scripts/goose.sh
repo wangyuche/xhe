@@ -50,6 +50,7 @@ case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合
 
 ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"; own_dir "$DIR/bin"
 WORK="$(mktemp -d "$DIR/goose.XXXXXX")"
+ISO_TMPDIR="$WORK/tmp"; mkdir -p "$ISO_TMPDIR"; export ISO_TMPDIR
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 GOOSE="$DIR/bin/goose-$GOOSE_VER"

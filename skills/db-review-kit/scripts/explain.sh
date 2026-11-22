@@ -32,7 +32,7 @@ load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"
 # drop trailing blank / "--" comment lines, then one trailing ';'
 Q="$(printf '%s\n' "$Q" | awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && (l[n] ~ /^[[:space:]]*$/ || l[n] ~ /^[[:space:]]*--/)) n--; for (i = 1; i <= n; i++) print l[i] }' \
-     | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
+     | sed -e 's/[[:space:]]*$//' -e '$ s/;[[:space:]]*--[^'"'"']*$/;/' -e '$ s/;$//')"
 case "$Q" in *";"*) die "--query / --file 只能放一個語句(EXPLAIN 只會套在第一個)" 2 ;; esac
 bad="$(printf '%s\n' "$Q" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" || die "查詢裡有交易控制或 psql 指令($bad),無法保證 ROLLBACK" 2
 
@@ -40,7 +40,7 @@ echo "### plan: EXPLAIN (ANALYZE, BUFFERS)"
 PLAN="$(printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q 2>&1)" && PRC=0 || PRC=$?
 printf '%s\n' "$PLAN"
 if [ $PRC -ne 0 ]; then
-  python3 -I -c 'import json,sys; print(json.dumps({"runs_completed": 0, "ok": False, "error": sys.argv[1]}, ensure_ascii=False))' \
+  python3 -I -c 'import json,sys; print(json.dumps({"runs_completed": 0, "ok": False, "error": sys.argv[1]}, ensure_ascii=False, separators=(",", ":")))' \
     "$(printf '%s\n' "$PLAN" | grep -m1 -E 'ERROR' | cut -c1-200 || true)"
   exit 1
 fi
@@ -50,7 +50,7 @@ TIMES="$(printf '%s\n' "$RAW" | awk '
   /^Planning Time:/ { p = $3 }
   /^Execution Time:/ { n++; if (n > 1) printf "%.3f\n", p + $3 }')"
 if [ $PRC -ne 0 ]; then
-  python3 -I -c 'import json,sys; print(json.dumps({"runs_completed": len([x for x in sys.argv[1].split() if x]), "ok": False, "error": sys.argv[2]}, ensure_ascii=False))' \
+  python3 -I -c 'import json,sys; print(json.dumps({"runs_completed": len([x for x in sys.argv[1].split() if x]), "ok": False, "error": sys.argv[2]}, ensure_ascii=False, separators=(",", ":")))' \
     "$TIMES" "$(printf '%s\n' "$RAW" | grep -m1 -E 'ERROR' | cut -c1-200 || true)"
   exit 1
 fi
