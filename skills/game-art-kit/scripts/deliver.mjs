@@ -22,6 +22,7 @@ const die = (m, c = 2) => { throw new Fail(m, c); };
 const JOURNAL = '.deliver-journal.json';
 const norm = (f) => normalize(f).split(sep).join('/');
 const key = (f) => norm(f).toLowerCase(); // macOS 預設不分大小寫
+const canon = (v) => Array.isArray(v) ? `[${v.map(canon).join(',')}]` : v && typeof v === 'object' ? `{${Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',')}}` : JSON.stringify(v); // 不受鍵順序影響
 
 function readJson(p, what) {
   let v; try { v = JSON.parse(readFileSync(p, 'utf8')); } catch (e) { die(`讀不到 ${what} ${p}:${e.message}`); }
@@ -41,10 +42,12 @@ export function recover(assets) {
     for (const e of [...j.entries].reverse()) {
       step(() => rmSync(join(assets, e.tmp), { force: true }));
       if (e.bak && existsSync(join(assets, e.bak))) step(() => { rmSync(join(assets, e.dest), { force: true }); renameSync(join(assets, e.bak), join(assets, e.dest)); });
-      else if (!e.bak && e.placed !== false) step(() => rmSync(join(assets, e.dest), { force: true })); // 原本沒有這個檔:新檔拿掉
+      // 原本沒有這個檔:已換上(placed),或換名途中被砍(placing 且 tmp 已不在)→ 新檔拿掉
+      else if (!e.bak && (e.placed || (e.placing && !existsSync(join(assets, e.tmp))))) step(() => rmSync(join(assets, e.dest), { force: true }));
     }
     step(() => rmSync(join(assets, j.jsonTmp), { force: true }));
     if (existsSync(join(assets, j.jsonBak))) step(() => { rmSync(join(assets, 'assets.json'), { force: true }); renameSync(join(assets, j.jsonBak), join(assets, 'assets.json')); });
+    else if (j.jsonExisted === false) step(() => rmSync(join(assets, 'assets.json'), { force: true })); // 第一次交付:原本沒有 assets.json
     for (const d of [...(j.createdDirs ?? [])].reverse()) step(() => { if (existsSync(join(assets, d)) && !readdirSync(join(assets, d)).length) rmdirSync(join(assets, d)); });
   }
   if (errs.length) die(`還原時有錯誤,日誌保留,請人工檢查:${errs.join(';')}`, 1);
@@ -66,22 +69,22 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
   // 內容有變的項目(新增或和目前 assets.json 不同),它的 files 要全部一起交付
   const target = join(assets, 'assets.json');
   const cur = existsSync(target) ? readJson(target, '目前的 assets.json') : { assets: [] };
-  const curById = new Map((cur.assets ?? []).map(a => [a.id, JSON.stringify(a)]));
+  const curById = new Map((cur.assets ?? []).map(a => [a.id, canon(a)]));
   for (const a of next.assets) {
-    if (curById.get(a.id) === JSON.stringify(a)) continue;
+    if (curById.get(a.id) === canon(a)) continue;
     const missing = a.files.filter(f => !delivered.has(key(f)));
     if (missing.length) die(`項目 ${a.id} 有變更,但這些檔沒有一起交付:${missing.join(', ')}`);
   }
   for (const f of files) if (!existsSync(join(stage, f))) die(`stage 沒有 ${f}(先確認該項 check 通過且輸出在 stage)`, 1);
   // 驗證:schema 看整份;檔案存在只看這次有變更的項目(無關的舊項目缺檔只警告,不擋這次交付)
-  const changedIds = new Set(next.assets.filter(a => curById.get(a.id) !== JSON.stringify(a)).map(a => a.id));
+  const changedIds = new Set(next.assets.filter(a => curById.get(a.id) !== canon(a)).map(a => a.id));
   const schemaErrs = validate('assets', next);
   if (schemaErrs.length) die(`新的 assets.json 格式不通過:${schemaErrs.slice(0, 5).join(';')}`);
   const unrelatedMissing = next.assets.filter(a => !changedIds.has(a.id)).flatMap(a => a.files.filter(f => !existsSync(join(assets, f))));
 
   const uniq = `.deliver-${process.pid}`;
   const entries = files.map(f => ({ dest: norm(f), tmp: norm(f) + uniq, bak: null, placed: false }));
-  const journal = { state: 'copying', entries, jsonTmp: 'assets.json' + uniq, jsonBak: 'assets.json' + uniq + '.bak', createdDirs: [] };
+  const journal = { state: 'copying', entries, jsonTmp: 'assets.json' + uniq, jsonBak: 'assets.json' + uniq + '.bak', jsonExisted: existsSync(target), createdDirs: [] };
   const saveJournal = () => writeFileSync(join(assets, JOURNAL), JSON.stringify(journal, null, 2));
   mkdirSync(assets, { recursive: true });
   saveJournal();
@@ -89,13 +92,14 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
     for (const e of entries) {
       let d = dirname(join(assets, e.dest)); const toMake = [];
       while (!existsSync(d)) { toMake.unshift(d); d = dirname(d); }
-      for (const m of toMake) { mkdirSync(m); journal.createdDirs.push(norm(relative(assets, m))); }
+      for (const m of toMake) { journal.createdDirs.push(norm(relative(assets, m))); saveJournal(); mkdirSync(m); }
       copyFileSync(join(stage, e.dest), join(assets, e.tmp));
       if (failAt === 'copy') throw new Error('測試注入:複製失敗');
     }
     journal.state = 'placing'; saveJournal();
     for (const e of entries) {
       if (existsSync(join(assets, e.dest))) { e.bak = e.dest + uniq + '.bak'; saveJournal(); renameSync(join(assets, e.dest), join(assets, e.bak)); }
+      e.placing = true; saveJournal();
       renameSync(join(assets, e.tmp), join(assets, e.dest)); e.placed = true; saveJournal();
     }
     if (failAt === 'place') throw new Error('測試注入:換檔後失敗');
@@ -123,7 +127,7 @@ if (isMain) {
     const a = process.argv.slice(2), flags = {}, files = [];
     for (let i = 0; i < a.length; i++) {
       if (a[i] === '--recover') flags.recover = true;
-      else if (['--stage', '--assets', '--json'].includes(a[i])) flags[a[i].slice(2)] = a[++i] ?? die(`${a[i]} 缺值`);
+      else if (['--stage', '--assets', '--json'].includes(a[i])) { const k = a[i]; flags[k.slice(2)] = a[++i] ?? die(`${k} 缺值`); }
       else if (a[i].startsWith('--')) die(`不認得的參數 ${a[i]}`);
       else files.push(a[i]);
     }
