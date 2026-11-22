@@ -100,6 +100,20 @@
 | 本機開發一律 Docker:骨架內建 Dockerfile 與執行時 `/api` 轉發;compose 只透過 `web-dev-kit/scripts/compose.sh`(必帶 `-p`,不刪 volume) | 結構(骨架、`compose.sh`)+ 測試(kit tests) | 使用者 2026-11-21 指示「本機開發都用 docker」;當次 backend-owner 規則只允許 `pg.sh`,compose build 只能由主 agent 跑 |
 | integration-verifier 用 standalone `server.js` 啟動前端 | 結構(骨架 `start` 腳本)+ 工作流程第 3 步 | 2026-11-21 fortest 每輪驗證都出現 `"next start" does not work with "output: standalone"` 警告 |
 
+## game-concept-artist
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 透明素材不能帶白色貼紙外框(提示詞不寫 sticker / sticker art) | 檢查(kit `sprite.mjs check` 外緣白框 > 30% 不通過,錯誤訊息附改法)+ 測試(kit tests「白色貼紙外框」) | 2026-11-22 MahjongParty ticketpack-t5、bundlepack-t2~t6、VIP 卡多輪白框,靠人眼發現;已交付的 ticketpack-t5 現在會被擋下 |
+| 底部留白依簡報(例如對齊既有素材的 8 px)用 `fit --foot`,不手動補像素 | 結構(kit `sprite.mjs fit --foot`)+ 測試(kit tests「--foot 8」) | 2026-11-22 MahjongParty 四輪都 fit 成 H-5 再補 5 列透明 |
+| 非角色參考圖(現有素材、先前生成的圖)只能上傳簡報旗標「使用者授權上傳參考圖」列出的檔案;沒旗標時回報列出建議路徑 | 旗標 + 測試(tests 情境 9,待實跑)+ 限制條文 | 2026-11-22 MahjongParty ticketpack-t5、vippack-gold 兩次停下等主 agent 轉問 |
+
+## 協調者(agent-forge multi-agent)
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 判斷能不能開 worktree,在每個 worker 的目標目錄跑 `git -C <目錄> rev-parse --show-toplevel`,不看 session 根目錄 | 僅文字(multi-agent.md 第 5 點,附失敗範例) | 2026-11-22 MahjongParty 開房券:三個 owner 共用 checkout,5 份回報 scope OUT 被汙染 |
+
 ## 待辦(暫緩)
 
 只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。
@@ -116,3 +130,6 @@
 | short-video-maker 旁白事實簡化失真 | 2026-11-18 craft-anything 第一版把 MIT / Apache-2.0 雙授權念成「MIT 授權」,沒提 early alpha(agent 自己列在已知限制) | 再發生時,在 repo 模式第 2 步加「授權、版本狀態照 README / LICENSE 原文,不簡化」並在 script.md 附來源 |
 | integration-verifier:非 `/api/` 端點自動只驗直連(不靠簡報標示) | 2026-11-21 `/healthz`(1 次,且是協調者簡報錯誤;已由端點驗證表的「經前端轉發」欄涵蓋) | 再發生時,verifier 第 5 步改為讀前端 `proxy.ts` 的 matcher 自動判定 |
 | 協調者沒先 build 就跑 `tsc`(`LayoutProps` 找不到) | 2026-11-21 主 agent 在新 checkout 直接 `tsc --noEmit`;frontend-owner 已有「build 之後才跑 tsc」規則 | 再發生時,骨架 `typecheck` 腳本改為 `next typegen && tsc --noEmit` |
+| game-concept-artist 錢幣上出現 $ / 字形 | 2026-11-22 MahjongParty ticketpack-t5 三次都有 $(同一輪;之後加負向 dollar sign / text 就沒再出現) | 再發生時,STYLE.md 負向基底固定加 dollar sign, currency symbol, text, kanji,或 check 加 OCR 類檢查 |
+| game-frontend-owner 在既有專案 `check-assets` / `check-early` 回 layout absent、沒有 cycleLeak 工具 | 2026-11-22 MahjongParty rt-lobby,改用專案自己的同等測試與手寫 soak | 再發生時,stack-pixi 檢查腳本支援既有專案的 layout 設定或提供 soak 工具 |
+| frontend-owner 說明只寫 Next.js,實際用在 Vite + React 後台 | 2026-11-22 MahjongParty rt-admin,照現有慣例完成,E2E 只能 mock 模式 | 再發生時,description 改「React(Next.js 或 Vite)」並在工作流程分支 |
