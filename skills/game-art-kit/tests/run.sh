@@ -200,24 +200,25 @@ for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) 
 writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/halo.png" || bad "白框測試圖產生失敗(halo)" ""
 o="$(S check "$W/sp/halo.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && echo "$o" | grep -q 'sticker' \
   && o2="$(S check "$W/sp/one.png" --width 120 --height 160)" && ok "sprite.mjs check:主體外緣一圈白色貼紙框 → 不通過並提示改提示詞;沒有白框的照常通過" || bad "sprite 白框" "$o ${o2:-}"
-for m in soft white; do node --input-type=module -e '
+for m in soft soft200 white; do node --input-type=module -e '
 import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
 const [out, mode] = process.argv.slice(1); const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
 const r = (x, y, x0, y0, x1, y1) => x >= x0 && x < x1 && y >= y0 && y < y1;
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4;
   if (mode === "white") { if (r(x, y, 50, 50, 250, 376)) { d[o] = d[o + 1] = d[o + 2] = 245; d[o + 3] = 255; } continue; }
-  if (r(x, y, 44, 44, 256, 382)) { d[o] = d[o + 1] = d[o + 2] = 250; d[o + 3] = r(x, y, 46, 46, 254, 380) ? 255 : 60;
+  if (r(x, y, 44, 44, 256, 382)) { d[o] = d[o + 1] = d[o + 2] = 250; d[o + 3] = r(x, y, 46, 46, 254, 380) ? 255 : (mode === "soft200" ? 200 : 60);
     if (r(x, y, 50, 50, 250, 376)) { d[o] = 90; d[o + 1] = 160; d[o + 2] = 90; } } }
 writeFileSync(out, encodePng({ width: W, height: H, data: d }));' "$W/sp/$m.png" "$m" || bad "白框測試圖產生失敗($m)" ""; done
 o="$(S check "$W/sp/soft.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && ok "sprite.mjs check:白框外有半透明羽化邊(alpha 60)也抓得到" || bad "sprite 羽化白框" "$o"
+o="$(S check "$W/sp/soft200.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && ok "sprite.mjs check:白框外有 alpha 200 的過渡邊也抓得到" || bad "sprite 過渡邊白框" "$o"
 o="$(S check "$W/sp/white.png" --width 300 --height 400)"; rc=$?; o2="$(S check "$W/sp/white.png" --width 300 --height 400 --allow-white-edge)" && [ $rc -eq 1 ] && ok "sprite.mjs check:白色主體預設不通過,加 --allow-white-edge 通過" || bad "sprite allow-white-edge" "rc=$rc $o ${o2:-}"
 node --input-type=module -e '
 import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
 const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; const r = (x0, y0, x1, y1) => x >= x0 && x < x1 && y >= y0 && y < y1;
-  if (r(48, 48, 252, 378)) { const inner = r(50, 50, 250, 376); d[o] = inner ? 200 : 228; d[o + 1] = inner ? 170 : 228; d[o + 2] = inner ? 60 : 228; d[o + 3] = inner ? 255 : 200; } }
+  if (r(46, 46, 254, 380)) { const inner = r(50, 50, 250, 376); d[o] = inner ? 200 : 228; d[o + 1] = inner ? 170 : 228; d[o + 2] = inner ? 60 : 228; d[o + 3] = 255; } }
 writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/greyaa.png" || bad "白框測試圖產生失敗(greyaa)" ""
-o="$(S check "$W/sp/greyaa.png" --width 300 --height 400)" && ok "sprite.mjs check:淺灰半透明去背邊(alpha 200)不算白框" || bad "sprite 淺灰去背邊誤判" "$o"
+o="$(S check "$W/sp/greyaa.png" --width 300 --height 400)" && echo "$o" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.frames[0].halo_edge>=20?0:1)' && ok "sprite.mjs check:淺灰(RGB 228)不透明外圈有算進外圈、但不算白框" || bad "sprite 淺灰外圈誤判" "$o"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 100 2>&1)"; [ $? -eq 2 ] && ok "sprite.mjs fit --foot:超過 (H − margin) / 2 → 結束碼 2(主體不會被縮到幾 px)" || bad "sprite --foot 上限" "$o"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 200 2>&1)"; r1=$?; o2="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 1 2>&1)"; r2=$?
 o3="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 8 --align center 2>&1)"; r3=$?; o4="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 96 --height 240 --margin 0 --foot 8 2>&1)"; r4=$?

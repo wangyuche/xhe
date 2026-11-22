@@ -104,7 +104,7 @@
 
 | 規則 | 強制方式 | 來源(哪次錯誤) |
 |---|---|---|
-| 透明素材不能帶白色貼紙外框(提示詞不寫 sticker / sticker art) | 檢查(kit `sprite.mjs check` 外緣白框 > 30% 不通過,錯誤訊息附改法)+ 測試(kit tests「白色貼紙外框」) | 2026-11-22 MahjongParty ticketpack-t5、bundlepack-t2~t6、VIP 卡多輪白框,靠人眼發現;已交付的 ticketpack-t5 現在會被擋下 |
+| 透明素材不能帶白色貼紙外框(提示詞不寫 sticker / sticker art) | 檢查(kit `sprite.mjs check` 外圈接近純白 > 30% 不通過,錯誤訊息附改法;`--full-bleed` 的 UI 不在檢查範圍,僅文字要求看圖)+ 測試(kit tests 白框 ×3、淺灰外圈、白色主體) | 2026-11-22 MahjongParty ticketpack-t5、bundlepack-t2~t6、VIP 卡多輪白框,靠人眼發現;已交付的 ticketpack-t5 現在會被擋下 |
 | 底部留白依簡報(例如對齊既有素材的 8 px)用 `fit --foot`,不手動補像素 | 結構(kit `sprite.mjs fit --foot`)+ 測試(kit tests「--foot 8」) | 2026-11-22 MahjongParty 四輪都 fit 成 H-5 再補 5 列透明 |
 | 非角色參考圖(現有素材、先前生成的圖)只能上傳簡報旗標「使用者授權上傳參考圖」列出的檔案;沒旗標時回報列出建議路徑 | 旗標 + 測試(tests 情境 9,待實跑)+ 限制條文 | 2026-11-22 MahjongParty ticketpack-t5、vippack-gold 兩次停下等主 agent 轉問 |
 
