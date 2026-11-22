@@ -3,6 +3,7 @@ export const en = {
   'common.loading': 'Loading…',
   'common.reload': 'Reload',
   'common.rotate': 'Please rotate your device to landscape.',
+  'common.rotatePortrait': 'Please rotate your device to portrait.',
   'error.boot': 'Something went wrong while starting. Please reload.',
   'error.contextLost': 'The graphics context was lost. Please reload.',
   'title.heading': '__TITLE__',

@@ -20,7 +20,9 @@ const LIT = String.raw`('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|\`(?:[^\`\\]|\\.
 const SINKS = [
   new RegExp(String.raw`\bnew\s+(?:Text|BitmapText|HTMLText)\s*\(\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?\btext\s*:\s*` + LIT),
   new RegExp(String.raw`\bnew\s+(?:Text|BitmapText|HTMLText)\s*\(\s*` + LIT), // Pixi 8 舊的位置參數寫法
-  new RegExp(String.raw`\.(?:text|textContent|innerText|accessibleTitle|accessibleHint)\s*=(?!=)\s*` + LIT),
+  new RegExp(String.raw`\.(?:text|textContent|innerText|accessibleTitle|accessibleHint)\s*\+?=(?!=)\s*` + LIT),
+  // 三元運算:x.text = cond ? 'A' : 'B'(抓 ? 或 : 後面的字串)
+  new RegExp(String.raw`\.(?:text|textContent|innerText|accessibleTitle|accessibleHint)\s*\+?=(?!=)[^;\n(]*?[?:]\s*` + LIT), // 右邊有函式呼叫(例如 t(cond ? 'a.key' : 'b.key'))就不算
   new RegExp(String.raw`\b(?:accessibleTitle|accessibleHint)\s*:\s*` + LIT),
   new RegExp(String.raw`\bsetAttribute\(\s*['"](?:aria-label|aria-description|aria-roledescription|aria-valuetext|title|placeholder)['"]\s*,\s*` + LIT),
   new RegExp(String.raw`(?<![\w.])(?:alert|confirm|prompt)\(\s*` + LIT),

@@ -33,7 +33,7 @@ function budgets() {
   const out = {};
   for (const line of (sec ?? '').split('\n')) {
     const c = line.split('|').map((x) => x.trim());
-    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1])) {
+    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1]) && /^(\d|—|-|$)/.test(c[2])) { // 表頭(1x_kb)不算
       const n = (s) => (/^\d+(\.\d+)?/.test(s) ? parseFloat(s) : undefined);
       out[c[1]] = { '1x': n(c[2]), '0.5x': n(c[3]) };
     }

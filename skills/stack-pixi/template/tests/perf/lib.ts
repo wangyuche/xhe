@@ -28,7 +28,7 @@ export function budgets(): Record<string, number | undefined> {
   const lines = md.split(/^## /m).filter((sec) => THRESHOLD_SECTIONS.includes(sec.split('\n')[0]!.trim())).join('\n').split('\n');
   for (const line of lines) {
     const c = line.split('|').map((x) => x.trim());
-    if (c.length >= 4 && /^[a-z][a-z0-9_]*$/.test(c[1]!)) {
+    if (c.length >= 4 && /^[a-z][a-z0-9_]*$/.test(c[1]!) && c[1] !== 'key') { // 表頭 | key | 門檻 | 不算
       if (c[1]! in out) continue;
       const m = /^-?\d+(\.\d+)?/.exec(c[2]!);
       out[c[1]!] = m ? parseFloat(m[0]) : undefined;

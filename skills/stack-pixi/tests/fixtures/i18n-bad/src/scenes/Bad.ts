@@ -16,3 +16,5 @@ over.text = 'Hidden behind a glob';
 const g2 = import.meta.glob('./*/*.png');
 const deep = new Text({ style: { fill: { color: 0xffffff } }, text: 'Deep style' });
 const pos = new Text('Positional text');
+status.text = won ? 'You win' : 'You lose';
+log.text += 'Game over';

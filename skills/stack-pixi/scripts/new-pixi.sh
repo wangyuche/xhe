@@ -44,6 +44,7 @@ check() {
 DIR=${1:-}; [ -n "$DIR" ] && shift || die "用法:new-pixi.sh <目錄> --design WxH [--name n] [--title t] [--net ws] [--iframe] [--no-install]"
 DESIGN=""; NAME=""; TITLE=""; NET=""; IFRAME=0; INSTALL=1
 while [ $# -gt 0 ]; do
+  case $1 in --design|--name|--title|--net) [ $# -ge 2 ] || die "$1 需要值" ;; esac
   case $1 in
     --design) DESIGN=${2:-}; shift 2 ;;
     --name) NAME=${2:-}; shift 2 ;;

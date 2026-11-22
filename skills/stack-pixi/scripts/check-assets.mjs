@@ -20,7 +20,7 @@ const report = [];
 
 function dims(file) {
   const fd = openSync(file, 'r');
-  const b = Buffer.alloc(64 * 1024);
+  const b = Buffer.alloc(statSync(file).size);
   const n = readSync(fd, b, 0, b.length, 0);
   closeSync(fd);
   if (b.readUInt32BE(0) === 0x89504e47) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
@@ -42,7 +42,7 @@ function budgets() {
   for (const line of sec.split('\n')) {
     const c = line.split('|').map((x) => x.trim());
     const n = (s) => (/^\d+(\.\d+)?/.test(s ?? '') ? parseFloat(s) : undefined);
-    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1])) out[c[1]] = { '1x': n(c[2]), '0.5x': n(c[3]) };
+    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1]) && /^(\d|—|-|$)/.test(c[2])) out[c[1]] = { '1x': n(c[2]), '0.5x': n(c[3]) }; // 表頭(1x_kb)不算
   }
   return out;
 }
