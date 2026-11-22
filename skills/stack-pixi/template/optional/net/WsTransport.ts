@@ -1,6 +1,7 @@
 /**
  * WebSocket 連線(PX-NET-01,`new-pixi.sh --net ws` 加入;放 src/services/net/,純邏輯不 import pixi):
  * - 第一則送 {t:'hello', launchToken};伺服器回 {t:'welcome', sessionToken} 後,重連改送 {t:'resume', sessionToken}。
+ * - 一直連不上(還沒 open 就斷,例如握手被拒 401)連續 8 次 → 'fatal';resume 連續 3 次沒拿到 welcome → 'expired'。
  * - launch token 是一次性的:hello 已送出、還沒拿到 session token 就斷線 → 狀態 'expired' 並停止(呼叫端要取新的 launch token 重建)。
  * - 斷線重連:指數退避 min(10 s, 500 ms × 2^n),收到 welcome 歸零;FATAL 錯誤碼停止重連。
  * - 斷線期間 send() 丟棄(回 false),不排隊;重連後由伺服器送完整快照(onMessage 收到 snapshot 自行重建狀態)。
@@ -36,6 +37,8 @@ export class WsTransport {
   private stopped = false;
   private helloSent = false;
   private resumeFails = 0;
+  private preOpenFails = 0;
+  private opened = false;
 
   constructor(private readonly o: WsOptions) {}
 
@@ -59,7 +62,10 @@ export class WsTransport {
     this.o.onState?.('connecting');
     const ws = (this.o.create ?? ((u) => new WebSocket(u) as unknown as WsLike))(this.o.url);
     this.ws = ws;
+    this.opened = false;
     ws.onopen = () => {
+      this.opened = true;
+      this.preOpenFails = 0;
       if (this.sessionToken) { ws.send(JSON.stringify({ t: 'resume', sessionToken: this.sessionToken })); this.resumeFails++; }
       else {
         ws.send(JSON.stringify({ t: 'hello', launchToken: this.o.launchToken }));
@@ -86,6 +92,10 @@ export class WsTransport {
         return this.o.onState?.('fatal');
       }
       // resume 連續 3 次都沒拿到 welcome(session 已失效)→ 同樣要新的 launch token
+      if (!this.opened && ++this.preOpenFails >= 8) {
+        this.stopped = true; // 握手一直被拒或伺服器不在:停止,交給 UI
+        return this.o.onState?.('fatal');
+      }
       if ((this.helloSent && !this.sessionToken) || this.resumeFails >= 3) {
         this.stopped = true; // launch token 已用掉,重送 hello 一定被拒
         return this.o.onState?.('expired');

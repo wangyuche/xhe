@@ -4,3 +4,4 @@ tests/e2e/test-results/
 tests/e2e/playwright-report/
 tests/e2e/screenshots/
 tests/perf/results/
+src/assets/.build-*/

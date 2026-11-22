@@ -59,6 +59,15 @@ describe('WsTransport', () => {
     expect(states.at(-1)).toBe('expired');
     expect(sockets).toHaveLength(4); // 第一次連線 + 3 次 resume
   });
+  it('gives up after 8 closes that never opened', () => {
+    const { sockets, timers, states } = setup();
+    for (let i = 0; i < 10 && states.at(-1) !== 'fatal'; i++) {
+      sockets.at(-1)!.onclose?.({ code: 1006 });
+      if (states.at(-1) !== 'fatal') timers.at(-1)!.fn();
+    }
+    expect(states.at(-1)).toBe('fatal');
+    expect(sockets).toHaveLength(8);
+  });
   it('stops reconnecting on a fatal close code', () => {
     const { sockets, timers, states } = setup([4001]);
     sockets[0]!.onclose?.({ code: 4001 });

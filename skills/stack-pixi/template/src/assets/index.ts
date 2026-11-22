@@ -37,7 +37,7 @@ const frameCache = new Map<string, Texture[]>();
 /** 載入中的群組被 acquire / release 的淨次數(載入完成後併入 count;歸零就直接 release)。 */
 const pendingCounts = new Map<string, number>();
 /** 已經 Assets.add 過的 alias(unload 後 resolver 仍保留,不要重複 add)。 */
-const added = new Set<string>();
+const added = new Map<string, string>(); // alias → 第一個 src(不同群組同 id 但不同圖時改用帶群組的 alias)
 /** 每個 alias 被幾個已載入群組使用(PX-LOAD-04:跨群組共用的貼圖,計數歸零才 unload)。 */
 const aliasRefs = new Map<string, number>();
 const pendingLoads = new Map<string, Promise<void>>();
@@ -79,7 +79,10 @@ async function loadGroup(group: string): Promise<void> {
   const t = tier;
   for (const [id, a] of Object.entries(manifest.assets)) {
     if (a.type === 'sfx' || a.type === 'bgm') continue;
-    const alias = aliasOf(id, t);
+    let alias = aliasOf(id, t);
+    const want = a.files[`${t}.avif`];
+    // 同一個 id 已被別的群組用不同檔案註冊過:改用帶群組的 alias,避免拿到別人的圖
+    if (added.has(alias) && added.get(alias) !== `${group}/${want}`) alias = `${group}:${alias}`;
     aliasById.set(id, alias);
     aliases.push(alias);
     aliasRefs.set(alias, (aliasRefs.get(alias) ?? 0) + 1);
@@ -96,7 +99,7 @@ async function loadGroup(group: string): Promise<void> {
       const fallback = a.files[`${t}.png`] ?? a.files[`${t}.jpg`];
       const src = await Promise.all([url(group, a.files[`${t}.avif`]!), url(group, fallback!)]); // PX-FMT-01:Pixi 依支援度選 avif / 備援
       await unloading.get(alias);
-      if (!added.has(alias) && !Assets.cache.has(alias)) { Assets.add({ alias, src }); added.add(alias); }
+      if (!added.has(alias) && !Assets.cache.has(alias)) { Assets.add({ alias, src }); added.set(alias, `${group}/${a.files[`${t}.avif`]}`); }
     }));
     if (aliases.length) await Assets.load(aliases.filter((al) => !Assets.cache.has(al)));
   } catch (e) {

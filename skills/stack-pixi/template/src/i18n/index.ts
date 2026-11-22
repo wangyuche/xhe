@@ -13,7 +13,7 @@ export function setLocale(locale: string): void {
 /** `{name}` 參數替換;沒給的參數保留原樣。 */
 export function format(msg: string, params?: Record<string, string | number>): string {
   if (!params) return msg;
-  return msg.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m));
+  return msg.replace(/\{(\w+)\}/g, (m, k: string) => (Object.hasOwn(params, k) ? String(params[k]) : m));
 }
 
 /** 取文案(PX-I18N-01),例如 t('result.body', { score: 3 })。 */

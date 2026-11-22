@@ -33,7 +33,7 @@ function budgets() {
   const out = {};
   for (const line of (sec ?? '').split('\n')) {
     const c = line.split('|').map((x) => x.trim());
-    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1]) && /^(\d|—|-|$)/.test(c[2])) { // 表頭(1x_kb)不算
+    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1]) && c[1] !== 'group' && /^(\d+(\.\d+)?(\s|\(|$)|—|-|$)/.test(c[2])) { // 表頭(1x_kb)不算
       const n = (s) => (/^\d+(\.\d+)?/.test(s) ? parseFloat(s) : undefined);
       out[c[1]] = { '1x': n(c[2]), '0.5x': n(c[3]) };
     }
@@ -77,8 +77,9 @@ for (const g of groups.keys()) {
   if (m && m.generatedBy !== 'build-assets' && Object.keys(m.assets ?? {}).length) die(`src/assets/${g}/manifest.json 是手寫的而且有內容;assets.json 不能用同一個群組名(請改群組或把手寫素材移走)`);
 }
 
-// 1) 每個群組先產生到暫存資料夾
+// 1) 每個群組先產生到暫存資料夾(任何例外都清掉暫存)
 const built = [];
+process.on('exit', () => { for (const g of groups.keys()) rmSync(join(OUT, `.build-${g}`), { recursive: true, force: true }); });
 let over = false;
 for (const [group, list] of groups) {
   const dir = join(OUT, `.build-${group}`);

@@ -48,6 +48,7 @@ function load(src: Src): Promise<AudioBuffer> {
  */
 export function playSfx(src: Src | undefined, opts: { loop?: boolean } = {}): () => void {
   if (!src) return () => {};
+  if (isPaused() && !opts.loop) return () => {}; // 暫停中的音效不排隊(恢復時才不會一次全部響)
   let stopped = false;
   let node: AudioBufferSourceNode | undefined;
   const run = (): void => {

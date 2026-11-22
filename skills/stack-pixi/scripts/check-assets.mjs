@@ -42,7 +42,7 @@ function budgets() {
   for (const line of sec.split('\n')) {
     const c = line.split('|').map((x) => x.trim());
     const n = (s) => (/^\d+(\.\d+)?/.test(s ?? '') ? parseFloat(s) : undefined);
-    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1]) && /^(\d|—|-|$)/.test(c[2])) out[c[1]] = { '1x': n(c[2]), '0.5x': n(c[3]) }; // 表頭(1x_kb)不算
+    if (c.length >= 5 && /^[a-z0-9][a-z0-9-]*$/.test(c[1]) && c[1] !== 'group' && /^(\d+(\.\d+)?(\s|\(|$)|—|-|$)/.test(c[2])) out[c[1]] = { '1x': n(c[2]), '0.5x': n(c[3]) }; // 表頭(1x_kb)不算
   }
   return out;
 }
@@ -52,7 +52,7 @@ const root = join(dir, 'src/assets');
 const MAX = { '1x': 2048, '0.5x': 1024 };
 for (const g of existsSync(root) ? readdirSync(root) : []) {
   const gdir = join(root, g);
-  if (!statSync(gdir).isDirectory()) continue;
+  if (g.startsWith('.') || !statSync(gdir).isDirectory()) continue; // .build-* 是 build-assets 的暫存
   const mf = join(gdir, 'manifest.json');
   const files = readdirSync(gdir).filter((f) => /\.(avif|png|jpg|webp|ogg|m4a|mp3)$/.test(f));
   if (!existsSync(mf)) { if (files.length) errors.push(`${g}: 有素材檔但沒有 manifest.json`); continue; }
