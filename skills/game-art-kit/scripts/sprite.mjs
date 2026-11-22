@@ -2,8 +2,10 @@
 // game-art-kit:遊戲素材的 PNG 處理(純 Node,不需要任何套件)。尺寸一律是 1x 檔案像素(= 顯示尺寸 × density)。
 // 用法:
 //   node sprite.mjs info <png>                                           → {width,height,hasAlpha,coverage,bbox}
-//   node sprite.mjs fit <in.png>... --out <out.png> --width W --height H [--align bottom|center] [--margin px]
+//   node sprite.mjs fit <in.png>... --out <out.png> --width W --height H [--align bottom|center] [--margin px] [--foot px]
 //        裁掉透明邊 → 同一個縮放比例(以最大的那張為準,確保每張都放得下)→ 置中 / 底部對齊補到 W×H。
+//        --foot px:底部對齊時主體離下緣的距離(預設 3,最小 2 = 外框檢查範圍外;要和既有素材對齊時例如 --foot 8);
+//        範圍 2 ~ floor((H − margin) / 2)。只對 --align bottom 且 margin ≠ 0 有效,搭配 --align center 或 --margin 0 → 結束碼 2。
 //        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
 //   node sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]
@@ -12,9 +14,10 @@
 //        因 2048 上限把 density 調到低於要求(--density 或預設 2)時另加 "lowered":true(只是寬取整的差異不算)
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
-//   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
+//   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character] [--allow-white-edge]
 //        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%(主體 = alpha ≥ 8)、
-//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
+//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、外緣白框:離透明區 1–3 px 內、alpha ≥ 128 的主體外圈,接近純白(RGB 皆 ≥ 238)像素 ≤ 30%(外緣 ≥ 20 px 才判斷;
+//        主體本來就是白色的素材(白票、雲)加 --allow-white-edge 略過)、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
 //        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
@@ -144,8 +147,12 @@ const FOOT = 3;
 export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(count, Math.floor(2048 / w))); return { columns, rows: Math.ceil(count / columns) }; };
 
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
-export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
+export function fit(imgs, W, H, { align = 'bottom', margin, foot } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
+  if (foot != null && (align !== 'bottom' || m === 0)) die('--foot 只用於 --align bottom 且 margin ≠ 0');
+  if (foot != null && Math.floor((H - m) / 2) < 2) die(`格子太小(H ${H}、margin ${m}),放不下 --foot;不要用 --foot 或加大 1x 高度`);
+  if (foot != null && (foot < 2 || foot > Math.floor((H - m) / 2))) die(`--foot 要在 2 到 ${Math.floor((H - m) / 2)} 之間(2 px 外框檢查之外;最多 (H − margin) / 2,主體才不會被縮得太小)`);
+  foot ??= FOOT;
   if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (m === 0 && imgs.length === 1) {
     const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1);
@@ -158,7 +165,7 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const maxW = Math.max(...boxes.map(b => b.w)), maxH = Math.max(...boxes.map(b => b.h));
   if (m === 0) die('--margin 0 只用於單張(UI / 九宮格:裁邊後直接縮放到 W×H)');
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
-  const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
+  const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + foot : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
@@ -167,10 +174,10 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
     const cell = resample(im, b.x, b.y, b.w, b.h, dw, dh);
     const cx = (i % columns) * W, cy = Math.floor(i / columns) * H;
     // 水平:以主體的 alpha 加權重心置中(伸出手腳時身體不會左右跳),超出格子就貼齊邊界
-    // 底部對齊:腳底離下緣 3 px(在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
+    // 底部對齊:腳底離下緣 foot px(預設 3,在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
     const gx = centroidX(im, b) * s;
     const lo = dw <= W - 2 * m ? m : 0, hi = dw <= W - 2 * m ? W - m - dw : W - dw;
-    const dx = cx + Math.min(hi, Math.max(lo, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
+    const dx = cx + Math.min(hi, Math.max(lo, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - foot - dh : Math.round((H - dh) / 2));
     blit(sheet, cell, dx, dy);
   });
   return { sheet, columns, rows, scale: s, margin: m };
@@ -205,7 +212,38 @@ export function cover(img, W, H, exact = false) {
   return resample(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, W, H);
 }
 
-export function checkImage(img, { width: W, height: H, frames = 1, columns, opaque = false, tileable = false, character = false, fullBleed = false }) {
+// 白色貼紙外框:離透明區(alpha < 8,格子外也算)1–3 px 內、alpha ≥ 128 的主體外圈中,接近純白(RGB 皆 ≥ 238)像素的比例。
+// 用距離找外圈,半透明過渡邊不會讓檢查跳過;門檻 238 不把淺灰去背殘留(約 220–235)當白。
+// 校準(2026-11-22 MahjongParty,33 張):有白框的原圖 0.83–1.00,乾淨的 ≤ 0.017。
+const HALO_MAX = 0.3, HALO_MIN_EDGE = 20, HALO_RING = 3, HALO_WHITE = 238;
+export function whiteHalo(img, x0 = 0, y0 = 0, w = img.width, h = img.height) {
+  const d = img.data, A = (x, y) => d[((y0 + y) * img.width + x0 + x) * 4 + 3];
+  const dist = new Int16Array(w * h).fill(-1), q = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (A(x, y) < ALPHA_MIN) dist[i] = 0;
+    else if (x === 0 || y === 0 || x === w - 1 || y === h - 1) dist[i] = 1; // 格子外當透明
+    else continue;
+    q.push(i);
+  }
+  for (let k = 0; k < q.length; k++) {
+    const i = q[k], x = i % w, y = (i - x) / w;
+    if (dist[i] >= HALO_RING) continue;
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const j = ny * w + nx; if (dist[j] < 0) { dist[j] = dist[i] + 1; q.push(j); }
+    }
+  }
+  let edge = 0, white = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dd = dist[y * w + x]; if (dd < 1 || dd > HALO_RING || A(x, y) < 128) continue;
+    const o = ((y0 + y) * img.width + x0 + x) * 4;
+    edge++; if (Math.min(d[o], d[o + 1], d[o + 2]) >= HALO_WHITE) white++;
+  }
+  return { edge, ratio: edge ? +(white / edge).toFixed(3) : 0 };
+}
+
+export function checkImage(img, { width: W, height: H, frames = 1, columns, opaque = false, tileable = false, character = false, fullBleed = false, allowWhiteEdge = false }) {
   const errs = [], info = [];
   const cols = columns ?? (frames > 1 ? sheetLayout(frames, W).columns : 1), rows = Math.ceil(frames / cols);
   // 要真的有透明像素(色彩類型是 RGBA 不夠:去背失敗時整張還是不透明)
@@ -223,11 +261,13 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
       if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2) { borderN++; if (a >= ALPHA_MIN) border++; }
     }
     const b = bbox(img, x0, y0, W, H);
-    const f = { frame: i + 1, coverage: +(cover / (W * H)).toFixed(3), border: +(border / borderN).toFixed(4), baseline: b ? b.y + b.h : null, height: b?.h ?? 0 };
+    const halo = opaque || fullBleed || allowWhiteEdge ? null : whiteHalo(img, x0, y0, W, H);
+    const f = { frame: i + 1, coverage: +(cover / (W * H)).toFixed(3), border: +(border / borderN).toFixed(4), baseline: b ? b.y + b.h : null, height: b?.h ?? 0, ...(halo ? { halo: halo.ratio, halo_edge: halo.edge } : {}) };
     info.push(f);
     if (!opaque) {
       if (f.coverage < 0.1 || (!fullBleed && f.coverage > 0.9)) errs.push(`第 ${i + 1} 格主體覆蓋率 ${(f.coverage * 100).toFixed(1)}%(應 10–90%)`);
       if (!fullBleed && f.border >= 0.01) errs.push(`第 ${i + 1} 格外框 2 px 內有 ${(f.border * 100).toFixed(2)}% 不透明像素(應 < 1%;去背殘留或主體貼邊)`);
+      if (halo && halo.edge >= HALO_MIN_EDGE && halo.ratio > HALO_MAX) errs.push(`第 ${i + 1} 格主體外緣 ${(halo.ratio * 100).toFixed(0)}% 是近白像素(應 ≤ ${HALO_MAX * 100}%;白色貼紙外框):重出時正向提示詞拿掉 sticker / sticker art,改寫 game item art, no white contour,負向加 sticker, white outline, white contour, white halo;主體本來就是白色的素材才加 --allow-white-edge`);
     }
   }
   if (character && frames > 1 && !opaque) {
@@ -256,7 +296,7 @@ if (isMain) {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
-      if (['--opaque', '--tileable', '--character', '--full-bleed', '--exact'].includes(a)) flags[a.slice(2)] = true;
+      if (['--opaque', '--tileable', '--character', '--full-bleed', '--exact', '--allow-white-edge'].includes(a)) flags[a.slice(2)] = true;
       else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`);
       else pos.push(a);
     }
@@ -271,7 +311,7 @@ if (isMain) {
       const out = flags.out ?? die('缺 --out');
       const align = flags.align ?? 'bottom'; if (!['bottom', 'center'].includes(align)) die('--align 只能 bottom 或 center');
       if (pos.length > 8) die('一個動作最多 8 格');
-      const r = fit(pos.map(load), int('width'), int('height'), { align, margin: flags.margin != null ? int('margin', true, 0) : undefined });
+      const r = fit(pos.map(load), int('width'), int('height'), { align, margin: flags.margin != null ? int('margin', true, 0) : undefined, foot: flags.foot != null ? int('foot', true, 0) : undefined });
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, encodePng(r.sheet));
       console.log(JSON.stringify({ file: out, width: r.sheet.width, height: r.sheet.height, frames: pos.length, columns: r.columns, rows: r.rows, scale: +r.scale.toFixed(4), margin: r.margin }));
@@ -289,7 +329,7 @@ if (isMain) {
       const img = load(pos[0] ?? die('用法:check <png> --width W --height H'));
       const frames = flags.frames != null ? int('frames') : 1;
       if (frames > 8) die('frames 最多 8');
-      const { errs, info } = checkImage(img, { width: int('width'), height: int('height'), frames, columns: flags.columns != null ? int('columns') : undefined, opaque: !!flags.opaque, tileable: !!flags.tileable, character: !!flags.character, fullBleed: !!flags['full-bleed'] });
+      const { errs, info } = checkImage(img, { width: int('width'), height: int('height'), frames, columns: flags.columns != null ? int('columns') : undefined, opaque: !!flags.opaque, tileable: !!flags.tileable, character: !!flags.character, fullBleed: !!flags['full-bleed'], allowWhiteEdge: !!flags['allow-white-edge'] });
       console.log(JSON.stringify({ ok: errs.length === 0, errors: errs, frames: info }));
       process.exit(errs.length ? 1 : 0);
     } else die('用法:sprite.mjs info | density | fit | cover | check(見檔頭)');
