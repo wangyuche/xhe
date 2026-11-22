@@ -66,6 +66,8 @@ echo "goose=$GOOSE_VER (from $MODULE/go.mod)" >&2
 # -env (skip loading ./.env) exists only in newer goose CLIs; older ones never load .env, so the flag is just omitted.
 ENVFLAG=(); GOOSE_HELP="$("$GOOSE" -h 2>&1 || true)"
 case "$GOOSE_HELP" in *"-env string"*) ENVFLAG=(-env none) ;; esac
+# Older goose CLIs do not read GOOSE_DRIVER / GOOSE_DBSTRING: fall back to positional args (password then visible in ps)
+DBSTRING_ENV=1; case "$GOOSE_HELP" in *GOOSE_DBSTRING*) ;; *) DBSTRING_ENV=""; echo "注意:goose $GOOSE_VER 不支援 GOOSE_DBSTRING,DSN 改用參數傳入(本機 ps 看得到暫存容器的隨機密碼)" >&2 ;; esac
 
 # Copy only versioned *.sql (read-only use of the project dir).
 mkdir -p "$WORK/mig"
@@ -80,7 +82,11 @@ goose_cmd() { # <dsn> <goose args...>
   local dsn="$1"; shift
   local d2; d2="$(dsnpy opts "$dsn" "-c statement_timeout=${GOOSE_STATEMENT_TIMEOUT:-300s}")"
   # DSN via GOOSE_DBSTRING in the isolated env (not argv, so the password is not visible in `ps`)
-  (cd "$WORK" && run_iso "$NAME" GOOSE_DRIVER=postgres GOOSE_DBSTRING="$d2" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" -table "$TABLE" "$@")
+  if [ -n "$DBSTRING_ENV" ]; then
+    (cd "$WORK" && run_iso "$NAME" GOOSE_DRIVER=postgres GOOSE_DBSTRING="$d2" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" -table "$TABLE" "$@")
+  else
+    (cd "$WORK" && run_iso "$NAME" -- "$GOOSE" ${ENVFLAG[@]+"${ENVFLAG[@]}"} -dir "$WORK/mig" -table "$TABLE" postgres "$d2" "$@")
+  fi
 }
 
 versions() { ls "$WORK/mig" | sed -n 's/^\([0-9][0-9]*\)_.*\.sql$/\1/p' | while read -r v; do echo $((10#$v)); done | sort -n; }

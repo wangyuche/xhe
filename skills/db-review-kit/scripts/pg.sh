@@ -69,7 +69,7 @@ case "$CMD" in
     VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
     [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
     TMPFS_ARGS=(); for v in $VOLS; do TMPFS_ARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
-    RUNARGS=(-d --label "dbrev=$NAME" "${TMPFS_ARGS[@]}" -p "127.0.0.1::5432"
+    RUNARGS=(-d --label "dbrev=$NAME" "${TMPFS_ARGS[@]}" --shm-size 256m -p "127.0.0.1::5432"
              -e "POSTGRES_USER=$SUPERUSER" -e "POSTGRES_PASSWORD=$SUPERPASS")
     for m in ${MOUNTS[@]+"${MOUNTS[@]}"}; do
       src="${m%%:*}"; rest="${m#*:}"; dest="${rest%%:*}"; mode=""
@@ -121,6 +121,7 @@ case "$CMD" in
       r="${rs%%=*}"; pv="${rs#*=}"
       [ "$r" != "$rs" ] && [ -n "$r" ] && [ -n "$pv" ] || die "--role 格式是 ROLE=PWVAR:$rs" 2
       pw=""
+      [ "$pv" != POSTGRES_PASSWORD ] || pw="$SUPERPASS"
       for x in $STATE_RANDOM; do [ "${x%%=*}" = "$pv" ] && pw="${x#*=}"; done
       for kv in ${ENVS[@]+"${ENVS[@]}"}; do [ "${kv%%=*}" = "$pv" ] && pw="${kv#*=}"; done
       [ -n "$pw" ] || { cleanup_fail; die "--role $rs:$pv 不在 --env-random / --env 裡" 2; }

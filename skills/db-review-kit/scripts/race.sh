@@ -93,7 +93,7 @@ ENDED_A=""; ENDED_B=""
 
 n=0; : > "$W/steps"
 wait_marker() { # <outfile> <marker> <seconds> -> 0 found
-  local t=0 lim; lim=$(awk -v w="$3" 'BEGIN{printf "%d", w*10}')
+  local t=0 lim; lim=$(awk -v w="$3" 'BEGIN{l = int(w * 10 + 0.999); if (l < 1) l = 1; printf "%d", l}')
   while [ $t -lt "$lim" ]; do grep -qx "$2" "$1" 2>/dev/null && return 0; sleep 0.1; t=$((t + 1)); done
   return 1
 }

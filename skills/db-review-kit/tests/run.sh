@@ -127,6 +127,7 @@ if [ $rc -ne 0 ]; then bad "pg.sh up(fixture bootstrap)" "$UP"; echo "pass=$PASS
 C="$(echo "$UP" | sed -n 's/^container=\([^ ]*\) .*/\1/p')"; PORT="$(echo "$UP" | sed -n 's/^container=[^ ]* port=\([0-9]*\).*/\1/p')"
 case "$C" in "dbrev-$N-"*) ok "pg.sh up:容器名稱前綴 dbrev-$N-" ;; *) bad "容器名稱" "$C" ;; esac
 [ "$(docker inspect -f '{{index .Config.Labels "dbrev"}}' "$C")" = "$N" ] && ok "pg.sh up:label dbrev=$N" || bad "label"
+[ "$(docker inspect -f '{{.HostConfig.ShmSize}}' "$C")" = 268435456 ] && ok "pg.sh up:--shm-size 256m(平行查詢用的共享記憶體)" || bad "shm-size" "$(docker inspect -f '{{.HostConfig.ShmSize}}' "$C")"
 [ "$(docker inspect -f '{{index .HostConfig.Tmpfs "/var/lib/postgresql"}}' "$C")" = "rw,size=768m" ] && ok "pg.sh up:tmpfs /var/lib/postgresql size=768m" || bad "tmpfs" "$(docker inspect -f '{{json .HostConfig.Tmpfs}}' "$C")"
 m="$(docker inspect -f '{{range .Mounts}}{{.Type}}:{{.Destination}}:{{.RW}} {{end}}' "$C")"
 [ "$m" = "bind:/docker-entrypoint-initdb.d:false bind:/roles.sql:false " ] || [ "$m" = "bind:/roles.sql:false bind:/docker-entrypoint-initdb.d:false " ] \
@@ -297,7 +298,7 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
-for q in '\set x `id`' '\echo -- \! id' "-- don't do this
+for q in "\\echo 'a\\'' \\! id" '\echo $a$ \! id $a$' '\set x `id`' '\echo -- \! id' "-- don't do this
 \! id
 SELECT 'x';"; do
   o="$(printf '%s\n' "$q" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:$q → 拒絕" || bad "psql $q" "$o"

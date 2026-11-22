@@ -107,6 +107,13 @@ def main():
     if "--connect" in sys.argv[1:]:
         # psql does not treat "--" as a comment inside meta-command arguments, so keep comments here (stricter);
         # only SQL literals / dollar bodies are removed. Backticks run shell commands in meta-command arguments.
+        # A meta-command line is parsed by psql's argument rules (backslash escapes in quotes, no dollar quoting, a new
+        # command at any unquoted backslash), so a line starting with a backslash may contain exactly one backslash.
+        for line in raw.splitlines():
+            st = line.lstrip()
+            if st.startswith("\\") and line.count("\\") > 1:
+                print("meta-command line with more than one backslash: " + st[:60])
+                return 1
         text = strip(raw, keep_comments=True)
         if "`" in text:
             line = next(l for l in text.splitlines() if "`" in l)
