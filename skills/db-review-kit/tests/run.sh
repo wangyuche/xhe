@@ -62,7 +62,7 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/gw" bash -c "source '$S/_common.sh' && ensure_name
 [ $rc -eq 4 ] && echo "$o" | grep -q '可被群組或其他人寫入' && ok "暫存目錄:既有目錄群組可寫(0775)→ 拒絕,不改權限" || bad "暫存目錄 0775" "rc=$rc $o"
 o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
-for kv in 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
+for kv in 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:${kv%%=*} 等會被工具鏈執行的變數不能傳" || bad "${kv%%=*} 應拒絕" "$o"
 done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
@@ -344,6 +344,9 @@ printf '%s\n' "A: SELECT set_config('app.tenant_id', '1', false);" "B: SELECT 1;
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-sc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 0 ] && ok "race.sh:一般的 set_config('app.…') 可以用" || bad "race set_config" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$APP" --query "SELECT balance FROM fx.accounts" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
+o="$(printf 'SELECT :x;\n' | bash "$S/pg.sh" psql "$N" "$SU" -v "x=1
+\\c host=10.0.0.5" 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值跨行 → 拒絕" || bad "psql -v 跨行" "$o"
+o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql '\c host=10.0.0.5' 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:psql 指令一律拒絕(不受自我測試開關影響)" || bad "locks 反斜線" "$o"
 o="$(printf ':x\n' | bash "$S/pg.sh" psql "$N" "$SU" -v 'x=\c host=10.0.0.5 dbname=prod' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值含反斜線 → 拒絕" || bad "psql -v backslash" "$o"
 o="$(printf "SELECT chr(92)||'! id' AS x \\gset\n:x\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 變數再以 :x 執行 → 拒絕" || bad "psql gset :x" "$o"
 o="$(printf "SELECT chr(92)||'c host=10.0.0.5' AS x \\gset\n\\set y :x\n:y\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\set y :x 複製變數再執行 → 拒絕" || bad "psql set y :x" "$o"

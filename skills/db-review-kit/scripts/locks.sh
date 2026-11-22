@@ -45,6 +45,10 @@ done
 # The DDL runs between BEGIN and ROLLBACK; transaction control inside it would make it permanent.
 # Best-effort pre-filter; the txid check below is the guarantee. DBREV_SELFTEST_SKIP_TXCHECK=1 exists only so the
 # self-test can prove that check without a filter bypass.
+# psql meta-commands are always refused (the txid check proves the rollback, not where psql connected).
+for part in "$SQL" "$HOLD" "$PROBE"; do
+  case "$part" in *\\*) die "SQL 不能含反斜線(psql 指令;字串裡請用 chr(92))" 2 ;; esac
+done
 [ "${DBREV_SELFTEST_SKIP_TXCHECK:-}" = 1 ] || for part in "$SQL" "$HOLD" "$PROBE"; do
   [ -n "$part" ] || continue
   bad="$(printf '%s\n' "$part" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" \

@@ -61,6 +61,7 @@ bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
 #   保證靠事後檢查:BEGIN 後設 SAVEPOINT,使用者 SQL 後 ROLLBACK TO SAVEPOINT 並比對前後 txid_current();
 #   SQL 出錯也照樣檢查。無法證明已 ROLLBACK → "rolled_back":false、結束碼 1(暫存庫可能已被改,要重建);SQL 出錯但已證明 ROLLBACK → "rolled_back":true、ok:false
 #   hold 模式 ok=false 時結束碼 1
+#   SQL 一律不能含反斜線(psql 指令;migration 的 E'' 字串若用到,改推導或用 chr(92) 改寫後手動觀察)
 
 # GRANT 矩陣(每項用該角色的 LOGIN DSN 實際連線執行,BEGIN … ROLLBACK)
 bash <kit>/scripts/grants.sh <name> --matrix <矩陣檔> --dsn app=<mj_app DSN> --dsn admin=<…>
@@ -108,7 +109,7 @@ bash <kit>/scripts/gotest.sh <name> --dir <模組目錄> --tags integration \
 - **容器**:只操作 label `dbrev=<name>` 且名稱前綴 `dbrev-<name>-` 的容器;資料在 tmpfs(有 `size=`,掛在映像宣告的每個 VOLUME:18 以後 `/var/lib/postgresql`、17 以前 `/var/lib/postgresql/data`),沒有 volume;只綁 `127.0.0.1` 隨機埠。`pg.sh up` 失敗或中斷時 trap 刪容器;locks / race 結束時取消自己的 backend、收掉背景程序;goose / gotest 刪自己的暫存子目錄。
 - 暫存根目錄與 `<name>/` 必須是目前使用者擁有的一般目錄(0700),`state.env` 與 goose 執行檔也要是自己的;否則結束碼 4(Linux 共用 `/tmp` 時防止別人預放檔案)。
 - `explain.sh` 的查詢與 grants.sh 的 `sql:` 動作只能是一個語句:不能含分號或反斜線(字面檢查,不靠詞法分析)。
-- `gotest.sh` 會掃 `*_test.go` 裡寫死的連線字串並警告(任何 `postgres://…`、`host=…`、`localhost:5432` / `127.0.0.1:5432`);能否排除由使用者判斷(db-reviewer 判 BLOCKED)。
+- `gotest.sh` 會掃模組裡所有 `*.go`(不含 vendor)寫死的連線字串並警告(非測試檔的預設值也會列出,要判斷測試會不會用到)(任何 `postgres://…`、`host=…`、`localhost:5432` / `127.0.0.1:5432`);能否排除由使用者判斷(db-reviewer 判 BLOCKED)。
 
 **網路限制(腳本擋不住)**:暫存容器在 Docker 預設 bridge 網路,能連外。DSN 守門只管 kit 自己的連線;被審的 SQL 以 superuser 執行時,`dblink`、`postgres_fdw`、`COPY … FROM PROGRAM` 仍可能連到別的主機。db-reviewer 審到這類語句時不在容器實測,改推導並標明。
 

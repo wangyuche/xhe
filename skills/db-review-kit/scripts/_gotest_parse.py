@@ -41,7 +41,8 @@ def main(path, elapsed, go_rc=0):
                     pkgs[pkg] = "build-fail"
                     if fb != pkg:
                         outputs.setdefault((pkg, None), []).extend(outputs.get((fb, None), []))
-                        pkgs.pop(fb, None)
+                        if fb == pkg + "_test" or fb.endswith("_test"):
+                            pkgs.pop(fb, None)   # only the x_test pseudo-package; a real tested dependency keeps its entry
                     continue
                 if test:
                     results[(pkg, test)] = act

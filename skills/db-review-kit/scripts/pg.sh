@@ -178,6 +178,8 @@ case "$CMD" in
       case "$1" in
         -[qAtX]|-[qAtX][qAtX]|-[qAtX][qAtX][qAtX]|-[qAtX][qAtX][qAtX][qAtX]) ARGS+=("$1"); shift ;;
         -v) [ $# -ge 2 ] || die "-v 需要 name=value" 2
+            case "$2" in *"
+"*|*"$(printf '\r')"*) die "-v 的值不能跨行" 2 ;; esac
             printf '%s' "$2" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[^\\`]*$' || die "-v 的值不能含反斜線或反引號:$2" 2
             VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; ARGS+=("$1" "$2"); shift 2 ;;
         -F|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;

@@ -164,7 +164,7 @@ check_extra_env() {
     # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
     case "$ku" in
       GOOSE_*|GOOGLE_*|GORM_*) ;;   # project libraries' variables (goose, Google client libs, gorm)
-      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GO*|GCCGO*|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
+      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|XDG_*|APPDATA|LOCALAPPDATA|GO*|GCCGO*|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
         die "$k 是隔離環境 / 工具鏈會執行的變數,不能用 --env 覆寫" 4 ;;
     esac
     case "$v" in
