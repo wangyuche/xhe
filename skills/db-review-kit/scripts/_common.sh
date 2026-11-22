@@ -20,6 +20,15 @@ check_name() {
 }
 
 name_dir() { echo "$KIT_TMP/$1"; }
+# The tmp root and <name> dir must be real directories owned by the current user (0700): state.env is sourced and the
+# goose binary is executed from there, so a dir planted by another local user (shared /tmp on Linux) is refused.
+own_dir() {
+  [ ! -L "$1" ] || die "$1 是 symlink,拒絕使用" 4
+  mkdir -p "$1" 2>/dev/null || true
+  [ -d "$1" ] && [ -O "$1" ] || die "$1 不是目前使用者擁有的目錄,拒絕使用(改用 DB_REVIEW_KIT_TMP 指定自己的目錄)" 4
+  chmod 700 "$1"
+}
+ensure_name_dir() { own_dir "$KIT_TMP"; own_dir "$KIT_TMP/$1"; }
 state_file() { echo "$KIT_TMP/$1/state.env"; }
 rand_hex() { od -An -tx1 -N"${1:-12}" /dev/urandom | tr -d ' \n'; }
 
@@ -46,8 +55,10 @@ require_local_docker() {
 # Load state written by `pg.sh up`: CONTAINER PORT IMAGE SUPERUSER SUPERPASS DBS ROLES
 load_state() {
   require_local_docker
+  ensure_name_dir "$1"
   local f; f="$(state_file "$1")"
   [ -f "$f" ] || die "找不到 $1 的容器狀態($f);先 pg.sh up $1" 1
+  [ -O "$f" ] && [ ! -L "$f" ] || die "$f 不是目前使用者擁有的一般檔案,拒絕載入" 4
   # shellcheck disable=SC1090
   . "$f"
   case "$CONTAINER" in "dbrev-$1-"*) ;; *) die "狀態檔的容器名稱不符前綴 dbrev-$1-:$CONTAINER" 4 ;; esac
@@ -140,7 +151,8 @@ check_extra_env() {
     ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
     # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
     case "$ku" in
-      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GOFLAGS|GOTOOLCHAIN|GOCACHE|GOMODCACHE|GOPATH|GOBIN|GOROOT|GOENV|GOWORK|GOPROXY|GOSUMDB|GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE|GOTMPDIR) die "$k 是隔離環境自己設定的變數,不能用 --env 覆寫" 4 ;;
+      GOOSE_*|GOOGLE_*) ;;   # project variables (goose settings, GCP client libs) are allowed
+      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GO*|CGO_*) die "$k 是隔離環境 / Go 工具鏈的變數,不能用 --env 覆寫" 4 ;;
     esac
     case "$v" in
       postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v"; continue ;;

@@ -112,7 +112,7 @@ until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name 
   sleep 0.25
 done
 (printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$SQL" \
-  | psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out") & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
+  | { set +e; psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out"; }) & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
 wait_lock() { # <session> : until it waits on a lock (max 5 s)
   local i=0
   until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>/dev/null)" = 1 ]; do
@@ -123,7 +123,7 @@ wait_lock ddl
 PROBE_PID=""
 if [ -n "$PROBE" ]; then
   (printf "SET application_name = 'dbrev-lock-probe';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$PROBE" \
-    | psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out") & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
+    | { set +e; psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out"; }) & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
   wait_lock probe
 fi
 SNAP="$(printf "%s\n" \
@@ -143,6 +143,7 @@ outcome() { # file -> ok | timeout(55P03) | error(code)
   c="$(grep -oE 'ERROR: +[0-9A-Z]{5}' "$f" | head -1 | grep -oE '[0-9A-Z]{5}$' || true)"
   if [ -z "$c" ] && grep -q '^rc=0$' "$f"; then echo ok
   elif [ "$c" = 55P03 ]; then echo "timeout(55P03)"
+  elif [ -z "$c" ] && grep -q '^psql: error:' "$f"; then echo "connect-failed"
   else echo "error(${c:-?})"; fi
 }
 DDL_RES="$(outcome "$WORK/ddl.out")"; PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"

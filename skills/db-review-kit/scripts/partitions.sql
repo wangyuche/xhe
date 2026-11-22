@@ -50,6 +50,18 @@ JOIN pg_partitioned_table pt ON pt.partrelid = p.oid
 WHERE c.relacl IS DISTINCT FROM p.relacl;
 SELECT * FROM dbrev_acl ORDER BY 1, 2;
 
+\echo '### partition column ACL differs from parent (column-level GRANTs)'
+CREATE TEMP VIEW dbrev_colacl AS
+SELECT i.inhparent::regclass AS parent, c.oid::regclass AS partition, pa.attname AS column_name,
+       pa.attacl::text AS parent_acl, ca.attacl::text AS partition_acl
+FROM pg_inherits i
+JOIN pg_class c ON c.oid = i.inhrelid
+JOIN pg_partitioned_table pt ON pt.partrelid = i.inhparent
+JOIN pg_attribute pa ON pa.attrelid = i.inhparent AND pa.attnum > 0 AND NOT pa.attisdropped
+JOIN pg_attribute ca ON ca.attrelid = c.oid AND ca.attname = pa.attname AND NOT ca.attisdropped
+WHERE ca.attacl IS DISTINCT FROM pa.attacl;
+SELECT * FROM dbrev_colacl ORDER BY 1, 2, 3;
+
 \echo '### foreign keys on partitioned tables (DETACH takes locks on referenced tables; consider DETACH CONCURRENTLY only without them)'
 SELECT con.conrelid::regclass AS partitioned_table, con.conname, con.confrelid::regclass AS references_table,
        pg_get_constraintdef(con.oid) AS definition
@@ -74,7 +86,7 @@ ORDER BY 1;
 SELECT 'partitions_summary parents=' || (SELECT count(*) FROM pg_partitioned_table pt JOIN pg_class p ON p.oid = pt.partrelid
                                           WHERE p.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace))
     || ' runway_violations=' || (SELECT count(*) FROM dbrev_runway WHERE runway_days < :min_runway_days)
-    || ' acl_mismatches=' || (SELECT count(*) FROM dbrev_acl)
+    || ' acl_mismatches=' || ((SELECT count(*) FROM dbrev_acl) + (SELECT count(*) FROM dbrev_colacl))
     || ' missing_default=' || (SELECT count(*) FROM pg_partitioned_table pt JOIN pg_class p ON p.oid = pt.partrelid
                                WHERE pt.partdefid = 0 AND pt.partstrat <> 'h'
                                  AND p.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace));

@@ -43,11 +43,12 @@ GOOSE_VER="$(awk '$1=="github.com/pressly/goose/v3" && $3!="=>"{print $2; exit} 
 [ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;goose 版本無法判定" 1
 case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
 
-DIR="$(name_dir "$NAME")"; mkdir -p "$DIR/bin"
+ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"; own_dir "$DIR/bin"
 WORK="$(mktemp -d "$DIR/goose.XXXXXX")"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 GOOSE="$DIR/bin/goose-$GOOSE_VER"
+if [ -e "$GOOSE" ] && { [ ! -O "$GOOSE" ] || [ -L "$GOOSE" ]; }; then die "$GOOSE 不是目前使用者擁有的檔案,拒絕執行" 4; fi
 if [ ! -x "$GOOSE" ]; then
   # GOBIN points into the kit tmp dir: nothing is installed globally. Driver tags trim the build to postgres.
   run_iso "$NAME" GOBIN="$WORK/gobin" -- go install \
@@ -57,7 +58,8 @@ if [ ! -x "$GOOSE" ]; then
 fi
 echo "goose=$GOOSE_VER (from $MODULE/go.mod)" >&2
 # -env (skip loading ./.env) exists only in newer goose CLIs; older ones never load .env, so the flag is just omitted.
-ENVFLAG=(); "$GOOSE" -h 2>&1 | grep -q -- '-env string' && ENVFLAG=(-env none)
+ENVFLAG=(); GOOSE_HELP="$("$GOOSE" -h 2>&1 || true)"
+case "$GOOSE_HELP" in *"-env string"*) ENVFLAG=(-env none) ;; esac
 
 # Copy only versioned *.sql (read-only use of the project dir).
 mkdir -p "$WORK/mig"

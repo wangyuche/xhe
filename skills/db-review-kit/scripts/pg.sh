@@ -52,6 +52,7 @@ case "$CMD" in
         *) die "未知參數:$1" 2 ;;
       esac
     done
+    case "$IMAGE" in *[!A-Za-z0-9._/:@-]*) die "--image 只能含 A-Z a-z 0-9 . _ / : @ -" 2 ;; esac
     case "$SUPERUSER" in ""|*[!A-Za-z0-9_-]*) die "--superuser 只能是英數、底線、連字號" 2 ;; esac
     [ -n "$IMAGE" ] || die "--image 必填(依專案設定,例如 compose 的 db 映像)" 2
     case "$IMAGE" in *postgres*|*postgis*|*pgvector*|*timescale*) ;; *) die "映像看起來不是 PostgreSQL:$IMAGE" 2 ;; esac
@@ -59,7 +60,7 @@ case "$CMD" in
     require_local_docker
     [ -z "$(list_ours "$NAME")" ] || die "已有 dbrev-$NAME-* 容器;先 pg.sh gc $NAME" 1
 
-    DIR="$(name_dir "$NAME")"; mkdir -p "$DIR"; chmod 700 "$DIR"
+    ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"
     SUPERPASS="$(rand_hex 16)"
     RUNARGS=(-d --label "dbrev=$NAME" --tmpfs "/var/lib/postgresql:rw,size=$TMPFS_SIZE" -p "127.0.0.1::5432"
              -e "POSTGRES_USER=$SUPERUSER" -e "POSTGRES_PASSWORD=$SUPERPASS")

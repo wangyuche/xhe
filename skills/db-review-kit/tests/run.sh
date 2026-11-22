@@ -56,6 +56,9 @@ if command -v go >/dev/null 2>&1; then
 else skip "沙盒 GOMODCACHE(沒有 go)"; fi
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'DATABASE_URL=host=10.0.0.1 dbname=x'" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && ok "隔離:DB 類變數不是 URL(keyword DSN)→ 拒絕(結束碼 4)" || bad "keyword DSN 應拒絕" "rc=$rc $o"
+o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOAUTH=sh -c id'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:GOAUTH 等 Go 工具鏈變數不能傳" || bad "GOAUTH 應拒絕" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 for kv in 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
@@ -254,6 +257,7 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.led
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT * FROM fx.no_such_table" --runs 2 2>&1)"; rc=$?
 [ $rc -eq 1 ] && ok "explain.sh:SQL 錯誤 → 結束碼 1(不會被當成 Docker 沒開的 3)" || bad "explain SQL 錯誤結束碼" "rc=$rc $o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--target-ms 不是數字 → 用法錯誤" || bad "explain target 格式" "$o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SET work_mem='1MB'; SELECT 1" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:多個語句 → 用法錯誤" || bad "explain 多語句" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--runs 0 → 用法錯誤(不會假通過)" || bad "explain runs 0" "$o"
 printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q.sql" --runs 3 2>&1)"; rc=$?

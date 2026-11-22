@@ -3,7 +3,7 @@
 #
 #   explain.sh <name> --dsn DSN (--query 'SQL' | --file F) [--runs 20] [--target-ms 50]
 #
-# Every run is wrapped in BEGIN … ROLLBACK, so DML under test changes nothing. Timing comes from
+# Exactly one statement (a ';' inside is refused). Every run is wrapped in BEGIN … ROLLBACK, so DML under test changes nothing. Timing comes from
 # EXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON): Planning Time + Execution Time, excluding network and client.
 # One warm-up run is excluded. Last line: JSON {"runs":…,"p50_ms":…,"p95_ms":…,"max_ms":…,"target_ms":…,"ok":…}.
 # Exit 1 if --target-ms is given and p95 exceeds it.
@@ -29,6 +29,7 @@ case "$RUNS" in *[!0-9]*|""|0) die "--runs 要是 ≥ 1 的整數" 2 ;; esac
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"
 Q="$(printf '%s' "$Q" | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
+case "$Q" in *";"*) die "--query / --file 只能放一個語句(EXPLAIN 只會套在第一個)" 2 ;; esac
 
 echo "### plan: EXPLAIN (ANALYZE, BUFFERS)"
 printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q
