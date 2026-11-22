@@ -145,7 +145,7 @@ export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
 export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
-  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 `sprite.mjs density` 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
+  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (m === 0 && imgs.length === 1) {
     const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1);
     // 不留邊時只能等比:裁切後的比例和 W×H 差超過 3% 就失敗(拉伸會讓邊框粗細不一、九宮格切線對不上),請用相同比例重出
@@ -159,7 +159,7 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
   const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
-  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 `sprite.mjs density` 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
+  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
   imgs.forEach((im, i) => {
