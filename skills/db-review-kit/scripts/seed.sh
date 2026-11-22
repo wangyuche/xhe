@@ -40,7 +40,7 @@ export ST_OVERRIDE=300s
 if [ -n "$FILE" ]; then
   [ -f "$FILE" ] || die "--file 不存在:$FILE" 2
   bad="$(python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect --vars "${VNAMES:-}" < "$FILE")" || { trc=$?; die "種子腳本不允許:$bad" "$trc"; }
-  psql_dsn "$DSN" -q ${VARS[@]+"${VARS[@]}"} < "$FILE"
+  psql_dsn "$DSN" -q ${VARS[@]+"${VARS[@]}"} < "$FILE" || die "種子腳本 $FILE 執行失敗:出錯前已提交的資料仍在暫存庫(資料量未知,EXPLAIN 前請重建或重新種子)" 1
   echo "seed file=$FILE seconds=$(( $(date +%s) - START )) tmpfs_free_mb_after=$(free_mb)"
   exit 0
 fi

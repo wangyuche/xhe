@@ -85,7 +85,7 @@ fi
 mkfifo "$W/a.fifo" "$W/b.fifo"
 start_session() { # <label> <dsn> <fifo> <out>
   (printf "SET application_name = 'dbrev-race-%s-%s';\n" "$RID" "$1"; cat "$3") \
-    | PSQL_MERGE_STDERR=1 ST_OVERRIDE=30s LT_OVERRIDE="$LT" psql_dsn "$2" -q -v ON_ERROR_STOP=0 > "$4" 2>&1
+    | PSQL_KIT_WINS=1 PSQL_MERGE_STDERR=1 ST_OVERRIDE=30s LT_OVERRIDE="$LT" psql_dsn "$2" -q -v ON_ERROR_STOP=0 > "$4" 2>&1
 }
 start_session A "$DSN_A" "$W/a.fifo" "$W/a.out" & PA=$!
 start_session B "$DSN_B" "$W/b.fifo" "$W/b.out" & PB=$!
@@ -167,9 +167,11 @@ fi
 while IFS= read -r line; do
   q="${line#CHECK:}"; exp="${q##*=>}"; q="${q%=>*}"
   exp="$(echo "$exp" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  got="$(printf '%s\n' "$q" | psql_dsn "$CHK" -qAt 2>"$W/check.err" | tr '\n' ' ' | sed 's/[[:space:]]*$//')" || true   # stdout only; NOTICE / WARNING go to check.err
-  [ "$got" = "$exp" ] || { [ ! -s "$W/check.err" ] || got="$got [stderr: $(tr '\n' ' ' < "$W/check.err" | cut -c1-200)]"; }
-  if [ "$got" = "$exp" ]; then CP=$((CP + 1)); v=PASS; else CF=$((CF + 1)); v=FAIL; fi
+  crc=0
+  printf '%s\n' "$q" | psql_dsn "$CHK" -qAt > "$W/check.out" 2>"$W/check.err" || crc=$?   # stdout only; NOTICE / WARNING go to check.err
+  got="$(tr '\n' ' ' < "$W/check.out" | sed 's/[[:space:]]*$//')"
+  [ "$got" = "$exp" ] && [ $crc -eq 0 ] || { [ ! -s "$W/check.err" ] || got="$got [stderr: $(tr '\n' ' ' < "$W/check.err" | cut -c1-200)]"; }
+  if [ $crc -eq 0 ] && [ "$got" = "$exp" ]; then CP=$((CP + 1)); v=PASS; else CF=$((CF + 1)); v=FAIL; fi
   echo "CHECK $v:$q=> expected '$exp' got '$got'"
 done < <(grep -E '^CHECK:' "$SCRIPT" || true)
 

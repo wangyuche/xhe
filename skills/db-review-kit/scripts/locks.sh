@@ -15,6 +15,7 @@
 # --goose-up takes the Up section of a goose file; files marked NO TRANSACTION are refused (cannot run in a transaction).
 # Last line: JSON summary. Exit: 0 observed (hold mode: ok true), 1 error / not observed, 2 usage, 4 DSN not this container.
 source "$(dirname "$0")/_common.sh"
+export PSQL_KIT_WINS=1   # the kit's statement / lock timeouts win over DSN options in every session here
 RID=$$   # per-run session-name suffix: parallel runs on one container never see or cancel each other
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }

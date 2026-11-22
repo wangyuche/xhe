@@ -7,7 +7,7 @@
 #   <label> | <object> | <action> | <expect>
 #   action: select | select(c1,c2) | insert | insert(c1,c2) | update(c1,c2) | delete | truncate | sql:<statement>
 #           (sql: may use {obj} for the object; '|' inside the statement is fine)
-#   expect: ok | 42501 | <other SQLSTATE> | connect(42501) | rls(42501)   (rls = privilege passed, row-level security refused)
+#   expect: ok | 42501 | <other SQLSTATE> | connect(42501) | rls(42501) | schema(42501)   (schema = no USAGE on the schema)   (rls = privilege passed, row-level security refused)
 #   expect   (connect(…) = denied at login, e.g. no CONNECT privilege;
 #           it never matches a table / column level 42501)
 #   bare `select` (SELECT 1 …) also names no columns: it passes with SELECT on ANY one column; use select(c1,…) or
@@ -98,6 +98,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     case "$code" in
       42501) if [ -n "$CONN" ]; then got="connect(42501)"
              elif echo "$out" | grep -q 'row-level security'; then got="rls(42501)"   # privilege passed, RLS policy refused
+             elif echo "$out" | grep -q 'permission denied for schema'; then got="schema(42501)"   # no USAGE on the schema
              else got="42501"; fi ;;
       22*|23*) got="ok($code)" ;;
       0A000) if [ "$act" = truncate ]; then got="ok($code)"; else got="error($code)"; fi ;;  # FK check runs after the privilege check

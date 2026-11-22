@@ -247,8 +247,8 @@ app | fx.accounts | delete | 42501
 app | fx.ledger | insert | ok
 app | fx.ledger | update(amount) | 42501
 app | fx.events_2026_11 | select | ok
-app | fx_meta.goose_db_version | select | 42501
-app | fx | sql:CREATE TABLE {obj}.x (i int) | 42501
+app | fx_meta.goose_db_version | select | schema(42501)
+app | fx | sql:CREATE TABLE {obj}.x (i int) | schema(42501)
 mig | fx.ledger | truncate | ok
 EOF
 o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/grants.txt" --dsn app="$APP" --dsn mig="$MIG" 2>&1)"; rc=$?
@@ -299,6 +299,10 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$
 printf '%s\n' 'SETUP: CREATE OR REPLACE FUNCTION fx.tmp_notice() RETURNS int LANGUAGE plpgsql AS $$BEGIN RAISE NOTICE '"'"'checked'"'"'; RETURN 1; END$$;' 'A: SELECT 1;' 'B: SELECT 1;' 'CHECK: SELECT fx.tmp_notice() => 1' > "$WORK/race-notice.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-notice.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | grep -q "CHECK PASS" && ok "race.sh:CHECK 查詢有 NOTICE 也照 stdout 比對" || bad "race CHECK NOTICE" "rc=$rc $o"
+printf '%s\n' 'A: SELECT 1;' 'B: SELECT 1;' 'CHECK: SELECT id FROM fx.no_such_table => ' > "$WORK/race-cfail.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-cfail.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | grep -q "CHECK FAIL" && ok "race.sh:CHECK 查詢出錯一律 FAIL(預期值為空也一樣)" || bad "race CHECK 出錯" "rc=$rc $o"
+o="$(printf 'SELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" -v ON_ERROR_STOP=0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 不能改 ON_ERROR_STOP 等控制變數" || bad "psql -v ON_ERROR_STOP" "$o"
 
 # ---------- seed / explain ----------
 o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --file "$FX/db/dev/seed-accounts.sql" --var n=2000 2>&1)"; rc=$?

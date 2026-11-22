@@ -112,12 +112,13 @@ def main(argv):
             p, _, _, _ = parse(args[0])
             print(up.urlunsplit(with_netloc(p, "127.0.0.1:5432")))
             return 0
-        if cmd == "opts":
+        if cmd in ("opts", "opts-last"):
             p, _, _, q = parse(args[0])
             extra = args[1]
             existing = [v for k, v in q if k == "options"]
             rest = [(k, v) for k, v in q if k != "options"]
-            merged = " ".join([extra] + existing).strip()
+            # opts: kit defaults first (DSN options win); opts-last: kit values last (they win)
+            merged = " ".join(([extra] + existing) if cmd == "opts" else (existing + [extra])).strip()
             print(up.urlunsplit(p._replace(query=join_query(rest + [("options", merged)]))))
             return 0
         if cmd == "nopass":

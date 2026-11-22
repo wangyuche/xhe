@@ -72,7 +72,10 @@ case "$CMD" in
     SUPERPASS="$(rand_hex 16)"
     PULLED=""
     RUNARGS=(-d --label "dbrev=$NAME" --shm-size 256m -p "127.0.0.1::5432"
-             -e "POSTGRES_USER=$SUPERUSER" -e "POSTGRES_PASSWORD=$SUPERPASS")
+             --env-file "$DIR/run.env")
+    # every value goes through a 0600 env file, never docker run's argv (visible in ps)
+    ( umask 077; printf 'POSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\n' "$SUPERUSER" "$SUPERPASS" > "$DIR/run.env" )
+    trap 'rm -f "$DIR/run.env"' EXIT   # replaced by the full cleanup trap below; secrets never outlive a failed check
     for m in ${MOUNTS[@]+"${MOUNTS[@]}"}; do
       src="${m%%:*}"; rest="${m#*:}"; dest="${rest%%:*}"; mode=""
       [ "$rest" != "$dest" ] && mode="${rest#*:}"
@@ -87,18 +90,20 @@ case "$CMD" in
     for v in ${RANDOMS[@]+"${RANDOMS[@]}"}; do
       case "$v" in ""|*[!A-Za-z0-9_]*) die "--env-random 名稱不合法:$v" 2 ;; PGDATA|POSTGRES_USER|POSTGRES_INITDB_WALDIR) die "$v 不能用 --env-random 設定" 2 ;; esac
       [ "$v" = "POSTGRES_PASSWORD" ] && continue   # always random already
-      val="$(rand_hex 16)"; RUNARGS+=(-e "$v=$val"); STATE_RANDOM="$STATE_RANDOM $v=$val"
+      val="$(rand_hex 16)"; printf '%s=%s\n' "$v" "$val" >> "$DIR/run.env"; STATE_RANDOM="$STATE_RANDOM $v=$val"
     done
     for kv in ${ENVS[@]+"${ENVS[@]}"}; do
       case "$kv" in [A-Za-z_]*=*) ;; *) die "--env 需要 K=V:$kv" 2 ;; esac
       case "${kv%%=*}" in POSTGRES_PASSWORD|POSTGRES_USER) die "${kv%%=*} 由 pg.sh 設定" 2 ;; esac
       case "${kv%%=*}" in PGDATA|POSTGRES_INITDB_WALDIR) die "${kv%%=*} 不能用 --env 改(資料與 WAL 必須在映像宣告的 VOLUME,也就是 tmpfs 上)" 2 ;; esac
-      RUNARGS+=(-e "$kv")
+      case "$kv" in *"
+"*) die "--env 的值不能跨行:${kv%%=*}" 2 ;; esac
+      printf '%s\n' "$kv" >> "$DIR/run.env"
     done
     CONTAINER="dbrev-$NAME-$(rand_hex 3)"   # traps are in place before the pull, so an interrupted pull is cleaned up too
     START=$(date +%s)
     cleanup_fail() {
-      docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")"
+      docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")" "$DIR/run.env"
       # an image this up pulled is removed again when nothing else uses it
       if [ -n "${PULLED:-}" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then docker image rm "$IMAGE" >/dev/null 2>&1 || true; fi
     }
@@ -112,7 +117,8 @@ case "$CMD" in
     VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
     [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
     for v in $VOLS; do RUNARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
-    docker run --name "$CONTAINER" "${RUNARGS[@]}" "$IMAGE" >/dev/null || { cleanup_fail; die "docker run 失敗" 1; }
+    docker run --name "$CONTAINER" "${RUNARGS[@]}" "$IMAGE" >/dev/null || { rm -f "$DIR/run.env"; cleanup_fail; die "docker run 失敗" 1; }
+    rm -f "$DIR/run.env"
     # init (docker-entrypoint-initdb.d) runs on a socket-only temp server; TCP on 127.0.0.1 answers only after the final start.
     i=0
     until docker exec "$CONTAINER" pg_isready -q -h 127.0.0.1 -p 5432 -U "$SUPERUSER" >/dev/null 2>&1; do
@@ -188,6 +194,8 @@ case "$CMD" in
             case "$2" in *"
 "*|*"$(printf '\r')"*) die "-v 的值不能跨行" 2 ;; esac
             printf '%s' "$2" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.+-]*$' || die "-v 的值只能是英數與 _ . + -(不能含 : \\ 反引號 空白):$2" 2
+            case "${2%%=*}" in ON_ERROR_STOP|ON_ERROR_ROLLBACK|VERBOSITY|ECHO|ECHO_HIDDEN|QUIET|SINGLESTEP|SINGLELINE|AUTOCOMMIT|SHOW_CONTEXT|FETCH_COUNT)
+              die "-v 不能改 psql 的控制變數 ${2%%=*}(kit 依賴它們判斷錯誤)" 2 ;; esac
             VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; ARGS+=("$1" "$2"); shift 2 ;;
         -F|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;
         -c) [ $# -ge 2 ] || die "-c 需要 SQL" 2; CMDS="$CMDS$2

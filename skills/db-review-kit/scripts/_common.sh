@@ -97,7 +97,8 @@ psql_dsn() {
   local idsn
   # standard_conforming_strings is pinned on: _txcheck.py lexes '…' literals with that rule (the guard refuses DSN
   # options and _txcheck refuses SQL that change it)
-  idsn="$(dsnpy opts "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT} -c standard_conforming_strings=on")"
+  # PSQL_KIT_WINS=1 (race / locks sessions): the kit's timeouts must not be overridden by the DSN's own options
+  idsn="$(dsnpy "$( [ -n "${PSQL_KIT_WINS:-}" ] && echo opts-last || echo opts)" "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT} -c standard_conforming_strings=on")"
   # The password travels as PGPASSWORD in docker exec's environment (taken from this process via `-e PGPASSWORD`),
   # never in argv, so `ps` does not show it; it still works when the bootstrap requires scram on 127.0.0.1.
   local pw; pw="$(dsnpy field "$idsn" password)"
