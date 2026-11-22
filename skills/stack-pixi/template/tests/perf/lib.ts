@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { Browser, CDPSession, Page } from '@playwright/test';
 
 /**
- * 量測共用(PX-PERF-01 / 02):Slow 4G + 4× CPU(CDP)、冷快取、每次新 context、取中位數;門檻讀 docs/performance-budgets.md。
+ * 量測共用(PX-PERF-08 / 09):Slow 4G + 4× CPU(CDP)、冷快取、每次新 context、取中位數;門檻讀 docs/performance-budgets.md。
  * page 的 CDP session 設的網路條件也套用到 dedicated Worker 的 fetch(Chrome 實測;stack-pixi 自我測試有一項檢查,Chrome 改變行為時會失敗)。
  */
 export const SLOW4G = { offline: false, latency: 562.5, downloadThroughput: (1.44 * 1024 * 1024) / 8, uploadThroughput: (675 * 1024) / 8 };

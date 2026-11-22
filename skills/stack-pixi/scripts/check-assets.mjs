@@ -1,21 +1,29 @@
 #!/usr/bin/env node
 // PX-RES-01 / PX-PERF-07:src/assets/<group>/ 的 manifest 與檔案一致、尺寸上限、KB 預算。
-//   node check-assets.mjs <專案目錄> [--budgets docs/performance-budgets.md] [--art <art/assets 目錄>]
+//   node check-assets.mjs <專案目錄> [--budgets docs/performance-budgets.md] [--art <art/assets 目錄>] [--baseline <改動前的輸出.json>]
 // - manifest 列的檔案都存在;目錄裡的素材檔都被 manifest 列到(沒有孤兒)。
 // - PNG / JPG 尺寸:@1x ≤ 2048²、@0.5x ≤ 1024²(AVIF 與同級 PNG / JPG 同尺寸,由 build-assets 產生)。
 // - 每個群組 AVIF 合計 ≤「## 素材預算」的 1x_kb / 0.5x_kb(未設定只列出)。
 // - --art:另外用 scripts/schemas/validate.mjs 驗 art/assets/assets.json(含檔案存在)。
+// - 沒有任何 src/assets/<group>/manifest.json(不是 stack-pixi 的素材結構,例如既有專案)→ 結束碼 3、"layout":"absent",
+//   不是違規:改用專案自己的素材檢查,沒有就列為規則落差。
+// - --baseline:errors 的數字換成 # 後比對,基準已有的移到 existing、不算失敗。
 import { readFileSync, readdirSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { makeOpt, usageError, loadBaseline, splitByBaseline, EXIT, MEDIA_RE } from './_cli.mjs';
 
+const USAGE = '用法:node check-assets.mjs <專案目錄> [--budgets <md>] [--art <dir>] [--baseline <json>]';
 const [dirArg, ...rest] = process.argv.slice(2);
-if (!dirArg) { console.error('用法:node check-assets.mjs <專案目錄> [--budgets <md>] [--art <dir>]'); process.exit(2); }
+if (!dirArg || dirArg.startsWith('--')) usageError('缺少 <專案目錄>', USAGE);
 const dir = resolve(dirArg);
-const opt = (n, d) => { const i = rest.indexOf(n); if (i < 0) return d; if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) { console.error(`${n} 需要值`); process.exit(2); } return rest[i + 1]; };
+const opt = makeOpt(rest, USAGE);
 const budgetsFile = resolve(dir, opt('--budgets', 'docs/performance-budgets.md'));
 const artOpt = opt('--art');
 const art = artOpt ? resolve(dir, artOpt) : undefined; // 和 --budgets 一樣相對專案目錄
+const baselineFile = opt('--baseline');
+const keyOf = (e) => String(e).replace(/\d+(\.\d+)?/g, '#');
+const baseline = baselineFile ? loadBaseline(baselineFile, keyOf, USAGE) : undefined;
 const errors = [];
 const report = [];
 
@@ -52,11 +60,15 @@ function budgets() {
 const B = budgets();
 const root = join(dir, 'src/assets');
 const MAX = { '1x': 2048, '0.5x': 1024 };
-for (const g of existsSync(root) ? readdirSync(root) : []) {
+const groups = (existsSync(root) ? readdirSync(root) : []).filter((g) => !g.startsWith('.') && statSync(join(root, g)).isDirectory()); // .build-* 是 build-assets 的暫存
+if (!groups.some((g) => existsSync(join(root, g, 'manifest.json')))) {
+  console.log(JSON.stringify({ ok: false, layout: 'absent', reason: `${root} 下沒有任何 <group>/manifest.json(不是 stack-pixi 素材結構)`, groups: groups }));
+  process.exit(EXIT.layoutAbsent);
+}
+for (const g of groups) {
   const gdir = join(root, g);
-  if (g.startsWith('.') || !statSync(gdir).isDirectory()) continue; // .build-* 是 build-assets 的暫存
   const mf = join(gdir, 'manifest.json');
-  const files = readdirSync(gdir).filter((f) => /\.(avif|png|jpg|webp|ogg|m4a|mp3)$/.test(f));
+  const files = readdirSync(gdir).filter((f) => MEDIA_RE.test(f));
   if (!existsSync(mf)) { if (files.length) errors.push(`${g}: 有素材檔但沒有 manifest.json`); continue; }
   let m;
   try { m = JSON.parse(readFileSync(mf, 'utf8')); } catch (e) { errors.push(`${g}/manifest.json 不是 JSON:${e.message}`); continue; }
@@ -70,7 +82,7 @@ for (const g of existsSync(root) ? readdirSync(root) : []) {
       const tier = key.startsWith('0.5x') ? '0.5x' : key.startsWith('1x') ? '1x' : undefined;
       if (!tier) continue;
       if (name.endsWith('.avif')) kb[tier] += statSync(p).size / 1024;
-      if (/\.(png|jpg)$/.test(name)) {
+      if (/\.(png|jpe?g)$/i.test(name)) {
         const d = dims(p);
         if (!d) errors.push(`${g}/${name}: 讀不到尺寸`);
         else if (d.w > MAX[tier] || d.h > MAX[tier]) errors.push(`${g}/${name}: ${d.w}×${d.h} 超過 ${MAX[tier]}²(PX-RES-01)`);
@@ -94,5 +106,6 @@ if (art) {
     else errors.push(...validate('assets', JSON.parse(readFileSync(af, 'utf8')), { root: resolve(art) }).map((e) => `assets.json ${e}`));
   }
 }
-console.log(JSON.stringify({ ok: errors.length === 0, groups: report, errors }));
-process.exit(errors.length ? 1 : 0);
+const { fresh, existing } = splitByBaseline(errors, keyOf, baseline);
+console.log(JSON.stringify({ ok: fresh.length === 0, groups: report, errors: fresh, existing, baseline: baselineFile ?? null }));
+process.exit(fresh.length ? EXIT.violation : EXIT.ok);

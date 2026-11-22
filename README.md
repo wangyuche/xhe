@@ -118,7 +118,7 @@ ln -s "$(pwd)/agents/game-frontend-owner.md" ~/.claude/agents/game-frontend-owne
 ln -s "$(pwd)/skills/stack-pixi" ~/.claude/skills/stack-pixi
 ```
 
-需要 Node.js ≥ 22、Google Chrome(Playwright 用系統 Chrome,不另外下載瀏覽器)。流程:acceptance-designer(簡報寫「遊戲前端」)起草情境 → game-frontend-owner 實作;缺素材時它寫 `assets.needs.json`,主 agent 交給 game-concept-artist 的「遊戲素材」模式,素材合併後再派 game-frontend-owner 接素材。自我測試:`bash skills/stack-pixi/tests/run.sh`(需要網路)。
+需要 Node.js ≥ 22(專案有指定 node 版本時,本機主版本 ≥ 專案指定的)、Google Chrome(Playwright 用系統 Chrome,不另外下載瀏覽器)。流程:acceptance-designer(簡報寫「遊戲前端」)起草情境 → game-frontend-owner 實作;缺素材時它寫 `assets.needs.json`,主 agent 交給 game-concept-artist 的「遊戲素材」模式,素材合併後再派 game-frontend-owner 接素材。自我測試:`bash skills/stack-pixi/tests/run.sh`(需要網路)。
 
 ## 安裝 skill(全域連結)
 

@@ -3,7 +3,7 @@ import { forgetAudio } from '../core/audio';
 import { chooseTier, type Tier } from './tier';
 
 /**
- * 素材載入(PX-LOAD-01 / 03、PX-RES-01、PX-LIFE-01):
+ * 素材載入(PX-LOAD-01 / 03 / 08、PX-RES-01 / 04 / 05、PX-LIFE-01):
  * - 每個群組 `src/assets/<group>/manifest.json` 由 scripts/build-assets.mjs 產生;檔案經 Vite 加 hash,輸出到 assets/<group>/。
  * - 全部用 lazy glob:群組素材只在 acquireGroup() 時下載,不進首屏。
  * - 參考計數:acquire / release 成對;計數歸零才 unload,而且只 unload 自己載過、cache 裡真的有的 alias。
@@ -22,7 +22,8 @@ export interface ManifestEntry {
 export type Manifest = { group: string; assets: Record<string, ManifestEntry> };
 
 const manifests = import.meta.glob<Manifest>('./*/manifest.json', { import: 'default' });
-const urls = import.meta.glob<string>(['./*/*.avif', './*/*.png', './*/*.jpg', './*/*.ogg', './*/*.m4a'], { query: '?url', import: 'default' });
+// 副檔名與 stack-pixi check-assets / check-early 認得的素材一致(avif png jpg jpeg webp ogg m4a mp3)
+const urls = import.meta.glob<string>(['./*/*.avif', './*/*.png', './*/*.jpg', './*/*.jpeg', './*/*.webp', './*/*.ogg', './*/*.m4a', './*/*.mp3'], { query: '?url', import: 'default' });
 
 let tier: Tier = '1x';
 /** 選素材級別;之後載入的群組用新級別(已載入的群組不受影響,下次載入才換)。 */
@@ -42,7 +43,7 @@ const pendingCounts = new Map<string, number>();
 /** 已經 Assets.add 過的 alias(unload 後 resolver 仍保留,不要重複 add)。 */
 const owner = new Map<string, string>(); // alias → `<group>/<檔名>`(同步登記,不同群組同 id 不同圖時改用帶群組的 alias)
 const registered = new Set<string>(); // 已經 Assets.add 過的 alias
-/** 每個 alias 被幾個已載入群組使用(PX-LOAD-04:跨群組共用的貼圖,計數歸零才 unload)。 */
+/** 每個 alias 被幾個已載入群組使用(PX-LOAD-08:跨群組共用的貼圖,計數歸零才 unload)。 */
 const aliasRefs = new Map<string, number>();
 const pendingLoads = new Map<string, Promise<void>>();
 

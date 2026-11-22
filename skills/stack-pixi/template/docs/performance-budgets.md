@@ -20,7 +20,7 @@
 ## 傳輸量
 | key | 門檻 | 說明 |
 |---|---|---|
-| boot_kb | __BOOT__ | 可互動前的傳輸量(gzip 後,KB);BGM 不得計入(PX-LOAD-06) |
+| boot_kb | __BOOT__ | 可互動前的傳輸量(gzip 後,KB);BGM 不得計入(PX-LOAD-06;BGM 第一次手勢後才下載,PX-LOAD-10) |
 
 ## 長時間遊玩
 | key | 門檻 | 說明 |
