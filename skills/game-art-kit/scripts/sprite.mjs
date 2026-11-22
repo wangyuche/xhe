@@ -33,7 +33,10 @@ export function decodePng(buf) {
   if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) die('不是 PNG');
   let p = 8, ihdr, plte, trns; const idat = [];
   while (p < buf.length) {
-    const len = buf.readUInt32BE(p), type = buf.toString('ascii', p + 4, p + 8), data = buf.subarray(p + 8, p + 8 + len);
+    if (p + 12 > buf.length) die('PNG 不完整(檔案被截斷)');
+    const len = buf.readUInt32BE(p);
+    if (p + 12 + len > buf.length) die('PNG 不完整(檔案被截斷)');
+    const type = buf.toString('ascii', p + 4, p + 8), data = buf.subarray(p + 8, p + 8 + len);
     if (type === 'IHDR') ihdr = { w: data.readUInt32BE(0), h: data.readUInt32BE(4), depth: data[8], ct: data[9], interlace: data[12] };
     else if (type === 'PLTE') plte = data; else if (type === 'tRNS') trns = data; else if (type === 'IDAT') idat.push(data); else if (type === 'IEND') break;
     p += 12 + len;
@@ -41,6 +44,8 @@ export function decodePng(buf) {
   if (!ihdr) die('PNG 沒有 IHDR');
   const { w, h, depth, ct, interlace } = ihdr;
   if (interlace) die('不支援 interlace PNG');
+  if (ct === 3 && !plte) die('調色盤 PNG 缺 PLTE');
+  if (!idat.length) die('PNG 沒有影像資料');
   if (![8, 16].includes(depth) && !(ct === 3 && depth <= 8)) die(`不支援的 bit depth ${depth}`);
   const ch = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[ct]; if (!ch) die(`不支援的色彩類型 ${ct}`);
   const bpp = Math.max(1, (ch * depth) / 8), stride = Math.ceil((w * ch * depth) / 8);

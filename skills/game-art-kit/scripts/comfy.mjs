@@ -171,7 +171,7 @@ async function check() {
     if (ms.length) bg.push({ node: 'RMBG', models: ms });
   }
   const bgOk = bg.length > 0 && has('InvertMask') && has('JoinImageWithAlpha');
-  writeNodeFlags(oi, bg.flatMap(x => x.models));
+  writeNodeFlags(oi, bgOk ? bg.flatMap(x => x.models) : []);
   const unsupportedBg = [];
   const coreBg = await json('/models/background_removal').then(x => Array.isArray(x) ? x : []);
   if (has('RemoveBackground') && coreBg.length) unsupportedBg.push({ node: 'RemoveBackground', note: '主機有核心去背模型,但本 kit 的 sprite 骨架用 RMBG,不能用' });
@@ -313,7 +313,7 @@ async function run() {
     if (!oi || classes.some(c => !(c in oi))) {
       const full = await json('/object_info', { timeoutMs: 60000 });
       if (full.__status) die(`/object_info 回 HTTP ${full.__status}`, 3);
-      oi = writeNodeFlags(full);
+      oi = writeNodeFlags(full, readCache()?.rmbg); // 保留 check 存的 RMBG 清單
     }
     const api = classes.filter(c => oi[c]?.api_node === true);
     if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);

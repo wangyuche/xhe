@@ -97,14 +97,17 @@ function process_(input, { type, dur, out, name, loop }) {
     // 仍超過 −1.5 dBTP(取樣間峰值)再補一次降增益
     const norm = join(tmp, 'n.wav');
     // 限幅會吃掉響度:量測後補增益再限幅,最多 4 次,直到響度在目標 ±0.5 LU 內
-    let applied = gain;
+    let applied = gain; const firstGain = gain;
     for (let i = 0; i < 4; i++) {
       applied = gain;
       ff(['-i', stage1, '-af', short ? `volume=${gain.toFixed(2)}dB` : `volume=${gain.toFixed(2)}dB,alimiter=limit=0.708:attack=1:release=50:level=disabled:latency=1`, norm]);
       if (short) break;
       const mi = measure(norm);
       if (!(mi.lufs > -69) || Math.abs(mi.lufs - TARGET[type].lufs) <= 0.5) break;
-      gain += TARGET[type].lufs - mi.lufs;
+      // 補償最多比第一次多 6 dB(避免把衝擊音效壓到失真);到上限就停,響度不足由 check 判斷
+      const next = Math.min(gain + (TARGET[type].lufs - mi.lufs), firstGain + 6);
+      if (next <= gain + 0.05) break;
+      gain = next;
     }
     const m1 = measure(norm);
     if (m1.truePeak > TP_OUT) { const adj = TP_OUT - m1.truePeak - 0.1; const fix = join(tmp, 'f.wav'); ff(['-i', norm, '-af', `volume=${adj.toFixed(2)}dB`, fix]); renameSync(fix, norm); applied += adj; }

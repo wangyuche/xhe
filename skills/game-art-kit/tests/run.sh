@@ -241,7 +241,7 @@ if A tools >/dev/null 2>&1; then
   ffmpeg -v error -y -f lavfi -i "anullsrc=r=48000:cl=stereo:d=0.2" -f lavfi -i "sine=f=1200:d=0.15,volume=0.8" -filter_complex "[1]aformat=sample_rates=48000:channel_layouts=stereo[s];[0][s]concat=n=2:v=0:a=1" "$W/au/click.wav"
   o="$(A process "$W/au/click.wav" --type sfx --duration 0.3 --out "$W/au" --name sfx.click)" && echo "$o" | grep -q '"normalized":"peak"' && echo "$o" | grep -q '"lufs":null' \
     && o2="$(A check "$W/au/sfx.click.ogg" "$W/au/sfx.click.m4a" --type sfx --duration 0.3 --peak)" && ok "audio.mjs:短於 0.4 秒的音效改以峰值正規化,check 不套整體響度" || bad "audio 短音效" "$o $o2"
-  ffmpeg -v error -y -f lavfi -i "aevalsrc='if(lt(mod(t\,0.25)\,0.004)\,0.95*sin(2*PI*900*t)\,0.02*sin(2*PI*200*t))':s=48000:d=1.5" -ac 2 "$W/au/punch.wav"
+  ffmpeg -v error -y -f lavfi -i "aevalsrc='0.95*exp(-12*mod(t\,0.5))*sin(2*PI*900*t)':s=48000:d=1.5" -ac 2 "$W/au/punch.wav"
   o="$(A process "$W/au/punch.wav" --type sfx --duration 1.5 --out "$W/au" --name sfx.hit)" && o2="$(A check "$W/au/sfx.hit.ogg" "$W/au/sfx.hit.m4a" --type sfx --duration 1.5)" \
     && ok "audio.mjs:峰值因數大的衝擊音效經限幅後同時達到響度與峰值" || bad "audio 衝擊音效" "$o $o2"
   ffmpeg -v error -y -f lavfi -i "sine=f=220:d=6.5,volume=0.5" -f lavfi -i "sine=f=330:d=6.5,volume=0.3" -filter_complex "[0][1]amix=inputs=2,aformat=sample_rates=48000:channel_layouts=stereo" "$W/au/music.wav"
@@ -276,6 +276,19 @@ echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"ui.x","type
 o="$(V needs "$W/v/crash.json" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '"ok":false' && echo "$o" | grep -q 'nineSlice: 應為 array' && ok "schema:型別錯誤只回報錯誤,不丟例外" || bad "schema 型別錯誤崩潰" "$o"
 echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"a.b","group":"l","purpose":"x","width":10,"height":10}]}' > "$W/v/notype.json"
 o="$(V needs "$W/v/notype.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '缺少 type' && ! echo "$o" | grep -q 'durationSec' && ok "schema:缺 type 只報缺 type,不疊出矛盾的錯誤" || bad "schema 缺 type" "$o"
+for bad in '{"version":1,"design":{"width":10,"height":10},"needs":"oops"}' 'null' '[1,2]' '{"version":1,"design":{"width":10,"height":10},"needs":["x",3,null]}' \
+  '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"a.b","type":"frames","group":"g","purpose":"p","width":10,"height":10,"frames":5}]}' \
+  '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"a.b","type":"ui","group":"g","purpose":"p","width":10,"height":10,"nineSlice":"1,2,3,4","density":"2"}]}'; do
+  echo "$bad" > "$W/v/t.json"; o="$(V needs "$W/v/t.json" 2>&1)"; rc=$?
+  [ $rc -eq 1 ] && echo "$o" | grep -q '"ok":false' && ! echo "$o" | grep -q 'TypeError\|at ' || { bad "schema 型別錯誤不丟例外:$bad" "rc=$rc $o"; continue; }
+done; ok "schema:needs / 根物件 / frames / nineSlice / density 型別錯誤都只回報錯誤(結束碼 1),不丟例外"
+for bad in '{"version":1,"assets":"x"}' '{"version":1,"assets":[{"id":"a.b","type":"sfx","group":"g","files":"g/a.b.ogg","durationSec":1,"lufs":-16,"source":"out/x/manifest.json#a","review":"pending"}]}' \
+  '{"version":1,"assets":[{"id":"a.b","type":"frames","group":"g","files":[1,2],"width":1,"height":1,"density":2,"anchor":[0.5,1],"frames":7,"source":"out/x/manifest.json#a","review":"pending"}]}'; do
+  echo "$bad" > "$W/v/t.json"; o="$(V assets "$W/v/t.json" --root "$W/v" 2>&1)"; rc=$?
+  [ $rc -eq 1 ] && echo "$o" | grep -q '"ok":false' || { bad "assets 型別錯誤不丟例外:$bad" "rc=$rc $o"; continue; }
+done; ok "schema:assets / files / frames 型別錯誤(含 --root)都只回報錯誤"
+node --input-type=module -e 'import { validate } from "'"$K"'/schemas/validate.mjs"; const e = validate("needs", { version: 1, design: { width: 1, height: 1 }, needs: [{ id: "a.b", type: "ui", group: "g", purpose: "p", width: 5, height: 5, nineSlice: 9 }] }); process.exit(Array.isArray(e) && e.length ? 0 : 1)' \
+  && ok "schema:import 呼叫 validate() 遇型別錯誤回傳錯誤陣列,不丟例外" || bad "validate() import 型別錯誤" ""
 echo '{"version":1,"assets":[{"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":100,"frameHeight":160,"columns":4},"source":"out/x/manifest.json#r","review":"pending"},{"id":"sfx.l","type":"sfx","group":"table","files":["table/sfx.l.ogg","table/sfx.l.m4a"],"durationSec":1,"lufs":-16,"loop":true,"source":"out/x/manifest.json#l","review":"pending"}]}' > "$W/v/fw.json"
 o="$(V assets "$W/v/fw.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'frameWidth' && echo "$o" | grep -q 'assets\[1\]: 不可有 loop' && ok "schema:frames 尺寸要等於顯示 × density、音效不可有 loop" || bad "schema frames / sfx loop" "$o"
 echo '{"version":1,"assets":[{"id":"hero.idle","type":"sprite","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"source":"out/x/manifest.json#r","review":"pending"},{"id":"hero.x","type":"sprite","group":"table","files":["table/hero.x.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"constructor":1,"source":"out/x/manifest.json#x","review":"pending"}]}' > "$W/v/name.json"

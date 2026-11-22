@@ -66,9 +66,14 @@ const IMAGE = new Set(['sprite', 'frames', 'tile', 'background', 'ui']);
 
 // 語意檢查(schema 表達不了的)
 function semantic(kind, obj, root, errs) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
   const list = kind === 'needs' ? obj.needs : obj.assets;
   if (!Array.isArray(list)) return;
-  list.forEach((a, i) => {
+  list.forEach((a, i) => { try { semanticItem(kind, a, i, root, errs); } catch (e) { errs.push(`${kind}[${i}]: 格式錯誤,無法檢查(${e.message})`); } });
+}
+
+function semanticItem(kind, a, i, root, errs) {
+  {
     const p = `${kind}[${i}](${a?.id})`;
     if (!a || typeof a !== 'object') return;
     // schema 已報錯的項目(型別可能不對)不做語意檢查,避免丟例外
@@ -76,6 +81,11 @@ function semantic(kind, obj, root, errs) {
     if (a.nineSlice && a.width && a.height) {
       const [t, r, b, l] = a.nineSlice;
       if (t + b >= a.height || l + r >= a.width) errs.push(`${p}: nineSlice 切線超出尺寸`);
+    }
+    if (kind === 'needs' && a.width && a.height && a.density) {
+      const W = a.width * a.density, H = a.height * a.density, n = a.frames?.count ?? 1;
+      const cols = Math.max(1, Math.min(n, Math.floor(2048 / W))), rows = Math.ceil(n / cols);
+      if (Math.max(W, H) > 2048 || H * rows > 2048) errs.push(`${p}: 顯示尺寸 × density 超過 2048(PX-RES-01);降低 density 或不指定(交給 sprite.mjs density 算)`);
     }
     if (kind !== 'assets') return;
     const files = a.files ?? [];
@@ -118,7 +128,7 @@ function semantic(kind, obj, root, errs) {
         } else errs.push(`${p}: ${f} 不是 PNG`);
       }
     }
-  });
+  }
 }
 
 export function validate(kind, obj, { root } = {}) {
