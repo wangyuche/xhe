@@ -56,10 +56,12 @@ if command -v go >/dev/null 2>&1; then
 else skip "沙盒 GOMODCACHE(沒有 go)"; fi
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'DATABASE_URL=host=10.0.0.1 dbname=x'" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && ok "隔離:DB 類變數不是 URL(keyword DSN)→ 拒絕(結束碼 4)" || bad "keyword DSN 應拒絕" "rc=$rc $o"
-for kv in 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
+for kv in 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
 done
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'REPORT_DIR=/tmp/out' 'TEST_FEEDBACK_MODE=on' 'START_AT=12:30'" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ok "隔離:REPORT_DIR / FEEDBACK / 12:30 這類無關變數不誤擋" || bad "誤擋無關變數" "rc=$rc $o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_DATABASE_URL=postgres://u:p@127.0.0.1:5432/x_test'" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && ok "隔離:--env 的 DSN 指向別的埠 → 拒絕" || bad "--env 錯埠應拒絕" "rc=$rc $o"
 
@@ -71,6 +73,10 @@ printf '%s\n' '{"ImportPath":"p [p.test]","Action":"build-output","Output":"x.go
   '{"Action":"start","Package":"p"}' '{"Action":"output","Package":"p","Output":"FAIL\tp [build failed]\n"}' '{"Action":"fail","Package":"p"}' > "$WORK/bf.jsonl"
 o="$(python3 -I "$S/_gotest_parse.py" "$WORK/bf.jsonl" 1)"
 echo "$o" | grep -q '"status": "FAIL"' && echo "$o" | grep -q '"packages": {"ok": 0, "fail": 0, "no_tests": 0, "build_fail": 1}' && ok "gotest 解析:編譯失敗 → FAIL(同一個套件只算一次 build_fail)" || bad "編譯失敗" "$o"
+
+printf '%s\n' 'go: updates to go.mod needed; to update it:' '	go mod tidy' > "$WORK/plain.jsonl"
+o="$(python3 -I "$S/_gotest_parse.py" "$WORK/plain.jsonl" 1 1)"
+echo "$o" | grep -q '"status": "FAIL"' && echo "$o" | grep -q 'go mod tidy' && ok "gotest 解析:go 結束碼非 0 但沒有測試事件 → FAIL(不是 GAP)" || bad "go rc 非 0" "$o"
 
 # ---------- 4. non-local docker refused (offline) ----------
 for h in tcp://192.0.2.1:2375 ssh://user@192.0.2.1; do
@@ -154,6 +160,9 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$FX/migrations/00003_notes
 gone="$(echo "SELECT to_regclass('fx.notes') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
 echo "$o" | grep -q '| fx.accounts | ShareRowExclusiveLock | writes' && echo "$o" | tail -1 | grep -q '"rolled_back":true' && [ "$gone" = t ] && [ $rc -eq 0 ] \
   && ok "locks.sh:00003 Up 在交易內觀察到 accounts 的 ShareRowExclusiveLock(擋寫入),結束後已 ROLLBACK" || bad "locks 交易內" "rc=$rc gone=$gone $o"
+printf -- '-- +goose Up\nDROP TABLE IF EXISTS fx.no_such_table;\nCREATE INDEX IF NOT EXISTS accounts_pkey ON fx.accounts (id);\n' > "$WORK/notice.sql"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/notice.sql" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ! echo "$o" | grep -q 'NOTICE' && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:DDL 的 NOTICE 不會被當成鎖" || bad "locks NOTICE" "rc=$rc $o"
 printf -- '-- +goose NO TRANSACTION\n-- +goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS x ON fx.accounts (name);\n' > "$WORK/nt.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/nt.sql" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'NO TRANSACTION' && ok "locks.sh:NO TRANSACTION 檔 → 拒絕交易內觀察" || bad "NO TRANSACTION" "$o"
 bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" -- up >/dev/null 2>&1 || bad "goose up 回到最新版"

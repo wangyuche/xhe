@@ -10,7 +10,7 @@ import sys
 NOISE = ("=== RUN", "=== PAUSE", "=== CONT", "=== NAME", "--- SKIP", "--- PASS", "--- FAIL")
 
 
-def main(path, elapsed):
+def main(path, elapsed, go_rc=0):
     outputs = {}
     results = {}
     pkgs = {}
@@ -77,6 +77,10 @@ def main(path, elapsed):
         gaps.append("no tests ran")
     if top["skip"] or subs["skip"]:
         gaps.append("%d skipped" % (top["skip"] + subs["skip"]))
+    if go_rc != 0 and not fail:
+        # go exited non-zero without a failing test event (build/setup error printed as plain text, panic, timeout)
+        fail = True
+        failed.append({"package": "(go)", "test": "(exit %d)" % go_rc, "output": raw[-15:]})
     status = "FAIL" if fail else ("GAP" if gaps else "PASS")
     out = {
         "status": status, "tests": top, "subtests": subs, "packages": pkg_count,
@@ -88,4 +92,4 @@ def main(path, elapsed):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 0))
+    sys.exit(main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 0, int(sys.argv[3]) if len(sys.argv) > 3 else 0))

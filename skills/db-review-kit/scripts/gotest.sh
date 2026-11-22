@@ -56,7 +56,7 @@ set +e
 GORC=$?
 set -e
 ELAPSED=$(( $(date +%s) - START ))
-SUMMARY="$(python3 -I "$KIT_DIR/scripts/_gotest_parse.py" "$LOG" "$ELAPSED")"
+SUMMARY="$(python3 -I "$KIT_DIR/scripts/_gotest_parse.py" "$LOG" "$ELAPSED" "$GORC")"
 python3 -I -c '
 import json,sys
 s=json.loads(sys.argv[1]); t=s["tests"]; u=s["subtests"]

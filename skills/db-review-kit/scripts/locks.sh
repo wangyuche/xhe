@@ -83,11 +83,17 @@ LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc 
 
 if [ -z "$HOLD" ]; then
   out="$(printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
-        | psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
-  if [ $rc -ne 0 ]; then echo "$out" | tail -5 >&2; printf '{"mode":"in-transaction","ok":false,"error":"%s"}\n' "$(echo "$out" | grep -m1 -oE '[0-9A-Z]{5}: .{0,80}' | tr -d '"' || true)"; exit 1; fi
+        | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "$out" | tail -5 >&2
+    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","ok":False,"error":sys.argv[1]},ensure_ascii=False))' \
+      "$(echo "$out" | grep -m1 -oE '[0-9A-Z]{5}: .{0,120}' || true)"
+    exit 1
+  fi
   echo "| object | mode | blocks |"; echo "|---|---|---|"
   n=0; ae=0
   while IFS='|' read -r obj mode; do
+    case "$mode" in *Lock) ;; *) continue ;; esac   # skip NOTICE / other non-lock lines
     [ -n "$obj" ] || continue
     echo "| $obj | $mode | $(blocks_of "$mode") |"; n=$((n + 1))
     [ "$mode" = AccessExclusiveLock ] && ae=$((ae + 1))

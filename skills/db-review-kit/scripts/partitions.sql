@@ -63,10 +63,10 @@ JOIN pg_partitioned_table pt ON pt.partrelid = con.confrelid
 WHERE con.contype = 'f' AND con.conparentid = 0
 ORDER BY 1, 2;
 
-\echo '### default partition (out-of-range writes fail without one)'
+\echo '### default partition (range / list only; out-of-range writes fail without one)'
 SELECT p.oid::regclass AS parent, (pt.partdefid <> 0) AS has_default_partition
 FROM pg_partitioned_table pt JOIN pg_class p ON p.oid = pt.partrelid
-WHERE p.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+WHERE pt.partstrat <> 'h' AND p.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
 ORDER BY 1;
 
 \pset tuples_only on
@@ -76,5 +76,5 @@ SELECT 'partitions_summary parents=' || (SELECT count(*) FROM pg_partitioned_tab
     || ' runway_violations=' || (SELECT count(*) FROM dbrev_runway WHERE runway_days < :min_runway_days)
     || ' acl_mismatches=' || (SELECT count(*) FROM dbrev_acl)
     || ' missing_default=' || (SELECT count(*) FROM pg_partitioned_table pt JOIN pg_class p ON p.oid = pt.partrelid
-                               WHERE pt.partdefid = 0
+                               WHERE pt.partdefid = 0 AND pt.partstrat <> 'h'
                                  AND p.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace));

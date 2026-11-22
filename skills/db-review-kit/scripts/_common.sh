@@ -126,32 +126,43 @@ iso_base_env() {
 # look like a connection target (host=, @, host:port, other URLs) nor sit under a connection-looking name.
 # This is a heuristic backstop: pass only the DSN variables the project's tests read.
 check_extra_env() {
-  local kv k v
+  local kv k v ku tok looks
   for kv in "$@"; do
     case "$kv" in *=*) ;; *) die "--env 需要 K=V:$kv" 2 ;; esac
     k="${kv%%=*}"; v="${kv#*=}"
     case "$k" in ""|*[!A-Za-z0-9_]*) die "環境變數名稱不合法:$k" 2 ;; esac
-    local ku; ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
-    case "$v" in
-      postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v" ;;
-      *://*) die "$k 的值是非 postgres 的 URL,拒絕" 4 ;;
-      *host=*|*hostaddr=*|*@*|*[A-Za-z0-9.]:[0-9]*|*\[*\]:[0-9]*) die "$k 的值看起來是連線設定(host= / @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
-      *)
-        case "$ku" in
-          PG*|*DATABASE*|*DSN*|*_URL|*_URI|*DB*|*HOST*|*POSTGRES*|*ADDR*|*PORT*|*SERVER*|*SOCKET*) [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4 ;;
-        esac ;;
+    ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
+    # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
+    case "$ku" in
+      PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|GO*) die "$k 是隔離環境自己設定的變數,不能用 --env 覆寫" 4 ;;
     esac
+    case "$v" in
+      postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v"; continue ;;
+      *://*) die "$k 的值是非 postgres 的 URL,拒絕" 4 ;;
+      *host=*|*hostaddr=*|*dbname=*|*user=*|*sslmode=*|*port=*|*service=*|*@*)
+        die "$k 的值看起來是連線設定(libpq 關鍵字或 @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
+    esac
+    if printf '%s' "$v" | grep -Eq '^([A-Za-z][A-Za-z0-9.-]*|[0-9]+(\.[0-9]+){3}|\[[0-9A-Fa-f:]+\]):[0-9]{2,5}$'; then
+      die "$k 的值看起來是 主機:埠,拒絕" 4
+    fi
+    # Connection-looking names (whole _-separated tokens, so REPORT_DIR / FEEDBACK are fine) must carry a guarded URL.
+    looks=""
+    case "$ku" in PG*) looks=1 ;; esac
+    for tok in $(printf '%s' "$ku" | tr '_' ' '); do
+      case "$tok" in DATABASE|DSN|DB|HOST|POSTGRES|POSTGRESQL|ADDR|PORT|SERVER|SOCKET|URL|URI|CONN|CONNECTION) looks=1 ;; esac
+    done
+    [ -z "$looks" ] || [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4
   done
 }
 
-# usage: run_iso <name> [K=V ...] -- cmd args...
+# usage: run_iso <name> [K=V ...] -- cmd args...   (K=V from users must pass check_extra_env first)
 run_iso() {
   local name="$1"; shift
   local extra=()
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do extra+=("$1"); shift; done
   [ "${1:-}" = "--" ] || die "run_iso 缺少 --" 2
   shift
-  [ ${#extra[@]} -eq 0 ] || check_extra_env "${extra[@]}"
+  # Caller-supplied variables are validated by check_extra_env before this (gotest.sh); kit-internal ones (GOBIN) are trusted.
   local base=() line
   local envtxt; envtxt="$(iso_base_env "$name")" || die "無法建立隔離環境" 1
   while IFS= read -r line; do base+=("$line"); done <<< "$envtxt"
