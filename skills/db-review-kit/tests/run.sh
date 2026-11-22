@@ -199,6 +199,13 @@ done
 o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":false' && ok "locks.sh:SQL 中途 COMMIT 會被 txid 檢查偵測(rolled_back:false、結束碼 1)" || bad "locks txid 偵測" "rc=$rc $o"
 echo "DROP TABLE IF EXISTS fx.tmp_det;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
+o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1/0" 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":false' && ok "locks.sh:COMMIT 之後又出錯也偵測得到(rolled_back:false)" || bad "locks commit+error" "rc=$rc $o"
+echo "DROP TABLE IF EXISTS fx.tmp_det;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_err (i int); SELECT 1/0" 2>&1)"; rc=$?
+gone3="$(echo "SELECT to_regclass('fx.tmp_err') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":true' && [ "$gone3" = t ] && ok "locks.sh:SQL 出錯時回報錯誤且證明已 ROLLBACK" || bad "locks error rollback" "rc=$rc gone=$gone3 $o"
+echo "DROP TABLE IF EXISTS fx.tmp_det;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE TABLE fx.tmp_c (i int); COMMIT;' 2>&1)"; rc=$?
 gone2="$(echo "SELECT to_regclass('fx.tmp_c') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
 [ $rc -eq 2 ] && [ "$gone2" = t ] && ok "locks.sh:SQL 含 COMMIT → 拒絕,沒有留下物件" || bad "locks COMMIT" "rc=$rc gone=$gone2 $o"
@@ -300,6 +307,8 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT * FROM fx.no_such_ta
 [ $rc -eq 1 ] && ok "explain.sh:SQL 錯誤 → 結束碼 1(不會被當成 Docker 沒開的 3)" || bad "explain SQL 錯誤結束碼" "rc=$rc $o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--target-ms 不是數字 → 用法錯誤" || bad "explain target 格式" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.accounts; -- hot path" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:同一行分號後的註解不算第二個語句" || bad "explain 同行註解" "$o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1; /* note */" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:分號後的 /* */ 註解不算第二個語句" || bad "explain 區塊註解" "$o"
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --env POSTGRES_INITDB_WALDIR=/wal 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:POSTGRES_INITDB_WALDIR → 拒絕(WAL 也要在 tmpfs)" || bad "WALDIR" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --timeout 2m 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--timeout 不是秒數 → 用法錯誤(不啟動容器)" || bad "pg timeout" "$o"
 printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q2.sql" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:結尾分號後面接註解行也算一個語句" || bad "explain 分號+註解" "$o"

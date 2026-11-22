@@ -103,22 +103,38 @@ blocks_of() { # lock mode -> what ordinary statements it blocks
 }
 LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, CASE WHEN l.relation <> ALL (:'dbrev_pre'::oid[]) THEN 'new' ELSE '' END FROM pg_locks l WHERE l.pid = pg_backend_pid() AND l.granted AND l.locktype = 'relation' AND l.relation <> 'pg_locks'::regclass AND NOT EXISTS (SELECT 1 FROM pg_class cc WHERE cc.oid = l.relation AND cc.relnamespace = 'pg_catalog'::regnamespace) ORDER BY 1, 2;"
 
+# Every user SQL runs as:  BEGIN; <BEGIN txid>; SAVEPOINT; <SQL>; <END txid>; <extra>; ROLLBACK TO SAVEPOINT; <AFTER txid>; ROLLBACK
+# with ON_ERROR_STOP off, so the markers are printed even when the SQL fails. "Rolled back" is proven only when AFTER
+# exists and equals BEGIN (and END, if printed, too): a COMMIT inside the SQL — however it got past the pre-filter,
+# and even if a later statement errors — makes AFTER differ or go missing. No SQL lexing is involved.
+wrap_sql() { # <app-name suffix> <sql> <extra sql run before the rollback>
+  printf "SET application_name = 'dbrev-lock-%s-%s';\nSET lock_timeout = '%s';\n\\\\set ON_ERROR_STOP 0\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\nSAVEPOINT dbrev_sp;\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\n%s\nROLLBACK TO SAVEPOINT dbrev_sp;\nSELECT '__DBREV_TX_AFTER__' || txid_current();\nROLLBACK;\n" \
+    "$RID" "$1" "$LT" "$2" "$3"
+}
+tx_rolled_back() { # <output text> : 0 if the transaction provably stayed open until our ROLLBACK
+  local b e a
+  b="$(printf '%s\n' "$1" | grep -m1 '^__DBREV_TX_BEGIN__' | sed 's/^__DBREV_TX_BEGIN__//' || true)"
+  e="$(printf '%s\n' "$1" | grep '^__DBREV_TX_END__' | tail -1 | sed 's/^__DBREV_TX_END__//' || true)"
+  a="$(printf '%s\n' "$1" | grep '^__DBREV_TX_AFTER__' | tail -1 | sed 's/^__DBREV_TX_AFTER__//' || true)"
+  [ -n "$b" ] && [ "$a" = "$b" ] && { [ -z "$e" ] || [ "$e" = "$b" ]; }
+}
+
 if [ -z "$HOLD" ]; then
   # Relations that exist before the DDL; anything else in pg_locks afterwards was created by this transaction.
   # txid before / after the user SQL: if the SQL ended our transaction (COMMIT, however it got past the filter),
   # the ids differ and the run is reported as committed (structural check, no SQL lexing involved).
-  out="$(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nSELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
+  out="$( { printf "SELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\n"; wrap_sql ddl "$SQL" "$(printf '\\echo __DBREV_LOCKS__\n%s' "$LOCKQ")"; } \
         | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
-  if [ $rc -ne 0 ]; then
-    echo "$out" | tail -5 >&2
-    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","ok":False,"error":sys.argv[1]},ensure_ascii=False,separators=(",",":")))' \
-      "$(echo "$out" | grep -m1 -oE '[0-9A-Z]{5}: .{0,120}' || true)"
+  err="$(echo "$out" | grep -m1 -oE '(ERROR|FATAL): +[0-9A-Z]{5}: .{0,120}' || true)"
+  if ! tx_rolled_back "$out"; then
+    echo "$out" | grep -E 'ERROR|FATAL' | head -3 >&2
+    echo "SQL 結束了交易(COMMIT 等)或無法證明已 ROLLBACK:暫存資料庫可能已被改,後續實測請 pg.sh rm 後重建" >&2
+    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","rolled_back":False,"ok":False,"error":sys.argv[1] or "transaction ended inside the SQL"},ensure_ascii=False,separators=(",",":")))' "$err"
     exit 1
   fi
-  txb="$(echo "$out" | grep -m1 '^__DBREV_TX_BEGIN__' || true)"; txe="$(echo "$out" | grep '^__DBREV_TX_END__' | tail -1 || true)"
-  if [ -z "$txb" ] || [ "${txb#__DBREV_TX_BEGIN__}" != "${txe#__DBREV_TX_END__}" ]; then
-    echo "SQL 在交易中途結束了交易(COMMIT 等):變更已寫入暫存資料庫,後續實測請 pg.sh rm 後重建" >&2
-    echo '{"mode":"in-transaction","rolled_back":false,"ok":false,"error":"transaction ended inside the SQL"}'
+  if [ -n "$err" ] || [ $rc -ne 0 ]; then
+    echo "$out" | grep -E 'ERROR|FATAL' | head -3 >&2
+    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","rolled_back":True,"ok":False,"error":sys.argv[1]},ensure_ascii=False,separators=(",",":")))' "${err:-psql rc=$rc}"
     exit 1
   fi
   echo "| object | mode | blocks |"; echo "|---|---|---|"   # objects created by this DDL are marked new (invisible to others)
@@ -136,14 +152,14 @@ fi
 
 # ---- hold mode ----
 ST_HOLD="$((HOLD_S + 20))s"
-(printf "SET application_name = 'dbrev-lock-${RID}-hold';\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\nSELECT pg_sleep(%s);\nROLLBACK;\n" "$HOLD" "$HOLD_S" \
-  | ST_OVERRIDE="$ST_HOLD" psql_dsn "$HOLD_DSN" -qAt > "$WORK/hold.out" 2>&1) & PIDS="$PIDS $!"
+(wrap_sql hold "$HOLD" "SELECT pg_sleep($HOLD_S);" \
+  | ST_OVERRIDE="$ST_HOLD" psql_dsn "$HOLD_DSN" -qAt > "$WORK/hold.out" 2>&1) & HOLD_PID=$!; PIDS="$PIDS $HOLD_PID"
 i=0
 until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-${RID}-hold' AND wait_event = 'PgSleep';\n" | psql_dsn "$MON" -qAt 2>/dev/null)" = "1" ]; do
   i=$((i + 1)); [ $i -lt 40 ] || { cat "$WORK/hold.out" >&2; die "hold session 沒有進入等待(hold SQL 失敗?)" 1; }
   sleep 0.25
 done
-(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\nROLLBACK;\n" "$LT" "$SQL" \
+(wrap_sql ddl "$SQL" "" \
   | { set +e; psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out"; }) & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
 wait_lock() { # <session> : until it waits on a lock; gives up after the lock timeout (wall clock), reports monitor errors
   local start r; start=$(date +%s)
@@ -159,7 +175,7 @@ OBSERVED=true
 wait_lock ddl || OBSERVED=false
 PROBE_PID=""
 if [ -n "$PROBE" ]; then
-  (printf "SET application_name = 'dbrev-lock-${RID}-probe';\nSET lock_timeout = '%s';\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\nROLLBACK;\n" "$LT" "$PROBE" \
+  (wrap_sql probe "$PROBE" "" \
     | { set +e; psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out"; }) & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
   wait_lock probe || OBSERVED=false
 fi
@@ -184,13 +200,12 @@ outcome() { # file -> ok | timeout(55P03) | error(code)
   else echo "error(${c:-?})"; fi
 }
 DDL_RES="$(outcome "$WORK/ddl.out")"
-tx_ended() { # <outfile> : 0 if the SQL ended our transaction (txid before / after differ) or reached its end marker with another txid
-  local b e; b="$(grep -m1 '^__DBREV_TX_BEGIN__' "$1" || true)"; e="$(grep '^__DBREV_TX_END__' "$1" | tail -1 || true)"
-  [ -n "$e" ] && [ "${b#__DBREV_TX_BEGIN__}" != "${e#__DBREV_TX_END__}" ]
-}
-if [ "$DDL_RES" = ok ] && { ! grep -q '^__DBREV_TX_END__' "$WORK/ddl.out" || tx_ended "$WORK/ddl.out"; }; then DDL_RES="committed(transaction ended inside the SQL)"; fi
-HOLD_TX=ok; ! tx_ended "$WORK/hold.out" || HOLD_TX="committed(transaction ended inside the hold SQL)"
-PROBE_TX=ok; [ -z "$PROBE" ] || ! tx_ended "$WORK/probe.out" || PROBE_TX="committed(transaction ended inside the probe SQL)"
+# end the hold now (cancel its pg_sleep) and wait, so its ROLLBACK TO / AFTER marker is in hold.out before judging
+printf "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-%s-hold';\n" "$RID" | psql_dsn "$MON" -qAt >/dev/null 2>&1 || true
+k=0; while kill -0 "$HOLD_PID" 2>/dev/null && [ $k -lt 40 ]; do sleep 0.25; k=$((k + 1)); done
+if ! tx_rolled_back "$(cat "$WORK/ddl.out")"; then DDL_RES="committed(not provably rolled back)"; fi
+HOLD_TX=ok; tx_rolled_back "$(cat "$WORK/hold.out")" || HOLD_TX="committed(hold SQL not provably rolled back)"
+PROBE_TX=ok; [ -z "$PROBE" ] || tx_rolled_back "$(cat "$WORK/probe.out")" || PROBE_TX="committed(probe SQL not provably rolled back)"
 PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"
 echo "### outcomes"; echo "ddl: $DDL_RES $(grep -m1 ERROR "$WORK/ddl.out" || true)"
 [ -z "$PROBE" ] || echo "probe: $PROBE_RES $(grep -m1 ERROR "$WORK/probe.out" || true)"

@@ -40,6 +40,7 @@ bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 lab
 
 # goose(版本取自 go.mod;只複製 *.sql 到暫存目錄執行;goose CLI 支援時加 -env none,不讀 .env;舊版本來就不讀)
 bash <kit>/scripts/goose.sh <name> validate --dir <migrations>
+#   go.mod 沒有 goose(CLI 另外安裝)時加 --goose-version vX.Y.Z(取自設定檔);有 vendor/modules.txt 時沙盒用 -mod=vendor
 bash <kit>/scripts/goose.sh <name> run --dir <migrations> --table <版本表> --dsn <dsn> -- up-to 53
 bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本表> \
   --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶破壞性 Down 旗標的 DSN> --from <審查的第一版> [--to <最後一版>]
@@ -57,7 +58,8 @@ bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
 # → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)|connect-failed","ddl_blocked_by",…,"observed","ok"}(沒看到 DDL / probe 在等鎖 → observed / ok 為 false)
 #   NO TRANSACTION 檔(CREATE INDEX CONCURRENTLY 等)不能用 --goose-up(結束碼 1),改推導或手動 hold
 #   SQL 裡有交易控制(COMMIT / BEGIN / ROLLBACK / ABORT / SAVEPOINT …,函式本體與字串內的不算)或 psql 指令 → 結束碼 2(事前過濾,盡力而為)
-#   保證靠事後檢查:使用者 SQL 前後比對 txid_current(),交易在中途被結束 → "rolled_back":false、結束碼 1(暫存庫已被改,要重建)
+#   保證靠事後檢查:BEGIN 後設 SAVEPOINT,使用者 SQL 後 ROLLBACK TO SAVEPOINT 並比對前後 txid_current();
+#   SQL 出錯也照樣檢查。無法證明已 ROLLBACK → "rolled_back":false、結束碼 1(暫存庫可能已被改,要重建);SQL 出錯但已證明 ROLLBACK → "rolled_back":true、ok:false
 #   hold 模式 ok=false 時結束碼 1
 
 # GRANT 矩陣(每項用該角色的 LOGIN DSN 實際連線執行,BEGIN … ROLLBACK)

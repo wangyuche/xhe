@@ -135,7 +135,8 @@ iso_base_env() {
   echo "GOCACHE=$gocache"
   echo "GOMODCACHE=$gomodcache"
   echo "GOTOOLCHAIN=local"
-  echo "GOFLAGS=-mod=readonly"
+  # vendored modules: -mod=vendor (also read-only); otherwise -mod=readonly
+  if [ -n "${ISO_MODDIR:-}" ] && [ -f "$ISO_MODDIR/vendor/modules.txt" ]; then echo "GOFLAGS=-mod=vendor"; else echo "GOFLAGS=-mod=readonly"; fi
   echo "PGPASSFILE=/dev/null"
   echo "PGSERVICEFILE=/dev/null"
   # Go download settings: resolved from the user's go env (may come from `go env -w`, which env -i would lose).

@@ -2,7 +2,7 @@
 # goose CLI for db-reviewer, built at the project's go.mod version into the kit tmp dir and run in an isolated env.
 #
 #   goose.sh <name> run       --dir MIGDIR --table T --dsn DSN [--module DIR] -- <goose command...>
-#   goose.sh <name> validate  --dir MIGDIR [--module DIR]
+#   goose.sh <name> validate  --dir MIGDIR [--module DIR] [--goose-version vX.Y.Z (only when go.mod has no goose)]
 #   goose.sh <name> roundtrip --dir MIGDIR --table T --dsn STRICT_DSN [--dsn-allow ALLOW_DSN] --from V [--to V] [--module DIR]
 #
 # roundtrip: up-to <version before --from> → up-to <--to> → down-to <before> with STRICT_DSN (a guarded destructive
@@ -15,7 +15,7 @@ source "$(dirname "$0")/_common.sh"
 usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 2 ] || usage
 NAME="$1"; check_name "$NAME"; SUB="$2"; shift 2
-MIGDIR=""; TABLE=""; DSN=""; DSN_ALLOW=""; FROM=""; TO=""; MODULE=""
+MIGDIR=""; TABLE=""; DSN=""; DSN_ALLOW=""; FROM=""; TO=""; MODULE=""; GOOSE_VER_OPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) MIGDIR="${2:?}"; shift 2 ;;
@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
     --from) FROM="${2:?}"; shift 2 ;;
     --to) TO="${2:?}"; shift 2 ;;
     --module) MODULE="${2:?}"; shift 2 ;;
+    --goose-version) GOOSE_VER_OPT="${2:?}"; shift 2 ;;
     --) shift; break ;;
     *) die "未知參數:$1" 2 ;;
   esac
@@ -45,7 +46,8 @@ GOOSE_VER="$(awk '
   $1 == ")" { blk = ""; next }
   $1 == "require" && $2 == "github.com/pressly/goose/v3" { print $3; exit }
   blk == "require" && $1 == "github.com/pressly/goose/v3" { print $2; exit }' "$MODULE/go.mod")"
-[ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;goose 版本無法判定" 1
+[ -n "$GOOSE_VER" ] || GOOSE_VER="$GOOSE_VER_OPT"   # project without goose in go.mod (CLI installed separately): from the profile
+[ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;用 --goose-version(設定檔的 goose 版本)指定,否則 goose 版本無法判定" 1
 case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
 
 ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"; own_dir "$DIR/bin"

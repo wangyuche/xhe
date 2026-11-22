@@ -40,7 +40,7 @@ for kv in ${ENVS[@]+"${ENVS[@]}"}; do
 done
 
 # Warn about DSNs hard-coded in test files that point somewhere other than an env var (e.g. localhost:5432).
-HARD="$(cd "$MOD" && grep -rnE --include='*_test.go' '(postgres(ql)?://[^"`[:space:]]+|host=[^ "`]+|(localhost|127\.0\.0\.1|\[::1\]):5432)' . 2>/dev/null | head -20 || true)"
+HARD="$(cd "$MOD" && grep -rnE --include='*.go' --exclude-dir=vendor '(postgres(ql)?://[^"`[:space:]]+|host=[^ "`]+|(localhost|127\.0\.0\.1|\[::1\]):5432)' . 2>/dev/null | head -20 || true)"
 [ -z "$HARD" ] || { echo "警告:測試檔裡有寫死的連線字串(確認不會連到非本容器的資料庫):" >&2; echo "$HARD" | sed 's/^/  /' >&2; }
 
 ensure_name_dir "$NAME"; D="$(name_dir "$NAME")"
@@ -50,6 +50,7 @@ ARGS=(test -json -v -count=1 -timeout "$TMO")
 [ -n "$RUN" ] && ARGS+=(-run "$RUN")
 [ -n "$PAR" ] && ARGS+=(-p "$PAR")
 ISO_TMPDIR="$(mktemp -d "$D/gotmp.XXXXXX")"; export ISO_TMPDIR
+ISO_MODDIR="$MOD"; export ISO_MODDIR
 cleanup() { rm -rf "$ISO_TMPDIR"; }
 trap cleanup EXIT
 echo "go ${ARGS[*]} ${PKGS[*]}  (dir=$MOD, log=$LOG)" >&2

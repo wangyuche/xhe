@@ -51,7 +51,7 @@ def strip(sql, keep_comments=False):
             i = j
             out.append(" ")
             continue
-        m = re.match(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$", sql[i:])
+        m = re.match(r"\$([A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$", sql[i:])   # psql allows high-bit tag chars
         if m and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] == "_")):
             tag = m.group(0)
             j = sql.find(tag, i + len(tag))

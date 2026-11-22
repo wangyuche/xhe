@@ -78,14 +78,14 @@ case "$CMD" in
     done
     STATE_RANDOM=""
     for v in ${RANDOMS[@]+"${RANDOMS[@]}"}; do
-      case "$v" in ""|*[!A-Za-z0-9_]*) die "--env-random 名稱不合法:$v" 2 ;; PGDATA|POSTGRES_USER) die "$v 不能用 --env-random 設定" 2 ;; esac
+      case "$v" in ""|*[!A-Za-z0-9_]*) die "--env-random 名稱不合法:$v" 2 ;; PGDATA|POSTGRES_USER|POSTGRES_INITDB_WALDIR) die "$v 不能用 --env-random 設定" 2 ;; esac
       [ "$v" = "POSTGRES_PASSWORD" ] && continue   # always random already
       val="$(rand_hex 16)"; RUNARGS+=(-e "$v=$val"); STATE_RANDOM="$STATE_RANDOM $v=$val"
     done
     for kv in ${ENVS[@]+"${ENVS[@]}"}; do
       case "$kv" in [A-Za-z_]*=*) ;; *) die "--env 需要 K=V:$kv" 2 ;; esac
       case "${kv%%=*}" in POSTGRES_PASSWORD|POSTGRES_USER) die "${kv%%=*} 由 pg.sh 設定" 2 ;; esac
-      [ "${kv%%=*}" != PGDATA ] || die "PGDATA 不能用 --env 改(資料必須在映像宣告的 VOLUME,也就是 tmpfs 上)" 2
+      case "${kv%%=*}" in PGDATA|POSTGRES_INITDB_WALDIR) die "${kv%%=*} 不能用 --env 改(資料與 WAL 必須在映像宣告的 VOLUME,也就是 tmpfs 上)" 2 ;; esac
       RUNARGS+=(-e "$kv")
     done
     # pull only after every argument check passed (a failed check must not leave a pulled image behind)
