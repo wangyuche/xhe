@@ -27,8 +27,8 @@
 
 ## 遊戲素材模式(使用者 2026-11-22 確認)
 - 用途:給 game-frontend-owner 的 PixiJS 遊戲直接載入。素材清單是簡報給的 `assets.needs.json` 絕對路徑(只讀)。
-- **介面 schema 與尺寸定義**:以 `agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」為準(兩邊共用 `game-art-kit/schemas/`)。重點:
-  - needs 的 `width` / `height` 是**顯示尺寸**(設計座標);美術交的 **1x 檔案 = 顯示 × density**(density 照 needs;沒寫時取 `min(2, 2048 ÷ 顯示最長邊)`,任何類型的 1x 都不超過 2048),遊戲端再轉 0.5x 與 AVIF;assets.json 寫實際 `density` 與 `nineSlice1x`(= nineSlice × density,四捨五入)。
+- **介面 schema 與尺寸定義**:機器可驗證的定義以 `game-art-kit/schemas/`(schema + `validate.mjs`)與 `sprite.mjs density` 為準;`agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」是同一套規則的文字說明,兩邊不一致時以 kit 為準並回報。重點:
+  - needs 的 `width` / `height` 是**顯示尺寸**(設計座標);美術交的 **1x 檔案 = 顯示 × density**(density 照 needs;沒寫時預設 2,但單張與 frames 整張 sheet 都要 ≤ 2048,超過時往下調;以 `sprite.mjs density` 的輸出為準),遊戲端再轉 0.5x 與 AVIF;assets.json 寫實際 `density` 與 `nineSlice1x`(= nineSlice × density,四捨五入)。
   - `id` 照 needs 原樣使用,不改名;`group` 決定資料夾。
   - `anchor` 預設:有 `character` 時 `[0.5,1]`,否則 `[0.5,0.5]`;「角色類」= 有 `character` 欄位。
   - `frames.count` ≤ 8;各格橫向排列,寬超過 2048 px 時換行成格狀並記 `columns`。

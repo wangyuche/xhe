@@ -34,12 +34,13 @@ skills:
 ## 工作流程
 
 ### 第 0 步(完成條件:全部通過,或回 BLOCKED;不改任何檔案)
+遊戲素材模式的順序:1 → 2 → 第 6 步的「needs 驗證與檔案存在」→ 4(讀 STYLE.md、character.md、ref.png)→ 第 6 步其餘(density、骨架、Qwen 備援,這些要用到 STYLE.md 的 (a)/(b) 組)→ 5 → 7;不通過的項目全部記下,到第 7 步一起列出。
 1. `mkdir -p <tmp>`(暫存目錄,不在專案內);簡報有模式所需欄位;`git rev-parse --show-toplevel` 成功;`git status --porcelain > <tmp>/git.base`。
 2. `node <kit>/scripts/comfy.mjs check > <tmp>/check.json`:成功,記下 `consistency_methods` 與 `workflows_available`。角色一致只能用 `consistency_methods` 列的方法與它的 `workflows`;`unsupported_consistency`(例如 IP-Adapter)是主機有、但 kit 沒有骨架的方法,不能用,也不要自己組 workflow。
 3. 風格試作且參考有網址:`node -v` ≥ 22,Google Chrome 存在。
-4. 一般 / 角色定裝 / 風格定稿:讀 `art/STYLE.md`;一般模式另依需求文字比對各 `character.md` 的名稱與別名,讀出涉及的角色,Read 它們的 `ref.png`。
-5. 預估生成次數(圖與音訊,只算首次;去背在同一 workflow 不另計);超過 40 → BLOCKED。
-6. 遊戲素材:`node <kit>/schemas/validate.mjs needs <needs 路徑>` 通過;有圖類素材時 `background_removal` 不是空的(只有 opaque 背景 / 地圖塊時不需要)且 `art/STYLE.md` 存在;有角色的素材,該角色的 `ref.png` 存在;有音訊時 `node <kit>/scripts/audio.mjs tools` 通過且 `audio_models` 有對應的 sfx / bgm。
+4. 一般 / 角色定裝 / 風格定稿 / 遊戲素材(有圖類素材或 bgm 時):讀 `art/STYLE.md`;一般模式另依需求文字比對各 `character.md` 的名稱與別名,讀出涉及的角色;遊戲素材依 needs 的 `character` 欄位。涉及的角色都讀 `character.md` 並 Read `ref.png`。
+5. 預估生成次數(圖與音訊,只算首次;去背在同一 workflow 不另計;遊戲素材不算會跳過的項目:assets.json 已有且沒寫重做的、density < 1 跳過的);超過 40 → BLOCKED;超過 30 時回報提醒「重出可能讓總數達 40 上限」。
+6. 遊戲素材:`node <kit>/schemas/validate.mjs needs <needs 路徑>` 通過;之後每個圖類項目跑 `node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames <frames.count>] [--density <needs 的 density>]`(frames 一定要給 `--frames`,sheet 高度限制才算得到):透明素材(`background` / `tile` 以外、且 `opaque` 不是 true 的 sprite、frames、ui)算出 density < 1 → 該項**跳過**並在回報列出原因(政策:1x 檔案不得小於顯示尺寸,否則比顯示還糊;請遊戲端減少格數或縮小顯示尺寸),其他素材照做;不透明素材(`background`、`tile`、`opaque: true`)允許 < 1(全螢幕類本來就受 2048 上限),列在已知限制;有圖類素材或 bgm 時 `art/STYLE.md` 存在(bgm 的 tags 取它的氛圍);有透明圖類素材時 `background_removal` 不是空的(只有 opaque 背景 / 地圖塊時不需要);有角色的素材,該角色的 `ref.png` 與 `character.md` 都存在;有音訊時 `node <kit>/scripts/audio.mjs tools` 通過且 `audio_models` 有對應的 sfx / bgm;這次 needs 實際會用到的骨架都在 `workflows_available`:透明無角色 `qwen-t2i-sprite`、透明有角色 `qwen-edit-1ref-sprite`、不透明用 STYLE.md (a) 組的文生圖骨架(`qwen-t2i` / `flux-t2i` / `zimage-t2i`;(a) 組是 `qwen-t2i-canny`、需要參考圖的骨架或沒寫骨架時,改用 `workflows_available` 裡的 `qwen-t2i`,再沒有就 BLOCKED)、sfx `stable-audio-sfx`、bgm `ace-step-bgm`。透明素材的骨架只支援 Qwen 家族:check 沒有 Qwen-Image(無角色)或 Qwen-Image-Edit(有角色)的模型 → BLOCKED;素材會走 Qwen 備援(透明素材:STYLE.md 那一組不是 Qwen 骨架,見「遊戲素材」第 3 點;不透明素材:只有 (a) 組沒寫骨架或是需要參考圖的骨架時,見第 4 點;(a) 組是 `flux-t2i` / `zimage-t2i` 時直接用,不需要 Qwen)但 check `defaults` 缺需要的項目(無角色 `qwen_unet`、有角色 `qwen_edit_unet`,都要 `qwen_clip` / `qwen_vae`)→ BLOCKED。
 7. 逐條檢查「遇到以下情況要停下來」,同時成立的全部列出。
 
 ### 風格試作(完成條件:2–4 張 + manifest,回 BLOCKED)
@@ -73,19 +74,21 @@ skills:
 6. 寫 `manifest.json`。累計生成數(含重出、試作)達 40 張就停止,已完成的保留,回 ISSUES。
 
 ### 遊戲素材(完成條件:needs 每項都在 assets.json,或列為跳過 / 失敗)
-1. 產出目錄:原圖、下載的音訊、manifest、workflow 放 `art/out/<日期>-assets/`;交付檔放 `art/assets/<group>/<id>.png`、`art/assets/<group>/<id>.ogg` 與 `.m4a`。assets.json 已有同 id、簡報沒寫「重做 <id>」→ 跳過並列出。
-2. 尺寸:1x = 顯示尺寸(needs 的 `width` / `height`)× density。用 `node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density <needs 的 density>]` 算:印出整數的 1x 寬高、columns / rows 與實際 density(單格與整張 sheet 都不超過 2048,PX-RES-01);fit / cover / check 用這組 1x 尺寸,assets.json 的 `density`、`frames.frameWidth/frameHeight/columns` 照抄。生成解析度選和 1x 同比例、長邊約 1024 的 16 倍數(例如 1x 240×320 → 768×1024)。
+1. 產出目錄:原圖、下載的音訊、manifest、workflow 放 `art/out/<日期>-assets/`(同一天已存在時自動用 `-2`、`-3`…,不 BLOCKED;以下稱「本次產出目錄」,manifest、workflow、assets.json 的 `source` 都用它);交付檔放 `art/assets/<group>/<id>.png`、`art/assets/<group>/<id>.ogg` 與 `.m4a`。assets.json 已有同 id、簡報沒寫「重做 <id>」→ 跳過並列出。
+2. 尺寸:1x = 顯示尺寸(needs 的 `width` / `height`)× density。用 `node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density <needs 的 density>]` 算:印出整數的 1x 寬高、columns / rows 與實際 density(單格與整張 sheet 都不超過 2048,PX-RES-01);輸出有 `lowered: true`(實際 density 低於要求的值:needs 指定的 density,沒指定時為 2)時列在已知限制,讓遊戲端知道;透明的 sprite / frames / ui 在這裡算出 density < 1 時同樣跳過該項並列出(和第 0 步第 6 點相同的政策);fit / cover / check 用這組 1x 尺寸,assets.json 的 `density`、`frames.frameWidth/frameHeight/columns` 照抄;assets.json 的 `width` / `height` 寫**顯示尺寸**(照 needs,不是 1x)。`anchor`:needs 有就照抄,沒有時有 `character` 寫 `[0.5, 1]`、否則 `[0.5, 0.5]`(圖類必填)。生成解析度選和 1x 同比例、長邊約 1024 的 16 倍數(例如 1x 240×320 → 768×1024)。
 3. **透明素材**(`sprite` / `frames` / `ui`,且 `opaque` 不是 true):
-   - 沒有角色:`qwen-t2i-sprite`;有 `character`:上傳 ref,用 `qwen-edit-1ref-sprite`(`the character in image 1, <姿勢>`)。`bg_model` 用 `background_removal[0].models` 第一個(優先 `RMBG-2.0`)。提示詞 = STYLE.md 正向基底 + 角色提示詞 + 素材內容 + `plain flat light grey background, single subject, full body, centered`(UI:`flat game UI element, front view, centered`)。
+   - 沒有角色:`qwen-t2i-sprite`;有 `character`:上傳 ref,用 `qwen-edit-1ref-sprite`(`the character in image 1, <姿勢>`)。`bg_model` 用 `background_removal[0].models` 第一個(優先 `RMBG-2.0`)。提示詞 = STYLE.md 正向基底 + 角色提示詞 + 素材內容 + `plain flat light grey background, single subject, full body, centered`(UI:`flat game UI element, front view, centered`);**負向 = STYLE.md 負向基底**(兩個 sprite 骨架都必填 `negative`)。
+   - 模型:無角色用 STYLE.md (a) 組、有角色用 (b) 組的模型與 sampler 設定;那一組的骨架不是 `qwen-t2i` / `qwen-t2i-canny`((a) 組)或 `qwen-edit-*`((b) 組)時(例如 Flux、Z-Image),改用 check `defaults` 的 Qwen 模型(無角色 `qwen_unet` + `qwen_lightning`;有角色 `qwen_edit_unet` + `qwen_edit_lightning`;都配 `qwen_clip`、`qwen_vae`),sampler 設定也換成 Qwen 的(不沿用 (a)/(b) 組的 steps、cfg):有 Lightning LoRA 時 steps = LoRA 檔名的步數(`4steps` → 4、`8steps` → 8;檔名沒有步數時用 8)、cfg 1、shift 3.1、euler/simple、`lora_strength=1`;defaults 的 Lightning 是 null 時 `lora=none`、`lora_strength=0`、steps 20、cfg 2.5、shift 3.1,並在已知限制寫明「畫風可能和 STYLE.md 的 (a)/(b) 組有差異」。
    - `node <kit>/scripts/sprite.mjs fit <下載的 png>... --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高> --align <有 character 用 bottom,否則 center>`;`frames` 把同一動作的所有格一次給 fit(同一縮放比例,印出 columns)。**`ui` 類(尤其有 `nineSlice`)加 `--margin 0`**:裁邊後等比放滿 1x、不留透明邊,切線才對齊圖的邊緣;裁切後比例和 1x 差超過 3% 會失敗(結束碼 1),換 seed 或調整提示詞重出(算一次重出)。
    - `sprite.mjs check ... [--frames N --columns C] [--character]` 通過(`--margin 0` 的 UI 加 `--full-bleed`);Read 看過(composite 到素色底看邊緣)。
    - 動作格:每個動作最多 8 格,逐格生成(姿勢描述依序,例如 walk cycle contact / passing / contact / passing);每格寫出至少兩項 `character.md` 外觀特徵比對,有任何一項不同就重出那一格(每格最多 2 次)。
    - 九宮格(`nineSlice`):提示詞要求邊框等寬、中間素色,四條切線內不可有會被拉伸變形的圖案;assets.json 寫 `nineSlice` 與 `nineSlice1x`(× density 四捨五入)。
-4. **不透明素材**(`background`、`tile`,或任何 `opaque: true` 的圖):用 STYLE.md 的 (a) 組(`qwen-t2i` 等),生成解析度和 1x 同比例,下載後 `node <kit>/scripts/sprite.mjs cover <png> --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高>`(等比蓋滿再置中裁切;**地圖塊**用和 1x 完全相同比例生成並加 `--exact`,整張縮放不裁切,接縫才不會被切掉);`sprite.mjs check … --opaque [--tileable]`。地圖塊提示詞加 `seamless tileable texture, top-down`,平鋪檢查不過就重出。
-5. **音效**(`sfx`):`stable-audio-sfx`(`ckpt` / `clip` 用 check 的 defaults;seconds = durationSec + 1),再 `node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx --duration <durationSec> --out art/assets/<group> --name <id>`,`audio.mjs check` 通過。
+4. **不透明素材**(`background`、`tile`,或任何 `opaque: true` 的圖):用 STYLE.md 的 (a) 組文生圖骨架與設定(`qwen-t2i` / `flux-t2i` / `zimage-t2i`);(a) 組是 `qwen-t2i-canny` 時改用 `qwen-t2i`,沿用 (a) 組自己的模型與 sampler 設定;(a) 組沒寫骨架或是其他骨架(`flux-kontext`、`qwen-edit-*` 等需要參考圖的)時改用 `qwen-t2i`,模型與 sampler 照上面透明素材的 Qwen 備援設定。生成解析度和 1x 同比例,下載後 `node <kit>/scripts/sprite.mjs cover <png> --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高>`(等比蓋滿再置中裁切;**地圖塊**用和 1x 完全相同比例生成並加 `--exact`,整張縮放不裁切,接縫才不會被切掉);`sprite.mjs check … --opaque [--tileable]`。地圖塊提示詞加 `seamless tileable texture, top-down`,平鋪檢查不過就重出。
+5. **音效**(`sfx`):`stable-audio-sfx`(`ckpt` / `clip` 用 check 的 defaults;prompt = 音效描述(英文,依 needs 的 `purpose`);`negative` = `music, speech, voice`(風聲、爆炸、腳步等以噪音為主的音效不要加 `noise`;只有音調類音效(鈴聲、提示音)可以再加 `noise`);seconds = durationSec + 1),再 `node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx --duration <durationSec> --out art/assets/<group> --name <id>`,`audio.mjs check` 通過。
    短於 0.4 秒的音效量不到整體響度,`audio.mjs` 改以峰值正規化(輸出 `normalized: "peak"`、`lufs: null`),assets.json 寫 `"normalized": "peak"`、不寫 `lufs`,`audio.mjs check` 加 `--peak`。
-6. **配樂**(`bgm`):`ace-step-bgm`(tags = STYLE.md 的氛圍 + 需求;`lyrics` = `[instrumental]`;seconds = durationSec + 1),再 `audio.mjs process … --type bgm [--loop]`;`loop` 輸出為 `approx` 時 assets.json 寫 `"loop": "approx"`、`audio.mjs check` 加 `--approx`,並列在已知限制。音訊回報一律寫「未人耳試聽」。
-7. 寫 assets.json(保留既有項目),`validate.mjs assets art/assets/assets.json --root art/assets` 通過;寫 `art/out/<日期>-assets/manifest.json`。
+6. **配樂**(`bgm`):`ace-step-bgm`(tags = STYLE.md 的氛圍 + 需求;`lyrics` = `[instrumental]`;seconds = durationSec + 1;`bpm`、`timesignature`、`keyscale` 依 needs 的 `purpose` 決定,沒提到時依氛圍推定(例如輕鬆 90–110、緊張 130–150;拍號 4;`keyscale` 要完整調名,明亮例如 `C major` / `G major`、陰暗例如 `A minor` / `D minor`),三者寫進 manifest),再 `audio.mjs process … --type bgm [--loop]`;`loop` 輸出為 `approx` 時 assets.json 寫 `"loop": "approx"`、`audio.mjs check` 加 `--approx`,並列在已知限制。音訊回報一律寫「未人耳試聽」。
+7. 重出與上限:每個素材(單張 sprite、UI、背景、地圖塊、音訊)check 或看圖不符合時最多重出 2 次(動作格以單格計),仍不符合記失敗並列出;累計生成次數(含重出)達 40 就停止,已完成的保留,回 ISSUES。
+8. 寫 assets.json(保留既有項目),`validate.mjs assets art/assets/assets.json --root art/assets` 通過;寫「本次產出目錄」的 `manifest.json`(`source` = `out/<本次產出目錄名>/manifest.json#<檔名>`,**相對 `art/`**,和 `files` 相對 `art/assets/` 不同)。
 
 ### 結束(每個模式都要;完成條件:三項都通過)
 1. `node <kit>/scripts/comfy.mjs scrub-check art/`(簡報有「ComfyUI:<位址>」覆寫時,加同一個 `--url`)→ `hits=0`。
@@ -144,9 +147,9 @@ skills:
 - 一般 / 角色定裝模式、`art/STYLE.md` 不存在,簡報也沒寫「不需要風格規範」:請先走風格試作。
 - 需求涉及的角色沒有 `ref.png`,簡報也沒要求角色定裝。
 - 角色定裝時 `ref.png` 已存在,簡報沒寫「重新定裝 <id>」;風格定稿時 STYLE.md 已存在,簡報沒寫「修訂風格」。
-- 輸出目錄已存在(提議加 `-2`)。
+- 輸出目錄已存在(提議加 `-2`;遊戲素材模式自動加,不停)。
 - 需求要求仿製既有作品或真實人物。
 - 風格試作沒有風格描述,或描述互相矛盾。
 - 預估生成次數(圖與音訊,首次)超過 40。
-- 遊戲素材:簡報沒有 needs 路徑、needs 不合 schema;圖類素材需要透明但 `background_removal` 為空;圖類素材但 `art/STYLE.md` 不存在;有 `character` 的素材但該角色沒有 `ref.png`;需要音訊但 `audio.mjs tools` 失敗或 `audio_models` 沒有對應模型。
+- 遊戲素材:簡報沒有 needs 路徑、needs 不合 schema;圖類素材需要透明但 `background_removal` 為空;圖類素材或 bgm 但 `art/STYLE.md` 不存在;有 `character` 的素材但該角色沒有 `ref.png` 或 `character.md`;需要音訊但 `audio.mjs tools` 失敗或 `audio_models` 沒有對應模型;這次要用的骨架不在 `workflows_available`;透明素材但 check 沒有對應的 Qwen 模型;素材要走 Qwen 備援但 check `defaults` 缺需要的 Qwen 模型。(透明圖類素材 density < 1 不停,該項跳過並列出。)
 - 風格試作完成(請使用者選)。

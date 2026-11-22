@@ -69,7 +69,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 | `qwen-t2i-sprite` | **透明 sprite / UI**:文生圖 → RMBG 去背 → `InvertMask` → `JoinImageWithAlpha`,同一個 workflow | 同 qwen-t2i;`bg_model` 用 `RMBG-2.0`(768×1024 全身角色去背乾淨,約 30 秒)。提示詞要 `plain flat light grey background, single subject, full body, centered` |
 | `qwen-edit-1ref-sprite` | **角色一致的透明 sprite / 動作格**:以角色 ref 生成新姿勢 + 去背 | 同 qwen-edit-1ref + `bg_model` |
 | `stable-audio-sfx` | 音效(Stable Audio 3,本機) | `ckpt` = `defaults.sfx_ckpt`、`clip` = `defaults.sfx_clip`(t5gemma,CLIPLoader type stable_audio);steps 50、cfg 6、dpmpp_3m_sde_gpu / exponential;seconds 比目標長 1 秒(3 秒約 4 秒) |
-| `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
+| `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;另需 `bpm`、`timesignature`(2 / 3 / 4 / 6)、`keyscale`(例如 `C major`);seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
 
 模型檔名用 `check` 的 `defaults` 或 STYLE.md 的生成設定,不要寫死。
 
@@ -84,4 +84,4 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 ## 遊戲素材介面(`schemas/`)
 
-`needs.schema.json`(遊戲端寫 `assets.needs.json`)與 `assets.schema.json`(美術寫 `art/assets/assets.json`)。重點:`width` / `height` 是設計座標的**顯示尺寸**;1x 檔案 = 顯示 × `density`(預設 `min(2, 2048 ÷ 顯示最長邊)`:小素材為 2,任何類型的 1x 都不超過 2048);`frames` 的尺寸是單格;音訊只有 `durationSec` / `loop`;`nineSlice1x` = `nineSlice` × density 四捨五入;`review` 一律先寫 `pending`。完整定義見 `agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」。
+`needs.schema.json`(遊戲端寫 `assets.needs.json`)與 `assets.schema.json`(美術寫 `art/assets/assets.json`)。重點:`width` / `height` 是設計座標的**顯示尺寸**;1x 檔案 = 顯示 × `density`(預設 2,但單張與 frames 整張 sheet 都要 ≤ 2048,超過時 density 往下調;以 `sprite.mjs density` 的輸出為準);`frames` 的尺寸是單格;音訊只有 `durationSec` / `loop`;`nineSlice1x` = `nineSlice` × density 四捨五入;`review` 一律先寫 `pending`。機器可驗證的定義以本 kit 的 schema、`validate.mjs` 與 `sprite.mjs density` 為準(輸出 `lowered: true` 表示 density 被調低);`agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」是文字說明。
