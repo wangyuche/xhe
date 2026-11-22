@@ -45,7 +45,7 @@ stack-pixi 新增的編號(A11Y、I18N、INPUT、NET、SEC、TEST 等)從各類�
 
 ## 尺寸定義與素材介面(結構強制)
 - **設計座標**:專案的設計解析度(新專案寫在 `src/config/design.ts`,例如 1920×1080 橫式)。
-- **顯示尺寸** = 素材在設計座標下顯示的大小。**密度 `density`** = 1x 檔案 ÷ 顯示尺寸:預設 2,單張與 frames 整張 sheet 都要 ≤ 2048(PX-RES-01),超過時往下調(實際值以 game-art-kit `sprite.mjs density` 為準,被調低時輸出 `lowered: true`;needs 自己指定的 `density` 若讓 1x 超過 2048 會被 `validate.mjs needs` 判為 schema 錯誤(要自動調整就不要指定);透明的 sprite / frames / ui(非 `opaque`)調到 < 1 時美術會跳過該項,請減少格數或縮小顯示尺寸);needs 可逐項指定(lobby 也是逐零件標註 1 倍或 2 倍)。**1x 檔案 = 顯示 × density;0.5x = 1x 的一半,無條件進位成偶數**(同 lobby)。Pixi 的 resolution 由 density 換算。1x / 0.5x 的選擇照專案;新專案預設用 lobby EX-01 的像素需求公式(`cover × min(DPR,2) > 0.6 → 1x`,cover = 畫面縮放比)。
+- **顯示尺寸** = 素材在設計座標下顯示的大小。**密度 `density`** = 1x 檔案寬 ÷ 顯示寬:預設 2,但單張圖與整張 frames sheet 都必須 ≤ 2048(PX-RES-01),超過時自動降低;實際值以 game-art-kit `sprite.mjs density` 的輸出為準(1x 寬無條件捨去、density 取 4 位小數;被調低時輸出 `lowered: true`),美術照它寫進 assets.json。透明的 sprite / frames / ui 調到 < 1 時美術會跳過該項並在回報列出,本 agent 要減少格數或縮小顯示尺寸後重寫 needs;不透明的(background、tile 或 `opaque: true`)可以低於 1。needs 可逐項指定 density(lobby 也是逐零件標註 1 倍或 2 倍),但指定值讓 1x 超過 2048 時 validate.mjs 當成 schema 錯誤;要自動調低就不要指定。**1x 檔案 = 顯示 × density;0.5x = 1x 的一半,無條件進位成偶數**(同 lobby)。Pixi 的 resolution 由 density 換算。1x / 0.5x 的選擇照專案;新專案預設用 lobby EX-01 的像素需求公式(`cover × min(DPR,2) > 0.6 → 1x`,cover = 畫面縮放比)。
 - JSON Schema 放 `game-art-kit/schemas/`,兩邊共用,kit 內附無依賴驗證器;schema 依 `type` 分條件:
   - `needs.schema.json`(本 agent 寫 `<可寫路徑>/assets.needs.json`):`{"version":1, "design":{width, height}, "needs":[…]}`。每項:
     - 共通:`id`、`type`、`group`、`purpose`。
@@ -53,7 +53,7 @@ stack-pixi 新增的編號(A11Y、I18N、INPUT、NET、SEC、TEST 等)從各類�
     - 音訊(`sfx` / `bgm`):`durationSec` 必填,不得有 `width` / `height`;`bgm` 選填 `loop`。
   - `assets.schema.json`(美術寫 `art/assets/assets.json`):同上欄位(`density` 必填,寫實際值),加 `files`(相對 `art/assets/`)、`frames.frameWidth/frameHeight/columns`(1x px)、`nineSlice1x`(1x px)、`lufs`、`source`、`review`(`pending` / `approved`)。
   - `id`:`^[a-z0-9]+(\.[a-z0-9-]+)+$`;`group`:載入群組(對應 bundle 與輸出資料夾)。
-- 美術交 **1x 原始 PNG**(= 顯示 × density)與音訊;本 agent 用 stack-pixi `build-assets.mjs`(sharp)產生 1x / 0.5x 的 AVIF + PNG(`opaque` 的背景另出 JPG 備援,依 PX-FMT-01 再確認)、frames 的 spritesheet JSON(sheet 超過 2048 寬時換行,記 `columns`)、九宮格切線(0.5x 四捨五入、至少 1)、manifest;產出進 git(在可寫路徑內)。音訊只複製並驗證兩種格式都在。
+- 美術交 **1x 原始 PNG**(= 顯示 × density)與音訊;本 agent 用 stack-pixi `build-assets.mjs`(sharp)產生 1x / 0.5x 的 AVIF + PNG(`opaque` 的背景改出 JPG 備援,PX-FMT-01)與每個群組的 `manifest.json`(顯示尺寸、anchor、九宮格切線(顯示尺寸 px)、frames 格資訊:count / fps / frameWidth / frameHeight / columns,貼圖單位 = 1x px)。不另出 spritesheet JSON(實作時確認:Vite 加 hash 後的檔名無法被 spritesheet JSON 的 `meta.image` 參照,改由 manifest 切格)。產出進 git(在可寫路徑內)。音訊只複製並驗證兩種格式都在。
 - 流程:本 agent 寫 needs → 主 agent 把絕對路徑交給美術 → 美術完成、主 agent 合併 `art/` → 主 agent 派本 agent「接素材」。平行時各用獨立 worktree。
 
 ## 做什麼
@@ -204,7 +204,7 @@ client/
 - 可否與其他寫入 agent 平行:可以,各用獨立 worktree;與 game-concept-artist 平行時 needs 用絕對路徑交接。
 - 建議的模型與推理強度:inherit。
 - 需要的 skill:
-  - `stack-pixi`(新做):PX 規則(上表 + 新增類別)、`paths` 限定 Pixi 專案;`new-pixi.sh`(含 `--net ws`、`--iframe`、`--check`)、`build-assets.mjs`、`serve-dist.mjs`、E2E fixture(尺寸矩陣、錯誤收集、`cycleLeak`、`drawsDuring`)、perf spec 範本(三類)、`check-layers`、`check-i18n`、`check-assets`、`check-early`;離線自我測試:建骨架 → 安裝 → tsc / vitest / build / 四個檢查 / E2E 全尺寸 / perf 一次、check-i18n 誤報與漏報案例、Worker 內 fetch 在 Slow 4G 下確實被限速(否則對 worker target 也送限速)。
+  - `stack-pixi`(新做):PX 規則(上表 + 新增類別)、`paths` 限定 Pixi 專案;`new-pixi.sh`(含 `--net ws`、`--iframe`、`--check`)、`build-assets.mjs`、`serve-dist.mjs`、E2E fixture(尺寸矩陣、錯誤收集、`cycleLeak`、`drawsDuring`)、perf spec 範本(三類)、`check-layers`、`check-i18n`、`check-assets`、`check-early`;離線自我測試:建骨架 → 安裝 → tsc / vitest / build / 四個檢查 / E2E 全尺寸 / perf 一次、check-i18n 誤報與漏報案例、Worker 內 fetch 在 Slow 4G 下確實被限速(2026-11-22 實測:page 的 CDP 網路條件已套用到 dedicated Worker,不需另外附著;Chrome 行為改變時這項測試會失敗)。
   - `game-art-kit/schemas/`(介面 schema 與驗證器)。
   - 重用 web-dev-kit 的服務啟停、範圍檢查、秘密掃描。
   - acceptance-designer 修改:遊戲前端的「元件」層級 = Vitest(場景 / 元件的狀態邏輯);新增「遊戲」面向(暫停與回前景、context lost、直式旋轉、減少動態、斷線重連、觸控目標);契約路徑改由簡報指定。

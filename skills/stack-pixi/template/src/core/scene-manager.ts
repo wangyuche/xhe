@@ -1,0 +1,104 @@
+import type { Application, Container } from 'pixi.js';
+import { acquireGroup, releaseGroup, setTier } from '../assets';
+import { t } from '../i18n';
+import { showError } from './app';
+import { LANDSCAPE } from '../config/design';
+import { computeFit, type Fit } from './layout';
+import { watchModalDialogs } from './modal-guard';
+import { readSafeArea } from './safe-area';
+
+/** 場景介面:每個場景一個資料夾、動態 import、各自一個 chunk(PX-LOAD-01)。 */
+export interface Scene {
+  readonly root: Container;
+  /** 唯一的版面入口(PX-RES-03):由 SceneManager 在 renderer resize 時呼叫。 */
+  layout(fit: Fit): void;
+  setInputEnabled(enabled: boolean): void;
+  /** PX-LIFE-01:destroy({children:true}),移除監聽、ticker 回呼、dialog 綁定。 */
+  destroy(): void;
+}
+
+export interface SceneContext {
+  app: Application;
+  go: (name: SceneName) => Promise<void>;
+}
+
+/** 場景表:新增場景時在這裡加一行;只能從這裡動態 import 場景(首屏不靜態 import 其他場景)。 */
+const SCENES = {
+  title: { group: 'title', load: () => import('../scenes/title/TitleScene') },
+  play: { group: 'play', load: () => import('../scenes/play/PlayScene') },
+} as const;
+export type SceneName = keyof typeof SCENES;
+
+export class SceneManager {
+  private current?: { name: SceneName; scene: Scene };
+  private queue: Promise<void> = Promise.resolve();
+  private modalOpen = false;
+
+  constructor(private readonly app: Application) {
+    app.renderer.on('resize', () => this.layout());
+    watchModalDialogs((open) => {
+      this.modalOpen = open;
+      this.current?.scene.setInputEnabled(!open);
+    });
+  }
+
+  /** 給場景用:切換失敗(chunk 或素材載入失敗)顯示錯誤畫面與重新載入,不留下沒反應的按鈕。 */
+  goSafe(name: SceneName): Promise<void> {
+    return this.go(name).catch((e: unknown) => {
+      console.warn('scene switch failed', e);
+      showError(t('error.load'));
+    });
+  }
+
+  get currentName(): SceneName | undefined {
+    return this.current?.name;
+  }
+
+  private pending?: SceneName;
+
+  go(name: SceneName): Promise<void> {
+    // 連點同一個按鈕:同一個場景已在切換中或已是目前場景就不重複切換
+    if (this.pending === name || (!this.pending && this.current?.name === name)) return this.queue.catch(() => {});
+    this.pending = name;
+    // 前一次切換失敗不能卡住之後的切換:佇列先吞掉錯誤再接下一個
+    const run = this.queue.catch(() => {}).then(() => this.swap(name)).finally(() => { if (this.pending === name) this.pending = undefined; });
+    this.queue = run;
+    return run;
+  }
+
+  private async swap(name: SceneName): Promise<void> {
+    const def = SCENES[name];
+    // 素材級別用「轉到正確方向後」的畫面算(直式開機的橫式遊戲,旋轉後也拿 1x)
+    const { width, height } = this.app.screen;
+    const [w, h] = LANDSCAPE ? [Math.max(width, height), Math.min(width, height)] : [Math.min(width, height), Math.max(width, height)];
+    const ins = readSafeArea();
+    // 寬高對調時安全區也要跟著轉 90°
+    const swapped = w !== width;
+    setTier(computeFit(w, h, swapped ? { top: ins.left, right: ins.top, bottom: ins.right, left: ins.bottom } : ins).scale, window.devicePixelRatio);
+    const acquired = acquireGroup(def.group);
+    let scene: Scene;
+    try {
+      const [mod] = await Promise.all([def.load(), acquired]);
+      scene = mod.default({ app: this.app, go: (n) => this.goSafe(n) });
+    } catch (e) {
+      // 載入或建立失敗:已取得的素材群組要還回去(參考計數)
+      await acquired.then(() => releaseGroup(def.group), () => {});
+      throw e;
+    }
+    const prev = this.current;
+    this.app.stage.addChild(scene.root);
+    this.current = { name, scene };
+    scene.setInputEnabled(!this.modalOpen);
+    this.layout();
+    if (prev) {
+      prev.scene.destroy();
+      releaseGroup(SCENES[prev.name].group);
+    }
+    performance.mark(`${name}:ready`);
+  }
+
+  layout(): void {
+    const { width, height } = this.app.screen;
+    this.current?.scene.layout(computeFit(width, height, readSafeArea()));
+  }
+}

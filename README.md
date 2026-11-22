@@ -13,6 +13,7 @@
 | `stack-react` | React 元件與 Vitest 測試規則 |
 | `stack-nextjs` | Next.js 16 前端規則與骨架(轉發、契約型別、Prism mock、Playwright) |
 | `stack-go` | Go 後端規則與骨架(路由表、OpenAPI 3.0.3 契約測試、goose migration) |
+| `stack-pixi` | PixiJS 8 + Vite 8 + TypeScript 遊戲 / 大廳玩家端規則(PX-XXX-NN,MUST / SHOULD)與骨架:場景 chunk 與首屏白名單、a11y 層、i18n、1x / 0.5x AVIF 素材與 KB 預算、效能預算量測、三尺寸 E2E、資源釋放、WebSocket / iframe(game-frontend-owner 使用;MahjongParty 文件的 `/pixi-style` 就是它) |
 | `github-bot` | 以機器人身分(GitHub App 或機器人帳號)commit、push 功能分支、開 PR,自己 code review 沒問題就以 review 過的 SHA 合併(只限沒有 CI 的 repo;不直接推 main) |
 | `gitlab-bot` | 在自建 GitLab(或 gitlab.com)commit、push 功能分支、開 MR,review 沒問題以 review 過的 SHA 合併(只限沒有 CI 的專案;不直接推 main);多專案共用一筆鑰匙圈 token(需 `api` + `write_repository`) |
 | `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成、規格驗證(short-video-maker 使用) |
@@ -31,6 +32,7 @@
 | `backend-owner` | 網站後端(Go):實作、維護 OpenAPI 契約、httptest 與 curl 驗證;有「僅契約」模式 |
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
 | `short-video-maker` | 短影音:GitHub repo 或影片 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓),旁白與字幕,實際驗證規格與響度 |
+| `game-frontend-owner` | PixiJS 遊戲 / 大廳玩家端(正式版):新專案用 stack-pixi 骨架、既有專案照專案規則;Vitest + Playwright 三尺寸、效能預算、資源釋放、MUST 對照;缺素材寫 assets.needs.json 交給 game-concept-artist |
 | `game-concept-artist` | 遊戲示意圖與分鏡:ComfyUI 出圖,照各遊戲 `art/STYLE.md`,角色多張一致(參考圖編輯模型),逐張看圖;風格試作 / 定稿 / 角色定裝 / 一般 |
 
 安裝(全域連結,在倉庫根目錄執行):
@@ -108,6 +110,15 @@ mkdir -p ~/.config/game-art-kit && echo 'COMFYUI_URL=http://<ComfyUI 主機>:818
 ```
 
 ComfyUI 要用 `--listen` 啟動;macOS 要允許終端機 app 的「本機網路」權限。自我測試:`bash skills/game-art-kit/tests/run.sh`(離線)、`bash skills/game-art-kit/tests/run.sh --live`(實機 1 張小圖)。
+
+遊戲前端(game-frontend-owner + stack-pixi,另需 web-dev-kit、game-art-kit(素材 schema)、acceptance-designer):
+
+```bash
+ln -s "$(pwd)/agents/game-frontend-owner.md" ~/.claude/agents/game-frontend-owner.md
+ln -s "$(pwd)/skills/stack-pixi" ~/.claude/skills/stack-pixi
+```
+
+需要 Node.js ≥ 22、Google Chrome(Playwright 用系統 Chrome,不另外下載瀏覽器)。流程:acceptance-designer(簡報寫「遊戲前端」)起草情境 → game-frontend-owner 實作;缺素材時它寫 `assets.needs.json`,主 agent 交給 game-concept-artist 的「遊戲素材」模式,素材合併後再派 game-frontend-owner 接素材。自我測試:`bash skills/stack-pixi/tests/run.sh`(需要網路)。
 
 ## 安裝 skill(全域連結)
 
