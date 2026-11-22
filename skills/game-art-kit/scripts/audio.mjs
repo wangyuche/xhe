@@ -112,9 +112,10 @@ function process_(input, { type, dur, out, name, loop }) {
     ff(['-i', norm, '-c:a', 'aac', '-b:a', type === 'bgm' ? '160k' : '128k', '-movflags', '+faststart', m4a]);
     if (loopState) { const s = seam(norm); if (s > 6) loopState = 'approx'; }
     // 編碼(Opus / AAC)可能讓取樣間峰值上升:量編碼後的檔案,超過 −1 dBTP 就降增益重編(最多 2 次)
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; ; i++) {
       const over = Math.max(measure(ogg).truePeak ?? -99, measure(m4a).truePeak ?? -99) - (TP_MAX - 0.2);
       if (!(over > 0)) break;
+      if (i === 2) die(`編碼後 true peak 仍超過 ${TP_MAX} dBTP(重編 2 次)`, 1);
       const fix = join(tmp, 'g.wav'); ff(['-i', norm, '-af', `volume=${(-over).toFixed(2)}dB`, fix]); renameSync(fix, norm); applied -= over;
       ff(['-i', norm, '-c:a', 'libopus', '-b:a', type === 'bgm' ? '128k' : '96k', ogg]);
       ff(['-i', norm, '-c:a', 'aac', '-b:a', type === 'bgm' ? '160k' : '128k', '-movflags', '+faststart', m4a]);

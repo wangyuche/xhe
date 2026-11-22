@@ -27,7 +27,7 @@ node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
 #   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 180)。預設值已符合下面的規則。兩者相加要比呼叫端(例如 Bash 工具,最長 600 秒)的逾時
-#   少 180 秒以上(送出前查 `/object_info` 上限 15 秒;時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
+#   少 180 秒以上(送出前要節點旗標:用 `check` 存的快取,1 小時內不另外抓;沒有快取時抓 `/object_info` 最多 60 秒,所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
 #   → <目錄>/<檔名>.png(去背骨架是 RGBA)或 <檔名>.<伺服器給的音訊副檔名>(通常 .flac)、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);
 #     印 {"status":"ok","seconds":…,"files":[{file,width,height,channels} 或 {file,kind:"audio",bytes}]}
 #   逾時印 {"status":"timeout","reason":"run|queue|total","seconds":<設定的上限>,"elapsed":<實際秒數>}

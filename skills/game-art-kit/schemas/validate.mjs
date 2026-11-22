@@ -71,7 +71,7 @@ function semantic(kind, obj, root, errs) {
     const p = `${kind}[${i}](${a?.id})`;
     if (!a || typeof a !== 'object') return;
     // schema 已報錯的項目(型別可能不對)不做語意檢查,避免丟例外
-    if (errs.some(e => e.startsWith(`${kind}[${i}]`))) return;
+    if (errs.some(e => new RegExp(`^${kind}\\[${i}\\][.:\\[]`).test(e))) return;
     if (a.nineSlice && a.width && a.height) {
       const [t, r, b, l] = a.nineSlice;
       if (t + b >= a.height || l + r >= a.width) errs.push(`${p}: nineSlice 切線超出尺寸`);

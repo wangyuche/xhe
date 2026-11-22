@@ -9,8 +9,8 @@
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景、地圖塊):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
-//        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%、
-//        外框 2 px 內 alpha>0 的像素 < 1%、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
+//        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%(主體 = alpha ≥ 8)、
+//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
 //        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
@@ -67,8 +67,10 @@ export function decodePng(buf) {
       else { rgba[o] = s(0); rgba[o + 1] = s(1); rgba[o + 2] = s(2); rgba[o + 3] = ch === 4 ? s(3) : 255; }
       // 灰階 / RGB 的 tRNS 色鍵:等於該色的像素透明
       if (trns && (ct === 0 || ct === 2)) {
-        const key = (j) => trns.readUInt16BE(j * 2) >> (depth === 16 ? 8 : 0);
-        if (ct === 0 ? s(0) === key(0) : s(0) === key(0) && s(1) === key(1) && s(2) === key(2)) rgba[o + 3] = 0;
+        // 16 bit 要比完整的 16 bit 值,不能只比高位元組
+        const raw = (j) => depth === 16 ? px.readUInt16BE(y * stride + (x * ch + j) * 2) : s(j);
+        const key = (j) => trns.readUInt16BE(j * 2);
+        if (ct === 0 ? raw(0) === key(0) : raw(0) === key(0) && raw(1) === key(1) && raw(2) === key(2)) rgba[o + 3] = 0;
       }
     }
   }
@@ -156,7 +158,8 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
     // 水平:以主體的 alpha 加權重心置中(伸出手腳時身體不會左右跳),超出格子就貼齊邊界
     // 底部對齊:腳底離下緣 3 px(在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
     const gx = centroidX(im, b) * s;
-    const dx = cx + Math.min(W - dw, Math.max(0, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
+    const lo = dw <= W - 2 * m ? m : 0, hi = dw <= W - 2 * m ? W - m - dw : W - dw;
+    const dx = cx + Math.min(hi, Math.max(lo, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
     blit(sheet, cell, dx, dy);
   });
   return { sheet, columns, rows, scale: s, margin: m };

@@ -90,6 +90,17 @@ function pngChannels(file) {
   return { 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 }[t] ?? null;
 }
 
+// 節點旗標快取(只存 api_node / output_node,不含位址;檔名用位址雜湊):$TMPDIR/game-art-kit-nodeflags-<雜湊>.json
+const flagsFile = () => join(tmpdir(), `game-art-kit-nodeflags-${createHash('sha256').update(resolveUrl()).digest('hex').slice(0, 12)}.json`);
+function writeNodeFlags(oi) {
+  const flags = Object.fromEntries(Object.entries(oi).map(([k, v]) => [k, { api_node: v?.api_node === true, output_node: v?.output_node === true }]));
+  try { writeFileSync(flagsFile(), JSON.stringify({ t: Date.now(), flags })); } catch {}
+  return flags;
+}
+function readNodeFlags() {
+  try { const c = JSON.parse(readFileSync(flagsFile(), 'utf8')); return Date.now() - c.t < 3600000 ? c.flags : null; } catch { return null; }
+}
+
 // ---------- check ----------
 const MODEL_DIRS = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras', 'controlnet', 'clip_vision', 'style_models', 'ipadapter'];
 function family(name) {
@@ -123,6 +134,7 @@ async function check() {
   }
   const oi = await json('/object_info', { timeoutMs: 60000 });
   if (oi.__status) die(`/object_info 回 HTTP ${oi.__status}`, 3);
+  writeNodeFlags(oi);
   const has = (n) => Object.prototype.hasOwnProperty.call(oi, n);
   const dm = models.diffusion_models, te = models.text_encoders, vae = models.vae, lora = models.loras;
   const d = {
@@ -293,9 +305,13 @@ async function run() {
   const cloudByName = classes.filter(c => CLOUD.test(c));
   if (cloudByName.length) die(`workflow 含雲端 API 節點,不能用:${cloudByName.join(', ')}`, 2);
   {
-    // 15 秒上限(計入呼叫端的時間預算,見 SKILL.md)
-    const oi = await json('/object_info', { timeoutMs: 15000 });
-    if (oi.__status) die(`/object_info 回 HTTP ${oi.__status}`, 3);
+    // 節點旗標:優先用 check 存下的快取(1 小時內、同一個位址),沒有才抓 /object_info(上限 60 秒,見 SKILL.md 的時間預算)
+    let oi = readNodeFlags();
+    if (!oi) {
+      const full = await json('/object_info', { timeoutMs: 60000 });
+      if (full.__status) die(`/object_info 回 HTTP ${full.__status}`, 3);
+      oi = writeNodeFlags(full);
+    }
     const api = classes.filter(c => oi[c]?.api_node === true);
     if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);
     // 其他會寫進伺服器 output/ 的輸出節點(CheckpointSave、SaveGLB、自訂 Image Save…):output_node 且不是 Preview*

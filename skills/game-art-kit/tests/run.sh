@@ -31,6 +31,7 @@ node "$K/tests/fake-comfy.mjs" "$PORT" "$W/req.log" > "$W/fake.out" 2>&1 & PID=$
 for i in $(seq 1 50); do grep -q listening "$W/fake.out" 2>/dev/null && break; sleep 0.1; done
 export COMFYUI_URL="http://127.0.0.1:$PORT"
 export HOME="$W/home"; mkdir -p "$HOME"   # 不讀使用者的 ~/.config
+export TMPDIR="$W/tmp"; mkdir -p "$TMPDIR"   # 節點旗標快取、下載暫存都留在測試目錄
 
 # 1. 位址解析
 o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '找不到 ComfyUI 位址' && ok "沒有位址 → 結束碼 2 並附設定方式" || bad "沒有位址" "$o"
@@ -135,12 +136,14 @@ const ok=bg.length===1&&bg[0].node==="RMBG"&&bg[0].models.join()==="RMBG-2.0"&&d
 P3=$((PORT - 9000))
 FAKE_NO_RMBG=1 FAKE_NO_AUDIO=1 node "$K/tests/fake-comfy.mjs" "$P3" "$W/req3.log" > "$W/fake3.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake3.out" 2>/dev/null && break; sleep 0.1; done
+grep -q listening "$W/fake3.out" || bad "第 3 個假 ComfyUI 沒有啟動" "$(cat "$W/fake3.out")"
 c3="$(C check --url "http://127.0.0.1:$P3" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
 echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(d.background_removal.length===0&&d.audio_models.sfx.length===0&&d.audio_models.bgm.length===0&&w["qwen-t2i-sprite"]===false&&w["stable-audio-sfx"]===false&&w["ace-step-bgm"]===false&&w["qwen-t2i"]===true?0:1)' \
   && ok "check:沒有去背模型檔 / 音訊模型 → background_removal 與 audio_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
 P4=$((PORT - 8000))
 FAKE_WIN_PATHS=1 node "$K/tests/fake-comfy.mjs" "$P4" "$W/req4.log" > "$W/fake4.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake4.out" 2>/dev/null && break; sleep 0.1; done
+grep -q listening "$W/fake4.out" || bad "第 4 個假 ComfyUI 沒有啟動" "$(cat "$W/fake4.out")"
 c4="$(C check --url "http://127.0.0.1:$P4" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
 echo "$c4" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.background_removal[0]?.models.join()==="RMBG-2.0"?0:1)' \
   && ok "check:Windows 主機的反斜線路徑也認得 RMBG 模型檔" || bad "check Windows 路徑" "$c4"

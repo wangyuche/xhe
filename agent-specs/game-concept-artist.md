@@ -40,7 +40,7 @@
   - 生成與去背在**同一個 workflow** 完成:生成 → 本機 RMBG 節點(`check` 的 `background_removal`,只列模型檔已在主機上的選項;核心 `RemoveBackground` 只列在 `unsupported_background_removal`,kit 沒有骨架)→ `InvertMask` → `JoinImageWithAlpha` → `PreviewImage`。不另外上傳生成圖,去背不另計生成次數。
   - 雲端 API 節點(Bria、Recraft、Stability 等)一律不用;kit 的 `run` 拒絕這些節點。
   - kit `sprite.mjs`(純 Node 解 / 編 PNG):裁透明邊;角色類**底部對齊、水平置中**補到 1x 尺寸(顯示 × density);同一動作的所有格用同一個縮放比例(以最高的格為準);frames 拼成 sheet(橫向排列,超過 2048 px 換行)。
-  - `sprite.mjs check`:有 alpha 通道;尺寸等於 1x(顯示 × density);主體覆蓋率(alpha > 0 的像素)10–90%;外框 2 px 內 alpha > 0 的像素 < 1%;同一動作各格腳底基線差 ≤ 2 px、主體高度差 ≤ 10%。
+  - `sprite.mjs check`:有 alpha 通道;尺寸等於 1x(顯示 × density);主體覆蓋率(alpha ≥ 8 的像素;更低的是去背雜訊)10–90%;外框 2 px 內 alpha ≥ 8 的像素 < 1%;同一動作各格腳底基線差 ≤ 2 px、主體高度差 ≤ 10%。
 - **動作格**:每個動作最多 8 格(預設 idle 2、walk / run 4),以角色 ref + 姿勢描述逐格生成;每格寫出至少兩項 `character.md` 外觀特徵的比對;重出以單格計,每格最多 2 次。擴散模型做不出流暢動畫,格數少、動作是近似,列在已知限制。
 - **地圖塊**:不去背;`tileable` 時 `sprite.mjs check` 比較左右、上下邊緣像素平均差 ≤ 8(0–255)。背景不去背、不檢查平鋪。
 - **音效**:`stable_audio_3_small_sfx`(Stable Audio 3)生成;`audio.mjs`(ffmpeg)去頭尾靜音、裁到 `durationSec`(建議 3 秒以內)、正規化到 −16 LUFS(容許 −20 至 −12)、true peak ≤ −1 dBTP。
