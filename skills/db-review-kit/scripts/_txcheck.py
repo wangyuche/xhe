@@ -176,6 +176,11 @@ def main():
             idents |= {w.lower() for w in idents}
             star = "*" in stripped
             assigned |= idents | {p + w for p in prefixes for w in idents}
+            CONTROL_G = {"ON_ERROR_STOP", "ON_ERROR_ROLLBACK", "AUTOCOMMIT", "VERBOSITY", "SINGLELINE", "SINGLESTEP"}
+            hit = CONTROL_G & (idents | {p + w for p in prefixes for w in idents} | {w.upper() for w in idents})
+            if hit or star:
+                print("\\gset could set a psql control variable (%s)" % (", ".join(sorted(hit)) or "SELECT *"))
+                return 2
         sql_only = strip("\n".join(l for l in lines if not l.lstrip().startswith("\\")))
         for vm in re.finditer(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", sql_only):
             n = vm.group(1)

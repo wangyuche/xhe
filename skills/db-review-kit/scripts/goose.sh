@@ -47,7 +47,8 @@ GOOSE_VER="$(awk '
   $1 == ")" { blk = ""; next }
   $1 == "require" && $2 == "github.com/pressly/goose/v3" { print $3; exit }
   blk == "require" && $1 == "github.com/pressly/goose/v3" { print $2; exit }' "$MODULE/go.mod")"
-[ -n "$GOOSE_VER" ] || GOOSE_VER="$GOOSE_VER_OPT"   # project without goose in go.mod (CLI installed separately): from the profile
+GOOSE_SRC="$MODULE/go.mod"
+[ -n "$GOOSE_VER" ] || { GOOSE_VER="$GOOSE_VER_OPT"; GOOSE_SRC="--goose-version"; }   # project without goose in go.mod (CLI installed separately): from the profile
 [ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;用 --goose-version(設定檔的 goose 版本)指定,否則 goose 版本無法判定" 1
 printf '%s' "$GOOSE_VER" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' && case "$GOOSE_VER" in *..*) false ;; *) true ;; esac \
   || die "goose 版本不合法(要是 vX.Y.Z):$GOOSE_VER" 1
@@ -66,7 +67,7 @@ if [ ! -x "$GOOSE" ]; then
     "github.com/pressly/goose/v3/cmd/goose@$GOOSE_VER" >&2 || die "goose $GOOSE_VER 編譯失敗" 1
   mv "$WORK/gobin/goose" "$GOOSE"
 fi
-echo "goose=$GOOSE_VER (from $MODULE/go.mod)" >&2
+echo "goose=$GOOSE_VER (from $GOOSE_SRC)" >&2
 # -env (skip loading ./.env) exists only in newer goose CLIs; older ones never load .env, so the flag is just omitted.
 ENVFLAG=(); GOOSE_HELP="$("$GOOSE" -h 2>&1 || true)"
 case "$GOOSE_HELP" in *"-env string"*) ENVFLAG=(-env none) ;; esac

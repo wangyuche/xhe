@@ -38,12 +38,18 @@ def join_query(pairs):
 
 
 def parse(dsn):
+    # libpq and urllib disagree on '#' (libpq has no fragment) and on '@' (libpq ends userinfo at the FIRST '@'):
+    # refuse both ambiguities instead of trying to interpret them
+    if "#" in dsn:
+        raise DsnError("'#' is not allowed in a DSN")
     p = up.urlsplit(dsn)
     if p.scheme not in ("postgres", "postgresql"):
         raise DsnError("not a postgres:// URL")
-    hostport = p.netloc.rsplit("@", 1)[-1]
-    if "," in hostport:
+    if p.netloc.count("@") > 1:
+        raise DsnError("more than one '@' in the authority")
+    if "," in p.netloc:
         raise DsnError("multiple hosts are not allowed")
+    hostport = p.netloc.rsplit("@", 1)[-1]
     try:
         port = p.port
     except ValueError:

@@ -67,6 +67,9 @@ for kv in 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=
 done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
 o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?options=-c%20standard_conforming_strings%3Doff')"; [ $? -eq 4 ] && ok "guard:DSN options 改 standard_conforming_strings → 拒絕" || bad "guard scs" "$o"
+for bd in 'postgres://u:p@127.0.0.1:6000/db#&host=evil.example' 'postgres://u@evil.example,@127.0.0.1:6000/db' 'postgres://u@x@127.0.0.1:6000/db'; do
+  o="$(DSNPY guard 6000 "$bd")"; [ $? -eq 4 ] && ok "guard:拒絕 $bd" || bad "guard 應拒絕 $bd" "$o"
+done
 o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?options=--standard-conforming-strings%3Doff')"; [ $? -eq 4 ] && ok "guard:連字號寫法 --standard-conforming-strings 也拒絕" || bad "guard scs dash" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_ARGS=--report=json' 'NOTIFY=ci@example.com' 'SUPER=superuser=on'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:--report=json、email 這類值不誤擋" || bad "誤擋 report/email" "$o"
@@ -384,6 +387,7 @@ o="$(printf "SELECT chr(92)||'! id' AS n \\gset\n:n\n" | bash "$S/pg.sh" psql "$
 o="$(printf "\\set y 1\nSELECT chr(92)||'c host=evil' AS y\n\\gset\nSELECT :y;\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:獨立一行的 \\gset 覆寫 \\set 變數 → 拒絕" || bad "psql 獨立 gset" "$o"
 o="$(printf "SELECT chr(92)||'c h' AS y \\gset p_\nSELECT :p_y;\n" | bash "$S/pg.sh" psql "$N" "$SU" -v p_y=1 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 前綴產生的變數 → 拒絕" || bad "psql gset prefix" "$o"
 o="$(printf "SELECT :LAST_ERROR_MESSAGE;\n" | bash "$S/pg.sh" psql "$N" "$SU" -v LAST_ERROR_MESSAGE=x 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:psql 內建變數(LAST_ERROR_MESSAGE)不能裸用" || bad "psql 內建變數" "$o"
+o="$(printf 'SELECT 0 AS "ON_ERROR_STOP" \\gset\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:\\gset 設 ON_ERROR_STOP → 拒絕" || bad "psql gset control" "$o"
 o="$(printf "SELECT :x;\n" | bash "$S/pg.sh" psql "$N" "$SU" -v x=:y 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值含 : → 拒絕" || bad "psql -v :" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "-- TODO" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:只有註解 → 用法錯誤" || bad "explain 空查詢" "$o"
 o="$(printf "SELECT :'v'::int + :n AS s;\n" | bash "$S/pg.sh" psql "$N" "$SU" -qAt -v v=1 -v n=2 2>&1)"; [ "$o" = 3 ] && ok "pg.sh psql:-v 給的 :n 與 :'v' 可以用" || bad "psql -v 變數" "$o"
