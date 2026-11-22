@@ -135,7 +135,7 @@ skills:
 ## 限制
 - 只寫 `art/`;暫存只放 `<tmp>`。
 - 網路只連:ComfyUI(透過 kit);風格試作時簡報給的參考網址(只截圖)。不把圖傳到 ComfyUI 以外的任何地方。
-- 只上傳角色 ref、構圖草圖,以及簡報旗標「使用者授權上傳參考圖」列出的檔案(kit `upload`,放 temp);去背在生成的同一個 workflow 裡做,不另外上傳生成圖。不在 ComfyUI 主機安裝 / 下載模型或節點、不改設定、不刪檔案(去背只用 `background_removal` 列出、模型檔已在主機上的選項);workflow 只用 `PreviewImage` / `PreviewAudio`。
+- 只上傳角色 ref、構圖草圖,以及簡報旗標「使用者授權上傳參考圖」列出的檔案(kit `upload`,放 temp);去背在生成的同一個 workflow 裡做(不為了去背另外上傳生成圖)。不在 ComfyUI 主機安裝 / 下載模型或節點、不改設定、不刪檔案(去背只用 `background_removal` 列出、模型檔已在主機上的選項);workflow 只用 `PreviewImage` / `PreviewAudio`。
 - 不用雲端 API 節點(Bria、Recraft、Stability 等;kit 會拒絕);簡報要求用雲端服務去背或生成 → BLOCKED。
 - 不仿製既有遊戲 / 動畫 / 漫畫的角色、美術或關卡(含改名仿作),不畫真實人物肖像。
 - 不寫遊戲程式。遊戲素材模式的產出是 AI 生成素材,assets.json 一律 `review: "pending"`,上線前由使用者人工審核 / 修圖(動作格數少、未人工修圖、音訊未試聽),列在已知限制。

@@ -200,6 +200,20 @@ for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) 
 writeFileSync(process.argv[1], encodePng({ width: W, height: H, data: d }));' "$W/sp/halo.png"
 o="$(S check "$W/sp/halo.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && echo "$o" | grep -q 'sticker' \
   && o2="$(S check "$W/sp/one.png" --width 120 --height 160)" && ok "sprite.mjs check:主體外緣一圈白色貼紙框 → 不通過並提示改提示詞;沒有白框的照常通過" || bad "sprite 白框" "$o ${o2:-}"
+for m in soft white; do node --input-type=module -e '
+import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
+const [out, mode] = process.argv.slice(1); const W = 300, H = 400, d = Buffer.alloc(W * H * 4);
+const r = (x, y, x0, y0, x1, y1) => x >= x0 && x < x1 && y >= y0 && y < y1;
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4;
+  if (mode === "white") { if (r(x, y, 50, 50, 250, 376)) { d[o] = d[o + 1] = d[o + 2] = 245; d[o + 3] = 255; } continue; }
+  if (r(x, y, 44, 44, 256, 382)) { d[o] = d[o + 1] = d[o + 2] = 250; d[o + 3] = r(x, y, 46, 46, 254, 380) ? 255 : 60;
+    if (r(x, y, 50, 50, 250, 376)) { d[o] = 90; d[o + 1] = 160; d[o + 2] = 90; } } }
+writeFileSync(out, encodePng({ width: W, height: H, data: d }));' "$W/sp/$m.png" "$m"; done
+o="$(S check "$W/sp/soft.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo "$o" | grep -q '白色貼紙外框' && ok "sprite.mjs check:白框外有半透明羽化邊(alpha 60)也抓得到" || bad "sprite 羽化白框" "$o"
+o="$(S check "$W/sp/white.png" --width 300 --height 400)"; rc=$?; o2="$(S check "$W/sp/white.png" --width 300 --height 400 --allow-white-edge)" && [ $rc -eq 1 ] && ok "sprite.mjs check:白色主體預設不通過,加 --allow-white-edge 通過" || bad "sprite allow-white-edge" "rc=$rc $o ${o2:-}"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 200 2>&1)"; r1=$?; o2="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 1 2>&1)"; r2=$?
+o3="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 120 --height 160 --foot 8 --align center 2>&1)"; r3=$?; o4="$(S fit "$W/sp/f1.png" --out "$W/sp/x.png" --width 96 --height 240 --margin 0 --foot 8 2>&1)"; r4=$?
+[ $r1 -eq 2 ] && [ $r2 -eq 2 ] && [ $r3 -eq 2 ] && [ $r4 -eq 2 ] && ok "sprite.mjs fit --foot:太大 / 小於 2 / 搭配置中或 --margin 0 → 結束碼 2" || bad "sprite --foot 驗證" "$r1 $r2 $r3 $r4 $o $o2 $o3 $o4"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/foot8.png" --width 120 --height 160 --foot 8)" && o2="$(S info "$W/sp/foot8.png")" && echo "$o2" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.bbox.y+d.bbox.h===152?0:1)' \
   && o3="$(S info "$W/sp/one.png")" && echo "$o3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.bbox.y+d.bbox.h===157?0:1)' && ok "sprite.mjs fit --foot 8:主體離下緣 8 px(不給時預設 3 px)" || bad "sprite --foot" "$o ${o2:-} ${o3:-}"
 o="$(S check "$W/sp/one.png" --width 100 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '尺寸' && ok "sprite.mjs check:尺寸不符 → 不通過" || bad "sprite 尺寸" "$o"
