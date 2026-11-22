@@ -61,6 +61,8 @@ case "$CMD" in
     printf '%s' "$TIMEOUT" | grep -Eq '^[0-9]+$' || die "--timeout 要是秒數" 2
     TIMEOUT=$((10#$TIMEOUT)); [ "$TIMEOUT" -ge 1 ] || die "--timeout 要是秒數" 2
     require_local_docker
+    image_lock; LOCKED=1   # held until docker run: two parallel ups for one <name> cannot both pass the check below
+    trap 'image_unlock' EXIT; trap 'exit 130' INT TERM
     [ -z "$(list_ours "$NAME")" ] || die "已有 dbrev-$NAME-* 容器;先 pg.sh gc $NAME" 1
     # format checks that do not need the container run before any pull / docker run
     for rs in ${ROLESPEC[@]+"${ROLESPEC[@]}"}; do
@@ -128,7 +130,6 @@ case "$CMD" in
     trap '[ -n "$UP_OK" ] || cleanup_fail' EXIT
     trap 'exit 130' INT TERM
     # pull only after every argument check passed (a failed check must not leave a pulled image behind)
-    image_lock; LOCKED=1
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; record_pulled "$IMAGE"; fi
     # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
     # anonymous on-disk volume is created and --tmpfs-size really caps the data.

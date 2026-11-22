@@ -114,9 +114,9 @@ blocks_of() { # lock mode -> what ordinary statements it blocks
     AccessShareLock) echo "ddl-only(ACCESS EXCLUSIVE)" ;;
     RowShareLock) echo "EXCLUSIVE/ACCESS EXCLUSIVE(ddl, REFRESH MV)" ;;
     RowExclusiveLock) echo "SHARE+(CREATE INDEX non-concurrent, ddl)" ;;
-    ShareUpdateExclusiveLock) echo "ddl/VACUUM/ANALYZE/CREATE INDEX CONCURRENTLY; reads+writes ok" ;;
-    ShareLock) echo "writes(INSERT/UPDATE/DELETE)" ;;
-    ShareRowExclusiveLock) echo "writes(INSERT/UPDATE/DELETE)" ;;
+    ShareUpdateExclusiveLock) echo "ddl/VACUUM/ANALYZE/CREATE INDEX (plain and CONCURRENTLY); reads+writes ok" ;;
+    ShareLock) echo "writes(INSERT/UPDATE/DELETE) + VACUUM/ANALYZE/CREATE INDEX CONCURRENTLY/ddl" ;;
+    ShareRowExclusiveLock) echo "writes(INSERT/UPDATE/DELETE) + CREATE INDEX/VACUUM/ANALYZE/ddl" ;;
     ExclusiveLock) echo "writes + SELECT FOR UPDATE/SHARE; plain reads ok" ;;
     AccessExclusiveLock) echo "reads+writes(everything)" ;;
     *) echo "?" ;;

@@ -186,7 +186,7 @@ def main():
         lines = raw.splitlines()
         CONTROL = {"ON_ERROR_STOP", "ON_ERROR_ROLLBACK", "AUTOCOMMIT", "VERBOSITY", "SINGLELINE", "SINGLESTEP"}
         for line in lines:
-            cm = re.match(r"\s*\\(set|unset)\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+            cm = re.match(r"\s*\\(set|unset|getenv)\s+([A-Za-z_][A-Za-z0-9_]*)", line)
             if cm and cm.group(2).upper() in CONTROL:
                 print("changing psql control variable %s is not allowed (the kit relies on it)" % cm.group(2))
                 return 2
