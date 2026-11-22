@@ -33,6 +33,7 @@ guard_dsns "$DSN"
 # drop trailing blank / "--" comment lines, then one trailing ';'
 Q="$(printf '%s\n' "$Q" | awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && (l[n] ~ /^[[:space:]]*$/ || l[n] ~ /^[[:space:]]*--/)) n--; for (i = 1; i <= n; i++) print l[i] }' \
      | sed -e 's/[[:space:]]*$//' -e '$ s/;[[:space:]]*--.*$/;/' -e '$ s#;[[:space:]]*/\*.*\*/[[:space:]]*$#;#' -e '$ s/;$//')"
+[ -n "$(printf '%s' "$Q" | tr -d '[:space:]')" ] || die "--query / --file 去掉註解後是空的" 2
 case "$Q" in *";"*) die "--query / --file 只能放一個語句(EXPLAIN 只會套在第一個)" 2 ;; esac
 case "$Q" in *\\*) die "查詢不能含反斜線(psql 指令;字串裡請用 chr(92)),否則無法保證 ROLLBACK" 2 ;; esac
 bad="$(printf '%s\n' "$Q" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" || die "查詢裡有交易控制或 psql 指令($bad),無法保證 ROLLBACK" 2

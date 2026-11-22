@@ -131,41 +131,50 @@ def main():
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
         # psql re-lexes a bare :name value as if typed (so a value holding "\\c host=…" would run). In SQL lines only
         # :'name' / :"name" (quoted, safe) or a bare :name set by a validated -v (--vars) or a plain \\set are allowed.
+        # Order-independent and strict: a bare :name in SQL is allowed only when ALL hold
+        #   - the name came in through a validated -v (--vars: values are only [A-Za-z0-9_.+-]) or a plain \\set,
+        #   - it is not one of psql's own variables (psql overwrites those, e.g. LAST_ERROR_MESSAGE),
+        #   - the script never assigns it: no \\set / \\unset / \\getenv of it, and if the script has any \\gset,
+        #     no identifier anywhere in the script (alone or after a \\gset prefix) that could produce it, and no
+        #     \\gset over a SELECT *.
+        PSQL_VARS = {"AUTOCOMMIT", "COMP_KEYWORD_CASE", "DBNAME", "ECHO", "ECHO_HIDDEN", "ENCODING", "ERROR",
+                     "FETCH_COUNT", "HIDE_TABLEAM", "HIDE_TOAST_COMPRESSION", "HISTCONTROL", "HISTFILE", "HISTSIZE",
+                     "HOST", "IGNOREEOF", "LASTOID", "LAST_ERROR_MESSAGE", "LAST_ERROR_SQLSTATE", "ON_ERROR_ROLLBACK",
+                     "ON_ERROR_STOP", "PORT", "PROMPT1", "PROMPT2", "PROMPT3", "QUIET", "ROW_COUNT", "SERVER_VERSION_NAME",
+                     "SERVER_VERSION_NUM", "SHELL_ERROR", "SHELL_EXIT_CODE", "SHOW_ALL_RESULTS", "SHOW_CONTEXT",
+                     "SINGLELINE", "SINGLESTEP", "SQLSTATE", "USER", "VERBOSITY", "VERSION", "VERSION_NAME", "VERSION_NUM",
+                     "WATCH_INTERVAL"}
         vars_ok = set(v for v in (sys.argv[sys.argv.index("--vars") + 1].split(",") if "--vars" in sys.argv else []) if v)
-        # Untrusted names: anything a \gset may set (every identifier of that statement, or everything if it selects *),
-        # a \set with a non-plain value (e.g. "\set y :x" copies another variable), and \getenv targets.
-        untrusted, untrusted_all, stmt = set(), False, []
-        for line in raw.splitlines():
+        assigned, prefixes, has_gset, star = set(), set(), False, False
+        lines = raw.splitlines()
+        for line in lines:
             st = line.lstrip()
-            m = re.match(r"\\set\s+([A-Za-z_][A-Za-z0-9_]*)(\s+(.*))?$", st)
-            if m:
-                if re.fullmatch(r"[A-Za-z0-9_.+-]*", (m.group(3) or "").strip()):
-                    vars_ok.add(m.group(1))
-                else:
-                    untrusted.add(m.group(1))
-                continue
-            m = re.match(r"\\getenv\s+([A-Za-z_][A-Za-z0-9_]*)", st)
-            if m:
-                untrusted.add(m.group(1))
-                continue
-            if st.startswith("\\"):
-                continue
-            stmt.append(line)
-            if re.search(r"\\gset", line):
-                text_g = "\n".join(stmt)
-                text_g = text_g[text_g.rfind(";") + 1:]
-                quoted = re.findall(r'"([^"]*)"', text_g)
-                bare = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", strip(text_g))
-                untrusted.update(quoted); untrusted.update(b.lower() for b in bare); untrusted.update(bare)
-                if "*" in strip(text_g):
-                    untrusted_all = True
-                stmt = []
-            elif ";" in strip(line):
-                stmt = []
-        sql_only = strip("\n".join(l for l in raw.splitlines() if not l.lstrip().startswith("\\")))
+            m = re.match(r"\\(set|getenv)\s+([A-Za-z_][A-Za-z0-9_]*)(\s+(.*))?$", st)
+            # a \\set to a plain value (e.g. the "\\if :{?n} \\else \\set n 1000 \\endif" default) is safe;
+            # \\set from another variable (:x, backticks …) and \\getenv are not
+            if m and (m.group(1) == "getenv" or not re.fullmatch(r"[A-Za-z0-9_.+-]*", (m.group(4) or "").strip())):
+                assigned.add(m.group(2))
+            elif m:
+                vars_ok.add(m.group(2))   # plain \\set value: as safe as a validated -v
+            gm = re.search(r"\\gset(\s+([A-Za-z_][A-Za-z0-9_]*))?", line)
+            if gm:
+                has_gset = True
+                if gm.group(2):
+                    prefixes.add(gm.group(2))
+        if has_gset:
+            body = "\n".join(l for l in lines if not l.lstrip().startswith("\\"))
+            idents = set(re.findall(r'"([^"]*)"', body))
+            stripped = strip(body)
+            idents |= {w for w in re.findall(r"(?<![:A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*", stripped)}
+            idents |= {w.lower() for w in idents}
+            star = "*" in stripped
+            assigned |= idents | {p + w for p in prefixes for w in idents}
+        sql_only = strip("\n".join(l for l in lines if not l.lstrip().startswith("\\")))
         for vm in re.finditer(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", sql_only):
-            if vm.group(1) not in vars_ok or vm.group(1) in untrusted or untrusted_all:
-                print("bare :%s in SQL (re-lexed by psql); use :'%s' or pass it with -v" % (vm.group(1), vm.group(1)))
+            n = vm.group(1)
+            if n not in vars_ok or n in PSQL_VARS or n in assigned or star:
+                print("bare :%s in SQL is not provably safe (psql re-reads its value as input); use :'%s', or pass it "
+                      "with -v and do not assign it in the script" % (n, n))
                 return 1
         # psql's own lexer decides where a meta-command starts, and emulating it has proven fragile. So in script mode a
         # backslash is only accepted in two exact shapes, checked per raw line (no SQL lexing involved):

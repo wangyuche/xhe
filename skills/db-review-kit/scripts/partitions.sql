@@ -37,7 +37,7 @@ SELECT parent::regclass AS parent,
 FROM b
 WHERE upper_txt IS NOT NULL AND pg_input_is_valid(upper_txt, 'timestamptz')
 GROUP BY parent;
-SELECT r.*, (r.runway_days < :min_runway_days) AS below_minimum, :min_runway_days AS min_runway_days
+SELECT r.*, (r.runway_days < :'min_runway_days'::numeric) AS below_minimum, :'min_runway_days'::numeric AS min_runway_days
 FROM dbrev_runway r ORDER BY 1;
 
 \echo '### partition ACL differs from parent (NULL = default privileges)'
@@ -86,7 +86,7 @@ ORDER BY 1;
 \pset format unaligned
 SELECT 'partitions_summary parents=' || (SELECT count(*) FROM pg_partitioned_table pt JOIN pg_class p ON p.oid = pt.partrelid
                                           WHERE p.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace))
-    || ' runway_violations=' || (SELECT count(*) FROM dbrev_runway WHERE runway_days < :min_runway_days)
+    || ' runway_violations=' || (SELECT count(*) FROM dbrev_runway WHERE runway_days < :'min_runway_days'::numeric)
     || ' acl_mismatches=' || ((SELECT count(*) FROM dbrev_acl) + (SELECT count(*) FROM dbrev_colacl))
     || ' missing_default=' || (SELECT count(*) FROM pg_partitioned_table pt JOIN pg_class p ON p.oid = pt.partrelid
                                WHERE pt.partdefid = 0 AND pt.partstrat <> 'h'

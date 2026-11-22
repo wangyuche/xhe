@@ -180,7 +180,7 @@ case "$CMD" in
         -v) [ $# -ge 2 ] || die "-v 需要 name=value" 2
             case "$2" in *"
 "*|*"$(printf '\r')"*) die "-v 的值不能跨行" 2 ;; esac
-            printf '%s' "$2" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[^\\`]*$' || die "-v 的值不能含反斜線或反引號:$2" 2
+            printf '%s' "$2" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.+-]*$' || die "-v 的值只能是英數與 _ . + -(不能含 : \\ 反引號 空白):$2" 2
             VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; ARGS+=("$1" "$2"); shift 2 ;;
         -F|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;
         -c) [ $# -ge 2 ] || die "-c 需要 SQL" 2; CMDS="$CMDS$2

@@ -33,7 +33,8 @@ bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c 
 #   不接受連線參數(-d -h -p -U);反斜線只能出現在「行首的一個允許指令」或「行尾的 \gset」,
 #   SQL 文字裡的反斜線(含 E'' 字串)一律拒絕(改用 chr(92));psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv \conninfo \encoding
 #   (\c、\!、\o、\g |…、\copy、\i 等 → 結束碼 4;seed.sh --file 同樣)
-#   SQL 裡的裸 :name 只能是 -v 給的或 \set 設成一般值的變數(psql 會把值當成輸入重新解析);:'name' / :"name" 可用;-v 的值不能含反斜線
+#   SQL 裡的裸 :name 只能是 -v 給的或 \set 設成一般值的變數,且不是 psql 內建變數、不會被 \gset 覆寫(psql 會把值當成輸入重新解析);
+#   :'name' / :"name" 可用;-v / --var 的值只能是英數與 _ . + -
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
 bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄;映像是這次 up 拉的且沒有其他容器在用時一併刪除)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0
