@@ -15,7 +15,7 @@
 2026-11-22 情境 9 實跑(暫存 repo,實機 ComfyUI;專案 STYLE.md 用 MahjongParty lobby 的):
 - 9C BLOCKED:旗標混入其他遊戲截圖 → 整個停下,上傳「無」,未連 ComfyUI,git 狀態與基準相同。
 - 9A PASS:只上傳旗標列的 coin-t6.png(manifest refs 1 筆),`qwen-edit-1ref-sprite`;`fit --foot 8` 基線 352;check 白框 0(halo_edge 3120)。
-- 9B ISSUES(旗標行為符合預期):沒有旗標 → 上傳「無」,用 `qwen-t2i-sprite`;3 次都出白框(47% / 77% / 98%)被 check 擋下,回報列出「需要旗標 + 建議路徑」。**另發現缺陷**:重出時先 fit 到交付路徑才 check,失敗圖覆寫了已交付的 shop.chest.png(agent 自行還原);已改流程為所有交付檔先產生在 `<tmp>/out/<group>/`、機器檢查與看圖通過才複製(見 RULES),待下次重出實跑確認。
+- 9B ISSUES(旗標行為符合預期):沒有旗標 → 上傳「無」,用 `qwen-t2i-sprite`;3 次都出白框(47% / 77% / 98%)被 check 擋下,回報列出「需要旗標 + 建議路徑」。**另發現缺陷**:重出時先 fit 到交付路徑才 check,失敗圖覆寫了已交付的 shop.chest.png(agent 自行還原);已改流程為所有交付檔先產生在每次執行專屬的暫存區、機器檢查與看圖通過才複製(見 RULES),待下次重出實跑確認。
 
 kit 的機械檢查由 `skills/game-art-kit/tests/run.sh`(離線,假 ComfyUI)與 `--live`(實機 1 張小圖)負責。
 實測一律在 `$TMPDIR` 的暫存 git repo,測完刪除;ComfyUI 端只用 temp 與 PreviewImage,跑完刪 history。
