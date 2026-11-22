@@ -79,7 +79,7 @@ blocks_of() { # lock mode -> what ordinary statements it blocks
     *) echo "?" ;;
   esac
 }
-LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode FROM pg_locks l WHERE l.pid = pg_backend_pid() AND l.granted AND l.locktype = 'relation' AND l.relation <> 'pg_locks'::regclass AND NOT EXISTS (SELECT 1 FROM pg_class cc WHERE cc.oid = l.relation AND cc.relnamespace = 'pg_catalog'::regnamespace) ORDER BY 1, 2;"
+LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, CASE WHEN EXISTS (SELECT 1 FROM pg_class nc WHERE nc.oid = l.relation AND nc.xmin = (pg_current_xact_id()::text::numeric % 4294967296)::text::xid) THEN 'new' ELSE '' END FROM pg_locks l WHERE l.pid = pg_backend_pid() AND l.granted AND l.locktype = 'relation' AND l.relation <> 'pg_locks'::regclass AND NOT EXISTS (SELECT 1 FROM pg_class cc WHERE cc.oid = l.relation AND cc.relnamespace = 'pg_catalog'::regnamespace) ORDER BY 1, 2;"
 
 if [ -z "$HOLD" ]; then
   out="$(printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
@@ -90,13 +90,14 @@ if [ -z "$HOLD" ]; then
       "$(echo "$out" | grep -m1 -oE '[0-9A-Z]{5}: .{0,120}' || true)"
     exit 1
   fi
-  echo "| object | mode | blocks |"; echo "|---|---|---|"
+  echo "| object | mode | blocks |"; echo "|---|---|---|"   # objects created by this DDL are marked new (invisible to others)
   n=0; ae=0
-  while IFS='|' read -r obj mode; do
+  while IFS='|' read -r obj mode isnew; do
     case "$mode" in *Lock) ;; *) continue ;; esac   # skip NOTICE / other non-lock lines
     [ -n "$obj" ] || continue
+    if [ "$isnew" = new ]; then echo "| $obj (new in this transaction) | $mode | none (not visible to other sessions yet) |"; n=$((n + 1)); continue; fi
     echo "| $obj | $mode | $(blocks_of "$mode") |"; n=$((n + 1))
-    [ "$mode" = AccessExclusiveLock ] && ae=$((ae + 1))
+    if [ "$mode" = AccessExclusiveLock ]; then ae=$((ae + 1)); fi
   done < <(echo "$out" | sed -n '/^__DBREV_LOCKS__$/,$p' | sed 1d)
   printf '{"mode":"in-transaction","locks":%d,"access_exclusive":%d,"rolled_back":true,"ok":true}\n' "$n" "$ae"
   exit 0
@@ -133,9 +134,9 @@ SNAP="$(printf "%s\n" \
   "SELECT a.application_name, coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, l.granted FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE a.application_name LIKE 'dbrev-lock-%' AND l.locktype = 'relation' ORDER BY 1, 2, 3;" \
   | psql_dsn "$MON" -qAt -F '|' 2>&1 || true)"
 echo "### sessions(snapshot)"; echo "| session | pid | state | wait | blocked_by |"; echo "|---|---|---|---|---|"
-echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | while IFS='|' read -r s p st w b; do [ -n "$s" ] && echo "| ${s#dbrev-lock-} | $p | $st | $w | $(echo "$b" | sed 's/dbrev-lock-//g') |"; done
+echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | while IFS='|' read -r s p st w b; do if [ -n "$s" ]; then echo "| ${s#dbrev-lock-} | $p | $st | $w | $(echo "$b" | sed 's/dbrev-lock-//g') |"; fi; done
 echo "### relation locks(snapshot)"; echo "| session | object | mode | granted |"; echo "|---|---|---|---|"
-echo "$SNAP" | sed -n '/^__DBREV_LOCKS__$/,$p' | sed 1d | while IFS='|' read -r s o m g; do [ -n "$s" ] && echo "| ${s#dbrev-lock-} | $o | $m | $g |"; done
+echo "$SNAP" | sed -n '/^__DBREV_LOCKS__$/,$p' | sed 1d | while IFS='|' read -r s o m g; do if [ -n "$s" ]; then echo "| ${s#dbrev-lock-} | $o | $m | $g |"; fi; done
 wait "$DDL_PID" 2>/dev/null || true
 [ -z "$PROBE_PID" ] || wait "$PROBE_PID" 2>/dev/null || true
 outcome() { # file -> ok | timeout(55P03) | error(code)

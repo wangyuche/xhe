@@ -125,7 +125,7 @@ while IFS= read -r line; do
   echo "CHECK $v:$q=> expected '$exp' got '$got'"
 done < <(grep -E '^CHECK:' "$SCRIPT" || true)
 
-ERRJSON="$(sort "$W/codes" | grep -v '^$' | uniq -c | awk '{printf "%s\"%s\":%d", (n++?",":""), $2, $1}')"
+ERRJSON="$( { grep -v '^$' "$W/codes" || true; } | sort | uniq -c | awk '{printf "%s\"%s\":%d", (n++?",":""), $2, $1}')"
 DL=false; grep -qx 40P01 "$W/codes" && DL=true
 echo "{\"deadlock\":$DL,\"errors\":{${ERRJSON}},\"checks\":{\"pass\":$CP,\"fail\":$CF}}"
 [ $CF -eq 0 ]

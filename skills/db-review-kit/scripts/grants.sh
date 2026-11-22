@@ -8,6 +8,8 @@
 #   action: select | select(c1,c2) | insert | insert(c1,c2) | update(c1,c2) | delete | truncate | sql:<statement>
 #           (sql: may use {obj} for the object; '|' inside the statement is fine)
 #   expect: ok | 42501 | <other SQLSTATE>
+#   bare `select` (SELECT 1 …) also names no columns: it passes with SELECT on ANY one column; use select(c1,…) or
+#   sql:SELECT * FROM {obj} LIMIT 0 to prove table-wide SELECT.
 #   bare `insert` (DEFAULT VALUES) names no columns, so PostgreSQL accepts INSERT on ANY one column: it proves only
 #   "can insert at least one column". To check full / specific column INSERT use insert(c1,c2,…).
 # "ok" means the privilege check passed: success, or a later integrity / data error (23xxx / 22xxx, e.g. NOT NULL on

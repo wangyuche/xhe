@@ -75,8 +75,11 @@ def mask(dsn):
         if p.password is not None:
             userinfo, _, hostport = p.netloc.rpartition("@")
             user = userinfo.split(":", 1)[0]
-            return up.urlunsplit(p._replace(netloc=user + ":***@" + hostport))
-        return dsn
+            p = p._replace(netloc=user + ":***@" + hostport)
+        if p.query:
+            q = [(k, "***" if k.lower() == "password" else v) for k, v in split_query(p.query)]
+            p = p._replace(query="&".join(up.quote(k, safe="") + "=" + (v if v == "***" else up.quote(v, safe="")) for k, v in q))
+        return up.urlunsplit(p)
     except Exception:
         return "<unparsable dsn>"
 

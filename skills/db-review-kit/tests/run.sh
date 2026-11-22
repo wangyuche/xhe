@@ -39,6 +39,7 @@ o="$(DSNPY opts 'postgres://u:p@127.0.0.1:6000/db?options=-c%20lock_timeout%3D9s
   && ok "opts:kit 預設在前,DSN 自己的 options 在後(後者生效)" || bad "opts 合併" "$o"
 [ "$(DSNPY internal 'postgres://u:p@127.0.0.1:6000/db?x=1')" = 'postgres://u:p@127.0.0.1:5432/db?x=1' ] && ok "internal:改寫成容器內 127.0.0.1:5432" || bad "internal"
 [ "$(DSNPY mask 'postgres://u:secret@127.0.0.1:6000/db')" = 'postgres://u:***@127.0.0.1:6000/db' ] && ok "mask:隱藏密碼" || bad "mask"
+[ "$(DSNPY mask 'postgres://u@127.0.0.1:6000/db?password=secret&sslmode=disable')" = 'postgres://u@127.0.0.1:6000/db?password=***&sslmode=disable' ] && ok "mask:也隱藏 ?password=" || bad "mask password param" "$(DSNPY mask 'postgres://u@127.0.0.1:6000/db?password=secret&sslmode=disable')"
 
 # ---------- 2. isolated env (offline) ----------
 o="$(DATABASE_URL=postgres://evil@10.255.255.1/x PGHOST=10.255.255.1 PGPASSWORD=leak TEST_DATABASE_URL=postgres://x@10.0.0.1/y_test GOOSE_DBSTRING=x GOFLAGS=-mod=mod \
@@ -162,7 +163,7 @@ o="$(bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db
 # ---------- locks ----------
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$FX/migrations/00003_notes.sql" 2>&1)"; rc=$?
 gone="$(echo "SELECT to_regclass('fx.notes') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
-echo "$o" | grep -q '| fx.accounts | ShareRowExclusiveLock | writes' && echo "$o" | tail -1 | grep -q '"rolled_back":true' && [ "$gone" = t ] && [ $rc -eq 0 ] \
+echo "$o" | grep -q '| fx.accounts | ShareRowExclusiveLock | writes' && echo "$o" | grep -q '| fx.notes (new in this transaction) | AccessExclusiveLock' && echo "$o" | tail -1 | grep -q '"access_exclusive":0' && echo "$o" | tail -1 | grep -q '"rolled_back":true' && [ "$gone" = t ] && [ $rc -eq 0 ] \
   && ok "locks.sh:00003 Up 在交易內觀察到 accounts 的 ShareRowExclusiveLock(擋寫入),結束後已 ROLLBACK" || bad "locks 交易內" "rc=$rc gone=$gone $o"
 printf -- '-- +goose Up\nDROP TABLE IF EXISTS fx.no_such_table;\nCREATE INDEX IF NOT EXISTS accounts_pkey ON fx.accounts (id);\n' > "$WORK/notice.sql"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/notice.sql" 2>&1)"; rc=$?
@@ -240,6 +241,10 @@ BADB="$(echo "$APP" | sed 's#/fx_test?#/fx_nope?#')"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$BADB" --check-dsn "$SU" --step-wait 0.5 2>&1)"; rc=$?
 echo "$o" | tail -1 | grep -q '"errors":{"23505":1,"connect":1}\|"errors":{"connect":1' && echo "$o" | grep -q 'session B connect failed: .*fx_nope' && echo "$o" | grep -q '^step 6 B (.*→ never-finished)' && [ $rc -ne 141 ] \
   && ok "race.sh:session B 連線失敗(資料庫不存在)→ 不被 SIGPIPE 中斷,回報連線失敗,B 的步驟標 never-finished" || bad "race session 結束" "rc=$rc $o"
+
+printf '%s\n' "A: BEGIN;" "A: UPDATE fx.accounts SET name = name WHERE name = 'race-a';" "B: BEGIN;" "B: UPDATE fx.accounts SET name = name WHERE name = 'race-b';" "A: COMMIT;" "B: COMMIT;" > "$WORK/clean.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"deadlock":false,"errors":{}' && ok "race.sh:沒有任何錯誤時也印 JSON(errors 為空)" || bad "race 無錯誤" "rc=$rc $o"
 
 # ---------- seed / explain ----------
 o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --file "$FX/db/dev/seed-accounts.sql" --var n=2000 2>&1)"; rc=$?

@@ -95,7 +95,7 @@ case "$SUB" in
     versions | grep -qx "$FROM" || die "--dir 裡沒有版本 $FROM" 1
     versions | grep -qx "$TO" || die "--dir 裡沒有版本 $TO" 1
     [ "$TO" -ge "$FROM" ] || die "--to 不能小於 --from" 2
-    CUR0="$(goose_cmd "$UPDSN0" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1)"
+    CUR0="$(goose_cmd "$UPDSN0" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1 || true)"
     [ -z "$CUR0" ] || [ "$CUR0" -le "$TO" ] || die "資料庫目前在版本 $CUR0,高於 --to $TO;roundtrip 會連帶 down 審查範圍外的 migration。先用 goose.sh run 退到 ≤ $TO,或改 --to" 1
     BEFORE="$(versions | awk -v f="$FROM" '$1<f{b=$1} END{print b+0}')"
     UPDSN="${DSN_ALLOW:-$DSN}"
@@ -106,7 +106,7 @@ case "$SUB" in
       echo "$out" | sed 's/^/   /'; echo "   rc=$RC"
       LAST_OUT="$out"
     }
-    cur_version() { goose_cmd "$UPDSN" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1; }
+    cur_version() { goose_cmd "$UPDSN" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1 || true; }
     up1="skipped"; down_strict=""; down_allow="skipped"; up2=""; reject_msg=""
     if [ "$BEFORE" -gt 0 ]; then
       step "1 up-to before" "$( [ -n "$DSN_ALLOW" ] && echo allow || echo strict)" "$UPDSN" up-to "$BEFORE"
@@ -118,8 +118,8 @@ case "$SUB" in
       step "3 down-to before (no flag)" strict "$DSN" down-to "$BEFORE"
       if [ $RC -eq 0 ]; then down_strict="ok"; else
         down_strict="rejected"
-        reject_msg="$(echo "$LAST_OUT" | grep -oE 'ERROR: .*\(SQLSTATE [0-9A-Z]{5}\)' | tail -1 | cut -c1-300)"
-        [ -n "$reject_msg" ] || reject_msg="$(echo "$LAST_OUT" | grep -m1 -iE 'error|failed' | cut -c1-300)"
+        reject_msg="$(echo "$LAST_OUT" | grep -oE 'ERROR: .*\(SQLSTATE [0-9A-Z]{5}\)' | tail -1 | cut -c1-300 || true)"
+        [ -n "$reject_msg" ] || reject_msg="$(echo "$LAST_OUT" | grep -m1 -iE 'error|failed' | cut -c1-300 || true)"
         echo "   version after rejected down: $(cur_version)"
         if [ -n "$DSN_ALLOW" ]; then
           step "4 down-to before (with flag)" allow "$DSN_ALLOW" down-to "$BEFORE"

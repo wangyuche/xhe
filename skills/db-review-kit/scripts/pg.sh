@@ -105,7 +105,7 @@ case "$CMD" in
       fi
       sleep 0.5
     done
-    PORT="$(docker port "$CONTAINER" 5432/tcp | grep -m1 '^127\.0\.0\.1:' | sed 's/.*://')"
+    PORT="$(docker port "$CONTAINER" 5432/tcp | grep -m1 '^127\.0\.0\.1:' | sed 's/.*://' || true)"
     [ -n "$PORT" ] || { cleanup_fail; die "取不到 127.0.0.1 對應埠" 1; }
 
     ROLES="$SUPERUSER=$SUPERPASS"
