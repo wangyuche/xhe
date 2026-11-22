@@ -16,7 +16,7 @@
 //        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character] [--allow-white-edge]
 //        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%(主體 = alpha ≥ 8)、
-//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、外緣白框:主體外緣(alpha ≥ 128 且上下左右任一鄰居 alpha < 128)近白像素(RGB 皆 ≥ 215)≤ 30%(外緣 ≥ 20 px 才判斷;
+//        外框 2 px 內主體像素(alpha ≥ 8)< 1%、外緣白框:主體外緣(alpha ≥ 240 且上下左右任一鄰居 alpha < 128;半透明的去背邊不算,避免淺灰底殘留誤判)近白像素(RGB 皆 ≥ 215)≤ 30%(外緣 ≥ 20 px 才判斷;
 //        主體本來就是白色的素材(白票、雲)加 --allow-white-edge 略過)、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
 //        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
@@ -150,8 +150,8 @@ export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(
 export function fit(imgs, W, H, { align = 'bottom', margin, foot } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
   if (foot != null && (align !== 'bottom' || m === 0)) die('--foot 只用於 --align bottom 且 margin ≠ 0');
-  if (foot != null && H - m - 1 < 2) die(`格子太小(H ${H}、margin ${m}),放不下 --foot;不要用 --foot 或加大 1x 高度`);
-  if (foot != null && (foot < 2 || foot >= H - m)) die(`--foot 要在 2 到 ${H - m - 1} 之間(2 px 外框檢查之外、小於 H − margin)`);
+  if (foot != null && Math.floor((H - m) / 2) < 2) die(`格子太小(H ${H}、margin ${m}),放不下 --foot;不要用 --foot 或加大 1x 高度`);
+  if (foot != null && (foot < 2 || foot > Math.floor((H - m) / 2))) die(`--foot 要在 2 到 ${Math.floor((H - m) / 2)} 之間(2 px 外框檢查之外;最多 (H − margin) / 2,主體才不會被縮得太小)`);
   foot ??= FOOT;
   if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (m === 0 && imgs.length === 1) {
@@ -212,14 +212,14 @@ export function cover(img, W, H, exact = false) {
   return resample(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, W, H);
 }
 
-// 白色貼紙外框:主體外緣(alpha ≥ 128 且上下左右任一鄰居 alpha < 128,羽化邊也算得到)中近白像素的比例。
-// 校準(2026-11-22 MahjongParty,22 張):有白框的原圖 0.91–1.00,乾淨的 ≤ 0.045。
+// 白色貼紙外框:主體外緣(alpha ≥ 240 且上下左右任一鄰居 alpha < 128:羽化邊也算得到,半透明的去背邊不算)中近白像素的比例。
+// 校準(2026-11-22 MahjongParty,33 張):有白框的原圖 0.86–1.00,乾淨的 ≤ 0.041。
 const HALO_MAX = 0.3, HALO_MIN_EDGE = 20;
 export function whiteHalo(img, x0 = 0, y0 = 0, w = img.width, h = img.height) {
   const d = img.data, a = (x, y) => (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) ? 0 : d[(y * img.width + x) * 4 + 3];
   let edge = 0, white = 0;
   for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) {
-    const o = (y * img.width + x) * 4; if (d[o + 3] < 128) continue;
+    const o = (y * img.width + x) * 4; if (d[o + 3] < 240) continue;
     if (a(x - 1, y) >= 128 && a(x + 1, y) >= 128 && a(x, y - 1) >= 128 && a(x, y + 1) >= 128) continue;
     edge++; if (Math.min(d[o], d[o + 1], d[o + 2]) >= 215) white++;
   }
