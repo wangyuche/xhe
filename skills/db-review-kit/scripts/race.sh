@@ -87,8 +87,9 @@ fi
 
 mkfifo "$W/a.fifo" "$W/b.fifo"
 start_session() { # <label> <dsn> <fifo> <out>
+  # the END sentinel is written as soon as psql exits (cat may linger until its next write)
   (printf "SET application_name = 'dbrev-race-%s-%s';\n" "$RID" "$1"; cat "$3") \
-    | PSQL_KIT_WINS=1 PSQL_MERGE_STDERR=1 ST_OVERRIDE=30s LT_OVERRIDE="$LT" psql_dsn "$2" -q -v ON_ERROR_STOP=0 > "$4" 2>&1
+    | { PSQL_KIT_WINS=1 PSQL_MERGE_STDERR=1 ST_OVERRIDE=30s LT_OVERRIDE="$LT" psql_dsn "$2" -q -v ON_ERROR_STOP=0; echo "__DBREV_SESSION_END__"; } > "$4" 2>&1
 }
 start_session A "$DSN_A" "$W/a.fifo" "$W/a.out" & PA=$!
 start_session B "$DSN_B" "$W/b.fifo" "$W/b.out" & PB=$!
@@ -108,8 +109,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     A:*|B:*)
       s="${line%%:*}"; sql="${line#*:}"; sql="${sql# }"; n=$((n + 1))
       wok=0
-      if [ "$s" = A ] && ! kill -0 "$PA" 2>/dev/null; then ENDED_A=1; fi
-      if [ "$s" = B ] && ! kill -0 "$PB" 2>/dev/null; then ENDED_B=1; fi
+      if [ "$s" = A ] && { ! kill -0 "$PA" 2>/dev/null || grep -qx '__DBREV_SESSION_END__' "$W/a.out"; }; then ENDED_A=1; fi
+      if [ "$s" = B ] && { ! kill -0 "$PB" 2>/dev/null || grep -qx '__DBREV_SESSION_END__' "$W/b.out"; }; then ENDED_B=1; fi
       if [ "$s" = A ]; then f="$W/a.out"; [ -z "$ENDED_A" ] && /usr/bin/printf '%s\n\\echo __DBREV_STEP_%d__\n' "$sql" "$n" >&7 2>/dev/null && wok=1; [ $wok = 1 ] || ENDED_A=1
       else f="$W/b.out"; [ -z "$ENDED_B" ] && /usr/bin/printf '%s\n\\echo __DBREV_STEP_%d__\n' "$sql" "$n" >&8 2>/dev/null && wok=1; [ $wok = 1 ] || ENDED_B=1; fi
       if [ $wok = 0 ]; then st="not-sent(session $s ended)"

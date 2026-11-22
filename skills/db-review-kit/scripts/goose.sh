@@ -142,7 +142,10 @@ case "$SUB" in
     up1="skipped"; down_strict=""; down_allow="skipped"; up2=""; reject_msg=""
     if [ "$BEFORE" -gt 0 ]; then
       step "1 up-to before" "$( [ -n "$DSN_ALLOW" ] && echo allow || echo strict)" "$UPDSN" up-to "$BEFORE"
-      [ $RC -eq 0 ] || { echo '{"ok":false,"failed":"up-to-before"}'; exit 1; }
+      if [ $RC -ne 0 ]; then
+        python3 -I -c 'import json,sys; print(json.dumps({"before":int(sys.argv[1]),"from":int(sys.argv[2]),"to":int(sys.argv[3]),"up":"failed(up-to-before)","down_no_flag":"not-run","down_with_flag":"not-run","up_again":"not-run","final_version":"","reject_message":"","down_rejected_without_flag":None,"ok":False},ensure_ascii=False))' "$BEFORE" "$FROM" "$TO"
+        exit 1
+      fi
     fi
     step "2 up-to target" "$( [ -n "$DSN_ALLOW" ] && echo allow || echo strict)" "$UPDSN" up-to "$TO"
     [ $RC -eq 0 ] && up1="ok" || up1="failed"

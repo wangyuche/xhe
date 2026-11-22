@@ -28,13 +28,23 @@ image_lock() {
   own_dir "$KIT_TMP"; local i=0 d="$KIT_TMP/image.lock" owner
   until mkdir "$d" 2>/dev/null; do
     owner="$(cat "$d/pid" 2>/dev/null || true)"
-    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$d"; continue; fi
-    if [ -z "$owner" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf "$d"; continue; fi
+    # stale (owner gone, or no pid for over a minute): take over by an atomic rename, so only one process wins
+    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || { [ -z "$owner" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+      local stale="$d.stale.$$.$RANDOM"
+      if mv "$d" "$stale" 2>/dev/null; then
+        if [ "$(cat "$stale/pid" 2>/dev/null || true)" = "$owner" ]; then rm -rf "$stale"; else mv "$stale" "$d" 2>/dev/null || rm -rf "$stale"; fi
+      fi
+      continue
+    fi
     i=$((i + 1)); [ $i -lt 1200 ] || die "image.lock 被占用超過 10 分鐘($d,owner=${owner:-?})" 1; sleep 0.5
   done
   echo $$ > "$d/pid"; IMAGE_LOCK_HELD=1
 }
-image_unlock() { [ -z "${IMAGE_LOCK_HELD:-}" ] || { rm -rf "$KIT_TMP/image.lock"; IMAGE_LOCK_HELD=""; }; }
+image_unlock() {   # only release a lock that is still ours
+  [ -n "${IMAGE_LOCK_HELD:-}" ] || return 0
+  [ "$(cat "$KIT_TMP/image.lock/pid" 2>/dev/null || true)" != "$$" ] || rm -rf "$KIT_TMP/image.lock"
+  IMAGE_LOCK_HELD=""
+}
 record_pulled() { own_dir "$KIT_TMP"; printf '%s\n' "$1" >> "$KIT_TMP/pulled-images"; }
 remove_unused_pulled() {
   local f="$KIT_TMP/pulled-images" img keep=""
@@ -199,6 +209,7 @@ check_extra_env() {
     ku="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
     # The sandbox's own settings cannot be overridden (GOFLAGS=-mod=readonly, GOTOOLCHAIN=local, HOME, caches …).
     case "$ku" in
+      GOOGLE_*CREDENTIAL*|GOOGLE_*KEY*|GOOGLE_*TOKEN*|GOOGLE_*SECRET*) die "$k 看起來是雲端憑證,不能傳進測試(只連本容器)" 4 ;;
       GOOSE_*|GOOGLE_*|GORM_*) ;;   # project libraries' variables (goose, Google client libs, gorm)
       PATH|HOME|TMPDIR|PGPASSFILE|PGSERVICEFILE|XDG_*|APPDATA|LOCALAPPDATA|GO*|GCCGO*|CGO_*|CC|CXX|AR|FC|PKG_CONFIG*|GIT_*|SSH_*|LD_*|DYLD_*|BASH_ENV|ENV|SHELL|IFS|PS4|PROMPT_COMMAND)
         die "$k 是隔離環境 / 工具鏈會執行的變數,不能用 --env 覆寫" 4 ;;

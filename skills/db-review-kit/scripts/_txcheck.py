@@ -122,7 +122,10 @@ def main():
         print("U& escapes are not allowed (they hide identifiers and literals from this check)")
         return 2
     # an actual change of these GUCs (SET / RESET / ALTER … SET / set_config with that name), not every set_config call
-    if re.search(r"(standard_conforming_strings|escape_string_warning)", raw, re.I) or \
+    # only real changes: SET / RESET / ALTER … SET of these names (outside comments / literals), or set_config whose
+    # first argument is not a plain literal naming another setting (also catches assembled names)
+    if re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
+            re.search(r"\bSET\s+(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
             re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)", raw, re.I):
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
@@ -174,7 +177,17 @@ def main():
             stripped = strip(body)
             idents |= {w for w in re.findall(r"(?<![:A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*", stripped)}
             idents |= {w.lower() for w in idents}
-            star = "*" in stripped
+            # SELECT * only matters in a statement that feeds a \\gset (count(*), a*b … elsewhere are fine)
+            star, buf = False, []
+            for line in lines:
+                if line.lstrip().startswith("\\") and not re.match(r"\s*\\gset", line):
+                    continue
+                buf.append(line)
+                if re.search(r"\\gset", line):
+                    st_txt = strip("\n".join(buf)); st_txt = st_txt[st_txt.rfind(";") + 1:]
+                    if re.search(r"\bSELECT\s+(ALL\s+|DISTINCT\s+)?\*|,\s*\*\s*(,|\bFROM\b|$)", st_txt, re.I):
+                        star = True
+                    buf = []
             assigned |= idents | {p + w for p in prefixes for w in idents}
             CONTROL_G = {"ON_ERROR_STOP", "ON_ERROR_ROLLBACK", "AUTOCOMMIT", "VERBOSITY", "SINGLELINE", "SINGLESTEP"}
             hit = CONTROL_G & (idents | {p + w for p in prefixes for w in idents} | {w.upper() for w in idents})

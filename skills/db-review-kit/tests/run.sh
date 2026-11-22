@@ -62,7 +62,7 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/gw" bash -c "source '$S/_common.sh' && ensure_name
 [ $rc -eq 4 ] && echo "$o" | grep -q '可被群組或其他人寫入' && ok "暫存目錄:既有目錄群組可寫(0775)→ 拒絕,不改權限" || bad "暫存目錄 0775" "rc=$rc $o"
 o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
-for kv in 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
+for kv in 'GOOGLE_APPLICATION_CREDENTIALS=/k.json' 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:${kv%%=*} 等會被工具鏈執行的變數不能傳" || bad "${kv%%=*} 應拒絕" "$o"
 done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
@@ -387,6 +387,9 @@ o="$(printf "SELECT chr(92)||'! id' AS n \\gset\n:n\n" | bash "$S/pg.sh" psql "$
 o="$(printf "\\set y 1\nSELECT chr(92)||'c host=evil' AS y\n\\gset\nSELECT :y;\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:獨立一行的 \\gset 覆寫 \\set 變數 → 拒絕" || bad "psql 獨立 gset" "$o"
 o="$(printf "SELECT chr(92)||'c h' AS y \\gset p_\nSELECT :p_y;\n" | bash "$S/pg.sh" psql "$N" "$SU" -v p_y=1 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 前綴產生的變數 → 拒絕" || bad "psql gset prefix" "$o"
 o="$(printf "SELECT :LAST_ERROR_MESSAGE;\n" | bash "$S/pg.sh" psql "$N" "$SU" -v LAST_ERROR_MESSAGE=x 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:psql 內建變數(LAST_ERROR_MESSAGE)不能裸用" || bad "psql 內建變數" "$o"
+o="$(printf 'SELECT count(*) AS cnt FROM pg_class \\gset\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$o" = 1 ] && ok "pg.sh psql:\\gset 語句裡的 count(*) 不算 SELECT *" || bad "psql gset count(*)" "$o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "-- relies on standard_conforming_strings=on
+SELECT current_setting('standard_conforming_strings')" 2>&1)"; [ $? -eq 0 ] && ok "locks.sh:只是提到 standard_conforming_strings 不會被拒" || bad "locks scs mention" "$o"
 o="$(printf 'SELECT 0 AS "ON_ERROR_STOP" \\gset\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:\\gset 設 ON_ERROR_STOP → 拒絕" || bad "psql gset control" "$o"
 o="$(printf "SELECT :x;\n" | bash "$S/pg.sh" psql "$N" "$SU" -v x=:y 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值含 : → 拒絕" || bad "psql -v :" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "-- TODO" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:只有註解 → 用法錯誤" || bad "explain 空查詢" "$o"
