@@ -148,6 +148,12 @@ def main():
         vars_ok = set(v for v in (sys.argv[sys.argv.index("--vars") + 1].split(",") if "--vars" in sys.argv else []) if v)
         assigned, prefixes, has_gset, star = set(), set(), False, False
         lines = raw.splitlines()
+        CONTROL = {"ON_ERROR_STOP", "ON_ERROR_ROLLBACK", "AUTOCOMMIT", "VERBOSITY", "SINGLELINE", "SINGLESTEP"}
+        for line in lines:
+            cm = re.match(r"\s*\\(set|unset)\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+            if cm and cm.group(2).upper() in CONTROL:
+                print("changing psql control variable %s is not allowed (the kit relies on it)" % cm.group(2))
+                return 2
         for line in lines:
             st = line.lstrip()
             m = re.match(r"\\(set|getenv)\s+([A-Za-z_][A-Za-z0-9_]*)(\s+(.*))?$", st)

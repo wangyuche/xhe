@@ -21,6 +21,7 @@ while [ $# -gt 0 ]; do
     --var) case "${2:?}" in *"
 "*|*"$(printf '\r')"*) die "--var 的值不能跨行" 2 ;; esac
            printf '%s' "${2:?}" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.+-]*$' || die "--var 的值只能是英數與 _ . + -(不能含 : \\ 反引號 空白):$2" 2
+           for cv in $PSQL_CONTROL_VARS; do [ "${2%%=*}" != "$cv" ] || die "--var 不能改 psql 的控制變數 $cv" 2; done
            VARS+=(-v "$2"); VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; shift 2 ;;
     --table) TABLE="${2:?}"; shift 2 ;;
     --rows) ROWS="${2:?}"; shift 2 ;;

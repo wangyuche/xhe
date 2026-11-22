@@ -20,6 +20,25 @@ check_name() {
 }
 
 name_dir() { echo "$KIT_TMP/$1"; }
+# Images this kit pulled are recorded kit-wide ($KIT_TMP/pulled-images); whichever rm / gc runs when no container
+# uses one any more removes it, even if a different <name> pulled it.
+record_pulled() { own_dir "$KIT_TMP"; printf '%s\n' "$1" >> "$KIT_TMP/pulled-images"; }
+remove_unused_pulled() {
+  local f="$KIT_TMP/pulled-images" img keep=""
+  [ -f "$f" ] && [ -O "$f" ] || return 0
+  while IFS= read -r img; do
+    [ -n "$img" ] || continue
+    case "$img" in *[!A-Za-z0-9._/:@-]*) continue ;; esac
+    if [ -z "$(docker ps -aq --filter "ancestor=$img")" ]; then
+      docker image rm "$img" >/dev/null 2>&1 && echo "removed image=$img(kit 拉的)"
+    else keep="$keep$img
+"; fi
+  done < "$f"
+  printf '%s' "$keep" | awk 'NF && !seen[$0]++' > "$f"
+}
+# psql control variables the kit relies on (ON_ERROR_STOP for error detection …): never settable by scripts / -v
+# (error detection: ON_ERROR_STOP / ON_ERROR_ROLLBACK / AUTOCOMMIT / VERBOSITY; statement splitting: SINGLELINE / SINGLESTEP)
+PSQL_CONTROL_VARS="ON_ERROR_STOP ON_ERROR_ROLLBACK AUTOCOMMIT VERBOSITY SINGLELINE SINGLESTEP"
 # The tmp root and <name> dir must be real directories owned by the current user (0700): state.env is sourced and the
 # goose binary is executed from there, so a dir planted by another local user (shared /tmp on Linux) is refused.
 own_dir() {

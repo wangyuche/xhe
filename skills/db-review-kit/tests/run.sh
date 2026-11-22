@@ -302,6 +302,8 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/race-notice.txt" --dsn A="$MIG" --ds
 printf '%s\n' 'A: SELECT 1;' 'B: SELECT 1;' 'CHECK: SELECT id FROM fx.no_such_table => ' > "$WORK/race-cfail.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-cfail.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | grep -q "CHECK FAIL" && ok "race.sh:CHECK 查詢出錯一律 FAIL(預期值為空也一樣)" || bad "race CHECK 出錯" "rc=$rc $o"
+o="$(printf '\\set ON_ERROR_STOP off\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:腳本裡 \\set ON_ERROR_STOP → 拒絕" || bad "psql set ON_ERROR_STOP" "$o"
+o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --file "$FX/db/dev/seed-accounts.sql" --var AUTOCOMMIT=off 2>&1)"; [ $? -eq 2 ] && ok "seed.sh:--var 不能改 AUTOCOMMIT 等控制變數" || bad "seed --var control" "$o"
 o="$(printf 'SELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" -v ON_ERROR_STOP=0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 不能改 ON_ERROR_STOP 等控制變數" || bad "psql -v ON_ERROR_STOP" "$o"
 
 # ---------- seed / explain ----------

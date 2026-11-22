@@ -57,7 +57,8 @@ case "$CMD" in
     [ -n "$IMAGE" ] || die "--image 必填(依專案設定,例如 compose 的 db 映像)" 2
     case "$IMAGE" in *postgres*|*postgis*|*pgvector*|*timescale*) ;; *) die "映像看起來不是 PostgreSQL:$IMAGE" 2 ;; esac
     printf '%s' "$TMPFS_SIZE" | grep -Eq '^[0-9]+[kmgKMG]?$' || die "--tmpfs-size 格式例:512m、2g" 2
-    printf '%s' "$TIMEOUT" | grep -Eq '^[0-9]+$' && [ "$TIMEOUT" -ge 1 ] || die "--timeout 要是秒數" 2
+    printf '%s' "$TIMEOUT" | grep -Eq '^[0-9]+$' || die "--timeout 要是秒數" 2
+    TIMEOUT=$((10#$TIMEOUT)); [ "$TIMEOUT" -ge 1 ] || die "--timeout 要是秒數" 2
     require_local_docker
     [ -z "$(list_ours "$NAME")" ] || die "已有 dbrev-$NAME-* 容器;先 pg.sh gc $NAME" 1
     # format checks that do not need the container run before any pull / docker run
@@ -105,13 +106,13 @@ case "$CMD" in
     cleanup_fail() {
       docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")" "$DIR/run.env"
       # an image this up pulled is removed again when nothing else uses it
-      if [ -n "${PULLED:-}" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then docker image rm "$IMAGE" >/dev/null 2>&1 || true; fi
+      [ -z "${PULLED:-}" ] || remove_unused_pulled >/dev/null
     }
     UP_OK=""
     trap '[ -n "$UP_OK" ] || cleanup_fail' EXIT
     trap 'exit 130' INT TERM
     # pull only after every argument check passed (a failed check must not leave a pulled image behind)
-    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; fi
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; record_pulled "$IMAGE"; fi
     # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
     # anonymous on-disk volume is created and --tmpfs-size really caps the data.
     VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
@@ -194,8 +195,7 @@ case "$CMD" in
             case "$2" in *"
 "*|*"$(printf '\r')"*) die "-v 的值不能跨行" 2 ;; esac
             printf '%s' "$2" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.+-]*$' || die "-v 的值只能是英數與 _ . + -(不能含 : \\ 反引號 空白):$2" 2
-            case "${2%%=*}" in ON_ERROR_STOP|ON_ERROR_ROLLBACK|VERBOSITY|ECHO|ECHO_HIDDEN|QUIET|SINGLESTEP|SINGLELINE|AUTOCOMMIT|SHOW_CONTEXT|FETCH_COUNT)
-              die "-v 不能改 psql 的控制變數 ${2%%=*}(kit 依賴它們判斷錯誤)" 2 ;; esac
+            for cv in $PSQL_CONTROL_VARS; do [ "${2%%=*}" != "$cv" ] || die "-v 不能改 psql 的控制變數 $cv(kit 依賴它們判斷錯誤)" 2; done
             VNAMES="${VNAMES:+$VNAMES,}${2%%=*}"; ARGS+=("$1" "$2"); shift 2 ;;
         -F|-P) [ $# -ge 2 ] || die "$1 需要值" 2; ARGS+=("$1" "$2"); shift 2 ;;
         -c) [ $# -ge 2 ] || die "-c 需要 SQL" 2; CMDS="$CMDS$2
@@ -226,11 +226,7 @@ case "$CMD" in
     sf="$(state_file "$NAME")"; if [ -f "$sf" ] && [ -O "$sf" ]; then PULLED="$(sed -n "s/^PULLED='\(.*\)'$/\1/p" "$sf")"; IMAGE="$(sed -n "s/^IMAGE='\(.*\)'$/\1/p" "$sf")"; fi
     n=0
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "刪除容器 $c 失敗" 1; echo "removed container=$c"; n=$((n + 1)); done
-    # the image is removed too when this kit pulled it for this name and no other container uses it
-    # (always, not only with --purge: the state file that remembers it is deleted here)
-    if [ -n "$PULLED" ] && [ -n "$IMAGE" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then
-      docker image rm "$IMAGE" >/dev/null 2>&1 && echo "removed image=$IMAGE(本次拉的)"
-    fi
+    remove_unused_pulled   # images this kit pulled (any <name>) that no container uses any more
     [ $n -gt 0 ] || echo "not-found name=$NAME"
     rm -f "$(state_file "$NAME")"
     if [ -n "$PURGE" ]; then rm -rf "$(name_dir "$NAME")"; echo "purged dir=$(name_dir "$NAME")"; fi
@@ -243,7 +239,7 @@ case "$CMD" in
     sf="$(state_file "$NAME")"; PULLED=""; IMAGE=""
     if [ -f "$sf" ] && [ -O "$sf" ]; then PULLED="$(sed -n "s/^PULLED='\(.*\)'$/\1/p" "$sf")"; IMAGE="$(sed -n "s/^IMAGE='\(.*\)'$/\1/p" "$sf")"; fi
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "殘留容器 $c 刪不掉" 1; n=$((n + 1)); done
-    if [ -n "$PULLED" ] && [ -n "$IMAGE" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then docker image rm "$IMAGE" >/dev/null 2>&1 && echo "removed image=$IMAGE(上次拉的)"; fi
+    remove_unused_pulled
     rm -f "$sf"
     left="$(list_ours "$NAME" | wc -l | tr -d ' ')"
     echo "gc name=$NAME removed=$n remaining=$left"

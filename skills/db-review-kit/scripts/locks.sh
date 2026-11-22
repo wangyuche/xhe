@@ -59,6 +59,7 @@ if [ -n "$t" ] && [ -f "$t" ] && [ -O "$t" ] && [ "$(cat "$t")" = "dbrev-selftes
     || die "SQL 裡有交易控制語句或 psql 指令($bad),locks.sh 無法保證 ROLLBACK,拒絕" 2
 done
 case "$HOLD_S" in *[!0-9]*|"") die "--hold-seconds 要是整數秒" 2 ;; esac
+HOLD_S=$((10#$HOLD_S))
 [ -z "$LT" ] || printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 要帶單位,格式例:2s、500ms" 2
 if [ -n "$HOLD" ]; then
   # Monitoring polls through docker exec (~0.3–1 s each); the DDL / probe must keep waiting long enough to be observed.

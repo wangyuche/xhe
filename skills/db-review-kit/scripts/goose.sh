@@ -38,10 +38,10 @@ if [ -z "$MODULE" ]; then
   [ -f "$d/go.mod" ] || die "找不到 go.mod;用 --module 指定" 2
   MODULE="$d"
 fi
+[ -f "$MODULE/go.mod" ] || die "--module $MODULE 沒有 go.mod" 2
 grep -qE '^[[:space:]]*(replace[[:space:]]+)?github\.com/pressly/goose/v3([[:space:]]+v[^ ]+)?[[:space:]]*=>' "$MODULE/go.mod" \
   && die "go.mod 對 goose 有 replace;kit 只會編上游版本,行為可能不同 → goose 相關實測標缺口" 1
 # version only from require (single-line or block), never from exclude / replace / retract blocks
-[ -f "$MODULE/go.mod" ] || die "--module $MODULE 沒有 go.mod" 2
 GOOSE_VER="$(awk '
   $1 ~ /^(require|exclude|replace|retract)$/ && $2 == "(" { blk = $1; next }
   $1 == ")" { blk = ""; next }
