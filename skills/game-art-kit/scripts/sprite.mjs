@@ -2,8 +2,9 @@
 // game-art-kit:遊戲素材的 PNG 處理(純 Node,不需要任何套件)。尺寸一律是 1x 檔案像素(= 顯示尺寸 × density)。
 // 用法:
 //   node sprite.mjs info <png>                                           → {width,height,hasAlpha,coverage,bbox}
-//   node sprite.mjs fit <in.png>... --out <out.png> --width W --height H [--align bottom|center] [--margin px]
+//   node sprite.mjs fit <in.png>... --out <out.png> --width W --height H [--align bottom|center] [--margin px] [--foot px]
 //        裁掉透明邊 → 同一個縮放比例(以最大的那張為準,確保每張都放得下)→ 置中 / 底部對齊補到 W×H。
+//        --foot px:底部對齊時主體離下緣的距離(預設 3;要和既有素材對齊時例如 --foot 8),只對 --align bottom 有效。
 //        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
 //   node sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]
@@ -144,7 +145,7 @@ const FOOT = 3;
 export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(count, Math.floor(2048 / w))); return { columns, rows: Math.ceil(count / columns) }; };
 
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
-export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
+export function fit(imgs, W, H, { align = 'bottom', margin, foot = FOOT } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
   if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (m === 0 && imgs.length === 1) {
@@ -158,7 +159,7 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const maxW = Math.max(...boxes.map(b => b.w)), maxH = Math.max(...boxes.map(b => b.h));
   if (m === 0) die('--margin 0 只用於單張(UI / 九宮格:裁邊後直接縮放到 W×H)');
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
-  const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
+  const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + foot : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
@@ -167,10 +168,10 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
     const cell = resample(im, b.x, b.y, b.w, b.h, dw, dh);
     const cx = (i % columns) * W, cy = Math.floor(i / columns) * H;
     // 水平:以主體的 alpha 加權重心置中(伸出手腳時身體不會左右跳),超出格子就貼齊邊界
-    // 底部對齊:腳底離下緣 3 px(在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
+    // 底部對齊:腳底離下緣 foot px(預設 3,在 2 px 外框檢查之外;anchor [0.5,1] 誤差 < 2 顯示 px)
     const gx = centroidX(im, b) * s;
     const lo = dw <= W - 2 * m ? m : 0, hi = dw <= W - 2 * m ? W - m - dw : W - dw;
-    const dx = cx + Math.min(hi, Math.max(lo, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - FOOT - dh : Math.round((H - dh) / 2));
+    const dx = cx + Math.min(hi, Math.max(lo, Math.round(W / 2 - gx))), dy = cy + (align === 'bottom' ? H - foot - dh : Math.round((H - dh) / 2));
     blit(sheet, cell, dx, dy);
   });
   return { sheet, columns, rows, scale: s, margin: m };
@@ -271,7 +272,7 @@ if (isMain) {
       const out = flags.out ?? die('缺 --out');
       const align = flags.align ?? 'bottom'; if (!['bottom', 'center'].includes(align)) die('--align 只能 bottom 或 center');
       if (pos.length > 8) die('一個動作最多 8 格');
-      const r = fit(pos.map(load), int('width'), int('height'), { align, margin: flags.margin != null ? int('margin', true, 0) : undefined });
+      const r = fit(pos.map(load), int('width'), int('height'), { align, margin: flags.margin != null ? int('margin', true, 0) : undefined, foot: flags.foot != null ? int('foot', true, 0) : undefined });
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, encodePng(r.sheet));
       console.log(JSON.stringify({ file: out, width: r.sheet.width, height: r.sheet.height, frames: pos.length, columns: r.columns, rows: r.rows, scale: +r.scale.toFixed(4), margin: r.margin }));
