@@ -81,10 +81,10 @@ while IFS= read -r line || [ -n "$line" ]; do
   # libpq connection failures usually print no SQLSTATE: map the standard server messages
   if [ -z "$code" ] && echo "$out" | grep -q '^psql: error:'; then
     case "$out" in
+      *'FATAL:  role "'*'" does not exist'*|*"is not permitted to log in"*|*"no pg_hba.conf entry"*) code=28000 ;;
       *"permission denied for database"*) code=42501 ;;
-      *"does not exist"*database*|*database*"does not exist"*) code=3D000 ;;
+      *'FATAL:  database "'*'" does not exist'*) code=3D000 ;;
       *"password authentication failed"*) code=28P01 ;;
-      *role*"does not exist"*|*"is not permitted to log in"*|*"no pg_hba.conf entry"*) code=28000 ;;
     esac
   fi
   msg="$(echo "$out" | grep -m1 -E 'ERROR|FATAL' | sed 's/^psql:[^ ]* //' | cut -c1-160 || true)"

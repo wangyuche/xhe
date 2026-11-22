@@ -84,6 +84,9 @@ def drop_atomic(text):
     for m in re.finditer(r"\bBEGIN\s+ATOMIC\b", text, re.I):
         if m.start() < pos:
             continue
+        stmt_start = text.rfind(";", 0, m.start()) + 1
+        if not re.match(r"\s*CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\b", text[stmt_start:m.start()], re.I):
+            continue          # "begin atomic" outside a function definition is just words (e.g. column + alias)
         depth, k = 1, m.end()
         for w in WORD.finditer(text, m.end()):
             u = w.group(0).upper()
@@ -105,31 +108,34 @@ def drop_atomic(text):
 def main():
     raw = sys.stdin.read()
     if "--connect" in sys.argv[1:]:
-        # psql does not treat "--" as a comment inside meta-command arguments, so keep comments here (stricter);
-        # only SQL literals / dollar bodies are removed. Backticks run shell commands in meta-command arguments.
-        # A meta-command line is parsed by psql's argument rules (backslash escapes in quotes, no dollar quoting, a new
-        # command at any unquoted backslash), so a line starting with a backslash may contain exactly one backslash.
-        for line in raw.splitlines():
-            st = line.lstrip()
-            if st.startswith("\\") and line.count("\\") > 1:
-                print("meta-command line with more than one backslash: " + st[:60])
-                return 1
-        text = strip(raw, keep_comments=True)
-        if "`" in text:
-            line = next(l for l in text.splitlines() if "`" in l)
-            print("backtick (shell command) not allowed: " + line.strip()[:60])
-            return 1
-        # psql scripts may use only these meta-commands (no \\c, \\!, \\o, \\g |cmd, \\copy, \\i, \\setenv …)
         allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
-        for m in re.finditer(r"\\([A-Za-z!?]+|\\)", text):
-            cmd = m.group(1)
-            if cmd == "\\":
+        # 1) Lines starting with a backslash are psql meta-commands; psql parses their arguments up to end of line with
+        #    its own rules, so validate each line on its own (exactly one backslash, allowed command, no backtick) and
+        #    then remove it, so a stray quote in it cannot hide later lines from the SQL scan.
+        sql_lines = []
+        for line in raw.splitlines():
+            st = line.lstrip()
+            if not st.startswith("\\"):
+                sql_lines.append(line)
                 continue
-            if cmd not in allowed:
-                line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0]
-                print("psql meta-command not allowed: \\" + cmd + " (" + line.strip()[:60] + ")")
+            cmd = re.match(r"\\([A-Za-z!?]*)", st).group(1)
+            if line.count("\\") > 1 or "`" in line or cmd not in allowed:
+                print("psql meta-command not allowed: " + st[:60])
                 return 1
+            sql_lines.append("")
+        # 2) SQL lines: psql's SQL lexer does carry quotes across lines, like strip(); comments are kept (stricter).
+        text = strip("\n".join(sql_lines), keep_comments=True)
+        if "`" in text:
+            print("backtick not allowed: " + next(l for l in text.splitlines() if "`" in l).strip()[:60])
+            return 1
+        m = re.search(r"\\([A-Za-z!?]*)", text)
+        if m:   # a meta-command after SQL on the same line (e.g. SELECT 1 \\g |sh): only allowed ones, still one per line
+            for mm in re.finditer(r"\\([A-Za-z!?]*)", text):
+                if mm.group(1) not in allowed:
+                    line = text[text.rfind("\n", 0, mm.start()) + 1:].split("\n", 1)[0]
+                    print("psql meta-command not allowed: \\" + mm.group(1) + " (" + line.strip()[:60] + ")")
+                    return 1
         return 0
     text = strip(raw)
     if "\\" in text:

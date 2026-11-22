@@ -62,7 +62,9 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/gw" bash -c "source '$S/_common.sh' && ensure_name
 [ $rc -eq 4 ] && echo "$o" | grep -q '可被群組或其他人寫入' && ok "暫存目錄:既有目錄群組可寫(0775)→ 拒絕,不改權限" || bad "暫存目錄 0775" "rc=$rc $o"
 o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
-o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOAUTH=sh -c id'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:GOAUTH 等 Go 工具鏈變數不能傳" || bad "GOAUTH 應拒絕" "$o"
+for kv in 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
+  o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:${kv%%=*} 等會被工具鏈執行的變數不能傳" || bad "${kv%%=*} 應拒絕" "$o"
+done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_ARGS=--report=json' 'NOTIFY=ci@example.com' 'SUPER=superuser=on'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:--report=json、email 這類值不誤擋" || bad "誤擋 report/email" "$o"
 for kv in 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
@@ -184,7 +186,7 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --file "$WORK/fn.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:plpgsql 函式裡的 BEGIN / END / CASE … END 不算交易控制" || bad "locks 函式本體" "rc=$rc $o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE FUNCTION fx.tmp_g(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN x > 0 THEN 1 ELSE 0 END; END' 2>&1)"; rc=$?
 [ $rc -eq 0 ] && ok "locks.sh:BEGIN ATOMIC … END 函式本體不算交易控制" || bad "locks BEGIN ATOMIC" "rc=$rc $o"
-for q in 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
+for q in 'CREATE TABLE fx.tmp_h (i int); SELECT begin atomic FROM (SELECT 1 AS begin) s; COMMIT; SELECT 1 AS end' 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
 \c fx_test' 'CREATE TABLE fx.tmp_e (i int) \g
 COMMIT' "SELECT E'a\\'b'; COMMIT;"; do
   o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "$q" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:ABORT / psql 指令 → 拒絕" || bad "locks ABORT/meta" "$o"
@@ -298,7 +300,9 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
-for q in "\\echo 'a\\'' \\! id" '\echo $a$ \! id $a$' '\set x `id`' '\echo -- \! id' "-- don't do this
+for q in "\\echo it's
+\\! id
+\\echo '" "\\echo 'a\\'' \\! id" '\echo $a$ \! id $a$' '\set x `id`' '\echo -- \! id' "-- don't do this
 \! id
 SELECT 'x';"; do
   o="$(printf '%s\n' "$q" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:$q → 拒絕" || bad "psql $q" "$o"
