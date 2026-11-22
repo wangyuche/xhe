@@ -63,7 +63,8 @@ case "$CMD" in
 
     ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"
     SUPERPASS="$(rand_hex 16)"
-    docker image inspect "$IMAGE" >/dev/null 2>&1 || docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1
+    PULLED=""
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; fi
     # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
     # anonymous on-disk volume is created and --tmpfs-size really caps the data.
     VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
@@ -143,7 +144,7 @@ case "$CMD" in
     {
       echo "CONTAINER='$CONTAINER'"; echo "PORT='$PORT'"; echo "IMAGE='$IMAGE'"
       echo "SUPERUSER='$SUPERUSER'"; echo "SUPERPASS='$SUPERPASS'"
-      echo "ROLES='$ROLES'"; echo "DBS='$DBS'"; echo "RANDOM_ENV='${STATE_RANDOM# }'"
+      echo "ROLES='$ROLES'"; echo "DBS='$DBS'"; echo "RANDOM_ENV='${STATE_RANDOM# }'"; echo "PULLED='$PULLED'"
     } > "$(state_file "$NAME")"
     UP_OK=1
     echo "container=$CONTAINER port=$PORT image=$IMAGE tmpfs=$TMPFS_SIZE tmpfs_paths=$(echo $VOLS | tr ' ' ',') ready_seconds=$(( $(date +%s) - START ))"
@@ -196,8 +197,14 @@ case "$CMD" in
   rm)
     NAME="${1:-}"; check_name "$NAME"; PURGE=""; [ "${2:-}" = "--purge" ] && PURGE=1
     require_local_docker
+    PULLED=""; IMAGE=""
+    sf="$(state_file "$NAME")"; if [ -f "$sf" ] && [ -O "$sf" ]; then PULLED="$(sed -n "s/^PULLED='\(.*\)'$/\1/p" "$sf")"; IMAGE="$(sed -n "s/^IMAGE='\(.*\)'$/\1/p" "$sf")"; fi
     n=0
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "刪除容器 $c 失敗" 1; echo "removed container=$c"; n=$((n + 1)); done
+    # the image is removed too when this kit pulled it for this name and no other container uses it
+    if [ -n "$PURGE" ] && [ -n "$PULLED" ] && [ -n "$IMAGE" ] && [ -z "$(docker ps -aq --filter "ancestor=$IMAGE")" ]; then
+      docker image rm "$IMAGE" >/dev/null 2>&1 && echo "removed image=$IMAGE(本次拉的)"
+    fi
     [ $n -gt 0 ] || echo "not-found name=$NAME"
     rm -f "$(state_file "$NAME")"
     if [ -n "$PURGE" ]; then rm -rf "$(name_dir "$NAME")"; echo "purged dir=$(name_dir "$NAME")"; fi

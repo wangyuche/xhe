@@ -62,7 +62,7 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/gw" bash -c "source '$S/_common.sh' && ensure_name
 [ $rc -eq 4 ] && echo "$o" | grep -q '可被群組或其他人寫入' && ok "暫存目錄:既有目錄群組可寫(0775)→ 拒絕,不改權限" || bad "暫存目錄 0775" "rc=$rc $o"
 o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
-for kv in 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
+for kv in 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:${kv%%=*} 等會被工具鏈執行的變數不能傳" || bad "${kv%%=*} 應拒絕" "$o"
 done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
@@ -188,11 +188,17 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --file "$WORK/fn.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:plpgsql 函式裡的 BEGIN / END / CASE … END 不算交易控制" || bad "locks 函式本體" "rc=$rc $o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE FUNCTION fx.tmp_g(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN x > 0 THEN 1 ELSE 0 END; END' 2>&1)"; rc=$?
 [ $rc -eq 0 ] && ok "locks.sh:BEGIN ATOMIC … END 函式本體不算交易控制" || bad "locks BEGIN ATOMIC" "rc=$rc $o"
-for q in "SET standard_conforming_strings = off; SELECT 'a\\' , ' ; COMMIT ; SELECT ';" 'CREATE TABLE fx.tmp_h (i int); SELECT begin atomic FROM (SELECT 1 AS begin) s; COMMIT; SELECT 1 AS end' 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
+for q in "SELECT set_config('standard_'||'conforming_strings','off',false); CREATE TABLE fx.tmp_s (i int); SELECT 'x\\'; SELECT '; COMMIT; --'" 'CREATE TABLE fx.tmp_t2 ("case" int); CREATE FUNCTION fx.tmp_f2() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT (t.case) FROM fx.tmp_t2 t; END; COMMIT;' "SET standard_conforming_strings = off; SELECT 'a\\' , ' ; COMMIT ; SELECT ';" 'CREATE TABLE fx.tmp_h (i int); SELECT begin atomic FROM (SELECT 1 AS begin) s; COMMIT; SELECT 1 AS end' 'CREATE TABLE fx.tmp_a (i int); ABORT; CREATE TABLE fx.tmp_b (i int)' 'CREATE TABLE fx.tmp_d (i int);
 \c fx_test' 'CREATE TABLE fx.tmp_e (i int) \g
 COMMIT' "SELECT E'a\\'b'; COMMIT;"; do
-  o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "$q" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:ABORT / psql 指令 → 拒絕" || bad "locks ABORT/meta" "$o"
+  o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "$q" 2>&1)"; rc=$?
+  left="$(echo "SELECT count(*) FROM pg_class WHERE relname LIKE 'tmp_%' AND relnamespace = 'fx'::regnamespace;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+  [ $rc -eq 2 ] && [ "$left" = 0 ] && ok "locks.sh:交易控制 / psql 指令 → 拒絕(沒有留下物件)" || bad "locks 交易控制" "rc=$rc left=$left $o"
 done
+# the txid check itself (pre-filter switched off for this case only): a COMMIT inside the SQL is detected
+o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1" 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":false' && ok "locks.sh:SQL 中途 COMMIT 會被 txid 檢查偵測(rolled_back:false、結束碼 1)" || bad "locks txid 偵測" "rc=$rc $o"
+echo "DROP TABLE IF EXISTS fx.tmp_det;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE TABLE fx.tmp_c (i int); COMMIT;' 2>&1)"; rc=$?
 gone2="$(echo "SELECT to_regclass('fx.tmp_c') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
 [ $rc -eq 2 ] && [ "$gone2" = t ] && ok "locks.sh:SQL 含 COMMIT → 拒絕,沒有留下物件" || bad "locks COMMIT" "rc=$rc gone=$gone2 $o"

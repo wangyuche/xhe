@@ -88,18 +88,27 @@ def drop_atomic(text):
         stmt_start = text.rfind(";", 0, m.start()) + 1
         if not re.match(r"\s*CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\b", text[stmt_start:m.start()], re.I):
             continue          # "begin atomic" outside a function definition is just words (e.g. column + alias)
-        depth, k = 1, m.end()
-        for w in WORD.finditer(text, m.end()):
-            u = w.group(0).upper()
+        depth, k, paren = 1, None, 0
+        pos2 = m.end()
+        for t in re.finditer(r"[()]|[A-Za-z_][A-Za-z0-9_]*", text[m.end():]):
+            tok = t.group(0)
+            if tok == "(":
+                paren += 1; continue
+            if tok == ")":
+                paren -= 1; continue
+            start = m.end() + t.start()
+            if paren != 0 or (start > 0 and text[start - 1] == "."):
+                continue          # psql counts CASE / END only at paren depth 0; t.case is a column
+            u = tok.upper()
             if u == "CASE":
                 depth += 1
             elif u == "END":
                 depth -= 1
                 if depth == 0:
-                    k = w.end()
+                    k = m.end() + t.end()
                     break
-        else:
-            k = len(text)
+        if k is None:
+            return None           # no matching END: fail closed
         out.append(text[pos:m.start()] + " atomic_body ")
         pos = k
     out.append(text[pos:])
@@ -108,7 +117,7 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
-    if re.search(r"standard_conforming_strings|escape_string_warning", raw, re.I):
+    if re.search(r"conforming|escape_string|set_config", raw, re.I):
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
         return 1
@@ -141,7 +150,11 @@ def main():
         line = next(l for l in text.splitlines() if "\\" in l)
         print("psql meta-command: " + line.strip()[:80])
         return 1
-    for stmt in drop_atomic(text).split(";"):
+    dropped = drop_atomic(text)
+    if dropped is None:
+        print("BEGIN ATOMIC without a matching END")
+        return 1
+    for stmt in dropped.split(";"):
         s = stmt.strip()
         if TX.match(s):
             print(s.splitlines()[0][:80])

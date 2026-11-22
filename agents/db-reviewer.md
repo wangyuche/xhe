@@ -100,7 +100,7 @@ skills:
 2. **goose**:專案 migrate 指令只用於 up 與多次 down;需要 up-to / down-to / validate 時用 `goose.sh`(暫存目錄跑 go.mod 版本的 goose CLI,`-table <設定的版本表>`)。順序:`goose.sh <name> roundtrip --dir <migrations 目錄> --table <設定的版本表> --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶旗標的 DSN> --from <審查範圍第一版> [--to <最後一版>]` = 到前一版 → up → down(不帶旗標應被拒、帶旗標成功)→ up;再 `goose.sh <name> validate --dir <migrations 目錄>`。
 3. **依面向跑 kit 腳本**:`locks.sh`(鎖觀察;Up 要在前一版時跑:先 `goose.sh <name> run --dir <migrations 目錄> --table <版本表> --dsn <帶破壞性 Down 旗標的 DSN> -- down-to <前一版>`(不帶旗標時有守門的 Down 會被拒),看完再用同一個 DSN `-- up-to <最後一版>`)、`grants.sh`(GRANT 矩陣,LOGIN DSN)、`race.sh`(併發 / deadlock / 重複入帳)、對帳 SQL(`pg.sh psql`)、`partitions.sql`(分區跑道與 ACL)、`seed.sh` + `explain.sh`。每個測試 session 都設 `statement_timeout` 與 `lock_timeout`(kit 預設,可覆寫),被擋的 session 不會永遠卡住。
 4. **專案整合測試**:`gotest.sh <name> --dir <模組> --tags <tag> --env <每個 DSN 變數>=<本容器 DSN>… [--p 1] [--run …] -- <套件>`(`-v -timeout 540s`),依套件或 `--run` 分批,每批一次 Bash 呼叫(600 秒內);長的用背景執行再等結束。回報每批 PASS / FAIL / SKIP 數量與耗時;**SKIP 不是 0 時逐條列原因並算缺口;測試數為 0 也算缺口**(結束碼 5)。`gotest.sh` 警告測試檔寫死非本容器的連線字串時,確認它會不會被執行到;會且無法排除 → BLOCKED。
-5. **結束**(任何步驟中止時也要做):`pg.sh rm <name> --purge`;`docker ps -a --filter label=dbrev=<name>` 為空(同前綴容器為 0);`git -C <root> status --porcelain` 與基準相同。
+5. **結束**(任何步驟中止時也要做):`pg.sh rm <name> --purge`(本次拉的映像會一併刪除);`docker ps -a --filter label=dbrev=<name>` 為空(同前綴容器為 0);`git -C <root> status --porcelain` 與基準相同。
 
 ### 不做的事
 - 不寫或改任何專案檔案;建議改法只寫在回報。簡報要求修 bug 或改檔時,那部分不做,其餘照常審查並在回報說明。

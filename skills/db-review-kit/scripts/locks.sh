@@ -43,7 +43,9 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$DSN" ] && [ -n "$SQL" ] || die "需要 --dsn 與 --sql / --file / --goose-up" 2
 # The DDL runs between BEGIN and ROLLBACK; transaction control inside it would make it permanent.
-for part in "$SQL" "$HOLD" "$PROBE"; do
+# Best-effort pre-filter; the txid check below is the guarantee. DBREV_SELFTEST_SKIP_TXCHECK=1 exists only so the
+# self-test can prove that check without a filter bypass.
+[ "${DBREV_SELFTEST_SKIP_TXCHECK:-}" = 1 ] || for part in "$SQL" "$HOLD" "$PROBE"; do
   [ -n "$part" ] || continue
   bad="$(printf '%s\n' "$part" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" \
     || die "SQL 裡有交易控制語句或 psql 指令($bad),locks.sh 無法保證 ROLLBACK,拒絕" 2
@@ -103,12 +105,20 @@ LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc 
 
 if [ -z "$HOLD" ]; then
   # Relations that exist before the DDL; anything else in pg_locks afterwards was created by this transaction.
-  out="$(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nSELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
+  # txid before / after the user SQL: if the SQL ended our transaction (COMMIT, however it got past the filter),
+  # the ids differ and the run is reported as committed (structural check, no SQL lexing involved).
+  out="$(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nSELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
         | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
   if [ $rc -ne 0 ]; then
     echo "$out" | tail -5 >&2
     python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","ok":False,"error":sys.argv[1]},ensure_ascii=False,separators=(",",":")))' \
       "$(echo "$out" | grep -m1 -oE '[0-9A-Z]{5}: .{0,120}' || true)"
+    exit 1
+  fi
+  txb="$(echo "$out" | grep -m1 '^__DBREV_TX_BEGIN__' || true)"; txe="$(echo "$out" | grep '^__DBREV_TX_END__' | tail -1 || true)"
+  if [ -z "$txb" ] || [ "${txb#__DBREV_TX_BEGIN__}" != "${txe#__DBREV_TX_END__}" ]; then
+    echo "SQL 在交易中途結束了交易(COMMIT 等):變更已寫入暫存資料庫,後續實測請 pg.sh rm 後重建" >&2
+    echo '{"mode":"in-transaction","rolled_back":false,"ok":false,"error":"transaction ended inside the SQL"}'
     exit 1
   fi
   echo "| object | mode | blocks |"; echo "|---|---|---|"   # objects created by this DDL are marked new (invisible to others)
@@ -133,7 +143,7 @@ until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name 
   i=$((i + 1)); [ $i -lt 40 ] || { cat "$WORK/hold.out" >&2; die "hold session 沒有進入等待(hold SQL 失敗?)" 1; }
   sleep 0.25
 done
-(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$SQL" \
+(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nBEGIN;\nSELECT '__DBREV_TX_BEGIN__' || txid_current();\n%s\n;\nSELECT '__DBREV_TX_END__' || txid_current();\nROLLBACK;\n" "$LT" "$SQL" \
   | { set +e; psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out"; }) & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
 wait_lock() { # <session> : until it waits on a lock; gives up after the lock timeout (wall clock), reports monitor errors
   local start r; start=$(date +%s)
@@ -173,12 +183,17 @@ outcome() { # file -> ok | timeout(55P03) | error(code)
   elif [ -z "$c" ] && grep -q '^psql: error:' "$f"; then echo "connect-failed"
   else echo "error(${c:-?})"; fi
 }
-DDL_RES="$(outcome "$WORK/ddl.out")"; PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"
+DDL_RES="$(outcome "$WORK/ddl.out")"
+if [ "$DDL_RES" = ok ]; then
+  txb="$(grep -m1 '^__DBREV_TX_BEGIN__' "$WORK/ddl.out" || true)"; txe="$(grep '^__DBREV_TX_END__' "$WORK/ddl.out" | tail -1 || true)"
+  [ -n "$txb" ] && [ "${txb#__DBREV_TX_BEGIN__}" = "${txe#__DBREV_TX_END__}" ] || DDL_RES="committed(transaction ended inside the SQL)"
+fi
+PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"
 echo "### outcomes"; echo "ddl: $DDL_RES $(grep -m1 ERROR "$WORK/ddl.out" || true)"
 [ -z "$PROBE" ] || echo "probe: $PROBE_RES $(grep -m1 ERROR "$WORK/probe.out" || true)"
 by() { echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | awk -F'|' -v s="dbrev-lock-$RID-$1" -v pre="dbrev-lock-$RID-" '$1==s{gsub(pre,"",$5); print $5}'; }
 # ok = the DDL (and probe) were seen waiting on a lock; otherwise the hold did not conflict or the run failed.
-OKV=$OBSERVED; case "$DDL_RES" in error*|connect-failed) OKV=false ;; esac
+OKV=$OBSERVED; case "$DDL_RES" in error*|connect-failed|committed*) OKV=false ;; esac
 printf '{"mode":"hold","ddl":"%s","ddl_blocked_by":"%s","probe":"%s","probe_blocked_by":"%s","observed":%s,"ok":%s}\n' \
   "$DDL_RES" "$(by ddl)" "$PROBE_RES" "$(by probe)" "$OBSERVED" "$OKV"
 [ "$OKV" = true ]

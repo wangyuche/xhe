@@ -34,7 +34,7 @@ bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c 
 #   SQL 文字裡的反斜線(含 E'' 字串)一律拒絕(改用 chr(92));psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv
 #   (\c、\!、\o、\g |…、\copy、\i 等 → 結束碼 4;seed.sh --file 同樣)
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
-bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄)
+bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄;映像是這次 up 拉的且沒有其他容器在用時一併刪除)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0
 
 # goose(版本取自 go.mod;只複製 *.sql 到暫存目錄執行;goose CLI 支援時加 -env none,不讀 .env;舊版本來就不讀)
@@ -55,7 +55,8 @@ bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
 #   --hold 模式的 --monitor-dsn 必須是 superuser(或 pg_read_all_stats + pg_signal_backend),否則結束碼 2
 # → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)|connect-failed","ddl_blocked_by",…,"observed","ok"}(沒看到 DDL / probe 在等鎖 → observed / ok 為 false)
 #   NO TRANSACTION 檔(CREATE INDEX CONCURRENTLY 等)不能用 --goose-up(結束碼 1),改推導或手動 hold
-#   SQL 裡有交易控制(COMMIT / BEGIN / ROLLBACK / ABORT / SAVEPOINT …,函式本體與字串內的不算)或 psql 指令 → 結束碼 2
+#   SQL 裡有交易控制(COMMIT / BEGIN / ROLLBACK / ABORT / SAVEPOINT …,函式本體與字串內的不算)或 psql 指令 → 結束碼 2(事前過濾,盡力而為)
+#   保證靠事後檢查:使用者 SQL 前後比對 txid_current(),交易在中途被結束 → "rolled_back":false、結束碼 1(暫存庫已被改,要重建)
 #   hold 模式 ok=false 時結束碼 1
 
 # GRANT 矩陣(每項用該角色的 LOGIN DSN 實際連線執行,BEGIN … ROLLBACK)
@@ -103,7 +104,7 @@ bash <kit>/scripts/gotest.sh <name> --dir <模組目錄> --tags integration \
 - **專案唯讀**:掛載一律 `readonly`;goose 只讀專案的 `*.sql`(複製到暫存目錄);`GOFLAGS=-mod=readonly` 不改 go.mod / go.sum;goose CLI 編到 `<tmp>/<name>/bin/`(`GOBIN` 在暫存目錄,不是全域安裝)。
 - **容器**:只操作 label `dbrev=<name>` 且名稱前綴 `dbrev-<name>-` 的容器;資料在 tmpfs(有 `size=`,掛在映像宣告的每個 VOLUME:18 以後 `/var/lib/postgresql`、17 以前 `/var/lib/postgresql/data`),沒有 volume;只綁 `127.0.0.1` 隨機埠。`pg.sh up` 失敗或中斷時 trap 刪容器;locks / race 結束時取消自己的 backend、收掉背景程序;goose / gotest 刪自己的暫存子目錄。
 - 暫存根目錄與 `<name>/` 必須是目前使用者擁有的一般目錄(0700),`state.env` 與 goose 執行檔也要是自己的;否則結束碼 4(Linux 共用 `/tmp` 時防止別人預放檔案)。
-- `explain.sh` 的查詢只能是一個語句。
+- `explain.sh` 的查詢與 grants.sh 的 `sql:` 動作只能是一個語句:不能含分號或反斜線(字面檢查,不靠詞法分析)。
 - `gotest.sh` 會掃 `*_test.go` 裡寫死的連線字串並警告(任何 `postgres://…`、`host=…`、`localhost:5432` / `127.0.0.1:5432`);能否排除由使用者判斷(db-reviewer 判 BLOCKED)。
 
 **網路限制(腳本擋不住)**:暫存容器在 Docker 預設 bridge 網路,能連外。DSN 守門只管 kit 自己的連線;被審的 SQL 以 superuser 執行時,`dblink`、`postgres_fdw`、`COPY … FROM PROGRAM` 仍可能連到別的主機。db-reviewer 審到這類語句時不在容器實測,改推導並標明。
