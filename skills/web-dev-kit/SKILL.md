@@ -34,6 +34,7 @@ node <kit>/scripts/concurrency.mjs <url> <方法> <路徑> [-n 10] [--data '{"em
 # 範圍檢查(在專案根目錄執行)
 bash <kit>/scripts/scope.sh snapshot <name>                 # 第 0 步記基準
 bash <kit>/scripts/scope.sh check <name> frontend/ ...      # IN / OUT / IN-DEL / OUT-DEL,in=… out=…;out>0 結束碼 1
+bash <kit>/scripts/scope.sh check <name> --exclude src/gen/ src/ ...   # 排除路徑(可重複)下的變動一律算 OUT
 bash <kit>/scripts/secret-scan.sh <name>                    # 掃最近一次 check 的 IN 檔 → hits=…
 
 # 本機 PostgreSQL(容器 dev-<專案名>-pg,postgres:17,dev/devpass,資料庫 app)

@@ -20,3 +20,4 @@ status.text = won ? 'You win' : 'You lose';
 log.text += 'Game over';
 const nested = `${n ? `x` : ''}`;
 btn.accessibleTitle = 'After nested template';
+if (n < /\*/.exec(s)!.index) el.textContent = 'Regex before sink';

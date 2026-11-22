@@ -1,7 +1,7 @@
 import { isPaused, onPauseChange } from './pause';
 
 /**
- * 音訊(PX-FMT-07):ogg(Opus)優先,不支援就 m4a(AAC)。第一次使用者手勢後才建立 AudioContext 與下載 BGM(首屏不含 BGM)。
+ * 音訊(PX-FMT-07):ogg(Opus)優先,不支援就 m4a(AAC)。第一次使用者手勢後才建立 AudioContext 與下載 BGM(首屏不含 BGM,PX-LOAD-10)。
  * 暫停狀態(背景、旋轉)時 suspend。只用 Web Audio,不 import pixi。
  */
 type Src = { ogg: string; m4a: string };

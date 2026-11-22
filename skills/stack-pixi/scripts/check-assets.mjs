@@ -1,21 +1,37 @@
 #!/usr/bin/env node
 // PX-RES-01 / PX-PERF-07:src/assets/<group>/ 的 manifest 與檔案一致、尺寸上限、KB 預算。
-//   node check-assets.mjs <專案目錄> [--budgets docs/performance-budgets.md] [--art <art/assets 目錄>]
+//   node check-assets.mjs <專案目錄> [--budgets docs/performance-budgets.md] [--art <art/assets 目錄>] [--baseline <改動前的輸出.json>]
 // - manifest 列的檔案都存在;目錄裡的素材檔都被 manifest 列到(沒有孤兒)。
 // - PNG / JPG 尺寸:@1x ≤ 2048²、@0.5x ≤ 1024²(AVIF 與同級 PNG / JPG 同尺寸,由 build-assets 產生)。
 // - 每個群組 AVIF 合計 ≤「## 素材預算」的 1x_kb / 0.5x_kb(未設定只列出)。
 // - --art:另外用 scripts/schemas/validate.mjs 驗 art/assets/assets.json(含檔案存在)。
+// - 沒有任何 src/assets/<group>/manifest.json、也沒有 src/assets/early.ts(不是 stack-pixi 的素材結構,例如既有專案)→
+//   結束碼 3、"layout":"absent",不是違規:改用專案自己的素材檢查,沒有就列為規則落差。有 early.ts(骨架專案)時照常逐群組報錯。
+//   --art 的驗證在 layout absent 時照樣執行,有錯就結束碼 1。
+// - --baseline:錯誤訊息完全相同才算既有;KB 預算超標以「群組 + 級別」比對,而且這次的 KB 不得大於基準的 KB。
 import { readFileSync, readdirSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { makeOpt, usageError, loadBaseline, splitByBaseline, EXIT, MEDIA_RE } from './_cli.mjs';
 
+const USAGE = '用法:node check-assets.mjs <專案目錄> [--budgets <md>] [--art <dir>] [--baseline <json>]';
 const [dirArg, ...rest] = process.argv.slice(2);
-if (!dirArg) { console.error('用法:node check-assets.mjs <專案目錄> [--budgets <md>] [--art <dir>]'); process.exit(2); }
+if (!dirArg || dirArg.startsWith('--')) usageError('缺少 <專案目錄>', USAGE);
 const dir = resolve(dirArg);
-const opt = (n, d) => { const i = rest.indexOf(n); if (i < 0) return d; if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) { console.error(`${n} 需要值`); process.exit(2); } return rest[i + 1]; };
+const opt = makeOpt(rest, USAGE);
 const budgetsFile = resolve(dir, opt('--budgets', 'docs/performance-budgets.md'));
 const artOpt = opt('--art');
 const art = artOpt ? resolve(dir, artOpt) : undefined; // 和 --budgets 一樣相對專案目錄
+const baselineFile = opt('--baseline');
+// 預算超標訊息:`<group> <tier>: AVIF <kb> KB 超過預算 <lim> KB(PX-PERF-07)`
+const BUDGET_RE = /^(\S+) (1x|0\.5x): AVIF ([\d.]+) KB 超過預算/;
+const keyOf = (e) => { const m = BUDGET_RE.exec(String(e)); return m ? `budget:${m[1]}:${m[2]}` : String(e); };
+const baseline = baselineFile ? loadBaseline(baselineFile, keyOf, USAGE) : undefined;
+const baselineKb = new Map();
+if (baselineFile) {
+  const j = JSON.parse(readFileSync(baselineFile, 'utf8'));
+  for (const e of [...(j.errors ?? []), ...(j.existing ?? [])]) { const m = BUDGET_RE.exec(String(e)); if (m) baselineKb.set(`budget:${m[1]}:${m[2]}`, parseFloat(m[3])); }
+}
 const errors = [];
 const report = [];
 
@@ -52,11 +68,26 @@ function budgets() {
 const B = budgets();
 const root = join(dir, 'src/assets');
 const MAX = { '1x': 2048, '0.5x': 1024 };
-for (const g of existsSync(root) ? readdirSync(root) : []) {
+const groups = (existsSync(root) ? readdirSync(root) : []).filter((g) => !g.startsWith('.') && statSync(join(root, g)).isDirectory()); // .build-* 是 build-assets 的暫存
+async function artErrors() {
+  if (!art) return [];
+  const v = join(dir, 'scripts/schemas/validate.mjs');
+  if (!existsSync(v)) return ['找不到 scripts/schemas/validate.mjs'];
+  const { validate } = await import(pathToFileURL(v).href);
+  const af = join(resolve(art), 'assets.json');
+  if (!existsSync(af)) return [`找不到 ${af}`];
+  return validate('assets', JSON.parse(readFileSync(af, 'utf8')), { root: resolve(art) }).map((e) => `assets.json ${e}`);
+}
+const skeleton = existsSync(join(root, 'early.ts'));
+if (!skeleton && !groups.some((g) => existsSync(join(root, g, 'manifest.json')))) {
+  const ae = splitByBaseline(await artErrors(), keyOf, baseline);
+  console.log(JSON.stringify({ ok: false, layout: 'absent', reason: `${root} 下沒有任何 <group>/manifest.json,也沒有 early.ts(不是 stack-pixi 素材結構)`, groups, errors: ae.fresh, existing: ae.existing, baseline: baselineFile ?? null }));
+  process.exit(ae.fresh.length ? EXIT.violation : EXIT.layoutAbsent);
+}
+for (const g of groups) {
   const gdir = join(root, g);
-  if (g.startsWith('.') || !statSync(gdir).isDirectory()) continue; // .build-* 是 build-assets 的暫存
   const mf = join(gdir, 'manifest.json');
-  const files = readdirSync(gdir).filter((f) => /\.(avif|png|jpg|webp|ogg|m4a|mp3)$/.test(f));
+  const files = readdirSync(gdir).filter((f) => MEDIA_RE.test(f));
   if (!existsSync(mf)) { if (files.length) errors.push(`${g}: 有素材檔但沒有 manifest.json`); continue; }
   let m;
   try { m = JSON.parse(readFileSync(mf, 'utf8')); } catch (e) { errors.push(`${g}/manifest.json 不是 JSON:${e.message}`); continue; }
@@ -69,8 +100,8 @@ for (const g of existsSync(root) ? readdirSync(root) : []) {
       if (!existsSync(p)) { errors.push(`${g}/${id}: 缺檔案 ${name}`); continue; }
       const tier = key.startsWith('0.5x') ? '0.5x' : key.startsWith('1x') ? '1x' : undefined;
       if (!tier) continue;
-      if (name.endsWith('.avif')) kb[tier] += statSync(p).size / 1024;
-      if (/\.(png|jpg)$/.test(name)) {
+      if (/\.avif$/i.test(name)) kb[tier] += statSync(p).size / 1024;
+      if (/\.(png|jpe?g)$/i.test(name)) {
         const d = dims(p);
         if (!d) errors.push(`${g}/${name}: 讀不到尺寸`);
         else if (d.w > MAX[tier] || d.h > MAX[tier]) errors.push(`${g}/${name}: ${d.w}×${d.h} 超過 ${MAX[tier]}²(PX-RES-01)`);
@@ -84,15 +115,11 @@ for (const g of existsSync(root) ? readdirSync(root) : []) {
     if (lim !== undefined && kb[tier] > lim) errors.push(`${g} ${tier}: AVIF ${kb[tier].toFixed(1)} KB 超過預算 ${lim} KB(PX-PERF-07)`);
   }
 }
-if (art) {
-  const v = join(dir, 'scripts/schemas/validate.mjs');
-  if (!existsSync(v)) errors.push('找不到 scripts/schemas/validate.mjs');
-  else {
-    const { validate } = await import(pathToFileURL(v).href);
-    const af = join(resolve(art), 'assets.json');
-    if (!existsSync(af)) errors.push(`找不到 ${af}`);
-    else errors.push(...validate('assets', JSON.parse(readFileSync(af, 'utf8')), { root: resolve(art) }).map((e) => `assets.json ${e}`));
-  }
-}
-console.log(JSON.stringify({ ok: errors.length === 0, groups: report, errors }));
-process.exit(errors.length ? 1 : 0);
+errors.push(...(await artErrors()));
+const split = splitByBaseline(errors, keyOf, baseline);
+// 預算超標:基準就超標也只有「沒有變更大」才算既有
+const grew = (e) => { const m = BUDGET_RE.exec(String(e)); return m && parseFloat(m[3]) > (baselineKb.get(keyOf(e)) ?? -1); };
+const fresh = [...split.fresh, ...split.existing.filter(grew)];
+const existing = split.existing.filter((e) => !grew(e));
+console.log(JSON.stringify({ ok: fresh.length === 0, groups: report, errors: fresh, existing, baseline: baselineFile ?? null }));
+process.exit(fresh.length ? EXIT.violation : EXIT.ok);

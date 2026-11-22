@@ -1,7 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 
-// stack-pixi 骨架。素材輸出依群組分資料夾(assets/<group>/),pixi 單一 chunk,不內嵌 data URL(PX-LOAD-01 / 03)。
+// stack-pixi 骨架。素材輸出依群組分資料夾(assets/<group>/),pixi 單一 chunk,不內嵌 data URL(PX-LOAD-01 / 03 / 07)。
 const port = Number(process.env.PORT) || 5173;
 
 export default defineConfig({
@@ -29,7 +29,7 @@ export default defineConfig({
       },
     },
     assetsInlineLimit: 0,
-    chunkSizeWarningLimit: 800, // pixi 單一 chunk 約 600 KB(PX-LOAD-02),gzip 後約 180 KB
+    chunkSizeWarningLimit: 800, // pixi 單一 chunk 約 600 KB(PX-LOAD-07),gzip 後約 180 KB
     target: 'es2022',
   },
   test: {

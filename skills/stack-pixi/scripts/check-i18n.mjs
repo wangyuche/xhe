@@ -1,19 +1,26 @@
 #!/usr/bin/env node
 // PX-I18N-01:玩家看得到的文字不寫死。只檢查「流向玩家可見文字」的位置(sink),值是含字母的字串常值或樣板字串就算違規。
-//   node check-i18n.mjs <專案目錄> [--src src]
+//   node check-i18n.mjs <專案目錄> [--src src] [--baseline <改動前的輸出.json>]
 // 掃 src/**(.ts / .tsx),排除 src/i18n/** 與 *.test.ts。例外:同一行或上一行加 `// i18n-ignore: <理由>`。
+// 每筆違規帶 key = 檔案|正規化後的該行文字(不含行號,插入或刪除行不影響)。--baseline 給改動前同一支腳本的輸出:
+//   基準已有的 key 移到 existing、不算失敗;只有新增的 key(或同 key 次數變多)才結束碼 1。
 // sink:new Text({ text: … }) / new BitmapText({ text: … }) / new HTMLText({ text: … })、`.text =`、`textContent =`、`innerText =`、
 //   setAttribute('aria-label' | 'aria-description' | 'aria-roledescription' | 'aria-valuetext' | 'title' | 'placeholder', …)、
 //   `.accessibleTitle =` / `.accessibleHint =`、accessibleTitle: / accessibleHint:(物件字面值)、alert(…) / confirm(…) / prompt(…)。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { stripComments } from './_strip.mjs';
+import { makeOpt, usageError, loadBaseline, splitByBaseline, normText } from './_cli.mjs';
 
+const USAGE = '用法:node check-i18n.mjs <專案目錄> [--src src] [--baseline <json>]';
 const [dir, ...rest] = process.argv.slice(2);
-if (!dir) { console.error('用法:node check-i18n.mjs <專案目錄> [--src src]'); process.exit(2); }
-const si = rest.indexOf('--src');
-const src = join(dir, si >= 0 ? rest[si + 1] : 'src');
-if (!existsSync(src)) { console.error(`找不到 ${src}`); process.exit(2); }
+if (!dir || dir.startsWith('--')) usageError('缺少 <專案目錄>', USAGE);
+const opt = makeOpt(rest, USAGE);
+const src = join(dir, opt('--src', 'src'));
+const baselineFile = opt('--baseline');
+if (!existsSync(src)) usageError(`找不到 ${src}`, USAGE);
+const keyOf = (v) => (typeof v === 'string' ? v : v.key ?? `${v.file}|${normText(v.text)}`);
+const baseline = baselineFile ? loadBaseline(baselineFile, keyOf, USAGE) : undefined;
 
 // 值:'…' / "…" / `…`(樣板字串只看 ${} 以外的字面部分)
 const LIT = String.raw`('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|\`(?:[^\`\\]|\\.)*\`)`;
@@ -52,11 +59,13 @@ const walk = (p) => {
         const ignored = [li, li - 1].some((k) => /\/\/\s*i18n-ignore:\s*\S/.test(lines[k] ?? ''));
         if (ignored || seen.has(li)) continue;
         seen.add(li);
-        out.push({ file: relative(dir, full), line: li + 1, text: lines[li].trim() });
+        const file = relative(dir, full), t = lines[li].trim();
+        out.push({ file, line: li + 1, text: t, key: `${file}|${normText(t)}` });
       }
     }
   }
 };
 walk(src);
-console.log(JSON.stringify({ ok: out.length === 0, violations: out }));
-process.exit(out.length ? 1 : 0);
+const { fresh, existing } = splitByBaseline(out, keyOf, baseline);
+console.log(JSON.stringify({ ok: fresh.length === 0, violations: fresh, existing, baseline: baselineFile ?? null }));
+process.exit(fresh.length ? 1 : 0);

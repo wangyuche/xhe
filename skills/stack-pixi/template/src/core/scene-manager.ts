@@ -7,7 +7,7 @@ import { computeFit, type Fit } from './layout';
 import { watchModalDialogs } from './modal-guard';
 import { readSafeArea } from './safe-area';
 
-/** 場景介面:每個場景一個資料夾、動態 import、各自一個 chunk(PX-LOAD-01)。 */
+/** 場景介面:每個場景一個資料夾、動態 import、各自一個 chunk(PX-LOAD-01;場景只從這裡動態 import,PX-LOAD-09)。 */
 export interface Scene {
   readonly root: Container;
   /** 唯一的版面入口(PX-RES-03):由 SceneManager 在 renderer resize 時呼叫。 */

@@ -1,13 +1,14 @@
 #!/bin/bash
 # 用法:scope.sh snapshot <name>
-#       scope.sh check <name> [<可寫路徑>...]
+#       scope.sh check <name> [--exclude <排除路徑>]... [<可寫路徑>...]
 # 在專案根目錄(git repo 內)執行。check 列出相對基準「新增、內容改變、或消失」的項目:
 #   IN / OUT          可寫路徑內 / 外的新增或改變
 #   IN-DEL / OUT-DEL  可寫路徑內 / 外的消失(被刪除,或被還原回 HEAD 而從 git status 消失)
+# --exclude(可重複,放在可寫路徑前後都可以):落在排除路徑下的變動一律算 OUT,即使也在可寫路徑內。
 # 最後印 out=<數量>;out > 0 結束碼 1。零個可寫路徑時任何變動都算 OUT。
 source "$(dirname "$0")/_common.sh"
 
-[ $# -ge 2 ] || die "用法:scope.sh snapshot <name> | scope.sh check <name> [<可寫路徑>...]"
+[ $# -ge 2 ] || die "用法:scope.sh snapshot <name> | scope.sh check <name> [--exclude <排除路徑>]... [<可寫路徑>...]"
 MODE="$1"; NAME="$2"; shift 2
 check_name "$NAME"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "目前目錄不是 git repo"
@@ -50,26 +51,41 @@ fi
 [ "$MODE" = "check" ] || die "未知模式:$MODE"
 [ -f "$BASE" ] || die "沒有基準,先執行 scope.sh snapshot $NAME"
 
-# 可寫路徑轉成相對 repo 根目錄、去掉結尾斜線
-PREFIXES=()
-for w in "$@"; do
-  w="${w%/}"; w="${w#./}"
+# 路徑轉成相對 repo 根目錄、去掉結尾斜線
+rel_path() {
+  local w="${1%/}" abs
+  w="${w#./}"
   if [ -d "$(dirname "$w")" ]; then
     abs="$(cd "$(dirname "$w")" && pwd -P)/$(basename "$w")"
   else
     abs="$(pwd -P)/$w"
   fi
   abs="${abs%/.}"
-  PREFIXES+=("${abs#$ROOT/}")
+  echo "${abs#$ROOT/}"
+}
+
+PREFIXES=(); EXCLUDES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --exclude) [ $# -ge 2 ] && [ -n "$2" ] || die "--exclude 需要路徑"; EXCLUDES+=("$(rel_path "$2")"); shift 2 ;;
+    --exclude=*) [ -n "${1#--exclude=}" ] || die "--exclude 需要路徑"; EXCLUDES+=("$(rel_path "${1#--exclude=}")"); shift ;;
+    *) PREFIXES+=("$(rel_path "$1")"); shift ;;
+  esac
 done
+
+under() { # <路徑> <前綴>
+  [ "$1" = "$2" ] && return 0
+  case "$1" in "$2"/*) return 0 ;; esac
+  return 1
+}
 
 in_scope() {
   local p="$1" w
   [ ${#PREFIXES[@]} -eq 0 ] && return 1
-  for w in "${PREFIXES[@]}"; do
-    [ "$p" = "$w" ] && return 0
-    case "$p" in "$w"/*) return 0 ;; esac
-  done
+  if [ ${#EXCLUDES[@]} -gt 0 ]; then
+    for w in "${EXCLUDES[@]}"; do under "$p" "$w" && return 1; done
+  fi
+  for w in "${PREFIXES[@]}"; do under "$p" "$w" && return 0; done
   return 1
 }
 

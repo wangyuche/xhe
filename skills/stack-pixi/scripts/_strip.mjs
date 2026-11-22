@@ -40,7 +40,8 @@ export function stripComments(src) {
     } else if (c === '/' && n === '*') {
       let j = src.indexOf('*/', i + 2); j = j < 0 ? src.length : j + 2;
       out += src.slice(i, j).replace(/[^\n]/g, ' '); i = j;
-    } else if (c === '/' && (prev === '' || /[(,=:[!&|?{};+\-*%<>~^]/.test(prev) || /\b(return|typeof|case|in|of)$/.test(out.trimEnd()))) {
+    } else if (c === '/' && (prev === '' || (/[(,=:[!&|?{};+\-*%<>~^]/.test(prev) && !(prev === '<' && src[i - 1] === '<')) || /\b(return|typeof|case|in|of)$/.test(out.trimEnd()))) {
+      // 緊接在 < 後面的 /(.tsx 的結束標籤 </b>)不是 regex;`a < /re/` 中間有空白,仍當 regex
       // regex 字面值:到同一行未跳脫、不在 [...] 內的 /
       let j = i + 1, cls = false;
       while (j < src.length && src[j] !== '\n') {

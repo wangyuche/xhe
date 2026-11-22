@@ -61,6 +61,16 @@ out="$(cd "$R" && bash "$S/scope.sh" check t-scope frontend/)"
 if echo "$out" | grep -q "^OUT-DEL backend/b.txt" && echo "$out" | grep -q "^OUT-DEL keep.txt"; then ok "scope:還原回 HEAD 與刪除列 OUT-DEL"; else bad "scope:DEL" "$out"; fi
 out="$(cd "$R" && bash "$S/scope.sh" check t-scope)"; rc=$?
 if [ $rc -eq 1 ] && echo "$out" | grep -q "^OUT frontend/a.txt"; then ok "scope:零個可寫路徑時全部算 OUT"; else bad "scope:零路徑" "$out"; fi
+( cd "$R" && mkdir -p frontend/gen && echo g > frontend/gen/x.txt )
+out="$(cd "$R" && bash "$S/scope.sh" check t-scope --exclude frontend/gen/ frontend/)"; rc=$?
+if [ $rc -eq 1 ] && echo "$out" | grep -q "^OUT frontend/gen/x.txt" && echo "$out" | grep -q "^IN frontend/a.txt"; then ok "scope:--exclude 下的變動算 OUT(其餘可寫路徑仍 IN)"; else bad "scope:--exclude" "$out"; fi
+out="$(cd "$R" && bash "$S/scope.sh" check t-scope frontend/ --exclude=frontend/gen)"; rc=$?
+if [ $rc -eq 1 ] && echo "$out" | grep -q "^OUT frontend/gen/x.txt"; then ok "scope:--exclude= 寫法、放在可寫路徑後面也可以"; else bad "scope:--exclude=" "$out"; fi
+out="$(cd "$R" && bash "$S/scope.sh" check t-scope --exclude frontend/other frontend/ 2>&1)"
+if echo "$out" | grep -q "^IN frontend/gen/x.txt"; then ok "scope:不相關的 --exclude 不影響"; else bad "scope:--exclude 不相關" "$out"; fi
+out="$(cd "$R" && bash "$S/scope.sh" check t-scope frontend/ --exclude 2>&1)"; rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q "需要路徑"; then ok "scope:--exclude 缺值是用法錯誤"; else bad "scope:--exclude 缺值" "rc=$rc $out"; fi
+( cd "$R" && rm -rf frontend/gen )
 
 # ---------- secret-scan ----------
 ( cd "$R" && git checkout -q -- . && git clean -qfd && bash "$S/scope.sh" snapshot t-sec >/dev/null \

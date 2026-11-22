@@ -8,7 +8,7 @@ vi.mock('pixi.js', () => ({
 
 const { __refCount, acquireGroup, releaseGroup } = await import('.');
 
-describe('asset groups (PX-LOAD-04)', () => {
+describe('asset groups (PX-LOAD-08)', () => {
   it('counts acquire / release', async () => {
     await acquireGroup('title');
     await acquireGroup('title');

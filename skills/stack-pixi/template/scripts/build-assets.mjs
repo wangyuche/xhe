@@ -1,4 +1,4 @@
-// 素材建置(stack-pixi):art/assets/assets.json(game-concept-artist 交件,1x 原圖)→ src/assets/<group>/ 的 1x / 0.5x、AVIF + PNG(不透明另出 JPG)、manifest.json。
+// 素材建置(stack-pixi):art/assets/assets.json(game-concept-artist 交件,1x 原圖)→ src/assets/<group>/ 的 1x / 0.5x、AVIF + PNG(不透明另出 JPG,PX-FMT-01 / 08)、manifest.json。
 //   node scripts/build-assets.mjs [--src <art/assets 目錄>] [--budgets docs/performance-budgets.md]
 //   預設 --src ../art/assets(相對這個專案)。產出進 git。超過「## 素材預算」的 KB 就結束碼 1(PX-PERF-07)。
 //   需要 sharp(devDependency)。驗證用 scripts/schemas/validate.mjs(new-pixi.sh 從 game-art-kit/schemas 複製)。
@@ -9,14 +9,20 @@ import sharp from 'sharp';
 import { validate } from './schemas/validate.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const arg = (n, d) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : d; };
+const arg = (n, d) => {
+  const i = process.argv.indexOf(n);
+  if (i < 0) return d;
+  const v = process.argv[i + 1];
+  if (v === undefined || v.startsWith('--')) { console.error(`${n} 需要值\n用法:node scripts/build-assets.mjs [--src <art/assets 目錄>] [--budgets <md>]`); process.exit(2); }
+  return v;
+};
 const SRC = resolve(ROOT, arg('--src', '../art/assets'));
 const BUDGETS = resolve(ROOT, arg('--budgets', 'docs/performance-budgets.md'));
 const OUT = join(ROOT, 'src/assets');
 const MAX = { '1x': 2048, '0.5x': 1024 }; // PX-RES-01
 const AVIF = { '1x': { quality: 60, effort: 6, chromaSubsampling: '4:4:4' }, '0.5x': { quality: 50, effort: 6, chromaSubsampling: '4:2:0' } };
 const IMAGE = new Set(['sprite', 'frames', 'tile', 'background', 'ui']);
-const half = (n) => Math.max(2, Math.ceil(n / 2 / 2) * 2); // 0.5x:一半,無條件進位成偶數(同 MahjongParty)
+const half = (n) => Math.max(2, Math.ceil(n / 2 / 2) * 2); // 0.5x:一半,無條件進位成偶數(PX-RES-04,同 MahjongParty)
 
 const die = (m) => { console.error(`build-assets: ${m}`); process.exit(1); };
 const file = join(SRC, 'assets.json');
