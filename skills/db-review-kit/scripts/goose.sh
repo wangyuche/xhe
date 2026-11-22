@@ -49,7 +49,8 @@ GOOSE_VER="$(awk '
   blk == "require" && $1 == "github.com/pressly/goose/v3" { print $2; exit }' "$MODULE/go.mod")"
 [ -n "$GOOSE_VER" ] || GOOSE_VER="$GOOSE_VER_OPT"   # project without goose in go.mod (CLI installed separately): from the profile
 [ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;用 --goose-version(設定檔的 goose 版本)指定,否則 goose 版本無法判定" 1
-case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
+printf '%s' "$GOOSE_VER" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' && case "$GOOSE_VER" in *..*) false ;; *) true ;; esac \
+  || die "goose 版本不合法(要是 vX.Y.Z):$GOOSE_VER" 1
 
 ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"; own_dir "$DIR/bin"
 WORK="$(mktemp -d "$DIR/goose.XXXXXX")"

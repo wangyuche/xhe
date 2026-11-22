@@ -326,6 +326,11 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.acc
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1; /* note */" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:分號後的 /* */ 註解不算第二個語句" || bad "explain 區塊註解" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --env POSTGRES_INITDB_WALDIR=/wal 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:POSTGRES_INITDB_WALDIR → 拒絕(WAL 也要在 tmpfs)" || bad "WALDIR" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --role app 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--role 格式錯誤在啟動容器前就拒絕" || bad "pg role 早檢查" "$o"
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --tmpfs-size 0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:--tmpfs-size 0 → 拒絕(size=0 是沒有上限)" || bad "tmpfs 0" "$o"
+mkdir -p "$DB_REVIEW_KIT_TMP/image.lock" && echo 999999 > "$DB_REVIEW_KIT_TMP/image.lock/pid"
+echo "dbrev-selftest-nonexistent:0" > "$DB_REVIEW_KIT_TMP/pulled-images"   # makes gc take the lock
+o="$(bash "$S/pg.sh" gc "$N-zz" 2>&1)"; [ $? -eq 0 ] && [ ! -d "$DB_REVIEW_KIT_TMP/image.lock" ] && ok "pg.sh:擁有者已不存在的 image.lock 會被接手" || bad "stale image.lock" "$o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1 WHERE 'a;-- b' <> ''" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:字串裡的 ;-- 不會被當成結尾註解切掉(照分號規則拒絕)" || bad "explain ;-- literal" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --timeout 2m 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--timeout 不是秒數 → 用法錯誤(不啟動容器)" || bad "pg timeout" "$o"
 printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q2.sql" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:結尾分號後面接註解行也算一個語句" || bad "explain 分號+註解" "$o"

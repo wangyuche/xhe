@@ -10,6 +10,7 @@
 #                             marked "waiting" and the next step is sent (the session keeps waiting in the background)
 #   SLEEP: <seconds>
 #   CHECK: <sql> => <expected> run after both sessions end (check DSN); output compared as trimmed text
+#                             (split at the LAST "=>": the expected text itself cannot contain "=>")
 # Sessions: application_name dbrev-race-<pid>-A / -B (cancelled on exit), statement_timeout 30s, lock_timeout (default 10s, must exceed
 # deadlock_timeout). Session ends roll back anything uncommitted.
 # Last line: JSON {"deadlock":bool,"errors":{code:n},"checks":{"pass":n,"fail":n}}. Exit 1 if a CHECK fails.

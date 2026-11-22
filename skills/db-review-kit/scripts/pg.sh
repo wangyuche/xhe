@@ -57,6 +57,7 @@ case "$CMD" in
     [ -n "$IMAGE" ] || die "--image 必填(依專案設定,例如 compose 的 db 映像)" 2
     case "$IMAGE" in *postgres*|*postgis*|*pgvector*|*timescale*) ;; *) die "映像看起來不是 PostgreSQL:$IMAGE" 2 ;; esac
     printf '%s' "$TMPFS_SIZE" | grep -Eq '^[0-9]+[kmgKMG]?$' || die "--tmpfs-size 格式例:512m、2g" 2
+    ! printf '%s' "$TMPFS_SIZE" | grep -Eq '^0+[kmgKMG]?$' || die "--tmpfs-size 不能是 0(tmpfs size=0 代表沒有上限)" 2
     printf '%s' "$TIMEOUT" | grep -Eq '^[0-9]+$' || die "--timeout 要是秒數" 2
     TIMEOUT=$((10#$TIMEOUT)); [ "$TIMEOUT" -ge 1 ] || die "--timeout 要是秒數" 2
     require_local_docker
@@ -83,6 +84,7 @@ case "$CMD" in
       [ -n "$src" ] && [ -n "$dest" ] && [ "$src" != "$m" ] || die "--mount 格式是 SRC:DEST:$m" 2
       case "$mode" in ""|ro) ;; *) die "--mount 一律唯讀,不接受模式 $mode:$m" 4 ;; esac
       case "$dest" in /*) ;; *) die "--mount 的 DEST 要是容器內絕對路徑:$dest" 2 ;; esac
+      case "$src$dest" in *,*|*=*) die "--mount 的路徑不能含 , 或 =(docker --mount 會誤判):$m" 2 ;; esac
       [ -e "$src" ] || die "--mount 來源不存在:$src" 1
       abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
       RUNARGS+=(--mount "type=bind,source=$abs,target=$dest,readonly")
@@ -225,6 +227,7 @@ case "$CMD" in
   rm)
     NAME="${1:-}"; check_name "$NAME"; PURGE=""; [ "${2:-}" = "--purge" ] && PURGE=1
     require_local_docker
+    trap 'image_unlock' EXIT; trap 'exit 130' INT TERM
     n=0
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "刪除容器 $c 失敗" 1; echo "removed container=$c"; n=$((n + 1)); done
     remove_unused_pulled   # images this kit pulled (any <name>) that no container uses any more
@@ -236,6 +239,7 @@ case "$CMD" in
   gc)
     NAME="${1:-}"; check_name "$NAME"
     require_local_docker
+    trap 'image_unlock' EXIT; trap 'exit 130' INT TERM
     n=0
     sf="$(state_file "$NAME")"
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "殘留容器 $c 刪不掉" 1; n=$((n + 1)); done

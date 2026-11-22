@@ -23,8 +23,18 @@ name_dir() { echo "$KIT_TMP/$1"; }
 # Images this kit pulled are recorded kit-wide ($KIT_TMP/pulled-images); whichever rm / gc runs when no container
 # uses one any more removes it, even if a different <name> pulled it.
 # pull → docker run and the cleanup both hold $KIT_TMP/image.lock, so a parallel up's fresh pull is never removed.
-image_lock() { own_dir "$KIT_TMP"; local i=0; until mkdir "$KIT_TMP/image.lock" 2>/dev/null; do i=$((i + 1)); [ $i -lt 1200 ] || die "image.lock 被占用超過 10 分鐘($KIT_TMP/image.lock)" 1; sleep 0.5; done; }
-image_unlock() { rmdir "$KIT_TMP/image.lock" 2>/dev/null || true; }
+# The lock dir holds the owner's PID; a lock whose owner is gone (killed rm / gc / up) is taken over.
+image_lock() {
+  own_dir "$KIT_TMP"; local i=0 d="$KIT_TMP/image.lock" owner
+  until mkdir "$d" 2>/dev/null; do
+    owner="$(cat "$d/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$d"; continue; fi
+    if [ -z "$owner" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf "$d"; continue; fi
+    i=$((i + 1)); [ $i -lt 1200 ] || die "image.lock 被占用超過 10 分鐘($d,owner=${owner:-?})" 1; sleep 0.5
+  done
+  echo $$ > "$d/pid"; IMAGE_LOCK_HELD=1
+}
+image_unlock() { [ -z "${IMAGE_LOCK_HELD:-}" ] || { rm -rf "$KIT_TMP/image.lock"; IMAGE_LOCK_HELD=""; }; }
 record_pulled() { own_dir "$KIT_TMP"; printf '%s\n' "$1" >> "$KIT_TMP/pulled-images"; }
 remove_unused_pulled() {
   local f="$KIT_TMP/pulled-images" img keep=""
@@ -33,10 +43,10 @@ remove_unused_pulled() {
   while IFS= read -r img; do
     [ -n "$img" ] || continue
     case "$img" in *[!A-Za-z0-9._/:@-]*) continue ;; esac
-    if [ -z "$(docker ps -aq --filter "ancestor=$img")" ]; then
-      docker image rm "$img" >/dev/null 2>&1 && echo "removed image=$img(kit 拉的)"
-    else keep="$keep$img
-"; fi
+    if [ -z "$(docker ps -aq --filter "ancestor=$img")" ] && docker image rm "$img" >/dev/null 2>&1; then
+      echo "removed image=$img(kit 拉的)"
+    elif docker image inspect "$img" >/dev/null 2>&1; then keep="$keep$img
+"; fi   # still in use or removal failed: keep the record for a later rm / gc
   done < "$f"
   printf '%s' "$keep" | awk 'NF && !seen[$0]++' > "$f"
   image_unlock
