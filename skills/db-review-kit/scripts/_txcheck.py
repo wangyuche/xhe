@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exit 1 if the SQL on stdin contains transaction control at the start of a statement or any psql meta-command.
+"""Exit 4 (psql meta-command / backslash / backtick / unsafe variable: could leave the container) or 2 (other content
+rules: transaction control, U&, standard_conforming_strings) if the SQL on stdin contains transaction control at the start of a statement or any psql meta-command.
 
 Removed first (so they never count): comments, string literals (incl. E'' backslash escapes), quoted identifiers,
 dollar-quoted bodies ($$…$$, $tag$…$tag$) and SQL-standard bodies (BEGIN ATOMIC … END, CASE … END nested).
@@ -119,13 +120,13 @@ def main():
     raw = sys.stdin.read()
     if re.search(r"\bU&['\"]", raw, re.I):
         print("U& escapes are not allowed (they hide identifiers and literals from this check)")
-        return 1
+        return 2
     # an actual change of these GUCs (SET / RESET / ALTER … SET / set_config with that name), not every set_config call
     if re.search(r"(standard_conforming_strings|escape_string_warning)", raw, re.I) or \
             re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)", raw, re.I):
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
-        return 1
+        return 2
     if "--connect" in sys.argv[1:]:
         allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
                    "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
@@ -175,7 +176,7 @@ def main():
             if n not in vars_ok or n in PSQL_VARS or n in assigned or star:
                 print("bare :%s in SQL is not provably safe (psql re-reads its value as input); use :'%s', or pass it "
                       "with -v and do not assign it in the script" % (n, n))
-                return 1
+                return 4
         # psql's own lexer decides where a meta-command starts, and emulating it has proven fragile. So in script mode a
         # backslash is only accepted in two exact shapes, checked per raw line (no SQL lexing involved):
         #   - a line that starts with an allowed meta-command and has exactly one backslash and no backtick;
@@ -187,35 +188,35 @@ def main():
                 continue
             if "`" in line or line.count("\\") != 1:
                 print("backslash / backtick not allowed here: " + st[:60])
-                return 1
+                return 4
             if st.startswith("\\"):
                 cmd = re.match(r"\\([A-Za-z!?]*)", st).group(1)
                 if cmd not in allowed:
                     print("psql meta-command not allowed: " + st[:60])
-                    return 1
+                    return 4
             elif not re.search(r"\\gset(\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$", line):
                 print("backslash in an SQL line is only allowed as a trailing \\gset: " + st[:60])
-                return 1
+                return 4
         return 0
     text = strip(raw)
     # a bare :name is re-read by psql as input (e.g. :LAST_ERROR_MESSAGE after a crafted error): never allowed here
     vm = re.search(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", text)
     if vm:
         print("bare psql variable :%s is not allowed" % vm.group(1))
-        return 1
+        return 4
     if "\\" in text:
         line = next(l for l in text.splitlines() if "\\" in l)
         print("psql meta-command: " + line.strip()[:80])
-        return 1
+        return 4
     dropped = drop_atomic(text)
     if dropped is None:
         print("BEGIN ATOMIC without a matching END")
-        return 1
+        return 2
     for stmt in dropped.split(";"):
         s = stmt.strip()
         if TX.match(s):
             print(s.splitlines()[0][:80])
-            return 1
+            return 2
     return 0
 
 

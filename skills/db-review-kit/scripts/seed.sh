@@ -10,7 +10,7 @@
 # Prints free space on the container's tmpfs before and after. Exit: 1 failure, 2 usage, 4 DSN not this container.
 source "$(dirname "$0")/_common.sh"
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 NAME="$1"; check_name "$NAME"; shift
 DSN=""; FILE=""; VARS=(); VNAMES=""; TABLE=""; ROWS=""; COLS=(); BATCH=100000
@@ -39,7 +39,7 @@ export ST_OVERRIDE=300s
 
 if [ -n "$FILE" ]; then
   [ -f "$FILE" ] || die "--file 不存在:$FILE" 2
-  bad="$(python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect --vars "${VNAMES:-}" < "$FILE")" || die "種子腳本有 \\c / \\connect / \\!($bad),拒絕" 4
+  bad="$(python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect --vars "${VNAMES:-}" < "$FILE")" || { trc=$?; die "種子腳本不允許:$bad" "$trc"; }
   psql_dsn "$DSN" -q ${VARS[@]+"${VARS[@]}"} < "$FILE"
   echo "seed file=$FILE seconds=$(( $(date +%s) - START )) tmpfs_free_mb_after=$(free_mb)"
   exit 0

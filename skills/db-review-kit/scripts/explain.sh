@@ -10,7 +10,7 @@
 # Exit 1 if --target-ms is given and p95 exceeds it.
 source "$(dirname "$0")/_common.sh"
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 NAME="$1"; check_name "$NAME"; shift
 DSN=""; Q=""; RUNS=20; TARGET=""

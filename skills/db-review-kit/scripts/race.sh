@@ -16,7 +16,7 @@
 source "$(dirname "$0")/_common.sh"
 RID=$$
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 NAME="$1"; check_name "$NAME"; shift
 SCRIPT=""; DSN_A=""; DSN_B=""; CHK=""; STEP_WAIT=1; LT="10s"
@@ -38,7 +38,7 @@ printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式�
 # The check is per raw line (no cross-line lexing), so lines sent to different sessions cannot hide each other.
 bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' || true; grep -E '^CHECK:' "$SCRIPT" | sed -E 's/^CHECK:[[:space:]]*//; s/(.*)=>.*$/\1/' || true; } \
   | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
-  || die "腳本裡有不允許的 psql 指令($bad),拒絕" 4
+  || { trc=$?; die "腳本不允許:$bad" "$trc"; }
 nosemi="$(grep -E '^(A|B):' "$SCRIPT" | sed -E 's/;[[:space:]]*--[^;]*$/;/; s/[[:space:]]+$//' | grep -vE ';$' | head -1 || true)"
 [ -z "$nosemi" ] || die "A: / B: 的每一行都要以 ; 結尾(否則 psql 會先印標記、語句卻還沒送出):$nosemi" 2
 nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
@@ -118,7 +118,16 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$SCRIPT"
 { exec 7>&- 8>&-; } 2>/dev/null || true
-k=0; while { kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; } && [ $k -lt 160 ]; do sleep 0.25; k=$((k + 1)); done
+# wait for both sessions: every queued step may wait up to statement_timeout (30 s)
+lim=$(( (n * 30 + 10) * 4 )); k=0
+while { kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; } && [ $k -lt $lim ]; do sleep 0.25; k=$((k + 1)); done
+SESS_LEFT=""
+if kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; then
+  printf "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name IN ('dbrev-race-%s-A', 'dbrev-race-%s-B');\n" "$RID" "$RID" \
+    | psql_dsn "$CHK" -qAt >/dev/null 2>&1 || true
+  k=0; while { kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; } && [ $k -lt 40 ]; do sleep 0.25; k=$((k + 1)); done
+  SESS_LEFT=1
+fi
 
 # Attribute each ERROR to the step whose marker follows it in that session's output.
 seg_errors() { # <outfile> <step> -> "CODE message" lines between the previous marker and this one
@@ -149,6 +158,12 @@ for s in A B; do f="$W/a.out"; [ $s = B ] && f="$W/b.out"
 done
 
 CP=0; CF=0
+if kill -0 "$PA" 2>/dev/null || kill -0 "$PB" 2>/dev/null; then
+  echo "sessions still running after cancel: CHECK skipped" >&2
+  echo '{"deadlock":null,"errors":{},"checks":{"pass":0,"fail":0},"ok":false,"error":"sessions did not finish"}'
+  exit 1
+fi
+[ -z "$SESS_LEFT" ] || echo "注意:session 超過等待上限而被取消,之後的步驟沒有結果" >&2
 while IFS= read -r line; do
   q="${line#CHECK:}"; exp="${q##*=>}"; q="${q%=>*}"
   exp="$(echo "$exp" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"

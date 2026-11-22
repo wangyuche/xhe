@@ -17,7 +17,7 @@
 source "$(dirname "$0")/_common.sh"
 RID=$$   # per-run session-name suffix: parallel runs on one container never see or cancel each other
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 NAME="$1"; check_name "$NAME"; shift
 DSN=""; SQL=""; LT=""; HOLD_DSN=""; HOLD=""; HOLD_S=10; PROBE_DSN=""; PROBE=""; MON=""

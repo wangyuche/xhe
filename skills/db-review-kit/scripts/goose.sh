@@ -12,7 +12,7 @@
 # --module: directory holding go.mod (default: nearest go.mod above MIGDIR). Exit: 1 failure, 2 usage, 4 refused.
 source "$(dirname "$0")/_common.sh"
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 NAME="$1"; check_name "$NAME"; SUB="$2"; shift 2
 MIGDIR=""; TABLE=""; DSN=""; DSN_ALLOW=""; FROM=""; TO=""; MODULE=""; GOOSE_VER_OPT=""
@@ -41,6 +41,7 @@ fi
 grep -qE '^[[:space:]]*(replace[[:space:]]+)?github\.com/pressly/goose/v3([[:space:]]+v[^ ]+)?[[:space:]]*=>' "$MODULE/go.mod" \
   && die "go.mod 對 goose 有 replace;kit 只會編上游版本,行為可能不同 → goose 相關實測標缺口" 1
 # version only from require (single-line or block), never from exclude / replace / retract blocks
+[ -f "$MODULE/go.mod" ] || die "--module $MODULE 沒有 go.mod" 2
 GOOSE_VER="$(awk '
   $1 ~ /^(require|exclude|replace|retract)$/ && $2 == "(" { blk = $1; next }
   $1 == ")" { blk = ""; next }

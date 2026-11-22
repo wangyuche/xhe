@@ -13,7 +13,7 @@
 # Exit codes: 1 failure, 2 usage, 3 docker not running, 4 refused (non-local docker / DSN guard / foreign container).
 source "$(dirname "$0")/_common.sh"
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 CMD="$1"; shift
 
@@ -191,7 +191,7 @@ case "$CMD" in
     D="$(name_dir "$NAME")"; IN="$(mktemp "$D/psql-in.XXXXXX")"; trap 'rm -f "$IN"' EXIT
     if [ -n "$CMDS" ]; then : > "$IN"; else cat > "$IN"; fi
     bad="$(printf '%s' "$CMDS" | cat - "$IN" | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect --vars "${VNAMES:-}")" \
-      || die "SQL 裡有 \\c / \\connect / \\!($bad),會離開本容器的連線,拒絕" 4
+      || { trc=$?; die "SQL 不允許:$bad" "$trc"; }   # 4 = could leave the container, 2 = other content rule
     psql_dsn "$DSN" ${ARGS[@]+"${ARGS[@]}"} < "$IN"
     ;;
 
