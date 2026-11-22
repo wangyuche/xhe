@@ -141,7 +141,8 @@ psql_dsn() {
   # PSQL_KIT_WINS=1 (race / locks sessions): the kit's timeouts must not be overridden by the DSN's own options
   idsn="$(dsnpy "$( [ -n "${PSQL_KIT_WINS:-}" ] && echo opts-last || echo opts)" "$dsn" "-c statement_timeout=${ST_OVERRIDE:-$DBREV_STATEMENT_TIMEOUT} -c lock_timeout=${LT_OVERRIDE:-$DBREV_LOCK_TIMEOUT} -c standard_conforming_strings=on")"
   # The password travels as PGPASSWORD in docker exec's environment (taken from this process via `-e PGPASSWORD`),
-  # never in argv, so `ps` does not show it; it still works when the bootstrap requires scram on 127.0.0.1.
+  # not on the docker exec command line (it still passes through the kit's own helper argv briefly; the passwords are
+  # random per container, bound to 127.0.0.1); it also works when the bootstrap requires scram on 127.0.0.1.
   local pw; pw="$(dsnpy field "$idsn" password)"
   idsn="$(dsnpy nopass "$(dsnpy internal "$idsn")")"
   # psql exits 3 on a script error with ON_ERROR_STOP; map it to 1 (3 means "Docker not running" in this kit).

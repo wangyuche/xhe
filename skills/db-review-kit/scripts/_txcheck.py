@@ -14,13 +14,19 @@ import sys
 
 TX = re.compile(r"^(COMMIT|END|ROLLBACK|ABORT|BEGIN|START\s+TRANSACTION|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\b", re.I)
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# precompiled and matched at an offset (slicing sql[i:] per character made strip() quadratic)
+DOLLAR = re.compile(r"\$([A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$")
 
 
 def strip(sql, keep_comments=False, keep_literals=False, marks=None):
     # marks (a list) collects the offsets of top-level ';' — used by --single to cut a trailing ';' and comments
     out, i, n = [], 0, len(sql)
+    special = set("-/$'\";")
     while i < n:
         c = sql[i]
+        if c not in special:
+            out.append(c); i += 1
+            continue
         if keep_comments and sql.startswith("--", i):
             j = sql.find("\n", i)          # copy the whole line comment verbatim (quotes in it mean nothing)
             j = n if j < 0 else j
@@ -53,7 +59,7 @@ def strip(sql, keep_comments=False, keep_literals=False, marks=None):
             i = j
             out.append(" ")
             continue
-        m = re.match(r"\$([A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$", sql[i:])   # psql allows high-bit tag chars
+        m = DOLLAR.match(sql, i)   # psql allows high-bit tag chars
         if m and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] in "_$")):   # '$' is an identifier character too
             tag = m.group(0)
             j = sql.find(tag, i + len(tag))
@@ -121,6 +127,13 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
+    if "--ends-with-semicolon" in sys.argv[1:]:
+        # every input line must end with a top-level ';' (comments / literals do not count)
+        for line in raw.splitlines():
+            if line.strip() and not strip(line).rstrip().endswith(";"):
+                print(line.strip()[:80])
+                return 2
+        return 0
     if "--single" in sys.argv[1:]:
         # one statement: cut a trailing top-level ';' (and comments after it) using the real lexer; refuse any other ';'
         marks = []
@@ -140,12 +153,13 @@ def main():
     # an actual change of these GUCs (SET / RESET / ALTER … SET / set_config with that name), not every set_config call
     # only real changes: SET / RESET / ALTER … SET of these names (outside comments / literals), or set_config whose
     # first argument is not a plain literal naming another setting (also catches assembled names)
-    if re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
-            re.search(r"\bSET\s+(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
+    stripped_raw = strip(raw)
+    if re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?(standard_conforming_strings|escape_string_warning)\b", stripped_raw, re.I) or \
+            re.search(r"\bSET\s+(standard_conforming_strings|escape_string_warning)\b", stripped_raw, re.I) or \
             re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?\"(standard_conforming_strings|escape_string_warning)\"", raw, re.I) or \
             re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)",
                       strip(raw, keep_literals=True), re.I) or \
-            re.search(r"\b(UPDATE|INSERT\s+INTO)\s+(pg_catalog\s*\.\s*)?pg_settings\b", strip(raw), re.I):   # UPDATE pg_settings = SET
+            re.search(r"\b(UPDATE|INSERT\s+INTO)\s+(pg_catalog\s*\.\s*)?pg_settings\b", stripped_raw, re.I):   # UPDATE pg_settings = SET
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
         return 2
@@ -243,7 +257,7 @@ def main():
                 print("backslash in an SQL line is only allowed as a trailing \\gset: " + st[:60])
                 return 4
         return 0
-    text = strip(raw)
+    text = stripped_raw
     # a bare :name is re-read by psql as input (e.g. :LAST_ERROR_MESSAGE after a crafted error): never allowed here
     vm = re.search(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", text)
     if vm:
