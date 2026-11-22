@@ -14,6 +14,7 @@ def main(path, elapsed, go_rc=0):
     outputs = {}
     results = {}
     pkgs = {}
+    started = set()   # packages that were actually under test ("start" events)
     raw = []
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -30,6 +31,8 @@ def main(path, elapsed, go_rc=0):
             act = ev.get("Action")
             pkg = ev.get("Package") or (ev.get("ImportPath") or "").split(" [", 1)[0]
             test = ev.get("Test")
+            if act == "start":
+                started.add(pkg)
             if act in ("output", "build-output"):
                 outputs.setdefault((pkg, test), []).append(ev.get("Output", ""))
             elif act == "build-fail":
@@ -41,8 +44,8 @@ def main(path, elapsed, go_rc=0):
                     pkgs[pkg] = "build-fail"
                     if fb != pkg:
                         outputs.setdefault((pkg, None), []).extend(outputs.get((fb, None), []))
-                        if fb == pkg + "_test" or fb.endswith("_test"):
-                            pkgs.pop(fb, None)   # only the x_test pseudo-package; a real tested dependency keeps its entry
+                        if fb not in started:
+                            pkgs.pop(fb, None)   # x_test or an untested dependency; a tested package keeps its own entry
                     continue
                 if test:
                     results[(pkg, test)] = act

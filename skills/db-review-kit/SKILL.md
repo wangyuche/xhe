@@ -36,7 +36,7 @@ bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c 
 #   SQL 裡的裸 :name 只能是 -v 給的或 \set 設成一般值的變數,且不是 psql 內建變數、不會被 \gset 覆寫(psql 會把值當成輸入重新解析);
 #   :'name' / :"name" 可用;-v / --var 的值只能是英數與 _ . + -
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
-bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄;映像是這次 up 拉的且沒有其他容器在用時一併刪除)
+bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄);kit 拉過、已沒有容器在用的映像一併刪除(和 up 的拉取 / 啟動互斥)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0
 
 # goose(版本取自 go.mod;只複製 *.sql 到暫存目錄執行;goose CLI 支援時加 -env none,不讀 .env;舊版本來就不讀)
@@ -55,7 +55,7 @@ bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本�
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --goose-up <migration.sql>       # 交易內執行 Up,列出每個鎖與它會擋什麼
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
   --hold-dsn <dsn> --hold '<開著交易的語句>' --probe-dsn <app> --probe '<熱表寫入>' --monitor-dsn <superuser> [--lock-timeout 5s(至少 3s)] [--hold-seconds 10(要大於 lock-timeout)]
-#   --hold 模式的 --monitor-dsn 必須是 superuser(或 pg_read_all_stats + pg_signal_backend),否則結束碼 2
+#   --hold 模式的 --monitor-dsn 必須是 superuser(或 pg_read_all_stats + pg_signal_backend),否則結束碼 2;有 --probe 時 --lock-timeout 至少 5s
 # → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)|connect-failed","ddl_blocked_by",…,"observed","ok"}(沒看到 DDL / probe 在等鎖 → observed / ok 為 false)
 #   NO TRANSACTION 檔(CREATE INDEX CONCURRENTLY 等)不能用 --goose-up(結束碼 1),改推導或手動 hold
 #   SQL 裡有交易控制(COMMIT / BEGIN / ROLLBACK / ABORT / SAVEPOINT …,函式本體與字串內的不算)或 psql 指令 → 結束碼 2(事前過濾,盡力而為)

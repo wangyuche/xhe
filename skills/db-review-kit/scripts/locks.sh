@@ -68,6 +68,8 @@ if [ -n "$HOLD" ]; then
   case "$LT_S" in *[!0-9]*) die "--lock-timeout 用整數秒寫,例如 5s" 2 ;; esac
   [ "$LT_S" -ge 3 ] || die "--hold 模式的 --lock-timeout 至少 3s(太短時監看還沒拍到就已逾時)" 2
   [ "$HOLD_S" -gt "$LT_S" ] || die "--hold-seconds 要大於 --lock-timeout" 2
+  # with a probe, the DDL must still be waiting after it was observed and the probe was started and observed
+  [ -z "$PROBE" ] || [ "$LT_S" -ge 5 ] || die "有 --probe 時 --lock-timeout 至少 5s(監看 DDL 再啟動 probe 需要時間)" 2
 else
   [ -n "$LT" ] || LT="2s"
 fi

@@ -22,10 +22,14 @@ check_name() {
 name_dir() { echo "$KIT_TMP/$1"; }
 # Images this kit pulled are recorded kit-wide ($KIT_TMP/pulled-images); whichever rm / gc runs when no container
 # uses one any more removes it, even if a different <name> pulled it.
+# pull → docker run and the cleanup both hold $KIT_TMP/image.lock, so a parallel up's fresh pull is never removed.
+image_lock() { own_dir "$KIT_TMP"; local i=0; until mkdir "$KIT_TMP/image.lock" 2>/dev/null; do i=$((i + 1)); [ $i -lt 1200 ] || die "image.lock 被占用超過 10 分鐘($KIT_TMP/image.lock)" 1; sleep 0.5; done; }
+image_unlock() { rmdir "$KIT_TMP/image.lock" 2>/dev/null || true; }
 record_pulled() { own_dir "$KIT_TMP"; printf '%s\n' "$1" >> "$KIT_TMP/pulled-images"; }
 remove_unused_pulled() {
   local f="$KIT_TMP/pulled-images" img keep=""
   [ -f "$f" ] && [ -O "$f" ] || return 0
+  image_lock
   while IFS= read -r img; do
     [ -n "$img" ] || continue
     case "$img" in *[!A-Za-z0-9._/:@-]*) continue ;; esac
@@ -35,6 +39,7 @@ remove_unused_pulled() {
 "; fi
   done < "$f"
   printf '%s' "$keep" | awk 'NF && !seen[$0]++' > "$f"
+  image_unlock
 }
 # psql control variables the kit relies on (ON_ERROR_STOP for error detection …): never settable by scripts / -v
 # (error detection: ON_ERROR_STOP / ON_ERROR_ROLLBACK / AUTOCOMMIT / VERBOSITY; statement splitting: SINGLELINE / SINGLESTEP)

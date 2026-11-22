@@ -225,7 +225,7 @@ bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_vers
 START=$(date +%s)
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.notes ADD CONSTRAINT notes_account_fk2 FOREIGN KEY (account_id) REFERENCES fx.accounts (id)' \
   --hold-dsn "$MIG" --hold 'UPDATE fx.accounts SET name = name WHERE false' --probe-dsn "$APP" --probe 'UPDATE fx.accounts SET name = name WHERE false' \
-  --monitor-dsn "$SU" --lock-timeout 3s --hold-seconds 6 2>&1)"; rc=$?
+  --monitor-dsn "$SU" --lock-timeout 5s --hold-seconds 8 2>&1)"; rc=$?
 j="$(echo "$o" | tail -1)"
 echo "$j" | grep -q '"ddl":"timeout(55P03)"' && echo "$j" | grep -q '"ddl_blocked_by":"hold"' && echo "$j" | grep -q '"probe_blocked_by":"ddl"' && echo "$j" | grep -q '"observed":true,"ok":true' && [ $rc -eq 0 ] \
   && ok "locks.sh --hold:DDL 被 hold 擋住並在 lock_timeout 結束(55P03),probe(fx_app UPDATE)排在 DDL 後面($(( $(date +%s) - START ))s)" || bad "locks hold" "rc=$rc $o"

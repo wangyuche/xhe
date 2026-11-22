@@ -106,19 +106,22 @@ case "$CMD" in
     cleanup_fail() {
       docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")" "$DIR/run.env"
       # an image this up pulled is removed again when nothing else uses it
+      [ -z "${LOCKED:-}" ] || { image_unlock; LOCKED=""; }
       [ -z "${PULLED:-}" ] || remove_unused_pulled >/dev/null
     }
     UP_OK=""
     trap '[ -n "$UP_OK" ] || cleanup_fail' EXIT
     trap 'exit 130' INT TERM
     # pull only after every argument check passed (a failed check must not leave a pulled image behind)
+    image_lock; LOCKED=1
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; record_pulled "$IMAGE"; fi
     # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
     # anonymous on-disk volume is created and --tmpfs-size really caps the data.
     VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
     [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
     for v in $VOLS; do RUNARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
-    docker run --name "$CONTAINER" "${RUNARGS[@]}" "$IMAGE" >/dev/null || { rm -f "$DIR/run.env"; cleanup_fail; die "docker run 失敗" 1; }
+    docker run --name "$CONTAINER" "${RUNARGS[@]}" "$IMAGE" >/dev/null || { rm -f "$DIR/run.env"; image_unlock; LOCKED=""; cleanup_fail; die "docker run 失敗" 1; }
+    image_unlock; LOCKED=""   # the container now uses the image, so cleanup elsewhere keeps it
     rm -f "$DIR/run.env"
     # init (docker-entrypoint-initdb.d) runs on a socket-only temp server; TCP on 127.0.0.1 answers only after the final start.
     i=0
@@ -222,8 +225,6 @@ case "$CMD" in
   rm)
     NAME="${1:-}"; check_name "$NAME"; PURGE=""; [ "${2:-}" = "--purge" ] && PURGE=1
     require_local_docker
-    PULLED=""; IMAGE=""
-    sf="$(state_file "$NAME")"; if [ -f "$sf" ] && [ -O "$sf" ]; then PULLED="$(sed -n "s/^PULLED='\(.*\)'$/\1/p" "$sf")"; IMAGE="$(sed -n "s/^IMAGE='\(.*\)'$/\1/p" "$sf")"; fi
     n=0
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "刪除容器 $c 失敗" 1; echo "removed container=$c"; n=$((n + 1)); done
     remove_unused_pulled   # images this kit pulled (any <name>) that no container uses any more
@@ -236,8 +237,7 @@ case "$CMD" in
     NAME="${1:-}"; check_name "$NAME"
     require_local_docker
     n=0
-    sf="$(state_file "$NAME")"; PULLED=""; IMAGE=""
-    if [ -f "$sf" ] && [ -O "$sf" ]; then PULLED="$(sed -n "s/^PULLED='\(.*\)'$/\1/p" "$sf")"; IMAGE="$(sed -n "s/^IMAGE='\(.*\)'$/\1/p" "$sf")"; fi
+    sf="$(state_file "$NAME")"
     for c in $(list_ours "$NAME"); do docker rm -f -v "$c" >/dev/null || die "殘留容器 $c 刪不掉" 1; n=$((n + 1)); done
     remove_unused_pulled
     rm -f "$sf"
