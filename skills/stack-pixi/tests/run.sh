@@ -78,6 +78,8 @@ echo "export const BOOT_GROUPS: readonly string[] = ['boot'];" > "$X/src/assets/
 tc 1 "check-assets:骨架專案刪掉所有 manifest → 違規" node "$K/scripts/check-assets.mjs" "$X"
 rm "$X/dist/.vite/manifest.json"
 tc 1 "check-early:骨架專案關掉 build.manifest → 違規" node "$K/scripts/check-early.mjs" "$X" --dist "$X/dist"
+node "$K/scripts/check-early.mjs" "$X" --dist "$X/dist" > "$W/early-layout-base.json"
+tc 0 "check-early --baseline:基準就關掉 build.manifest → 既有" node "$K/scripts/check-early.mjs" "$X" --dist "$X/dist" --baseline "$W/early-layout-base.json"
 rm -rf "$X"
 echo "import { Sprite } from 'pixi.js'; export const s = Sprite;" > "$P/src/game/bad.ts"
 tf "check-layers 抓到 src/game import pixi" node "$K/scripts/check-layers.mjs" "$P"
@@ -100,14 +102,14 @@ r=$(node "$K/scripts/check-layers.mjs" "$P" --baseline "$W/layers-base.json"); r
 [ $rc = 1 ] && [ "$(jget "$r" 'j.violations.length + "/" + j.existing.length')" = 1/1 ] && ok "check-layers --baseline:只有新增的算違規(1 新 / 1 既有)" || bad "check-layers --baseline 新增" "$r"
 rm "$P/src/game/bad.ts" "$P/src/game/bad2.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
-[ "$n" = 15 ] && ok "check-i18n 漏報案例全抓到(15)" || bad "check-i18n 漏報案例" "$r"
+[ "$n" = 16 ] && ok "check-i18n 漏報案例全抓到(16,含 < 後面的 regex)" || bad "check-i18n 漏報案例" "$r"
 t  "check-i18n 誤報案例全部放行(含 .tsx 的 </b>)" node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-good"
 # --baseline:既有違規不擋 PASS;比對用 檔案 + 正規化文字,不看行號
 cp -R "$K/tests/fixtures/i18n-bad" "$W/i18n"; node "$K/scripts/check-i18n.mjs" "$W/i18n" > "$W/i18n-base.json"
-tc 0 "check-i18n --baseline:基準已有的 15 筆不算失敗" node "$K/scripts/check-i18n.mjs" "$W/i18n" --baseline "$W/i18n-base.json"
+tc 0 "check-i18n --baseline:基準已有的 16 筆不算失敗" node "$K/scripts/check-i18n.mjs" "$W/i18n" --baseline "$W/i18n-base.json"
 B="$W/i18n/src/scenes/Bad.ts"; { printf '\n\n\n'; cat "$B"; printf "label.text = 'Brand new text';\n"; } > "$W/b.ts" && mv "$W/b.ts" "$B"
 r=$(node "$K/scripts/check-i18n.mjs" "$W/i18n" --baseline "$W/i18n-base.json"); rc=$?
-[ $rc = 1 ] && [ "$(jget "$r" 'j.violations.length + "/" + j.existing.length + "/" + j.violations[0].text')" = "1/15/label.text = 'Brand new text';" ] && ok "check-i18n --baseline:行號全部移動後只抓到新增的 1 筆" || bad "check-i18n --baseline" "$r"
+[ $rc = 1 ] && [ "$(jget "$r" 'j.violations.length + "/" + j.existing.length + "/" + j.violations[0].text')" = "1/16/label.text = 'Brand new text';" ] && ok "check-i18n --baseline:行號全部移動後只抓到新增的 1 筆" || bad "check-i18n --baseline" "$r"
 printf "label.text = \"Game over\";\n" >> "$B"
 r=$(node "$K/scripts/check-i18n.mjs" "$W/i18n" --baseline "$W/i18n-base.json"); [ "$(jget "$r" 'j.violations.length')" = 2 ] && ok "check-i18n --baseline:同一段文字多出一次也算新增" || bad "check-i18n --baseline 重複" "$r"
 tc 2 "check-i18n --baseline 檔案不存在 → 用法錯誤" node "$K/scripts/check-i18n.mjs" "$W/i18n" --baseline "$W/nope.json"
@@ -220,7 +222,7 @@ TS
     [ "$(jget "$st" 'j.state + ":" + j.code')" = "done:0" ] && ok "soak 經 serve.sh + bg-job 背景執行並結束碼 0" || bad "soak(bg-job)" "$st $(tail -20 "$WEB_DEV_KIT_TMP/$N-soak/server.log")"
   else bad "啟動 bg-job" "$out"; fi
   bash "$WK/stop.sh" "$N-soak" >/dev/null 2>&1
-  t "bg-job 已停止(埠釋放)" bash -c "! lsof -nP -iTCP:${PORT_SOAK:-1} -sTCP:LISTEN -t >/dev/null 2>&1"
+  if [ -n "$PORT_SOAK" ]; then t "bg-job 已停止(埠釋放)" bash -c "! lsof -nP -iTCP:$PORT_SOAK -sTCP:LISTEN -t >/dev/null 2>&1"; fi
   t "perf 首屏(phone 844×390@3x)" env PORT="$PORT_DIST" PERF_RUNS=1 PERF_VIEW=phone PERF_RESULTS_DIR="$W/perf" PERF_OUTPUT_DIR="$W/perf-out" npx --no playwright test -c tests/perf/playwright.perf.config.ts first-screen
   t "perf 結果寫進 jsonl" test "$(wc -l < "$W/perf/perf.jsonl" | tr -d ' ')" = 4
 else bad "啟動 serve-dist" "$out"; fi

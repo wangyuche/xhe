@@ -25,7 +25,12 @@ const early = join(dir, 'src/assets/early.ts');
 const skeleton = existsSync(early);
 // 骨架專案缺結構 = 違規;既有專案 = layout absent
 const absent = (reason) => {
-  if (skeleton) { console.log(JSON.stringify({ ok: false, violations: [{ error: `${reason}(PX-LOAD-01)` }], existing: [] })); process.exit(EXIT.violation); }
+  if (skeleton) {
+    const v = [{ error: `${reason}(PX-LOAD-01)`, key: `layout:${reason.includes('BOOT_GROUPS') ? 'boot-groups' : 'build-manifest'}` }];
+    const { fresh, existing } = splitByBaseline(v, keyOf, baseline);
+    console.log(JSON.stringify({ ok: fresh.length === 0, violations: fresh, existing, baseline: baselineFile ?? null }));
+    process.exit(fresh.length ? EXIT.violation : EXIT.ok);
+  }
   console.log(JSON.stringify({ ok: false, layout: 'absent', reason })); process.exit(EXIT.layoutAbsent);
 };
 if (bootOpt !== undefined && !bootOpt.split(',').some(Boolean)) usageError('--boot 不可為空', USAGE);

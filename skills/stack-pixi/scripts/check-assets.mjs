@@ -80,9 +80,9 @@ async function artErrors() {
 }
 const skeleton = existsSync(join(root, 'early.ts'));
 if (!skeleton && !groups.some((g) => existsSync(join(root, g, 'manifest.json')))) {
-  const ae = await artErrors();
-  console.log(JSON.stringify({ ok: false, layout: 'absent', reason: `${root} 下沒有任何 <group>/manifest.json,也沒有 early.ts(不是 stack-pixi 素材結構)`, groups, errors: ae }));
-  process.exit(ae.length ? EXIT.violation : EXIT.layoutAbsent);
+  const ae = splitByBaseline(await artErrors(), keyOf, baseline);
+  console.log(JSON.stringify({ ok: false, layout: 'absent', reason: `${root} 下沒有任何 <group>/manifest.json,也沒有 early.ts(不是 stack-pixi 素材結構)`, groups, errors: ae.fresh, existing: ae.existing, baseline: baselineFile ?? null }));
+  process.exit(ae.fresh.length ? EXIT.violation : EXIT.layoutAbsent);
 }
 for (const g of groups) {
   const gdir = join(root, g);
@@ -100,7 +100,7 @@ for (const g of groups) {
       if (!existsSync(p)) { errors.push(`${g}/${id}: 缺檔案 ${name}`); continue; }
       const tier = key.startsWith('0.5x') ? '0.5x' : key.startsWith('1x') ? '1x' : undefined;
       if (!tier) continue;
-      if (name.endsWith('.avif')) kb[tier] += statSync(p).size / 1024;
+      if (/\.avif$/i.test(name)) kb[tier] += statSync(p).size / 1024;
       if (/\.(png|jpe?g)$/i.test(name)) {
         const d = dims(p);
         if (!d) errors.push(`${g}/${name}: 讀不到尺寸`);

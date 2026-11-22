@@ -83,7 +83,8 @@ node <pixi>/scripts/check-early.mjs <專案> --dist <tmp>/dist
 ```
 (新專案沒有基準檔,四個檢查不加 `--baseline`。)
 - **檢查結束碼**:0 通過(`existing` 的項目列在規則落差);1 = 這次新增的違規 → 修正;2 = 指令錯誤 → 修正指令;3(`"layout":"absent"`)= 專案沒有 stack-pixi 結構 → 跑第 0 步記下的專案同等檢查(回報寫名稱與結果),沒有同等檢查就列規則落差,不判失敗。
-- check-early 結束碼 1 而你懷疑改動前就有:`mkdir -p <tmp>/base && git archive $(cat <tmp>/base.sha) | tar -x -C <tmp>/base`,在 `<tmp>/base` 用 `npm ci` 與 `vite build --outDir <tmp>/base-dist` 建置,`check-early.mjs <tmp>/base --dist <tmp>/base-dist > <tmp>/baseline/early.json`,再對這次的建置加 `--baseline <tmp>/baseline/early.json` 重跑。
+- **改動前的版本**(check-early 基準、效能「不得退步」基準共用):在 repo 根目錄 `mkdir -p <tmp>/base && git archive $(cat <tmp>/base.sha) | tar -x -C <tmp>/base`(整個 repo;只讀,不碰 `.git`);`<rel>` = `<專案>` 相對 repo 根目錄的路徑(專案在 repo 根就是 `.`),之後的 `npm ci`、建置、檢查都在 `<tmp>/base/<rel>` 執行。
+- check-early 結束碼 1 而你懷疑改動前就有:在 `<tmp>/base/<rel>` `npm ci` 並 `vite build --outDir <tmp>/base-dist`,`check-early.mjs <tmp>/base/<rel> --dist <tmp>/base-dist > <tmp>/baseline/early.json`,再對這次的建置加 `--baseline <tmp>/baseline/early.json` 重跑。
 - **E2E**:
   - 新專案:`bash <kit>/scripts/serve.sh <name>-dev <專案> 5173 -- npm run dev`(vite 讀 `PORT`);`SHOTS_DIR=<tmp>/shots E2E_OUTPUT_DIR=<tmp>/e2e PORT=<port> node_modules/.bin/playwright test`。
   - 既有專案:照第 0 步記下的專案方式跑,每個背景程序各用一個 `serve.sh` 名稱(例如 lobby:`bash <kit>/scripts/serve.sh <name>-e2e <專案> 5175 -- env VITE_E2E_CACHE_TAG=5175 VITE_PROXY_TARGET=<後端網址> node_modules/.bin/vite --config tests/e2e/vite.e2e.config.ts --port {port} --strictPort`,再 `BASE_URL=http://localhost:<port> node_modules/.bin/playwright test …`)。後端照簡報給的方式啟動、結束 teardown;簡報沒給而 E2E 需要 → 第 0 步已 BLOCKED。專案讀得到的輸出環境變數(`SHOTS_DIR`、`E2E_OUTPUT_DIR`、`PERF_OUTPUT_DIR`、`PERF_RESULTS_DIR`)都指到 `<tmp>`;寫死的輸出路徑照第 0 步的判定。
@@ -95,7 +96,7 @@ node <pixi>/scripts/check-early.mjs <專案> --dist <tmp>/dist
   - 靜態伺服器:新專案 `bash <kit>/scripts/serve.sh <name>-dist <專案> 4175 -- node scripts/serve-dist.mjs <tmp>/dist`;既有專案用專案的(例如 lobby `… -- node tests/perf/serve-dist.mjs <tmp>/dist {port} <後端網址>`)。
   - 每個尺寸一次 Bash 呼叫:`PORT=<port> PERF_BASE_URL=http://127.0.0.1:<port> PERF_VIEW=desktop PERF_RESULTS_DIR=<tmp>/perf PERF_OUTPUT_DIR=<tmp>/perf-out node_modules/.bin/playwright test -c tests/perf/playwright.perf.config.ts first-screen scene-switch`,再 `PERF_VIEW=phone`(既有專案用專案的 spec 名稱與環境變數)。呼叫前估算 5 ×(可互動 + 等待)+ 啟動 ≤ 540 秒,超過就減少等待或回 ISSUES。
   - soak 單獨跑;預估超過 540 秒就經 serve.sh 背景執行:`bash <kit>/scripts/serve.sh <name>-soak <專案> 4190 -- node <pixi>/scripts/bg-job.mjs -- env PERF_BASE_URL=http://127.0.0.1:<dist 埠> PERF_VIEW=desktop PERF_RESULTS_DIR=<tmp>/perf PERF_OUTPUT_DIR=<tmp>/perf-out node_modules/.bin/playwright test -c tests/perf/playwright.perf.config.ts soak`;之後每次 Bash 呼叫(≤ 540 秒)用 `curl -s http://127.0.0.1:<soak 埠>/` 輪詢到 `"state":"done"`(`code` 0 = 通過),結果看 `<tmp>/perf/perf.jsonl`,再 `bash <kit>/scripts/stop.sh <name>-soak`。
-  - 門檻用專案 budgets;「不得退步」的基準讀 budgets 的「最新實測」(欄或小節),沒有就用 `<tmp>/base`(`git archive $(cat <tmp>/base.sha) | tar -x -C <tmp>/base`,只讀,不碰 `.git`)安裝、建置到 `<tmp>/base-dist` 後量一次。
+  - 門檻用專案 budgets;「不得退步」的基準讀 budgets 的「最新實測」(欄或小節),沒有就用上面「改動前的版本」:在 `<tmp>/base/<rel>` 安裝、建置到 `<tmp>/base-dist` 後量一次。
 - **資源釋放**(新增或修改場景 / 面板時):新專案用 E2E 的 `cycleLeak`(進出 4 次,第 3、4 次的非 null `managedTextures`、GL buffer、stage 物件數不多於第 2 次;專案另有容許值照專案)與 `drawsDuring` = 0;既有專案用專案的同等測試(例如 lobby `drawsDuring`、TC-22-59 的貼圖計數),沒有就列規則落差。
 - **收尾**(任何步驟中止時也要做):
   1. 每個用過的 serve.sh 名稱都 `bash <kit>/scripts/stop.sh <name>-…`(`-dev`、`-dist`、`-soak`、專案用的其他名稱);後端照簡報方式 teardown。

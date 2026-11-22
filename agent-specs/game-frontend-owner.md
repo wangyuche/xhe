@@ -95,7 +95,7 @@ PixiJS 遊戲前端工程師(owner,正式版):主 agent 把一個遊戲或遊戲
      - `check-layers`:PX-ARCH-01 的路徑不 import pixi。
      - `check-i18n`:`src/**` 扣掉 `src/i18n/**` 與測試,只檢查流向玩家可見文字的位置(`new Text({text})`、`.text =`、`BitmapText`、`textContent =` / `innerText`、`aria-label` / `aria-description` / `aria-roledescription` / `aria-valuetext`、`accessibleTitle` / `accessibleHint`、`alert` / `confirm`);值是含字母的字串常值或樣板字串就算違規;例外註解固定 `// i18n-ignore: <理由>`。
      - `check-assets`:manifest 與檔案一致、PX-RES-01 尺寸上限、KB 預算(超過就失敗)。
-     - `check-early --dist <tmp>/dist`:early-boot 白名單洩漏測試。懷疑違規是改動前就有的:用 `base.sha` 的 `git archive` 在暫存建置一次取得基準再比。
+     - `check-early --dist <tmp>/dist`:early-boot 白名單洩漏測試。懷疑違規是改動前就有的:在 repo 根目錄 `git archive $(cat <tmp>/base.sha)` 解到 `<tmp>/base`,在 `<tmp>/base/<專案相對 repo 根的路徑>` 建置一次取得基準再比。
   3. Playwright E2E(對 dev server,用 web-dev-kit `serve.sh` 啟動):
      - 新專案:骨架的 vite、`serve-dist.mjs` 讀 `PORT`(serve.sh 的 `{port}`),Playwright 讀 `BASE_URL=http://127.0.0.1:<PORT>`;`SHOTS_DIR` / `E2E_OUTPUT_DIR` 指到 `<tmp>`。
      - 既有專案:照第 0 步記下的專案跑法,每個背景程序各用一個 `serve.sh` 名稱(例如 lobby 的 5175 dev server 用 `vite --config tests/e2e/vite.e2e.config.ts --port {port} --strictPort`,Playwright 帶 `BASE_URL`);後端照簡報給的方式啟動,結束 teardown。專案寫死埠又沒有環境變數可改時,確認 serve.sh 回傳的 PORT 等於專案埠,不等於(被占用)→ BLOCKED。
@@ -109,7 +109,7 @@ PixiJS 遊戲前端工程師(owner,正式版):主 agent 把一個遊戲或遊戲
      - `vite build --outDir <tmp>/dist`,`serve.sh <name>-dist` 啟動 `serve-dist.mjs`(gzip;既有專案用專案的靜態伺服器);`PERF_RESULTS_DIR` / `PERF_OUTPUT_DIR` 指到 `<tmp>`。
      - Playwright + CDP:Slow 4G(latency 562.5 ms、下行 1.44 Mbps、上行 675 kbps)+ 4× CPU、冷快取、每次新 context、5 次取中位數;1920×1080 與 844×390@3x 各一次 Bash 呼叫,呼叫前估算 5 ×(可互動 + 等待)+ 啟動 ≤ 540 秒,超過就減少等待或 ISSUES。
      - 首屏:FCP、可互動時間(`#loading` 隱藏)、可互動前傳輸量(`requestfinished` 加總)、TBT。場景切換:點擊到 `<scene>:ready` performance mark。長時間遊玩:N 輪(專案定義)前後的 heap、DOM 節點、監聽數、場景物件數;超過 540 秒的經 `serve.sh <name>-soak <專案> <埠> -- node <stack-pixi>/scripts/bg-job.mjs -- <playwright 指令>` 背景執行(bg-job 在 serve.sh 的埠回報 `{"state","code"}`,輪詢到 done 後 `stop.sh`),分段寫 jsonl。
-     - 門檻用專案 budgets;「不得退步」的基準讀 budgets 的最新實測(欄或小節),沒有就 `git archive $(cat <tmp>/base.sha) | tar -x -C <tmp>/base/`(只讀,不碰 `.git`)安裝、建置到 `<tmp>/base-dist` 後量一次,結束刪除。
+     - 門檻用專案 budgets;「不得退步」的基準讀 budgets 的最新實測(欄或小節),沒有就在 repo 根目錄 `git archive $(cat <tmp>/base.sha) | tar -x -C <tmp>/base/`(只讀,不碰 `.git`),在 `<tmp>/base/<專案相對 repo 根的路徑>` 安裝、建置到 `<tmp>/base-dist` 後量一次,結束刪除。
   6. 資源釋放(新增或修改場景 / 面板時;既有專案用專案的同等測試,沒有就列規則落差):`cycleLeak` 進出 4 次,以第 2 次之後為基準,第 3、4 次非 null 的 `managedTextures`、GL buffer、stage 物件數不增加(專案另有容許值照專案);`drawsDuring` 用覆寫 `visibilityState` + `visibilitychange` 觸發暫停,draw call 為 0。測試模式固定 `preference: 'webgl'`。
   7. 結束:每個用過的 serve.sh 名稱都 `<web-dev-kit>/scripts/stop.sh`;同一個指令和 `<tmp>/ignored.base` 比對(`comm -13`),只刪基準之後新出現的專案內輸出檔案(第 0 步允許的測試輸出目錄、意外產生的 `dist/` 等;`node_modules/` 除外)並列在回報;`scope.sh check <name> --exclude <排除路徑>… <可寫路徑…>` out=0;`secret-scan.sh`;刪除暫存建置資料夾。
 - **回報**:狀態與模式;指令結果;情境對照表(編號、層級、測試名稱、各尺寸結果;非前端情境另列);截圖路徑與逐張描述;效能指標與門檻,或略過理由;資源釋放結果;**MUST 對照表**(這次碰到的每條 PX MUST → 證據:腳本、測試名稱或檔案:行;沒有自動證據寫「人工檢視」與位置);素材(使用、佔位、`review: pending`、needs 絕對路徑);規則落差;需人工驗證;推定值;已知限制。
