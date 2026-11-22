@@ -1,0 +1,273 @@
+#!/bin/bash
+# db-review-kit self-test. Offline except: Docker (local) for the container tests, and Go module downloads for the
+# fixture / goose CLI on the first run. Image: postgres:18-alpine (pulled if missing, removed afterwards only if this
+# test pulled it). Items that cannot run (no docker / no go) print SKIP, which does not count as passing.
+# Everything is cleaned up: containers labelled dbrev=<test name>, tmp dirs, background processes.
+set -uo pipefail
+KIT="$(cd "$(dirname "$0")/.." && pwd)"
+S="$KIT/scripts"; FX="$KIT/tests/fixture"
+IMAGE="${DB_REVIEW_KIT_TEST_IMAGE:-postgres:18-alpine}"
+WORK="$(mktemp -d)"
+export DB_REVIEW_KIT_TMP="$WORK/kit"
+N="kst-$$"
+PASS=0; FAIL=0; SKIP=0
+ok()   { echo "PASS  $1"; PASS=$((PASS + 1)); }
+bad()  { echo "FAIL  $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | tail -20 | sed 's/^/      /'; FAIL=$((FAIL + 1)); }
+skip() { echo "SKIP  $1"; SKIP=$((SKIP + 1)); }
+PULLED=""
+cleanup() {
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    for c in $(docker ps -a --filter "label=dbrev=$N" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1; done
+    [ -n "$PULLED" ] && docker image rm "$IMAGE" >/dev/null 2>&1
+  fi
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+DSNPY() { python3 -I "$S/_dsn.py" "$@"; }
+
+# ---------- 1. DSN guard (offline) ----------
+o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?sslmode=disable')"; [ $? -eq 0 ] && echo "$o" | grep -q 'guard ok #1 host=127.0.0.1 port=6000 user=u db=db' && ok "guard:本容器 DSN 通過" || bad "guard ok" "$o"
+for d in 'postgres://u:p@10.0.0.5:6000/db' 'postgres://u:p@localhost:6000/db' 'postgres://u:p@127.0.0.1:5432/db' \
+         'postgres://u:p@127.0.0.1:6000/db?host=10.0.0.5' 'postgres://u:p@127.0.0.1:6000/db?hostaddr=10.0.0.5' \
+         'postgres://u:p@127.0.0.1:6000/db?service=prod' 'postgres://u:p@127.0.0.1:6000,10.0.0.5:6000/db' \
+         'mysql://u:p@127.0.0.1:6000/db' 'postgres://u:p@127.0.0.1:6000/' 'postgres://u:p@127.0.0.1:6000/db?passfile=/x'; do
+  o="$(DSNPY guard 6000 "$d")"; rc=$?
+  [ $rc -eq 4 ] && echo "$o" | grep -q 'guard FAIL' && ! echo "$o" | grep -q ':p@' && ok "guard:拒絕 $d" || bad "guard 應拒絕 $d" "rc=$rc $o"
+done
+o="$(DSNPY opts 'postgres://u:p@127.0.0.1:6000/db?options=-c%20lock_timeout%3D9s' '-c lock_timeout=5s -c statement_timeout=60s')"
+[ "$o" = 'postgres://u:p@127.0.0.1:6000/db?options=-c%20lock_timeout%3D5s%20-c%20statement_timeout%3D60s%20-c%20lock_timeout%3D9s' ] \
+  && ok "opts:kit 預設在前,DSN 自己的 options 在後(後者生效)" || bad "opts 合併" "$o"
+[ "$(DSNPY internal 'postgres://u:p@127.0.0.1:6000/db?x=1')" = 'postgres://u:p@127.0.0.1:5432/db?x=1' ] && ok "internal:改寫成容器內 127.0.0.1:5432" || bad "internal"
+[ "$(DSNPY mask 'postgres://u:secret@127.0.0.1:6000/db')" = 'postgres://u:***@127.0.0.1:6000/db' ] && ok "mask:隱藏密碼" || bad "mask"
+
+# ---------- 2. isolated env (offline) ----------
+o="$(DATABASE_URL=postgres://evil@10.255.255.1/x PGHOST=10.255.255.1 PGPASSWORD=leak TEST_DATABASE_URL=postgres://x@10.0.0.1/y_test GOOSE_DBSTRING=x GOFLAGS=-mod=mod \
+     bash -c "source '$S/_common.sh'; run_iso $N -- env" 2>&1)"
+if ! echo "$o" | grep -qE '^(DATABASE_URL|PGHOST|PGPASSWORD|TEST_DATABASE_URL|GOOSE_DBSTRING)=' && echo "$o" | grep -qx 'GOFLAGS=-mod=readonly' \
+   && echo "$o" | grep -qx 'PGPASSFILE=/dev/null' && echo "$o" | grep -qx 'GOTOOLCHAIN=local' && echo "$o" | grep -q "^HOME=$DB_REVIEW_KIT_TMP/$N/home"; then
+  ok "隔離:shell 的 DATABASE_URL / PG* / TEST_* / GOOSE_* 不會被繼承;GOFLAGS=-mod=readonly、GOTOOLCHAIN=local、HOME 在暫存目錄"
+else bad "隔離環境" "$o"; fi
+if command -v go >/dev/null 2>&1; then
+  real_mod="$(go env GOMODCACHE)"; real_cache="$(go env GOCACHE)"
+  if echo "$o" | grep -qx "GOMODCACHE=$real_mod" && echo "$o" | grep -qx "GOCACHE=$real_cache" && [ -n "$real_mod" ] \
+     && ! echo "$o" | grep -E '^GO(MOD)?CACHE=' | grep -q "$WORK"; then
+    ok "隔離:沙盒用使用者真正的 GOMODCACHE($real_mod)與 GOCACHE,不是暫存目錄"
+  else bad "沙盒 GOMODCACHE / GOCACHE" "$(echo "$o" | grep -E '^GO(MOD)?CACHE=') real=$real_mod $real_cache"; fi
+else skip "沙盒 GOMODCACHE(沒有 go)"; fi
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'DATABASE_URL=host=10.0.0.1 dbname=x'" 2>&1)"; rc=$?
+[ $rc -eq 4 ] && ok "隔離:DB 類變數不是 URL(keyword DSN)→ 拒絕(結束碼 4)" || bad "keyword DSN 應拒絕" "rc=$rc $o"
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_DATABASE_URL=postgres://u:p@127.0.0.1:5432/x_test'" 2>&1)"; rc=$?
+[ $rc -eq 4 ] && ok "隔離:--env 的 DSN 指向別的埠 → 拒絕" || bad "--env 錯埠應拒絕" "rc=$rc $o"
+
+# ---------- 3. gotest parser (offline) ----------
+printf '%s\n' '{"Action":"start","Package":"p"}' '{"Action":"output","Package":"p","Output":"ok  \tp\t0.1s [no tests to run]\n"}' '{"Action":"pass","Package":"p"}' > "$WORK/zero.jsonl"
+o="$(python3 -I "$S/_gotest_parse.py" "$WORK/zero.jsonl" 1)"
+echo "$o" | grep -q '"status": "GAP"' && echo "$o" | grep -q 'no tests ran' && ok "gotest 解析:測試數 0 → GAP" || bad "測試數 0" "$o"
+printf '%s\n' '{"ImportPath":"p [p.test]","Action":"build-output","Output":"x.go:1: undefined: y\n"}' '{"ImportPath":"p [p.test]","Action":"build-fail"}' \
+  '{"Action":"start","Package":"p"}' '{"Action":"output","Package":"p","Output":"FAIL\tp [build failed]\n"}' '{"Action":"fail","Package":"p"}' > "$WORK/bf.jsonl"
+o="$(python3 -I "$S/_gotest_parse.py" "$WORK/bf.jsonl" 1)"
+echo "$o" | grep -q '"status": "FAIL"' && ok "gotest 解析:編譯失敗 → FAIL" || bad "編譯失敗" "$o"
+
+# ---------- 4. non-local docker refused (offline) ----------
+for h in tcp://192.0.2.1:2375 ssh://user@192.0.2.1; do
+  o="$(DOCKER_HOST="$h" bash "$S/pg.sh" up "$N" --image "$IMAGE" 2>&1)"; rc=$?
+  [ $rc -eq 4 ] && echo "$o" | grep -q '不是本機' && ok "非本機 docker:DOCKER_HOST=$h → 結束碼 4" || bad "DOCKER_HOST=$h 應拒絕" "rc=$rc $o"
+done
+if command -v docker >/dev/null 2>&1; then
+  export_cfg="$WORK/dockercfg"; mkdir -p "$export_cfg"
+  if DOCKER_CONFIG="$export_cfg" docker context create dbrev-remote --docker host=tcp://192.0.2.1:2375 >/dev/null 2>&1; then
+    o="$(env -u DOCKER_HOST DOCKER_CONFIG="$export_cfg" DOCKER_CONTEXT=dbrev-remote bash "$S/pg.sh" up "$N" --image "$IMAGE" 2>&1)"; rc=$?
+    [ $rc -eq 4 ] && echo "$o" | grep -q 'dbrev-remote' && ok "非本機 docker:context 指向 tcp:// → 結束碼 4" || bad "遠端 context 應拒絕" "rc=$rc $o"
+  else skip "非本機 docker context(docker context create 失敗)"; fi
+else skip "非本機 docker context(沒有 docker CLI)"; fi
+o="$(bash "$S/pg.sh" up "$N" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q -- '--image 必填' && ok "pg.sh up:沒給 --image → 用法錯誤(不提供預設映像)" || bad "--image 必填" "$o"
+
+# ---------- docker section ----------
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  for t in "pg.sh up / psql / guard / rm / gc" "goose.sh" "locks.sh" "grants.sh" "race.sh" "seed.sh / explain.sh" "partitions.sql" "gotest.sh"; do skip "$t(Docker 沒有在執行)"; done
+  echo "---"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; [ "$FAIL" -eq 0 ]; exit
+fi
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  docker pull -q "$IMAGE" >/dev/null && PULLED=1 || { bad "docker pull $IMAGE"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; exit 1; }
+fi
+GIT_BEFORE="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
+
+o="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" --mount "$FX/db/init:/docker-entrypoint-initdb.d" --mount "$FX/db/roles.sql:/roles.sql:rw" 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$o" | grep -q '一律唯讀' && ok "pg.sh up:--mount 帶 :rw → 拒絕(結束碼 4)" || bad "--mount rw 應拒絕" "rc=$rc $o"
+o="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" --mount "$FX/db/init:/docker-entrypoint-initdb.d" --env-random FX_MIGRATOR_PASSWORD FX_APP_PASSWORD 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | grep -q '初始化失敗' && [ -z "$(docker ps -aq --filter "label=dbrev=$N")" ] \
+  && ok "pg.sh up:init 腳本要的 /roles.sql 沒掛載 → 初始化失敗並刪掉容器" || bad "init 失敗處理" "rc=$rc $o"
+
+UP="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" --tmpfs-size 768m \
+  --mount "$FX/db/init:/docker-entrypoint-initdb.d" --mount "$FX/db/roles.sql:/roles.sql:ro" \
+  --env-random FX_MIGRATOR_PASSWORD FX_APP_PASSWORD --role fx_migrator=FX_MIGRATOR_PASSWORD --role fx_app=FX_APP_PASSWORD --db fx_test 2>&1)"; rc=$?
+if [ $rc -ne 0 ]; then bad "pg.sh up(fixture bootstrap)" "$UP"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; exit 1; fi
+C="$(echo "$UP" | sed -n 's/^container=\([^ ]*\) .*/\1/p')"; PORT="$(echo "$UP" | sed -n 's/^container=[^ ]* port=\([0-9]*\).*/\1/p')"
+case "$C" in "dbrev-$N-"*) ok "pg.sh up:容器名稱前綴 dbrev-$N-" ;; *) bad "容器名稱" "$C" ;; esac
+[ "$(docker inspect -f '{{index .Config.Labels "dbrev"}}' "$C")" = "$N" ] && ok "pg.sh up:label dbrev=$N" || bad "label"
+[ "$(docker inspect -f '{{index .HostConfig.Tmpfs "/var/lib/postgresql"}}' "$C")" = "rw,size=768m" ] && ok "pg.sh up:tmpfs /var/lib/postgresql size=768m" || bad "tmpfs" "$(docker inspect -f '{{json .HostConfig.Tmpfs}}' "$C")"
+m="$(docker inspect -f '{{range .Mounts}}{{.Type}}:{{.Destination}}:{{.RW}} {{end}}' "$C")"
+[ "$m" = "bind:/docker-entrypoint-initdb.d:false bind:/roles.sql:false " ] || [ "$m" = "bind:/roles.sql:false bind:/docker-entrypoint-initdb.d:false " ] \
+  && ok "pg.sh up:只有兩個唯讀 bind mount,沒有資料 volume" || bad "mounts" "$m"
+[ "$(docker port "$C" 5432/tcp)" = "127.0.0.1:$PORT" ] && ok "pg.sh up:只綁 127.0.0.1:$PORT" || bad "port binding" "$(docker port "$C")"
+echo "$UP" | grep -q "^dsn role=fx_app db=fx_test url=postgres://fx_app:[0-9a-f]\{32\}@127.0.0.1:$PORT/fx_test" && ok "pg.sh up:印出各角色 DSN(隨機密碼)" || bad "DSN 輸出" "$UP"
+SU="$(bash "$S/pg.sh" dsn "$N" postgres fx_test)"; MIG="$(bash "$S/pg.sh" dsn "$N" fx_migrator fx_test)"; APP="$(bash "$S/pg.sh" dsn "$N" fx_app fx_test)"
+MIGA="$(bash "$S/pg.sh" dsn "$N" fx_migrator fx_test --options '-c fx.allow_data_down=on')"
+o="$(echo "SELECT string_agg(nspname, ',' ORDER BY nspname) FROM pg_namespace WHERE nspname LIKE 'fx%';" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+[ "$o" = "fx,fx_meta" ] && ok "pg.sh up:init 腳本讀到另外掛載的 /roles.sql(schema fx、fx_meta 已建立)" || bad "roles.sql" "$o"
+o="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'pg.sh gc' && ok "pg.sh up:同名容器已存在 → 拒絕" || bad "同名拒絕" "$o"
+
+o="$(echo "SELECT current_setting('statement_timeout') || ' ' || current_setting('lock_timeout');" | bash "$S/pg.sh" psql "$N" "$APP" -At 2>&1)"
+[ "$o" = "1min 5s" ] && ok "psql:每個 session 預設 statement_timeout 60s、lock_timeout 5s" || bad "psql 預設 timeout" "$o"
+o="$(echo "SELECT current_setting('lock_timeout');" | bash "$S/pg.sh" psql "$N" "$(bash "$S/pg.sh" dsn "$N" fx_app fx_test --options '-c lock_timeout=250ms')" -At 2>&1)"
+[ "$o" = "250ms" ] && ok "psql:DSN 自己的 options 覆寫 kit 預設" || bad "options 覆寫" "$o"
+o="$(echo "SELECT 1;" | bash "$S/pg.sh" psql "$N" "postgres://postgres:x@127.0.0.1:5432/fx_test" -At 2>&1)"; rc=$?
+[ $rc -eq 4 ] && ok "psql:DSN 不是本容器的埠 → 拒絕(結束碼 4)" || bad "psql guard" "rc=$rc $o"
+o="$(bash "$S/pg.sh" guard "$N" "$APP" "${APP}&host=db.internal" 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$o" | grep -q 'guard ok #1' && echo "$o" | grep -q 'guard FAIL #2' && ok "pg.sh guard:逐一回報,有一個不符就結束碼 4" || bad "pg.sh guard" "rc=$rc $o"
+
+# ---------- goose ----------
+if ! command -v go >/dev/null 2>&1; then skip "goose.sh(沒有 go)"; skip "gotest.sh(沒有 go)"; else
+o="$(bash "$S/goose.sh" "$N" validate --dir "$FX/migrations" 2>&1)"; [ $? -eq 0 ] && ok "goose.sh validate(版本取自 go.mod:$(echo "$o" | sed -n 's/^goose=\([^ ]*\).*/\1/p'))" || bad "goose validate" "$o"
+o="$(DATABASE_URL=postgres://evil@10.255.255.1/x GOOSE_DBSTRING=postgres://evil@10.255.255.1/x bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --dsn-allow "$MIGA" --from 3 2>&1)"; rc=$?
+j="$(echo "$o" | tail -1)"
+echo "$j" | grep -q '"before": 2' && echo "$j" | grep -q '"down_no_flag": "rejected"' && echo "$j" | grep -q '"down_with_flag": "ok"' \
+  && echo "$j" | grep -q '"up_again": "ok"' && echo "$j" | grep -q '"ok": true' && echo "$j" | grep -q 'fx.allow_data_down' && [ $rc -eq 0 ] \
+  && ok "goose.sh roundtrip:前一版 → up → down 不帶旗標被拒(RAISE)→ 帶旗標成功 → up" || bad "goose roundtrip" "$o"
+o="$(bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --from 3 2>&1)"; rc=$?
+echo "$o" | tail -1 | grep -q '"down_with_flag": "no-allow-dsn"' && [ $rc -eq 1 ] && ok "goose.sh roundtrip:沒給 --dsn-allow 時破壞性 Down 無法完成 → ok=false" || bad "roundtrip 無 allow" "$o"
+o="$(bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "postgres://fx_migrator:x@127.0.0.1:5432/fx_test" -- status 2>&1)"; rc=$?
+[ $rc -eq 4 ] && ok "goose.sh:DSN 不是本容器 → 拒絕" || bad "goose guard" "rc=$rc $o"
+o="$(bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIGA" -- down-to 2 2>&1)" \
+  && ok "goose.sh run:down-to 2(準備觀察 00003 的鎖)" || bad "goose run down-to" "$o"
+
+# ---------- locks ----------
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$FX/migrations/00003_notes.sql" 2>&1)"; rc=$?
+gone="$(echo "SELECT to_regclass('fx.notes') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+echo "$o" | grep -q '| fx.accounts | ShareRowExclusiveLock | writes' && echo "$o" | tail -1 | grep -q '"rolled_back":true' && [ "$gone" = t ] && [ $rc -eq 0 ] \
+  && ok "locks.sh:00003 Up 在交易內觀察到 accounts 的 ShareRowExclusiveLock(擋寫入),結束後已 ROLLBACK" || bad "locks 交易內" "rc=$rc gone=$gone $o"
+printf -- '-- +goose NO TRANSACTION\n-- +goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS x ON fx.accounts (name);\n' > "$WORK/nt.sql"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/nt.sql" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'NO TRANSACTION' && ok "locks.sh:NO TRANSACTION 檔 → 拒絕交易內觀察" || bad "NO TRANSACTION" "$o"
+bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" -- up >/dev/null 2>&1 || bad "goose up 回到最新版"
+START=$(date +%s)
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.notes ADD CONSTRAINT notes_account_fk2 FOREIGN KEY (account_id) REFERENCES fx.accounts (id)' \
+  --hold-dsn "$MIG" --hold 'UPDATE fx.accounts SET name = name WHERE false' --probe-dsn "$APP" --probe 'UPDATE fx.accounts SET name = name WHERE false' \
+  --monitor-dsn "$SU" --lock-timeout 2s --hold-seconds 6 2>&1)"; rc=$?
+j="$(echo "$o" | tail -1)"
+echo "$j" | grep -q '"ddl":"timeout(55P03)"' && echo "$j" | grep -q '"ddl_blocked_by":"hold"' && echo "$j" | grep -q '"probe_blocked_by":"ddl"' && [ $rc -eq 0 ] \
+  && ok "locks.sh --hold:DDL 被 hold 擋住並在 lock_timeout 結束(55P03),probe(fx_app UPDATE)排在 DDL 後面($(( $(date +%s) - START ))s)" || bad "locks hold" "rc=$rc $o"
+o="$(echo "SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-%';" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+[ "$o" = 0 ] && ok "locks.sh:結束後沒有殘留 session" || bad "locks 殘留 session" "$o"
+fi
+
+# ---------- grants ----------
+cat > "$WORK/grants.txt" <<'EOF'
+# label | object | action | expect
+app | fx.accounts | select(id, name) | ok
+app | fx.accounts | select(balance) | 42501
+app | fx.accounts | insert(name) | ok
+app | fx.accounts | update(name) | ok
+app | fx.accounts | update(balance) | 42501
+app | fx.accounts | delete | 42501
+app | fx.ledger | insert | ok
+app | fx.ledger | update(amount) | 42501
+app | fx.events_2026_11 | select | ok
+app | fx_meta.goose_db_version | select | 42501
+app | fx | sql:CREATE TABLE {obj}.x (i int) | 42501
+mig | fx.ledger | truncate | ok
+EOF
+o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/grants.txt" --dsn app="$APP" --dsn mig="$MIG" 2>&1)"; rc=$?
+echo "$o" | grep -q 'grants total=12 pass=12 fail=0' && [ $rc -eq 0 ] && ok "grants.sh:欄位等級 GRANT 矩陣(LOGIN DSN)12/12 符合" || bad "grants 矩陣" "$o"
+printf 'app | fx.events_2026_12 | select | ok\napp | fx.nope | select | ok\n' > "$WORK/grants-bad.txt"
+o="$(bash "$S/grants.sh" "$N" --matrix "$WORK/grants-bad.txt" --dsn app="$APP" 2>&1)"; rc=$?
+echo "$o" | grep -q 'FAIL  app | fx.events_2026_12 | select | expect=ok got=42501' && echo "$o" | grep -q 'got=error(42P01)' && [ $rc -eq 1 ] \
+  && ok "grants.sh:分區子表 ACL 不同 → 抓到 42501;表不存在 → error(42P01) 不算 ok" || bad "grants 反向" "$o"
+
+# ---------- race ----------
+cat > "$WORK/deadlock.txt" <<'EOF'
+SETUP: INSERT INTO fx.accounts (name, balance) VALUES ('race-a', 100), ('race-b', 100);
+A: BEGIN;
+A: UPDATE fx.accounts SET balance = balance - 10 WHERE name = 'race-a';
+B: BEGIN;
+B: UPDATE fx.accounts SET balance = balance - 10 WHERE name = 'race-b';
+A: UPDATE fx.accounts SET balance = balance + 10 WHERE name = 'race-b';
+B: UPDATE fx.accounts SET balance = balance + 10 WHERE name = 'race-a';
+A: COMMIT;
+B: COMMIT;
+CHECK: SELECT sum(balance) FROM fx.accounts WHERE name IN ('race-a', 'race-b') => 200
+EOF
+o="$(bash "$S/race.sh" "$N" --script "$WORK/deadlock.txt" --dsn A="$MIG" --dsn B="$MIG" --check-dsn "$SU" 2>&1)"; rc=$?
+echo "$o" | tail -1 | grep -q '"deadlock":true' && echo "$o" | grep -q '40P01: deadlock detected' && [ $rc -eq 0 ] \
+  && ok "race.sh:相反順序上鎖 → 偵測到 deadlock(40P01),總額不變" || bad "race deadlock" "$o"
+cat > "$WORK/dup.txt" <<'EOF'
+A: BEGIN;
+A: INSERT INTO fx.ledger (account_id, ref, amount) SELECT id, 'credit-1', 10 FROM fx.accounts WHERE name = 'race-a';
+B: BEGIN;
+B: INSERT INTO fx.ledger (account_id, ref, amount) SELECT id, 'credit-1', 10 FROM fx.accounts WHERE name = 'race-a';
+A: COMMIT;
+B: COMMIT;
+CHECK: SELECT count(*) FROM fx.ledger WHERE ref = 'credit-1' => 1
+CHECK: SELECT count(*) FROM fx.ledger WHERE ref = 'credit-1' => 2
+EOF
+o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$APP" --check-dsn "$SU" 2>&1)"; rc=$?
+echo "$o" | grep -q '^step 4 B (waiting → finished): 23505' && echo "$o" | tail -1 | grep -q '"checks":{"pass":1,"fail":1}' && [ $rc -eq 1 ] \
+  && ok "race.sh:重送入帳 → 第二筆 23505(錯誤歸到正確步驟);CHECK 不符時結束碼 1" || bad "race 冪等" "$o"
+
+# ---------- seed / explain ----------
+o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --file "$FX/db/dev/seed-accounts.sql" --var n=2000 2>&1)"; rc=$?
+cnt="$(echo "SELECT count(*) FROM fx.accounts WHERE name LIKE 'user-%';" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+[ $rc -eq 0 ] && [ "$cnt" = 2000 ] && echo "$o" | grep -q 'tmpfs_free_mb_before=' && ok "seed.sh --file:專案種子腳本(-v n=2000)" || bad "seed file" "rc=$rc cnt=$cnt $o"
+o="$(bash "$S/seed.sh" "$N" --dsn "$MIG" --table fx.ledger --rows 25000 --batch 10000 --col "account_id=(SELECT min(id) FROM fx.accounts) + (g % 2000)" --col "ref='seed-'||g" --col "amount=g % 100" 2>&1)"; rc=$?
+echo "$o" | grep -q 'seed table=fx.ledger rows=25000 batches=3' && [ $rc -eq 0 ] && ok "seed.sh generate_series:25,000 列分 3 批 + ANALYZE" || bad "seed generate" "$o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "UPDATE fx.accounts SET balance = balance + 1 WHERE name = 'user-7';" --runs 8 --target-ms 1000 2>&1)"; rc=$?
+bal="$(echo "SELECT balance FROM fx.accounts WHERE name = 'user-7';" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
+echo "$o" | grep -q 'Buffers: shared' && echo "$o" | tail -1 | grep -q '"runs":8,"p50_ms":' && echo "$o" | tail -1 | grep -q '"ok":true' && [ "$bal" = 7 ] && [ $rc -eq 0 ] \
+  && ok "explain.sh:EXPLAIN (ANALYZE, BUFFERS) + 8 次 p50/p95;DML 每次 ROLLBACK(餘額未變)" || bad "explain" "rc=$rc bal=$bal $o"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.ledger" --runs 3 --target-ms 0.0001 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:p95 超過 --target-ms → 結束碼 1" || bad "explain target" "rc=$rc $o"
+
+# ---------- partitions ----------
+o="$(bash "$S/pg.sh" psql "$N" "$SU" -v min_runway_days=100000 < "$S/partitions.sql" 2>&1)"
+echo "$o" | tail -1 | grep -qx 'partitions_summary parents=1 runway_violations=1 acl_mismatches=1 missing_default=1' && echo "$o" | grep -q 'fx.events_2026_12' \
+  && ok "partitions.sql:列出分區、跑道不足、子表 ACL 與父表不同(events_2026_12)、沒有 default 分區" || bad "partitions" "$o"
+o="$(bash "$S/pg.sh" psql "$N" "$SU" -v min_runway_days=-100000 < "$S/partitions.sql" 2>&1 | tail -1)"
+echo "$o" | grep -q 'runway_violations=0' && ok "partitions.sql:min_runway_days 變數生效" || bad "partitions 變數" "$o"
+
+# ---------- gotest ----------
+if command -v go >/dev/null 2>&1; then
+o="$(DATABASE_URL=postgres://evil@10.255.255.1/x PGHOST=10.255.255.1 PGPORT=5432 PGPASSWORD=leak TEST_DATABASE_URL=postgres://x@10.0.0.1/y_test \
+     bash "$S/gotest.sh" "$N" --dir "$FX" --tags integration --env FX_MIGRATOR_DSN="$MIG" --env FX_APP_DSN="$APP" -- ./migrations/ 2>&1)"; rc=$?
+j="$(echo "$o" | tail -1)"
+echo "$j" | grep -q '"tests": {"pass": 3, "fail": 0, "skip": 1, "total": 4}' && echo "$j" | grep -q '"status": "GAP"' && [ $rc -eq 5 ] \
+  && echo "$o" | grep -q '^SKIP .*TestAuditRoleSmoke: .*FX_AUDIT_DSN not set' \
+  && ok "gotest.sh:shell 帶 DATABASE_URL / PG* / TEST_* 時沒有漏進測試(TestNoAmbientConnectionEnv 通過);SKIP 1 個列原因並算缺口(結束碼 5)" || bad "gotest SKIP / 隔離" "rc=$rc $o"
+o="$(bash "$S/gotest.sh" "$N" --dir "$FX" --tags integration --env FX_MIGRATOR_DSN="$MIG" --env FX_APP_DSN="$APP" --env FX_AUDIT_DSN="$APP" -- ./migrations/ 2>&1)"; rc=$?
+echo "$o" | tail -1 | grep -q '"status": "PASS"' && [ $rc -eq 0 ] && ok "gotest.sh:補上 FX_AUDIT_DSN → 全部 PASS、SKIP 0(結束碼 0)" || bad "gotest PASS" "rc=$rc $o"
+o="$(bash "$S/gotest.sh" "$N" --dir "$FX" --tags integration --run NoSuchTest --env FX_MIGRATOR_DSN="$MIG" -- ./migrations/ 2>&1)"; rc=$?
+echo "$o" | tail -1 | grep -q 'no tests ran' && [ $rc -eq 5 ] && ok "gotest.sh:測試數 0 → 缺口(結束碼 5)" || bad "gotest 0 tests" "rc=$rc $o"
+o="$(bash "$S/gotest.sh" "$N" --dir "$FX" --tags integration --env FX_MIGRATOR_DSN="postgres://fx_migrator:x@127.0.0.1:5432/fx_test" -- ./migrations/ 2>&1)"; rc=$?
+[ $rc -eq 4 ] && ! ls "$DB_REVIEW_KIT_TMP/$N"/gotest-*.jsonl 2>/dev/null | xargs grep -l 'fx_migrator:x@' >/dev/null 2>&1 && ok "gotest.sh:--env DSN 指向 5432 → 執行前拒絕(結束碼 4)" || bad "gotest guard" "rc=$rc $o"
+o="$(bash "$S/gotest.sh" "$N" --dir "$FX" --env DATABASE_URL="host=10.0.0.1 dbname=x" -- ./migrations/ 2>&1)"; rc=$?
+[ $rc -eq 4 ] && ok "gotest.sh:--env DATABASE_URL 用 keyword 格式 → 拒絕" || bad "gotest keyword DSN" "rc=$rc $o"
+o="$(bash "$S/gotest.sh" "$N" --dir "$FX" --tags integration --env FX_MIGRATOR_DSN="$MIG" --env FX_APP_DSN="$APP" --run 'TestAppColumnGrants' -- ./migrations/ 2>&1)"; rc=$?
+echo "$o" | tail -1 | grep -q '"subtests": {"pass": 3, "fail": 0, "skip": 0, "total": 3}' && ok "gotest.sh:--run 分批、子測試分開計數" || bad "gotest --run" "rc=$rc $o"
+fi
+
+GIT_AFTER="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
+[ "$GIT_BEFORE" = "$GIT_AFTER" ] && ok "fixture 專案檔案沒有被改動(git status 前後相同;go.mod / go.sum 未被改寫)" || bad "fixture 被改動" "$GIT_AFTER"
+
+# ---------- rm / gc ----------
+o="$(bash "$S/pg.sh" rm "$N" --purge 2>&1)"
+echo "$o" | grep -q "removed container=$C" && [ ! -d "$DB_REVIEW_KIT_TMP/$N" ] && ok "pg.sh rm --purge:刪容器與暫存目錄" || bad "pg.sh rm" "$o"
+docker run -d --name "dbrev-$N-leftover" --label "dbrev=$N" "$IMAGE" sleep 300 >/dev/null 2>&1
+docker run -d --name "other-$N" --label "dbrev=$N" "$IMAGE" sleep 300 >/dev/null 2>&1
+o="$(bash "$S/pg.sh" gc "$N" 2>&1)"
+if echo "$o" | grep -q "gc name=$N removed=1 remaining=0" && [ -n "$(docker ps -aq --filter "name=^/other-$N\$")" ]; then
+  ok "pg.sh gc:只刪 label dbrev=$N 且名稱前綴 dbrev-$N- 的容器(同 label 但名稱不符的不刪)"
+else bad "pg.sh gc" "$o"; fi
+docker rm -f "other-$N" >/dev/null 2>&1
+[ -z "$(docker ps -aq --filter "label=dbrev=$N")" ] && ok "結束:docker ps -a --filter label=dbrev=$N 為空" || bad "殘留容器" "$(docker ps -a --filter "label=dbrev=$N")"
+
+echo "---"
+echo "pass=$PASS fail=$FAIL skip=$SKIP"
+[ "$FAIL" -eq 0 ]

@@ -100,6 +100,16 @@
 | 本機開發一律 Docker:骨架內建 Dockerfile 與執行時 `/api` 轉發;compose 只透過 `web-dev-kit/scripts/compose.sh`(必帶 `-p`,不刪 volume) | 結構(骨架、`compose.sh`)+ 測試(kit tests) | 使用者 2026-11-21 指示「本機開發都用 docker」;當次 backend-owner 規則只允許 `pg.sh`,compose build 只能由主 agent 跑 |
 | integration-verifier 用 standalone `server.js` 啟動前端 | 結構(骨架 `start` 腳本)+ 工作流程第 3 步 | 2026-11-21 fortest 每輪驗證都出現 `"next start" does not work with "output: standalone"` 警告 |
 
+## db-reviewer
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 只連本次建立的暫存容器;DSN host 必須 127.0.0.1、port 必須是本容器的埠,query 不能覆寫 host / port / service / passfile | 結構(kit `_dsn.py guard`,所有腳本執行前檢查)+ 測試(kit tests 第 1 節、psql / goose / gotest 守門) | 建立時就有(使用者 2026-11-22 規格) |
+| go / goose 在 `env -i` 沙盒執行,不繼承 `DATABASE_URL` / `TEST_*` / `PG*` / `GOOSE_*`;`GOFLAGS=-mod=readonly`、`GOTOOLCHAIN=local`;`GOMODCACHE` / `GOCACHE` 用使用者真正的快取 | 結構(kit `run_iso`)+ 測試(kit tests:shell 帶 DATABASE_URL 不外漏、沙盒用真正的 GOMODCACHE) | 建立時就有;快取規則為使用者 2026-11-22 決定 |
+| docker 只用本機(`DOCKER_HOST` 只接受 unix://,context 端點要 unix:// / npipe://) | 結構(kit `require_local_docker`)+ 測試(假的 tcp / ssh DOCKER_HOST、遠端 context) | 建立時就有 |
+| 不改專案檔案、不讀 `.env` / secret、不用 kubectl / gcloud / cnpg、不 go get / go mod tidy | 僅文字(工具沒有 Write / Edit,但 Bash 能寫檔;掛載唯讀與 `-mod=readonly` 只擋住一部分)+ 第 0 步 / 結束時比對 `git status --porcelain` | 建立時就有 |
+| 整合測試 SKIP > 0 或測試數 0 算缺口,不是通過 | 結構(kit `gotest.sh` 結束碼 5)+ 成功標準 4 | 建立時就有 |
+
 ## 待辦(暫緩)
 
 只發生過 1 次,依 `improve.md`「同一類錯誤發生兩次才算教訓」暫緩。再發生一次就加進 agent。
