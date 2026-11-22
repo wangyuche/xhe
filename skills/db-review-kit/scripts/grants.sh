@@ -13,7 +13,8 @@
 #   bare `insert` (DEFAULT VALUES) names no columns, so PostgreSQL accepts INSERT on ANY one column: it proves only
 #   "can insert at least one column". To check full / specific column INSERT use insert(c1,c2,…).
 # "ok" means the privilege check passed: success, or a later integrity / data error (23xxx / 22xxx, e.g. NOT NULL on
-# INSERT … DEFAULT VALUES; 0A000 "referenced in a foreign key" for truncate). Any other error (42P01 missing table, 28P01 login failed …) is reported as error(<code>).
+# INSERT … DEFAULT VALUES; 0A000 "referenced in a foreign key" for truncate). Any other error (42P01 missing table, 3D000 …) is reported as error(<code>).
+# Passwords / pg_hba are NOT tested here: psql runs inside the container over 127.0.0.1, which the official image trusts.
 # Each check is its own connection (a real login as that role; ALTER ROLE … SET applies except statement_timeout /
 # lock_timeout, which the kit sets per session). Nothing is committed.
 # Output: PASS/FAIL lines, then `grants total=… pass=… fail=…`. Exit 1 if any FAIL, 4 if a DSN is not this container.

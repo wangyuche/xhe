@@ -29,7 +29,7 @@ case "$CMD" in
     echo "docker=local context=$(docker context show 2>/dev/null || echo "DOCKER_HOST") host=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || echo "${DOCKER_HOST:-?}")"
     docker info --format 'docker_mem_mb={{.MemTotal}} docker_cpus={{.NCPU}} server={{.ServerVersion}}' \
       | awk '{ split($1,a,"="); printf "docker_mem_mb=%d %s %s\n", a[2]/1048576, $2, $3 }'
-    mkdir -p "$KIT_TMP"
+    own_dir "$KIT_TMP"
     echo "tmp=$KIT_TMP tmp_free_mb=$(df -Pk "$KIT_TMP" | awk 'NR==2{print int($4/1024)}')"
     if command -v go >/dev/null 2>&1; then echo "go=$(go env GOVERSION)"; else echo "go=missing"; fi
     ;;
@@ -89,6 +89,7 @@ case "$CMD" in
     for kv in ${ENVS[@]+"${ENVS[@]}"}; do
       case "$kv" in [A-Za-z_]*=*) ;; *) die "--env 需要 K=V:$kv" 2 ;; esac
       case "${kv%%=*}" in POSTGRES_PASSWORD|POSTGRES_USER) die "${kv%%=*} 由 pg.sh 設定" 2 ;; esac
+      [ "${kv%%=*}" != PGDATA ] || die "PGDATA 不能用 --env 改(資料必須在映像宣告的 VOLUME,也就是 tmpfs 上)" 2
       RUNARGS+=(-e "$kv")
     done
     CONTAINER="dbrev-$NAME-$(rand_hex 3)"

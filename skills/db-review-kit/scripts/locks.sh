@@ -9,6 +9,8 @@
 # --hold: session "hold" runs BEGIN; <hold SQL>; pg_sleep(hold-seconds) (e.g. an open transaction touching a hot
 #   table); then "ddl" runs the DDL with lock_timeout; then (optional) "probe" runs e.g. an UPDATE on the hot table.
 #   A monitor snapshot of pg_stat_activity / pg_locks shows who waits on whom (blocked_by uses session names).
+#   --lock-timeout defaults to 5s in hold mode (minimum 3s, and --hold-seconds must be larger) so the monitor can catch
+#   the waits; "observed":false / "ok":false when the DDL or probe was never seen waiting.
 #   Every session has statement_timeout and lock_timeout, so nothing waits forever; the hold session is cancelled at the end.
 # --goose-up takes the Up section of a goose file; files marked NO TRANSACTION are refused (cannot run in a transaction).
 # Last line: JSON summary. Exit: 0 observed, 1 error, 2 usage, 4 DSN not this container.
@@ -17,7 +19,7 @@ source "$(dirname "$0")/_common.sh"
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
 NAME="$1"; check_name "$NAME"; shift
-DSN=""; SQL=""; LT="2s"; HOLD_DSN=""; HOLD=""; HOLD_S=8; PROBE_DSN=""; PROBE=""; MON=""
+DSN=""; SQL=""; LT=""; HOLD_DSN=""; HOLD=""; HOLD_S=10; PROBE_DSN=""; PROBE=""; MON=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dsn) DSN="${2:?}"; shift 2 ;;
@@ -40,6 +42,16 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$DSN" ] && [ -n "$SQL" ] || die "需要 --dsn 與 --sql / --file / --goose-up" 2
 case "$HOLD_S" in *[!0-9]*|"") die "--hold-seconds 要是整數秒" 2 ;; esac
+if [ -n "$HOLD" ]; then
+  # Monitoring polls through docker exec (~0.3–1 s each); the DDL / probe must keep waiting long enough to be observed.
+  [ -n "$LT" ] || LT="5s"
+  case "$LT" in [0-9]*s) LT_S="${LT%s}" ;; *) die "--hold 模式的 --lock-timeout 用整數秒寫,例如 5s" 2 ;; esac
+  case "$LT_S" in *[!0-9]*) die "--lock-timeout 用整數秒寫,例如 5s" 2 ;; esac
+  [ "$LT_S" -ge 3 ] || die "--hold 模式的 --lock-timeout 至少 3s(太短時監看還沒拍到就已逾時)" 2
+  [ "$HOLD_S" -gt "$LT_S" ] || die "--hold-seconds 要大於 --lock-timeout" 2
+else
+  [ -n "$LT" ] || LT="2s"
+fi
 [ -z "$HOLD" ] || [ -n "$HOLD_DSN" ] || HOLD_DSN="$DSN"
 [ -z "$PROBE" ] || [ -n "$PROBE_DSN" ] || PROBE_DSN="$DSN"
 [ -n "$MON" ] || MON="$DSN"
@@ -118,15 +130,16 @@ done
 wait_lock() { # <session> : until it waits on a lock (max 5 s)
   local i=0
   until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>/dev/null)" = 1 ]; do
-    i=$((i + 1)); [ $i -lt 50 ] || return 0; sleep 0.1
+    i=$((i + 1)); [ $i -lt 50 ] || return 1; sleep 0.1
   done
 }
-wait_lock ddl
+OBSERVED=true
+wait_lock ddl || OBSERVED=false
 PROBE_PID=""
 if [ -n "$PROBE" ]; then
   (printf "SET application_name = 'dbrev-lock-probe';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$PROBE" \
     | { set +e; psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out"; }) & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
-  wait_lock probe
+  wait_lock probe || OBSERVED=false
 fi
 SNAP="$(printf "%s\n" \
   "WITH s AS (SELECT pid, application_name AS sess, state, wait_event_type, wait_event FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-%')" \
@@ -152,5 +165,7 @@ DDL_RES="$(outcome "$WORK/ddl.out")"; PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES
 echo "### outcomes"; echo "ddl: $DDL_RES $(grep -m1 ERROR "$WORK/ddl.out" || true)"
 [ -z "$PROBE" ] || echo "probe: $PROBE_RES $(grep -m1 ERROR "$WORK/probe.out" || true)"
 by() { echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | awk -F'|' -v s="dbrev-lock-$1" '$1==s{gsub(/dbrev-lock-/,"",$5); print $5}'; }
-printf '{"mode":"hold","ddl":"%s","ddl_blocked_by":"%s","probe":"%s","probe_blocked_by":"%s","ok":true}\n' \
-  "$DDL_RES" "$(by ddl)" "$PROBE_RES" "$(by probe)"
+# ok = the DDL (and probe) were seen waiting on a lock; otherwise the hold did not conflict or the run failed.
+OKV=$OBSERVED; case "$DDL_RES" in error*|connect-failed) OKV=false ;; esac
+printf '{"mode":"hold","ddl":"%s","ddl_blocked_by":"%s","probe":"%s","probe_blocked_by":"%s","observed":%s,"ok":%s}\n' \
+  "$DDL_RES" "$(by ddl)" "$PROBE_RES" "$(by probe)" "$OBSERVED" "$OKV"

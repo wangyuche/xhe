@@ -29,15 +29,23 @@ case "$RUNS" in *[!0-9]*|""|0) die "--runs 要是 ≥ 1 的整數" 2 ;; esac
 [ -z "$TARGET" ] || printf '%s' "$TARGET" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--target-ms 要是數字(毫秒)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"
-Q="$(printf '%s' "$Q" | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
+# drop trailing blank / "--" comment lines, then one trailing ';'
+Q="$(printf '%s\n' "$Q" | awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && (l[n] ~ /^[[:space:]]*$/ || l[n] ~ /^[[:space:]]*--/)) n--; for (i = 1; i <= n; i++) print l[i] }' \
+     | sed -e 's/[[:space:]]*$//' -e '$ s/;$//')"
 case "$Q" in *";"*) die "--query / --file 只能放一個語句(EXPLAIN 只會套在第一個)" 2 ;; esac
 
 echo "### plan: EXPLAIN (ANALYZE, BUFFERS)"
 printf 'BEGIN;\nEXPLAIN (ANALYZE, BUFFERS) %s\n;\nROLLBACK;\n' "$Q" | psql_dsn "$DSN" -q
 SCRIPT="$(i=0; while [ $i -le "$RUNS" ]; do printf 'BEGIN;\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON) %s\n;\nROLLBACK;\n' "$Q"; i=$((i + 1)); done)"
-TIMES="$(printf '%s\n' "$SCRIPT" | psql_dsn "$DSN" -qAt | awk '
+RAW="$(printf '%s\n' "$SCRIPT" | psql_dsn "$DSN" -qAt 2>&1)" && PRC=0 || PRC=$?
+TIMES="$(printf '%s\n' "$RAW" | awk '
   /^Planning Time:/ { p = $3 }
   /^Execution Time:/ { n++; if (n > 1) printf "%.3f\n", p + $3 }')"
+if [ $PRC -ne 0 ]; then
+  python3 -I -c 'import json,sys; print(json.dumps({"runs_completed": len([x for x in sys.argv[1].split() if x]), "ok": False, "error": sys.argv[2]}, ensure_ascii=False))' \
+    "$TIMES" "$(printf '%s\n' "$RAW" | grep -m1 -E 'ERROR' | cut -c1-200 || true)"
+  exit 1
+fi
 [ -n "$TIMES" ] || { echo '{"runs":0,"ok":false,"error":"no timings parsed"}'; exit 1; }
 echo "$TIMES" | sort -n | awk -v runs="$RUNS" -v target="$TARGET" '
   { v[NR] = $1 }

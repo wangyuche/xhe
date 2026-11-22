@@ -31,6 +31,7 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$SCRIPT" ] && [ -n "$DSN_A" ] && [ -n "$DSN_B" ] || die "需要 --script、--dsn A=…、--dsn B=…" 2
 [ -n "$CHK" ] || CHK="$DSN_A"
+printf '%s' "$STEP_WAIT" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || die "--step-wait 要是秒數(例如 1 或 0.5)" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN_A" "$DSN_B" "$CHK"
 

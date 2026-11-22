@@ -164,6 +164,9 @@ check_extra_env() {
       *host=*|*hostaddr=*|*dbname=*|*user=*|*sslmode=*|*port=*|*service=*|*@*)
         die "$k 的值看起來是連線設定(libpq 關鍵字或 @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
     esac
+    if printf '%s' "$v" | grep -Eqi '(^|[[:space:]])(host|hostaddr|dbname|user|port|service|sslmode|password)[[:space:]]*='; then
+      die "$k 的值看起來是 libpq 連線字串,拒絕" 4
+    fi
     if printf '%s' "$v" | grep -Eq '^([A-Za-z][A-Za-z0-9.-]*|[0-9]+(\.[0-9]+){3}|\[[0-9A-Fa-f:]+\]):[0-9]{2,5}$'; then
       die "$k 的值看起來是 主機:埠,拒絕" 4
     fi

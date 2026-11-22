@@ -65,7 +65,7 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOAUTH=sh -c id'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:GOAUTH 等 Go 工具鏈變數不能傳" || bad "GOAUTH 應拒絕" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
-for kv in 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
+for kv in 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
 done
@@ -182,9 +182,9 @@ bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_vers
 START=$(date +%s)
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.notes ADD CONSTRAINT notes_account_fk2 FOREIGN KEY (account_id) REFERENCES fx.accounts (id)' \
   --hold-dsn "$MIG" --hold 'UPDATE fx.accounts SET name = name WHERE false' --probe-dsn "$APP" --probe 'UPDATE fx.accounts SET name = name WHERE false' \
-  --monitor-dsn "$SU" --lock-timeout 2s --hold-seconds 6 2>&1)"; rc=$?
+  --monitor-dsn "$SU" --lock-timeout 3s --hold-seconds 6 2>&1)"; rc=$?
 j="$(echo "$o" | tail -1)"
-echo "$j" | grep -q '"ddl":"timeout(55P03)"' && echo "$j" | grep -q '"ddl_blocked_by":"hold"' && echo "$j" | grep -q '"probe_blocked_by":"ddl"' && [ $rc -eq 0 ] \
+echo "$j" | grep -q '"ddl":"timeout(55P03)"' && echo "$j" | grep -q '"ddl_blocked_by":"hold"' && echo "$j" | grep -q '"probe_blocked_by":"ddl"' && echo "$j" | grep -q '"observed":true,"ok":true' && [ $rc -eq 0 ] \
   && ok "locks.sh --hold:DDL 被 hold 擋住並在 lock_timeout 結束(55P03),probe(fx_app UPDATE)排在 DDL 後面($(( $(date +%s) - START ))s)" || bad "locks hold" "rc=$rc $o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'SELECT 1' --hold 'SELECT 1' 2>&1)"; rc=$?
 [ $rc -eq 2 ] && echo "$o" | grep -q 'superuser' && ok "locks.sh --hold:monitor 不是 superuser → 拒絕" || bad "locks monitor 權限" "rc=$rc $o"
@@ -270,6 +270,8 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT count(*) FROM fx.led
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT * FROM fx.no_such_table" --runs 2 2>&1)"; rc=$?
 [ $rc -eq 1 ] && ok "explain.sh:SQL 錯誤 → 結束碼 1(不會被當成 Docker 沒開的 3)" || bad "explain SQL 錯誤結束碼" "rc=$rc $o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --target-ms 50ms 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--target-ms 不是數字 → 用法錯誤" || bad "explain target 格式" "$o"
+printf 'SELECT count(*) FROM fx.accounts;\n-- hot path\n' > "$WORK/q2.sql"
+o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q2.sql" --runs 2 2>&1)"; [ $? -eq 0 ] && ok "explain.sh:結尾分號後面接註解行也算一個語句" || bad "explain 分號+註解" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SET work_mem='1MB'; SELECT 1" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:多個語句 → 用法錯誤" || bad "explain 多語句" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--runs 0 → 用法錯誤(不會假通過)" || bad "explain runs 0" "$o"
 printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"

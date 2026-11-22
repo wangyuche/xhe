@@ -46,9 +46,9 @@ bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本�
 # 鎖(一律 ROLLBACK)
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --goose-up <migration.sql>       # 交易內執行 Up,列出每個鎖與它會擋什麼
 bash <kit>/scripts/locks.sh <name> --dsn <migrator> --sql '<DDL>' \
-  --hold-dsn <dsn> --hold '<開著交易的語句>' --probe-dsn <app> --probe '<熱表寫入>' --monitor-dsn <superuser> [--lock-timeout 2s] [--hold-seconds 8]
+  --hold-dsn <dsn> --hold '<開著交易的語句>' --probe-dsn <app> --probe '<熱表寫入>' --monitor-dsn <superuser> [--lock-timeout 5s(至少 3s)] [--hold-seconds 10(要大於 lock-timeout)]
 #   --hold 模式的 --monitor-dsn 必須是 superuser(或 pg_read_all_stats + pg_signal_backend),否則結束碼 2
-# → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)","ddl_blocked_by",…}
+# → session 快照(誰被誰擋,blocked_by 用 hold / ddl / probe)、relation 鎖快照、結果;JSON {"ddl":"timeout(55P03)|ok|error(…)|connect-failed","ddl_blocked_by",…,"observed","ok"}(沒看到 DDL / probe 在等鎖 → observed / ok 為 false)
 #   NO TRANSACTION 檔(CREATE INDEX CONCURRENTLY 等)不能用 --goose-up(結束碼 1),改推導或手動 hold
 
 # GRANT 矩陣(每項用該角色的 LOGIN DSN 實際連線執行,BEGIN … ROLLBACK)

@@ -67,6 +67,11 @@ def main(path, elapsed, go_rc=0):
             pkg_count["no_tests"] += 1
         else:
             pkg_count["build_fail"] += 1
+    failed_pkgs_with_tests = {f["package"] for f in failed}
+    for p, a in pkgs.items():
+        if a == "fail" and p not in failed_pkgs_with_tests:
+            # package failed without a failing test (TestMain os.Exit, init panic, timeout): keep its output
+            failed.append({"package": p, "test": "(package)", "output": [l.rstrip() for l in outputs.get((p, None), [])][-15:]})
     build_errors = [p for p, a in pkgs.items() if a == "build-fail"]
     for p in build_errors:
         failed.append({"package": p, "test": "(build)", "output": [l.rstrip() for l in outputs.get((p, None), [])][-15:]})
