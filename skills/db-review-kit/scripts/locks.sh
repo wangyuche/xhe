@@ -79,10 +79,11 @@ blocks_of() { # lock mode -> what ordinary statements it blocks
     *) echo "?" ;;
   esac
 }
-LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, CASE WHEN EXISTS (SELECT 1 FROM pg_class nc WHERE nc.oid = l.relation AND nc.xmin = (pg_current_xact_id()::text::numeric % 4294967296)::text::xid) THEN 'new' ELSE '' END FROM pg_locks l WHERE l.pid = pg_backend_pid() AND l.granted AND l.locktype = 'relation' AND l.relation <> 'pg_locks'::regclass AND NOT EXISTS (SELECT 1 FROM pg_class cc WHERE cc.oid = l.relation AND cc.relnamespace = 'pg_catalog'::regnamespace) ORDER BY 1, 2;"
+LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, CASE WHEN l.relation <> ALL (:'dbrev_pre'::oid[]) THEN 'new' ELSE '' END FROM pg_locks l WHERE l.pid = pg_backend_pid() AND l.granted AND l.locktype = 'relation' AND l.relation <> 'pg_locks'::regclass AND NOT EXISTS (SELECT 1 FROM pg_class cc WHERE cc.oid = l.relation AND cc.relnamespace = 'pg_catalog'::regnamespace) ORDER BY 1, 2;"
 
 if [ -z "$HOLD" ]; then
-  out="$(printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
+  # Relations that exist before the DDL; anything else in pg_locks afterwards was created by this transaction.
+  out="$(printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nSELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
         | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
   if [ $rc -ne 0 ]; then
     echo "$out" | tail -5 >&2

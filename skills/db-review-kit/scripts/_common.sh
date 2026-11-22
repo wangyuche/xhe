@@ -28,7 +28,7 @@ own_dir() {
   if [ ! -e "$1" ]; then mkdir -p "$1" 2>/dev/null && created=1; fi
   [ -d "$1" ] && [ -O "$1" ] || die "$1 不是目前使用者擁有的目錄,拒絕使用(改用 DB_REVIEW_KIT_TMP 指定自己的目錄)" 4
   if [ -n "$created" ]; then chmod 700 "$1"
-  elif [ -n "$(find "$1" -maxdepth 0 -perm -0022 2>/dev/null)" ]; then
+  elif [ -n "$(find "$1" -maxdepth 0 \( -perm -0020 -o -perm -0002 \) 2>/dev/null)" ]; then
     die "$1 可被群組或其他人寫入,拒絕使用(不會替你改權限;請 chmod go-w 或改用別的目錄)" 4
   fi
 }

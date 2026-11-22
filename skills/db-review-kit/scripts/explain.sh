@@ -3,7 +3,8 @@
 #
 #   explain.sh <name> --dsn DSN (--query 'SQL' | --file F) [--runs 20] [--target-ms 50]
 #
-# Exactly one statement (a ';' inside is refused). Every run is wrapped in BEGIN … ROLLBACK, so DML under test changes nothing. Timing comes from
+# Exactly one statement: ';' is not allowed anywhere except one trailing ';' (even inside literals / comments;
+# rewrite such literals, e.g. chr(59)). Every run is wrapped in BEGIN … ROLLBACK, so DML under test changes nothing. Timing comes from
 # EXPLAIN (ANALYZE, TIMING OFF, SUMMARY ON): Planning Time + Execution Time, excluding network and client.
 # One warm-up run is excluded. Last line: JSON {"runs":…,"p50_ms":…,"p95_ms":…,"max_ms":…,"target_ms":…,"ok":…}.
 # Exit 1 if --target-ms is given and p95 exceeds it.

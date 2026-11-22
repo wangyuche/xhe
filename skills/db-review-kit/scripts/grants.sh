@@ -26,7 +26,9 @@ MATRIX=""; LABELS=""; DSNS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --matrix) MATRIX="${2:?}"; shift 2 ;;
-    --dsn) kv="${2:?--dsn 需要 LABEL=DSN}"; LABELS="$LABELS ${kv%%=*}"; DSNS+=("${kv#*=}"); shift 2 ;;
+    --dsn) kv="${2:?--dsn 需要 LABEL=DSN}"
+      case "${kv%%=*}" in ""|*[!A-Za-z0-9_-]*) die "--dsn 的 LABEL 只能是英數、底線、連字號:${kv%%=*}" 2 ;; esac
+      LABELS="$LABELS ${kv%%=*}"; DSNS+=("${kv#*=}"); shift 2 ;;
     *) die "未知參數:$1" 2 ;;
   esac
 done

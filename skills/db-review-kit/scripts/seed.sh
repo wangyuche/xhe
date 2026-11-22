@@ -28,7 +28,7 @@ done
 [ -n "$DSN" ] || die "--dsn 必填" 2
 load_state "$NAME"; verify_container "$NAME"
 guard_dsns "$DSN"
-free_mb() { docker exec "$CONTAINER" df -Pk /var/lib/postgresql | awk 'NR==2{print int($4/1024)}'; }
+free_mb() { docker exec "$CONTAINER" sh -c 'df -Pk "${PGDATA:-/var/lib/postgresql}"' | awk 'NR==2{print int($4/1024)}'; }
 echo "tmpfs_free_mb_before=$(free_mb)"
 START=$(date +%s)
 export ST_OVERRIDE=300s

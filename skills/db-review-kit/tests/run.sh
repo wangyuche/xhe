@@ -17,8 +17,9 @@ skip() { echo "SKIP  $1"; SKIP=$((SKIP + 1)); }
 PULLED=""
 cleanup() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    for c in $(docker ps -a --filter "label=dbrev=$N" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1; done
+    for c in $(docker ps -a --filter "label=dbrev=$N" --format '{{.Names}}') $(docker ps -a --filter "label=dbrev=$N-old" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1; done
     [ -n "$PULLED" ] && docker image rm "$IMAGE" >/dev/null 2>&1
+    [ -n "${VOL_BEFORE+x}" ] && for v in $(comm -13 <(echo "$VOL_BEFORE") <(docker volume ls -q | sort)); do docker volume rm "$v" >/dev/null 2>&1; done
   fi
   rm -rf "$WORK"
 }
@@ -57,6 +58,9 @@ if command -v go >/dev/null 2>&1; then
 else skip "沙盒 GOMODCACHE(沒有 go)"; fi
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'DATABASE_URL=host=10.0.0.1 dbname=x'" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && ok "隔離:DB 類變數不是 URL(keyword DSN)→ 拒絕(結束碼 4)" || bad "keyword DSN 應拒絕" "rc=$rc $o"
+mkdir -p "$WORK/gw"; chmod 0775 "$WORK/gw"
+o="$(DB_REVIEW_KIT_TMP="$WORK/gw" bash -c "source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
+[ $rc -eq 4 ] && echo "$o" | grep -q '可被群組或其他人寫入' && ok "暫存目錄:既有目錄群組可寫(0775)→ 拒絕,不改權限" || bad "暫存目錄 0775" "rc=$rc $o"
 o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOAUTH=sh -c id'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:GOAUTH 等 Go 工具鏈變數不能傳" || bad "GOAUTH 應拒絕" "$o"
@@ -106,6 +110,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker pull -q "$IMAGE" >/dev/null && PULLED=1 || { bad "docker pull $IMAGE"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; exit 1; }
 fi
 GIT_BEFORE="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
+VOL_BEFORE="$(docker volume ls -q | sort)"
 
 o="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" --mount "$FX/db/init:/docker-entrypoint-initdb.d" --mount "$FX/db/roles.sql:/roles.sql:rw" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q '一律唯讀' && ok "pg.sh up:--mount 帶 :rw → 拒絕(結束碼 4)" || bad "--mount rw 應拒絕" "rc=$rc $o"
@@ -169,6 +174,9 @@ printf -- '-- +goose Up\nDROP TABLE IF EXISTS fx.no_such_table;\nCREATE INDEX IF
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/notice.sql" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && ! echo "$o" | grep -q 'NOTICE' && echo "$o" | tail -1 | grep -q '"ok":true' && ok "locks.sh:DDL 的 NOTICE 不會被當成鎖" || bad "locks NOTICE" "rc=$rc $o"
 printf -- '-- +goose NO TRANSACTION\n-- +goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS x ON fx.accounts (name);\n' > "$WORK/nt.sql"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.accounts ADD COLUMN x int' 2>&1)"; rc=$?
+echo "$o" | grep -q '| fx.accounts | AccessExclusiveLock | reads+writes' && echo "$o" | tail -1 | grep -q '"access_exclusive":1' && [ $rc -eq 0 ] \
+  && ok "locks.sh:ALTER 既有表不會被標成 new,ACCESS EXCLUSIVE 有算到" || bad "locks 既有表" "rc=$rc $o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --goose-up "$WORK/nt.sql" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q 'NO TRANSACTION' && ok "locks.sh:NO TRANSACTION 檔 → 拒絕交易內觀察" || bad "NO TRANSACTION" "$o"
 bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" -- up >/dev/null 2>&1 || bad "goose up 回到最新版"
 START=$(date +%s)
@@ -307,6 +315,18 @@ fi
 GIT_AFTER="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
 [ "$GIT_BEFORE" = "$GIT_AFTER" ] && ok "fixture 專案檔案沒有被改動(git status 前後相同;go.mod / go.sum 未被改寫)" || bad "fixture 被改動" "$GIT_AFTER"
 
+# ---------- older image (VOLUME /var/lib/postgresql/data): only when already present locally, never pulled ----------
+OLD_IMAGE="${DB_REVIEW_KIT_TEST_OLD_IMAGE:-postgres:17}"
+if docker image inspect "$OLD_IMAGE" >/dev/null 2>&1; then
+  o="$(bash "$S/pg.sh" up "$N-old" --image "$OLD_IMAGE" --tmpfs-size 256m 2>&1)"; rc=$?
+  CO="$(echo "$o" | sed -n 's/^container=\([^ ]*\) .*/\1/p')"
+  if [ $rc -eq 0 ] && [ -n "$CO" ] && [ -z "$(docker inspect -f '{{range .Mounts}}{{.Type}} {{end}}' "$CO")" ] \
+     && [ "$(docker inspect -f '{{index .HostConfig.Tmpfs "/var/lib/postgresql/data"}}' "$CO")" = "rw,size=256m" ]; then
+    ok "pg.sh up:$OLD_IMAGE 的 tmpfs 掛在映像宣告的 /var/lib/postgresql/data,沒有匿名 volume"
+  else bad "舊映像 tmpfs" "rc=$rc $o $(docker inspect -f '{{json .Mounts}} {{json .HostConfig.Tmpfs}}' "$CO" 2>&1)"; fi
+  bash "$S/pg.sh" rm "$N-old" --purge >/dev/null 2>&1
+else skip "舊映像 tmpfs 路徑($OLD_IMAGE 本機沒有;不自動拉)"; fi
+
 # ---------- rm / gc ----------
 o="$(bash "$S/pg.sh" rm "$N" --purge 2>&1)"
 echo "$o" | grep -q "removed container=$C" && [ ! -d "$DB_REVIEW_KIT_TMP/$N" ] && ok "pg.sh rm --purge:刪容器與暫存目錄" || bad "pg.sh rm" "$o"
@@ -316,7 +336,9 @@ o="$(bash "$S/pg.sh" gc "$N" 2>&1)"
 if echo "$o" | grep -q "gc name=$N removed=1 remaining=0" && [ -n "$(docker ps -aq --filter "name=^/other-$N\$")" ]; then
   ok "pg.sh gc:只刪 label dbrev=$N 且名稱前綴 dbrev-$N- 的容器(同 label 但名稱不符的不刪)"
 else bad "pg.sh gc" "$o"; fi
-docker rm -f "other-$N" >/dev/null 2>&1
+docker rm -f -v "other-$N" >/dev/null 2>&1
+VOL_NEW="$(comm -13 <(echo "$VOL_BEFORE") <(docker volume ls -q | sort))"
+[ -z "$VOL_NEW" ] && ok "結束:沒有留下新的 docker volume(資料都在 tmpfs)" || bad "留下 volume" "$VOL_NEW"
 [ -z "$(docker ps -aq --filter "label=dbrev=$N")" ] && ok "結束:docker ps -a --filter label=dbrev=$N 為空" || bad "殘留容器" "$(docker ps -a --filter "label=dbrev=$N")"
 
 echo "---"

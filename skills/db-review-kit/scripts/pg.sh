@@ -62,7 +62,13 @@ case "$CMD" in
 
     ensure_name_dir "$NAME"; DIR="$(name_dir "$NAME")"
     SUPERPASS="$(rand_hex 16)"
-    RUNARGS=(-d --label "dbrev=$NAME" --tmpfs "/var/lib/postgresql:rw,size=$TMPFS_SIZE" -p "127.0.0.1::5432"
+    docker image inspect "$IMAGE" >/dev/null 2>&1 || docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1
+    # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
+    # anonymous on-disk volume is created and --tmpfs-size really caps the data.
+    VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
+    [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
+    TMPFS_ARGS=(); for v in $VOLS; do TMPFS_ARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
+    RUNARGS=(-d --label "dbrev=$NAME" "${TMPFS_ARGS[@]}" -p "127.0.0.1::5432"
              -e "POSTGRES_USER=$SUPERUSER" -e "POSTGRES_PASSWORD=$SUPERPASS")
     for m in ${MOUNTS[@]+"${MOUNTS[@]}"}; do
       src="${m%%:*}"; rest="${m#*:}"; dest="${rest%%:*}"; mode=""
@@ -137,7 +143,7 @@ case "$CMD" in
       echo "ROLES='$ROLES'"; echo "DBS='$DBS'"; echo "RANDOM_ENV='${STATE_RANDOM# }'"
     } > "$(state_file "$NAME")"
     UP_OK=1
-    echo "container=$CONTAINER port=$PORT image=$IMAGE tmpfs=$TMPFS_SIZE ready_seconds=$(( $(date +%s) - START ))"
+    echo "container=$CONTAINER port=$PORT image=$IMAGE tmpfs=$TMPFS_SIZE tmpfs_paths=$(echo $VOLS | tr ' ' ',') ready_seconds=$(( $(date +%s) - START ))"
     for rp in $ROLES; do
       for db in $DBS; do
         echo "dsn role=${rp%%=*} db=$db url=$(dsnpy build "${rp%%=*}" "${rp#*=}" "$PORT" "$db")"
