@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // game-art-kit:ComfyUI HTTP API 客戶端(只用 Node 內建模組)。
 // 用法(run 的 --timeout 只算開始執行後的時間,預設 240 秒;排隊等待另有 --queue-timeout,預設 180 秒;合計配 Bash 600 秒逾時):
-//   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、建議的 workflow 預設值(JSON)
+//   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、本機去背、音訊模型、建議的 workflow 預設值(JSON)
 //   node comfy.mjs upload <圖檔> --prefix <專案-角色>       → 上傳到 ComfyUI 的 temp 區,印出 LoadImage 用的名稱
 //   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 240] [--queue-timeout 180]
-//                                                           → 填參數、送出、輪詢、下載 PNG、刪除 history,印出結果 JSON
+//                                                           → 填參數、送出、輪詢、下載 PNG / 音訊、刪除 history,印出結果 JSON;拒絕 Save* 與雲端 API 節點
 //   node comfy.mjs pngsize <圖檔>                           → {"width":…,"height":…}
 //   node comfy.mjs scrub-check <目錄>                       → 產出不含 ComfyUI 位址 / 私有 IP;找到就結束碼 1
 // 共同參數:--url <位址> 臨時覆寫。位址優先序:--url > 環境變數 COMFYUI_URL > ~/.config/game-art-kit/config 的 COMFYUI_URL=。
@@ -80,6 +80,39 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 
+// PNG 色彩類型 → 通道數:RGBA 4、灰階 + alpha 2;任何帶 tRNS 的(調色盤 / 灰階 / RGB)也回 4,表示「有透明」
+function pngChannels(file) {
+  const b = readFileSync(file), t = b[25];
+  // 調色盤 / 灰階 / RGB 帶 tRNS 也算有 alpha(回 4)
+  let p = 8, trns = false;
+  while (p + 8 <= b.length) { const len = b.readUInt32BE(p), type = b.toString('ascii', p + 4, p + 8); if (type === 'tRNS') { trns = true; break; } if (type === 'IDAT' || type === 'IEND') break; p += 12 + len; }
+  if (trns) return 4;
+  return { 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 }[t] ?? null;
+}
+
+// 節點旗標快取(只存 api_node / output_node 與可用的 RMBG 模型,不含位址;檔名用位址雜湊):~/.cache/game-art-kit/nodeflags-<雜湊>.json
+// 放使用者自己的快取目錄(不放共用的 /tmp,避免別的使用者塞假旗標);可用 GAK_CACHE_DIR 覆寫(測試用)
+const flagsFile = () => { const d = process.env.GAK_CACHE_DIR || join(homedir(), '.cache', 'game-art-kit'); mkdirSync(d, { recursive: true, mode: 0o700 }); return join(d, `nodeflags-${createHash('sha256').update(resolveUrl()).digest('hex').slice(0, 12)}.json`); };
+function writeNodeFlags(oi, rmbg, rmbgT) {
+  const flags = Object.fromEntries(Object.entries(oi).map(([k, v]) => [k, { api_node: v?.api_node === true, output_node: v?.output_node === true }]));
+  // rmbgT:RMBG 清單的時間只由 check 更新(run 重抓旗標時沿用舊時間,不會延長)
+  try { writeFileSync(flagsFile(), JSON.stringify({ t: Date.now(), flags, rmbg: rmbg ?? null, rmbgT: rmbg ? (rmbgT ?? Date.now()) : null }), { mode: 0o600 }); } catch {}
+  return flags;
+}
+function readCache() {
+  try { const c = JSON.parse(readFileSync(flagsFile(), 'utf8')); return Date.now() - c.t < 3600000 ? c : null; } catch { return null; }
+}
+const readNodeFlags = () => readCache()?.flags ?? null;
+
+// RMBG 每個模型需要的完整檔案(缺任何一個,第一次用到時會在主機上下載 → 不列);不認得的模型不列
+const RMBG_FILES = {
+  'RMBG-2.0': ['model.safetensors', 'config.json', 'birefnet.py', 'BiRefNet_config.py'],
+  INSPYRENET: ['inspyrenet.safetensors'],
+  BEN: ['BEN_Base.pth', 'model.py'],
+  BEN2: ['BEN2_Base.pth', 'BEN2.py'],
+};
+const rmbgComplete = (files) => { const set = new Set(files.map(f => f.toLowerCase())); return Object.keys(RMBG_FILES).filter(o => RMBG_FILES[o].every(f => set.has(`${o}/${f}`.toLowerCase()))); };
+
 // ---------- check ----------
 const MODEL_DIRS = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras', 'controlnet', 'clip_vision', 'style_models', 'ipadapter'];
 function family(name) {
@@ -95,6 +128,9 @@ function family(name) {
   if (/t5xxl|umt5/.test(n)) return 't5';
   if (/sdxl|(^|[_-])xl([_.-])|pony|illustrious/.test(n)) return 'sdxl';
   if (/sd.?1\.?5|v1-5/.test(n)) return 'sd15';
+  if (/stable.?audio/.test(n)) return 'stable-audio';
+  if (/ace.?step.?(v)?1[._]5/.test(n)) return 'ace-step-1.5';
+  if (/ace.?step/.test(n)) return 'ace-step';
   return '未知';
 }
 // /models 可能回子資料夾路徑(例如 flux/ae.safetensors):用檔名比對,回傳完整路徑
@@ -120,7 +156,28 @@ async function check() {
     clip_l: pick(te, /^clip_l/), t5: pick(te, /t5xxl/), flux_vae: pick(vae, /^ae\./),
     zimage_unet: pick(dm, /z.?image/), zimage_clip: pick(te, /qwen_?3_?4b/),
     qwen_controlnet_union: pick(models.controlnet, /qwen.*union/),
+    // Stable Audio 3 配 t5gemma;Stable Audio Open 配 t5-base(同家族才配對)
+    sfx_ckpt: pick(models.checkpoints, /stable.?audio.?3.*sfx/) ?? pick(models.checkpoints, /stable.?audio.?3/) ?? pick(models.checkpoints, /stable.?audio.?open/),
+    sfx_clip: null,
+    bgm_ckpt: pick(models.checkpoints, /ace.?step.?(v)?1[._]5/),
   };
+  // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
+  // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
+  d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
+  // Windows 主機回傳反斜線路徑,統一成 /
+  const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : []);
+  const opts = (node) => { const m = oi[node]?.input?.required?.model; return Array.isArray(m?.[0]) ? m[0] : []; };
+  const bg = [];
+  if (has('RMBG')) {
+    const ok = rmbgComplete(rmbgFiles);
+    const ms = opts('RMBG').filter(o => ok.includes(o));
+    if (ms.length) bg.push({ node: 'RMBG', models: ms });
+  }
+  const bgOk = bg.length > 0 && has('InvertMask') && has('JoinImageWithAlpha');
+  writeNodeFlags(oi, bgOk ? bg.flatMap(x => x.models) : []);
+  const unsupportedBg = [];
+  const coreBg = await json('/models/background_removal').then(x => Array.isArray(x) ? x : []);
+  if (has('RemoveBackground') && coreBg.length) unsupportedBg.push({ node: 'RemoveBackground', note: '主機有核心去背模型,但本 kit 的 sprite 骨架用 RMBG,不能用' });
   const workflows = {
     'qwen-t2i': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae),
     'qwen-edit-1ref': !!(has('TextEncodeQwenImageEditPlus') && d.qwen_edit_unet && d.qwen_clip && d.qwen_vae)
@@ -132,6 +189,10 @@ async function check() {
     'qwen-t2i-canny': !!(d.qwen_unet && d.qwen_clip && d.qwen_vae && d.qwen_controlnet_union && has('Canny') && has('SetUnionControlNetType')),
   };
   workflows['qwen-edit-2ref'] = workflows['qwen-edit-3ref'] = workflows['qwen-edit-1ref'];
+  workflows['qwen-t2i-sprite'] = workflows['qwen-t2i'] && bgOk;
+  workflows['qwen-edit-1ref-sprite'] = workflows['qwen-edit-1ref'] && bgOk;
+  workflows['stable-audio-sfx'] = !!(d.sfx_ckpt && d.sfx_clip && ['CheckpointLoaderSimple', 'CLIPLoader', 'ConditioningStableAudio', 'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
+  workflows['ace-step-bgm'] = !!(d.bgm_ckpt && ['CheckpointLoaderSimple', 'ModelSamplingAuraFlow', 'TextEncodeAceStepAudio1.5', 'ConditioningZeroOut', 'EmptyAceStep1.5LatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
   // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
   // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。
   const methods = [];
@@ -149,6 +210,12 @@ async function check() {
     models: Object.fromEntries(Object.entries(models).map(([k, v]) => [k, v.map(n => ({ name: n, family: family(n) }))])),
     consistency_methods: methods,
     unsupported_consistency: unsupported,
+    background_removal: bgOk ? bg : [],
+    unsupported_background_removal: unsupportedBg,
+    audio_models: {
+      sfx: workflows['stable-audio-sfx'] ? [d.sfx_ckpt] : [],
+      bgm: workflows['ace-step-bgm'] ? [d.bgm_ckpt] : [],
+    },
     workflows_available: workflows,
     defaults: d,
   };
@@ -236,7 +303,45 @@ async function run() {
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);
-  if (Object.values(graph).some(n => n?.class_type === 'SaveImage')) die('workflow 不可用 SaveImage(會寫進伺服器 output/);用 PreviewImage', 2);
+  if (Object.values(graph).some(n => /^Save(Image|Audio|Video|Animated|WEBM|Latent)/.test(n?.class_type ?? ''))) die('workflow 不可用 Save* 節點(會寫進伺服器 output/);圖用 PreviewImage、音訊用 PreviewAudio', 2);
+  // 雲端 API 節點(付費、把內容送到外部):名稱黑名單 + /object_info 的 api_node 旗標,一律拒絕
+  // 名稱只擋規格點名的雲端服務(其他雲端節點靠 /object_info 的 api_node 旗標;不用通用字首,避免誤擋本機節點)
+  const CLOUD = /^(Bria|Recraft|Stability)[A-Z]\w*Node$|^(Bria|Recraft)\w*$/;
+  const classes = [...new Set(Object.values(graph).map(n => n?.class_type).filter(Boolean))];
+  const cloudByName = classes.filter(c => CLOUD.test(c));
+  if (cloudByName.length) die(`workflow 含雲端 API 節點,不能用:${cloudByName.join(', ')}`, 2);
+  {
+    // 節點旗標:優先用 check 存下的快取(1 小時內、同一個位址),沒有才抓 /object_info(上限 30 秒,落在呼叫端 180 秒餘量內,見 SKILL.md)
+    let oi = readNodeFlags();
+    // 快取裡沒有的節點(check 之後才裝的)一律重抓,不當成安全
+    if (!oi || classes.some(c => !(c in oi))) {
+      let full;
+      try { full = await json('/object_info', { timeoutMs: 30000 }); } catch (e) { if (e instanceof Fail && e.code === 5) die('抓 /object_info 超過 30 秒或連不上;先跑 comfy.mjs check(會存節點旗標快取)再 run', 5); throw e; }
+      if (full.__status) die(`/object_info 回 HTTP ${full.__status}`, 3);
+      const old = readCache();
+      oi = writeNodeFlags(full, old?.rmbg, old?.rmbgT); // 保留 check 存的 RMBG 清單與它的時間
+    }
+    const api = classes.filter(c => oi[c]?.api_node === true);
+    if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);
+    // 其他會寫進伺服器 output/ 的輸出節點(CheckpointSave、SaveGLB、自訂 Image Save…):output_node 且不是 Preview*
+    // RMBG 只能用 check 確認檔案齊全的模型(其他的會在主機上自動下載)
+    const rmbgUsed = Object.values(graph).filter(n => n?.class_type === 'RMBG').map(n => n.inputs?.model);
+    if (rmbgUsed.length) {
+      const c = readCache();
+      let ok = c && c.rmbg && Date.now() - (c.rmbgT ?? 0) < 3600000 ? c.rmbg : null;
+      if (!ok) {
+        // 超過 1 小時(長批次)或沒有快取:自己重查 /models/rmbg(很快),不必中斷批次
+        const files = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : null);
+        if (!files) die('查不到 /models/rmbg;先跑 comfy.mjs check', 2);
+        ok = rmbgComplete(files);
+        writeNodeFlags(oi, ok, Date.now());
+      }
+      const bad = rmbgUsed.filter(m => !ok.includes(m));
+      if (bad.length) die(`RMBG 模型 ${bad.join(', ')} 不在主機上檔案齊全的清單(${ok.join(', ') || '無'});用了會讓主機自動下載`, 2);
+    }
+    const writers = classes.filter(c => oi[c]?.output_node === true && !/^Preview/.test(c));
+    if (writers.length) die(`workflow 含會寫進伺服器的輸出節點,不能用(只用 PreviewImage / PreviewAudio):${writers.join(', ')}`, 2);
+  }
 
   const t0 = Date.now();
   const client_id = randomUUID();
@@ -361,8 +466,11 @@ async function run() {
       die('ComfyUI 執行失敗(見上方)', 3);
     }
     const imgs = [];
-    for (const o of Object.values(hist.outputs ?? {})) for (const im of o.images ?? []) imgs.push(im);
-    if (!imgs.length) die('workflow 沒有輸出圖片(要有 PreviewImage)', 3);
+    for (const o of Object.values(hist.outputs ?? {})) {
+      for (const im of o.images ?? []) imgs.push({ ...im, kind: 'image' });
+      for (const au of o.audio ?? []) imgs.push({ ...au, kind: 'audio' });
+    }
+    if (!imgs.length) die('workflow 沒有輸出(圖要有 PreviewImage、音訊要有 PreviewAudio)', 3);
     // 先全部下載到暫存,都成功才搬進 --out(避免留下半套檔案)
     stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
     const files = [];
@@ -372,14 +480,15 @@ async function run() {
         if (STOPPING) await halt();
         const im = imgs[i];
         const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
-        if (Date.now() > dlEnd) die('下載圖片超過 60 秒', 5);
+        if (Date.now() > dlEnd) die('下載輸出超過 60 秒', 5);
         const r = await api(`/view?${q}`, { timeoutMs: Math.max(1000, dlEnd - Date.now()) });
-        if (!r.ok) die(`下載圖片失敗 HTTP ${r.status}`, 3);
+        if (!r.ok) die(`下載輸出失敗 HTTP ${r.status}`, 3);
         let buf;
-        try { buf = Buffer.from(await r.arrayBuffer()); } catch (e) { die(`下載圖片途中斷線(${e.cause?.code || e.name})`, 5); }
-        const fname = imgs.length === 1 ? `${name}.png` : `${name}-${i + 1}.png`;
+        try { buf = Buffer.from(await r.arrayBuffer()); } catch (e) { die(`下載輸出途中斷線(${e.cause?.code || e.name})`, 5); }
+        const ext = im.kind === 'image' ? '.png' : (extname(im.filename).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.flac');
+        const fname = imgs.length === 1 ? `${name}${ext}` : `${name}-${i + 1}${ext}`;
         writeFileSync(join(stage, fname), buf);
-        files.push({ fname, ...pngSize(join(stage, fname)) });
+        files.push(im.kind === 'image' ? { fname, ...pngSize(join(stage, fname)), channels: pngChannels(join(stage, fname)) } : { fname, kind: 'audio', bytes: buf.length });
       }
       if (STOPPING) await halt();
       mkdirSync(join(out, 'workflows'), { recursive: true });

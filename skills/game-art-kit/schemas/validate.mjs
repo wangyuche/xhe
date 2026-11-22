@@ -6,7 +6,7 @@
 // 支援的關鍵字:type、const、enum、pattern、minLength、minimum、maximum、exclusiveMinimum、minItems、maxItems、items、
 //   properties、required、additionalProperties:false、$ref(#/$defs/…)、allOf、if / then / else;
 //   自訂:forbidden(列出的鍵不得出現)、uniqueBy(陣列元素該欄位不得重複)。
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -48,10 +48,11 @@ function check(schema, v, path, root, errs) {
     }
   }
   if (typeOk('object', v)) {
-    for (const r of schema.required ?? []) if (!(r in v)) err(`缺少 ${r}`);
-    for (const f of schema.forbidden ?? []) if (f in v) err(`不可有 ${f}`);
-    for (const [k, s] of Object.entries(schema.properties ?? {})) if (k in v) check(s, v[k], path ? `${path}.${k}` : k, root, errs);
-    if (schema.additionalProperties === false) for (const k of Object.keys(v)) if (!(k in (schema.properties ?? {}))) err(`未知欄位 ${k}`);
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o ?? {}, k);
+    for (const r of schema.required ?? []) if (!own(v, r)) err(`缺少 ${r}`);
+    for (const f of schema.forbidden ?? []) if (own(v, f)) err(`不可有 ${f}`);
+    for (const [k, s] of Object.entries(schema.properties ?? {})) if (own(v, k)) check(s, v[k], path ? `${path}.${k}` : k, root, errs);
+    if (schema.additionalProperties === false) for (const k of Object.keys(v)) if (!own(schema.properties, k)) err(`未知欄位 ${k}`);
   }
   for (const s of schema.allOf ?? []) check(s, v, path, root, errs);
   if (schema.if) {
@@ -65,14 +66,27 @@ const IMAGE = new Set(['sprite', 'frames', 'tile', 'background', 'ui']);
 
 // 語意檢查(schema 表達不了的)
 function semantic(kind, obj, root, errs) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
   const list = kind === 'needs' ? obj.needs : obj.assets;
   if (!Array.isArray(list)) return;
-  list.forEach((a, i) => {
+  list.forEach((a, i) => { try { semanticItem(kind, a, i, root, errs); } catch (e) { errs.push(`${kind}[${i}]: 格式錯誤,無法檢查(${e.message})`); } });
+}
+
+function semanticItem(kind, a, i, root, errs) {
+  {
     const p = `${kind}[${i}](${a?.id})`;
     if (!a || typeof a !== 'object') return;
+    // schema 已報錯的項目(型別可能不對)不做語意檢查,避免丟例外
+    if (errs.some(e => new RegExp(`^${kind}\\[${i}\\][.:\\[]`).test(e))) return;
     if (a.nineSlice && a.width && a.height) {
       const [t, r, b, l] = a.nineSlice;
       if (t + b >= a.height || l + r >= a.width) errs.push(`${p}: nineSlice 切線超出尺寸`);
+    }
+    if (kind === 'needs' && a.width && a.height && a.density) {
+      // 和 sprite.mjs density 同樣取整:寬無條件捨去、高用實際 density 四捨五入
+      const W = Math.floor(a.width * a.density), H = Math.round(a.height * (W / a.width)), n = a.frames?.count ?? 1;
+      const cols = Math.max(1, Math.min(n, Math.floor(2048 / W))), rows = Math.ceil(n / cols);
+      if (Math.max(W, H) > 2048 || H * rows > 2048) errs.push(`${p}: 顯示尺寸 × density 超過 2048(PX-RES-01);降低 density 或不指定(交給 sprite.mjs density 算)`);
     }
     if (kind !== 'assets') return;
     const files = a.files ?? [];
@@ -82,7 +96,14 @@ function semantic(kind, obj, root, errs) {
       const exts = files.map(f => f.split('.').pop()).sort().join(',');
       if (exts !== 'm4a,ogg') errs.push(`${p}: 音訊應恰好有 .ogg 與 .m4a 各一`);
     }
-    for (const f of files) if (!f.startsWith(`${a.group}/`)) errs.push(`${p}: 檔案 ${f} 應放在 ${a.group}/ 下`);
+    for (const f of files) {
+      if (!f.startsWith(`${a.group}/`)) errs.push(`${p}: 檔案 ${f} 應放在 ${a.group}/ 下`);
+      if (f.split('/').pop().replace(/\.(png|ogg|m4a)$/, '') !== a.id) errs.push(`${p}: 檔名 ${f} 應為 <group>/${a.id}.<副檔名>`);
+    }
+    if (a.frames && a.width && a.density) {
+      const fw = a.frames.frameWidth, fh = a.frames.frameHeight;
+      if (Math.abs(fw - a.width * a.density) > 1 || Math.abs(fh - a.height * a.density) > 1) errs.push(`${p}: frames.frameWidth/frameHeight ${fw}×${fh} 應為顯示 × density(約 ${Math.round(a.width * a.density)}×${Math.round(a.height * a.density)})`);
+    }
     if (a.frames) {
       const { count, columns, frameWidth, frameHeight } = a.frames;
       if (columns > count) errs.push(`${p}: frames.columns 不可大於 count`);
@@ -97,8 +118,18 @@ function semantic(kind, obj, root, errs) {
       const abs = resolve(root, f);
       if (!abs.startsWith(resolve(root) + sep)) errs.push(`${p}: 檔案路徑 ${f} 跑出 root`);
       else if (!existsSync(abs) || !statSync(abs).isFile()) errs.push(`${p}: 檔案不存在 ${f}`);
+      else if (f.endsWith('.png') && a.width && a.density) {
+        // 實際 PNG 尺寸 = 1x(frames 是整張 sheet)
+        const b = readFileSync(abs);
+        if (b.length >= 24 && b.toString('ascii', 1, 4) === 'PNG') {
+          const w = b.readUInt32BE(16), h = b.readUInt32BE(20);
+          const fw = a.frames ? a.frames.frameWidth * a.frames.columns : Math.round(a.width * a.density);
+          const fh = a.frames ? a.frames.frameHeight * Math.ceil(a.frames.count / a.frames.columns) : Math.round(a.height * a.density);
+          if (Math.abs(w - fw) > 1 || Math.abs(h - fh) > 1) errs.push(`${p}: ${f} 實際 ${w}×${h},應為 ${fw}×${fh}`);
+        } else errs.push(`${p}: ${f} 不是 PNG`);
+      }
     }
-  });
+  }
 }
 
 export function validate(kind, obj, { root } = {}) {
@@ -110,7 +141,9 @@ export function validate(kind, obj, { root } = {}) {
   return errs;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// skill 目錄常是連結:比 realpath
+const isMain = (() => { try { return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
+if (isMain) {
   const [kind, file, ...rest] = process.argv.slice(2);
   const ri = rest.indexOf('--root'); const root = ri >= 0 ? rest[ri + 1] : undefined;
   if (!['needs', 'assets'].includes(kind) || !file || (ri >= 0 && !root)) {
