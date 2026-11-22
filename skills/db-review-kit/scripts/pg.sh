@@ -69,6 +69,10 @@ case "$CMD" in
       r0="${rs%%=*}"; p0="${rs#*=}"
       [ "$r0" != "$rs" ] && [ -n "$r0" ] && [ -n "$p0" ] || die "--role 格式是 ROLE=PWVAR:$rs" 2
       case "$r0" in *[!A-Za-z0-9_-]*) die "--role 的角色名稱只能是英數、底線、連字號:$r0" 2 ;; esac
+      found=""; [ "$p0" != POSTGRES_PASSWORD ] || found=1
+      for v0 in ${RANDOMS[@]+"${RANDOMS[@]}"}; do [ "$v0" != "$p0" ] || found=1; done
+      for kv in ${ENVS[@]+"${ENVS[@]}"}; do [ "${kv%%=*}" != "$p0" ] || found=1; done
+      [ -n "$found" ] || die "--role $rs:$p0 不在 --env-random / --env 裡" 2
       for kv in ${ENVS[@]+"${ENVS[@]}"}; do   # a password given via --env is checked before any pull / run
         if [ "${kv%%=*}" = "$p0" ]; then case "${kv#*=}" in ""|*[!A-Za-z0-9_-]*) die "--role $rs:密碼只能是英數、底線、連字號(秘密請用 --env-random)" 2 ;; esac; fi
       done
@@ -97,15 +101,18 @@ case "$CMD" in
       abs="$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$src")"
       [ ! -S "$abs" ] && [ ! -c "$abs" ] && [ ! -b "$abs" ] || die "--mount 來源不能是 socket / device:$abs" 4
       hp="$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")"
-      case "$hp/" in "$abs"/*|"$abs/") die "--mount 不能掛 / 或家目錄(或其上層):$abs" 4 ;; esac
-      [ "$abs" != "/" ] || die "--mount 不能掛 /" 4
-      case "$abs/" in /var/run/*|/run/*|/private/var/run/*|/dev/*|/proc/*|/sys/*|/var/lib/docker/*|/private/var/lib/docker/*)
+      # macOS file systems are case-insensitive by default: compare in lower case there
+      chk="$abs"
+      if [ "$(uname -s)" = Darwin ]; then chk="$(printf '%s' "$abs" | tr '[:upper:]' '[:lower:]')"; hp="$(printf '%s' "$hp" | tr '[:upper:]' '[:lower:]')"; fi
+      case "$hp/" in "$chk"/*|"$chk/") die "--mount 不能掛 / 或家目錄(或其上層):$abs" 4 ;; esac
+      [ "$chk" != "/" ] || die "--mount 不能掛 /" 4
+      case "$chk/" in /var/run/*|/run/*|/private/var/run/*|/dev/*|/proc/*|/sys/*|/var/lib/docker/*|/private/var/lib/docker/*)
         die "--mount 不能掛系統執行期目錄:$abs" 4 ;; esac
-      if [ -d "$abs" ] && [ -n "$(find "$abs" -maxdepth 6 \( -type s -o -type c -o -type b \) -print -quit 2>/dev/null)" ]; then
+      if [ -d "$abs" ] && [ -n "$(find "$abs" \( -type s -o -type c -o -type b \) -print -quit 2>/dev/null)" ]; then
         die "--mount 的目錄裡有 socket / device(唯讀掛載擋不住 connect):$abs" 4
       fi
       for sec in .ssh .aws .config .docker .kube .gnupg .netrc .pgpass .azure .gcloud Library/Keychains; do
-        case "$abs/" in "$hp/$sec"/*) die "--mount 不能掛家目錄裡的憑證目錄($sec):$abs" 4 ;; esac
+        case "$chk/" in "$hp/$(printf '%s' "$sec" | { [ "$(uname -s)" = Darwin ] && tr '[:upper:]' '[:lower:]' || cat; })"/*) die "--mount 不能掛家目錄裡的憑證目錄($sec):$abs" 4 ;; esac
       done
       RUNARGS+=(--mount "type=bind,source=$abs,target=$dest,readonly")
     done

@@ -18,7 +18,8 @@ WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 DOLLAR = re.compile(r"\$([A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$")
 
 
-def strip(sql, keep_comments=False, keep_literals=False, marks=None):
+def strip(sql, keep_comments=False, keep_literals=False, marks=None, state=None):
+    # state (a dict): state["open"] = True when the text ends inside a literal / comment / dollar body
     # marks (a list) collects the offsets of top-level ';' — used by --single to cut a trailing ';' and comments
     out, i, n = [], 0, len(sql)
     special = set("-/$'\";")
@@ -41,6 +42,8 @@ def strip(sql, keep_comments=False, keep_literals=False, marks=None):
                     depth -= 1; j += 2
                 else:
                     j += 1
+            if depth and state is not None:
+                state["open"] = True
             out.append(sql[i:j]); i = j
             continue
         if sql.startswith("--", i):
@@ -56,6 +59,8 @@ def strip(sql, keep_comments=False, keep_literals=False, marks=None):
                     depth -= 1; j += 2
                 else:
                     j += 1
+            if depth and state is not None:
+                state["open"] = True
             i = j
             out.append(" ")
             continue
@@ -63,6 +68,8 @@ def strip(sql, keep_comments=False, keep_literals=False, marks=None):
         if m and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] in "_$")):   # '$' is an identifier character too
             tag = m.group(0)
             j = sql.find(tag, i + len(tag))
+            if j < 0 and state is not None:
+                state["open"] = True
             i = n if j < 0 else j + len(tag)
             out.append(" '' ")
             continue
@@ -79,6 +86,8 @@ def strip(sql, keep_comments=False, keep_literals=False, marks=None):
                 if sql[j] == c:
                     break
                 j += 1
+            if j >= n and state is not None:
+                state["open"] = True
             out.append(sql[i:j + 1] if keep_literals else " x ")
             i = j + 1
             continue
@@ -130,7 +139,8 @@ def main():
     if "--ends-with-semicolon" in sys.argv[1:]:
         # every input line must end with a top-level ';' (comments / literals do not count)
         for line in raw.splitlines():
-            if line.strip() and not strip(line).rstrip().endswith(";"):
+            st = {}
+            if line.strip() and (not strip(line, state=st).rstrip().endswith(";") or st.get("open")):
                 print(line.strip()[:80])
                 return 2
         return 0
@@ -231,7 +241,16 @@ def main():
             if hit or star:
                 print("\\gset could set a psql control variable (%s)" % (", ".join(sorted(hit)) or "SELECT *"))
                 return 2
-        sql_only = strip("\n".join(l for l in lines if not l.lstrip().startswith("\\")))
+        # Every SQL line must lex to a closed state on its own (no literal / comment / dollar body spanning lines):
+        # then where psql sees a meta-command is exactly "a line starting with a backslash", per line.
+        sql_lines = [l for l in lines if not l.lstrip().startswith("\\")]
+        for l in sql_lines:
+            st = {}
+            strip(l, state=st)
+            if st.get("open"):
+                print("a literal / comment / dollar body may not span lines in psql scripts: " + l.strip()[:60])
+                return 4
+        sql_only = "\n".join(strip(l) for l in sql_lines)
         for vm in re.finditer(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", sql_only):
             n = vm.group(1)
             if n not in vars_ok or n in PSQL_VARS or n in assigned or star:

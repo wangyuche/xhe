@@ -361,7 +361,8 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
 o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
-for q in 'SELECT a$$x$ \! id $x$;' 'SELECT 1 \echo $$ \! id' "SELECT E'a\\nb';" "\\echo it's
+for q in "SELECT 'x
+\\echo ' AS a, 1;" 'SELECT a$$x$ \! id $x$;' 'SELECT 1 \echo $$ \! id' "SELECT E'a\\nb';" "\\echo it's
 \\! id
 \\echo '" "\\echo 'a\\'' \\! id" '\echo $a$ \! id $a$' '\set x `id`' '\echo -- \! id' "-- don't do this
 \! id
@@ -373,6 +374,8 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad2.txt" --dsn A="$MIG" --dsn 
 printf '%s\n' 'A: BEGIN;' 'A: UPDATE fx.accounts SET name = name WHERE false -- note;' > "$WORK/race-nosemi.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-nosemi.txt" --dsn A="$MIG" --dsn B="$MIG" --check-dsn "$SU" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:A/B 行沒有分號 → 用法錯誤" || bad "race 無分號" "$o"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$APP" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'check-dsn' && ok "race.sh:A/B 不同角色且 check DSN 不是 superuser → 拒絕" || bad "race check-dsn 權限" "$o"
+printf '%s\n' 'A: BEGIN; /* lock first row' 'A: SELECT 1;' > "$WORK/race-opencomment.txt"
+o="$(bash "$S/race.sh" "$N" --script "$WORK/race-opencomment.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -ne 0 ] && ok "race.sh:行尾沒關的 /* 註解 → 拒絕" || bad "race open comment" "$o"
 printf '%s\n' "A: SELECT 'x;" 'B: SELECT 1 \! touch /tmp/pwn;' > "$WORK/race-bad3.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-bad3.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 4 ] && ok "race.sh:跨 session 的未閉合引號藏不住 \\!" || bad "race 跨 session" "$o"
 o="$(bash "$S/gotest.sh" "$N" --dir "$FX" -- -mod=mod ./... 2>&1)"; [ $? -eq 2 ] && ok "gotest.sh:-- 後面的 go 旗標(-mod=mod)→ 拒絕" || bad "gotest -- 旗標" "$o"
