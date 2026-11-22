@@ -80,7 +80,7 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 
-// PNG 色彩類型 → 通道數(6 = RGBA、4 = 灰階 + alpha;有 alpha 時回 4 / 2)
+// PNG 色彩類型 → 通道數:RGBA 4、灰階 + alpha 2;任何帶 tRNS 的(調色盤 / 灰階 / RGB)也回 4,表示「有透明」
 function pngChannels(file) {
   const b = readFileSync(file), t = b[25];
   // 調色盤 / 灰階 / RGB 帶 tRNS 也算有 alpha(回 4)
@@ -90,16 +90,18 @@ function pngChannels(file) {
   return { 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 }[t] ?? null;
 }
 
-// 節點旗標快取(只存 api_node / output_node,不含位址;檔名用位址雜湊):$TMPDIR/game-art-kit-nodeflags-<雜湊>.json
-const flagsFile = () => join(tmpdir(), `game-art-kit-nodeflags-${createHash('sha256').update(resolveUrl()).digest('hex').slice(0, 12)}.json`);
-function writeNodeFlags(oi) {
+// 節點旗標快取(只存 api_node / output_node 與可用的 RMBG 模型,不含位址;檔名用位址雜湊):~/.cache/game-art-kit/nodeflags-<雜湊>.json
+// 放使用者自己的快取目錄(不放共用的 /tmp,避免別的使用者塞假旗標);可用 GAK_CACHE_DIR 覆寫(測試用)
+const flagsFile = () => { const d = process.env.GAK_CACHE_DIR || join(homedir(), '.cache', 'game-art-kit'); mkdirSync(d, { recursive: true, mode: 0o700 }); return join(d, `nodeflags-${createHash('sha256').update(resolveUrl()).digest('hex').slice(0, 12)}.json`); };
+function writeNodeFlags(oi, rmbg) {
   const flags = Object.fromEntries(Object.entries(oi).map(([k, v]) => [k, { api_node: v?.api_node === true, output_node: v?.output_node === true }]));
-  try { writeFileSync(flagsFile(), JSON.stringify({ t: Date.now(), flags })); } catch {}
+  try { writeFileSync(flagsFile(), JSON.stringify({ t: Date.now(), flags, rmbg: rmbg ?? null }), { mode: 0o600 }); } catch {}
   return flags;
 }
-function readNodeFlags() {
-  try { const c = JSON.parse(readFileSync(flagsFile(), 'utf8')); return Date.now() - c.t < 3600000 ? c.flags : null; } catch { return null; }
+function readCache() {
+  try { const c = JSON.parse(readFileSync(flagsFile(), 'utf8')); return Date.now() - c.t < 3600000 ? c : null; } catch { return null; }
 }
+const readNodeFlags = () => readCache()?.flags ?? null;
 
 // ---------- check ----------
 const MODEL_DIRS = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras', 'controlnet', 'clip_vision', 'style_models', 'ipadapter'];
@@ -134,7 +136,6 @@ async function check() {
   }
   const oi = await json('/object_info', { timeoutMs: 60000 });
   if (oi.__status) die(`/object_info 回 HTTP ${oi.__status}`, 3);
-  writeNodeFlags(oi);
   const has = (n) => Object.prototype.hasOwnProperty.call(oi, n);
   const dm = models.diffusion_models, te = models.text_encoders, vae = models.vae, lora = models.loras;
   const d = {
@@ -170,6 +171,7 @@ async function check() {
     if (ms.length) bg.push({ node: 'RMBG', models: ms });
   }
   const bgOk = bg.length > 0 && has('InvertMask') && has('JoinImageWithAlpha');
+  writeNodeFlags(oi, bg.flatMap(x => x.models));
   const unsupportedBg = [];
   const coreBg = await json('/models/background_removal').then(x => Array.isArray(x) ? x : []);
   if (has('RemoveBackground') && coreBg.length) unsupportedBg.push({ node: 'RemoveBackground', note: '主機有核心去背模型,但本 kit 的 sprite 骨架用 RMBG,不能用' });
@@ -316,6 +318,14 @@ async function run() {
     const api = classes.filter(c => oi[c]?.api_node === true);
     if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);
     // 其他會寫進伺服器 output/ 的輸出節點(CheckpointSave、SaveGLB、自訂 Image Save…):output_node 且不是 Preview*
+    // RMBG 只能用 check 確認檔案齊全的模型(其他的會在主機上自動下載)
+    const rmbgUsed = Object.values(graph).filter(n => n?.class_type === 'RMBG').map(n => n.inputs?.model);
+    if (rmbgUsed.length) {
+      const ok = readCache()?.rmbg;
+      if (!ok) die('用到 RMBG 但沒有 check 的結果(或超過 1 小時);先跑 comfy.mjs check', 2);
+      const bad = rmbgUsed.filter(m => !ok.includes(m));
+      if (bad.length) die(`RMBG 模型 ${bad.join(', ')} 不在主機上檔案齊全的清單(${ok.join(', ') || '無'});用了會讓主機自動下載`, 2);
+    }
     const writers = classes.filter(c => oi[c]?.output_node === true && !/^Preview/.test(c));
     if (writers.length) die(`workflow 含會寫進伺服器的輸出節點,不能用(只用 PreviewImage / PreviewAudio):${writers.join(', ')}`, 2);
   }

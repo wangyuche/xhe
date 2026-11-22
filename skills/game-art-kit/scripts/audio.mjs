@@ -112,7 +112,7 @@ function process_(input, { type, dur, out, name, loop }) {
     const ogg = join(tmp, `${name}.ogg`), m4a = join(tmp, `${name}.m4a`);
     ff(['-i', norm, '-c:a', 'libopus', '-b:a', type === 'bgm' ? '128k' : '96k', ogg]);
     ff(['-i', norm, '-c:a', 'aac', '-b:a', type === 'bgm' ? '160k' : '128k', '-movflags', '+faststart', m4a]);
-    if (loopState) { const s = seam(norm); if (s > 6) loopState = 'approx'; }
+    if (loopState) { const s = Math.max(seam(norm), seam(ogg), seam(m4a)); if (s > 6) loopState = 'approx'; }
     // 編碼(Opus / AAC)可能讓取樣間峰值上升:量編碼後的檔案,超過 −1 dBTP 就降增益重編(最多 2 次)
     for (let i = 0; ; i++) {
       const over = Math.max(measure(ogg).truePeak ?? -99, measure(m4a).truePeak ?? -99) - (TP_MAX - 0.2);
@@ -153,8 +153,10 @@ export function check([ogg, m4a], { type, dur, loop, peak, approx }) {
     else if (m.lufs == null || !(m.lufs >= lo && m.lufs <= hi)) errs.push(`${k} 響度 ${m.lufs} LUFS(應 ${lo} 至 ${hi})`);
   }
   if (loop) {
-    const s = seam(ogg); measureOut.seamDb = isFinite(s) ? +s.toFixed(2) : null;
-    if (!(s <= 6)) { if (approx) measureOut.loop = 'approx'; else errs.push(`循環接縫 RMS 差 ${measureOut.seamDb} dB(應 ≤ 6;process 已標 approx 的加 --approx)`); }
+    // 兩種格式都量(m4a 靠 MP4 edit list 去掉 AAC 前置靜音;Safari 播 m4a)
+    const so = seam(ogg), sm = seam(m4a), s = Math.max(so, sm);
+    measureOut.seamDb = { ogg: isFinite(so) ? +so.toFixed(2) : null, m4a: isFinite(sm) ? +sm.toFixed(2) : null };
+    if (!(s <= 6)) { if (approx) measureOut.loop = 'approx'; else errs.push(`循環接縫 RMS 差 ${s.toFixed(2)} dB(ogg / m4a 取大者,應 ≤ 6;process 已標 approx 的加 --approx)`); }
   }
   return { errs, measure: measureOut };
 }

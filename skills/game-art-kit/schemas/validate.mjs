@@ -48,10 +48,11 @@ function check(schema, v, path, root, errs) {
     }
   }
   if (typeOk('object', v)) {
-    for (const r of schema.required ?? []) if (!(r in v)) err(`缺少 ${r}`);
-    for (const f of schema.forbidden ?? []) if (f in v) err(`不可有 ${f}`);
-    for (const [k, s] of Object.entries(schema.properties ?? {})) if (k in v) check(s, v[k], path ? `${path}.${k}` : k, root, errs);
-    if (schema.additionalProperties === false) for (const k of Object.keys(v)) if (!(k in (schema.properties ?? {}))) err(`未知欄位 ${k}`);
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o ?? {}, k);
+    for (const r of schema.required ?? []) if (!own(v, r)) err(`缺少 ${r}`);
+    for (const f of schema.forbidden ?? []) if (own(v, f)) err(`不可有 ${f}`);
+    for (const [k, s] of Object.entries(schema.properties ?? {})) if (own(v, k)) check(s, v[k], path ? `${path}.${k}` : k, root, errs);
+    if (schema.additionalProperties === false) for (const k of Object.keys(v)) if (!own(schema.properties, k)) err(`未知欄位 ${k}`);
   }
   for (const s of schema.allOf ?? []) check(s, v, path, root, errs);
   if (schema.if) {
@@ -84,7 +85,10 @@ function semantic(kind, obj, root, errs) {
       const exts = files.map(f => f.split('.').pop()).sort().join(',');
       if (exts !== 'm4a,ogg') errs.push(`${p}: 音訊應恰好有 .ogg 與 .m4a 各一`);
     }
-    for (const f of files) if (!f.startsWith(`${a.group}/`)) errs.push(`${p}: 檔案 ${f} 應放在 ${a.group}/ 下`);
+    for (const f of files) {
+      if (!f.startsWith(`${a.group}/`)) errs.push(`${p}: 檔案 ${f} 應放在 ${a.group}/ 下`);
+      if (f.split('/').pop().replace(/\.(png|ogg|m4a)$/, '') !== a.id) errs.push(`${p}: 檔名 ${f} 應為 <group>/${a.id}.<副檔名>`);
+    }
     if (a.frames && a.width && a.density) {
       const fw = a.frames.frameWidth, fh = a.frames.frameHeight;
       if (Math.abs(fw - a.width * a.density) > 1 || Math.abs(fh - a.height * a.density) > 1) errs.push(`${p}: frames.frameWidth/frameHeight ${fw}×${fh} 應為顯示 × density(約 ${Math.round(a.width * a.density)}×${Math.round(a.height * a.density)})`);

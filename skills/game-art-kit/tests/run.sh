@@ -31,7 +31,8 @@ node "$K/tests/fake-comfy.mjs" "$PORT" "$W/req.log" > "$W/fake.out" 2>&1 & PID=$
 for i in $(seq 1 50); do grep -q listening "$W/fake.out" 2>/dev/null && break; sleep 0.1; done
 export COMFYUI_URL="http://127.0.0.1:$PORT"
 export HOME="$W/home"; mkdir -p "$HOME"   # 不讀使用者的 ~/.config
-export TMPDIR="$W/tmp"; mkdir -p "$TMPDIR"   # 節點旗標快取、下載暫存都留在測試目錄
+export TMPDIR="$W/tmp"; mkdir -p "$TMPDIR"   # 下載暫存留在測試目錄
+export GAK_CACHE_DIR="$W/cache"                 # 節點旗標快取也留在測試目錄
 
 # 1. 位址解析
 o="$(env -u COMFYUI_URL node "$K/scripts/comfy.mjs" check 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '找不到 ComfyUI 位址' && ok "沒有位址 → 結束碼 2 並附設定方式" || bad "沒有位址" "$o"
@@ -151,6 +152,7 @@ r="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name sp1 "${QS[@]}
   && ok "qwen-t2i-sprite:同一 workflow 去背,下載的 PNG 有 alpha" || bad "qwen-t2i-sprite" "$r"
 r="$(C run "$K/workflows/qwen-edit-1ref-sprite.json" --out "$W/a" --name sp2 "${QS[@]}" --set width=64 --set height=64 --set 'ref1=r.png [temp]' --set bg_model=RMBG-2.0)" && echo "$r" | grep -q '"channels":4' \
   && ok "qwen-edit-1ref-sprite:角色一致 + 去背" || bad "qwen-edit-1ref-sprite" "$r"
+o="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name spx "${QS[@]}" --set width=64 --set height=64 --set bg_model=BEN2 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'BEN2' && ok "run:RMBG 模型不在 check 確認檔案齊全的清單 → 拒絕(避免主機自動下載)" || bad "run RMBG 模型檢查" "$o"
 SA=(--set ckpt=s --set clip=t --set prompt=boing --set negative=music --set seconds=3 --set seed=1 --set steps=8 --set cfg=6 --set sampler=euler --set scheduler=simple)
 r="$(C run "$K/workflows/stable-audio-sfx.json" --out "$W/a" --name sfx "${SA[@]}")" && [ -s "$W/a/sfx.wav" ] && echo "$r" | grep -q '"kind":"audio"' \
   && ok "stable-audio-sfx:下載 PreviewAudio 的音訊(副檔名照伺服器)" || bad "stable-audio-sfx" "$r"
@@ -203,7 +205,7 @@ o="$(S info "$W/sp/noisy.png")" && echo "$o" | grep -q '"bbox":{"x":100,"y":100,
   && ok "sprite.mjs:去背殘留的低 alpha 雜訊(< 8)不算主體" || bad "sprite 低 alpha 雜訊" "$o $o2 $o3"
 o="$(S fit "$W/sp/f1.png" --out "$W/sp/big.png" --width 2400 --height 1600 --margin 0 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'PX-RES-01' && ok "sprite.mjs fit:1x 超過 2048 → 結束碼 2(提示 density 上限)" || bad "sprite 2048 上限" "$o"
 o="$(S density --width 300 --height 400 --frames 8)" && echo "$o" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.width*d.columns<=2048&&d.height*d.rows<=2048&&d.density<2&&Number.isInteger(d.width)?0:1)' \
-  && o2="$(S density --width 120 --height 160)" && echo "$o2" | grep -q '"density":2,"width":240,"height":320' && ok "sprite.mjs density:8 格大動作自動降 density 讓 sheet ≤ 2048、小素材為 2、1x 為整數" || bad "sprite density" "$o $o2"
+  && o4="$(S density --width 300 --height 1100)" && echo "$o4" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(Math.abs(d.height-Math.round(1100*d.density))<=1&&d.height<=2048?0:1)' && o2="$(S density --width 120 --height 160)" && echo "$o2" | grep -q '"density":2,"width":240,"height":320' && ok "sprite.mjs density:8 格大動作自動降 density 讓 sheet ≤ 2048、小素材為 2、1x 為整數" || bad "sprite density" "$o $o2"
 mkdir -p "$W/lnk"; ln -s "$K" "$W/lnk/kit"
 o="$(node "$W/lnk/kit/scripts/sprite.mjs" check "$W/sp/dirty.png" --width 300 --height 400)"; rc=$?
 o2="$(node "$W/lnk/kit/schemas/validate.mjs" needs "$W/sp/dirty.png")"; rc2=$?
@@ -276,6 +278,8 @@ echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"a.b","group
 o="$(V needs "$W/v/notype.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '缺少 type' && ! echo "$o" | grep -q 'durationSec' && ok "schema:缺 type 只報缺 type,不疊出矛盾的錯誤" || bad "schema 缺 type" "$o"
 echo '{"version":1,"assets":[{"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":100,"frameHeight":160,"columns":4},"source":"out/x/manifest.json#r","review":"pending"},{"id":"sfx.l","type":"sfx","group":"table","files":["table/sfx.l.ogg","table/sfx.l.m4a"],"durationSec":1,"lufs":-16,"loop":true,"source":"out/x/manifest.json#l","review":"pending"}]}' > "$W/v/fw.json"
 o="$(V assets "$W/v/fw.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'frameWidth' && echo "$o" | grep -q 'assets\[1\]: 不可有 loop' && ok "schema:frames 尺寸要等於顯示 × density、音效不可有 loop" || bad "schema frames / sfx loop" "$o"
+echo '{"version":1,"assets":[{"id":"hero.idle","type":"sprite","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"source":"out/x/manifest.json#r","review":"pending"},{"id":"hero.x","type":"sprite","group":"table","files":["table/hero.x.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"constructor":1,"source":"out/x/manifest.json#x","review":"pending"}]}' > "$W/v/name.json"
+o="$(V assets "$W/v/name.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '檔名' && echo "$o" | grep -q '未知欄位 constructor' && ok "schema:檔名要等於 id、prototype 名稱的欄位也算未知" || bad "schema 檔名 / prototype" "$o"
 cp "$W/sp/one.png" "$W/v/table/hero.run.png"
 o="$(V assets "$W/v/assets.json" --root "$W/v" 2>&1)"; echo "$o" | grep -q 'hero.run.png 實際 120×160,應為 480×160' && ok "schema --root:PNG 實際尺寸要等於 1x(sheet)" || bad "schema --root PNG 尺寸" "$o"
 
