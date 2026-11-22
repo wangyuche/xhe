@@ -51,7 +51,7 @@ printf "// never do: import { Sprite } from 'pixi.js'\nexport const ok = 1;\n" >
 t  "check-layers 不把註解裡的 import 當違規" node "$K/scripts/check-layers.mjs" "$P"
 rm "$P/src/game/bad.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
-[ "$n" = 10 ] && ok "check-i18n 漏報案例全抓到(10,含多行與 glob 字串)" || bad "check-i18n 漏報案例" "$r"
+[ "$n" = 12 ] && ok "check-i18n 漏報案例全抓到(12)" || bad "check-i18n 漏報案例" "$r"
 t  "check-i18n 誤報案例全部放行" node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-good"
 # 首屏洩漏:main.ts 靜態 import play 群組的圖
 node -e "
@@ -89,7 +89,9 @@ s = s.replace("| group | 1x_kb | 0.5x_kb |\n|---|---|---|\n", "| group | 1x_kb |
 open(p, "w").write(s)
 PY
 t  "預算表寫入" grep -q '^| title | 300 | 100 |$' docs/performance-budgets.md
+printf '{"group":"boot","assets":{"logo":{"type":"sprite","files":{"1x.avif":"logo@1x.avif"}}}}\n' > src/assets/boot/manifest.json; printf 'x' > src/assets/boot/logo@1x.avif
 t  "build-assets 產生 1x / 0.5x 與 manifest" node scripts/build-assets.mjs --src "$A"
+t  "手寫的 boot 群組不被動到" test -f src/assets/boot/logo@1x.avif
 t  "產出:sprite AVIF + PNG 兩級、背景 JPG、音效複製" test -f src/assets/play/hero.idle@1x.avif -a -f src/assets/play/hero.idle@0.5x.png -a -f src/assets/title/bg.title@1x.jpg -a -f src/assets/play/sfx.hit.ogg
 t  "0.5x 尺寸 = 一半(進位成偶數)" node -e "const s=require('sharp');s('src/assets/play/hero.idle@0.5x.png').metadata().then(m=>process.exit(m.width===120&&m.height===160?0:1))"
 t  "frames 的 0.5x sheet 剛好一半(480→240)" node -e "const s=require('sharp');s('src/assets/play/hero.run@0.5x.png').metadata().then(m=>process.exit(m.width===240&&m.height===80?0:1))"
@@ -99,6 +101,7 @@ t  "check-assets 通過(含 --art)" node "$K/scripts/check-assets.mjs" "$P" --ar
 t  "接上素材後 build 與 check-early 仍通過" bash -c "npm run build >/dev/null 2>&1 && node '$K/scripts/check-early.mjs' '$P'"
 repl docs/performance-budgets.md '| title | 300 | 100 |' '| title | 0.1 | 100 |'
 tf "build-assets 超過 KB 預算就失敗" node scripts/build-assets.mjs --src "$A"
+t  "超過預算時既有產出不變(title 仍是舊的 manifest)" grep -q bg.title src/assets/title/manifest.json
 tf "check-assets 超過 KB 預算就失敗" node "$K/scripts/check-assets.mjs" "$P"
 repl docs/performance-budgets.md '| title | 0.1 | 100 |' '| title | 300 | 100 |'
 node -e "const f='$A/assets.json';const d=JSON.parse(require('fs').readFileSync(f));d.assets[0].width=121;require('fs').writeFileSync('$W/bad.json',JSON.stringify(d))"; cp "$A/assets.json" "$W/good.json"; cp "$W/bad.json" "$A/assets.json"
@@ -121,7 +124,8 @@ out=$(bash "$WK/serve.sh" "$N-dist" "$P" 4175 -- node scripts/serve-dist.mjs "$W
 if [ -n "$PORT_DIST" ]; then
   t "serve-dist 壞掉的網址回 400 且伺服器還活著" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:$PORT_DIST/%E0%A4%A')\" = 400 ] && curl -sf -o /dev/null http://127.0.0.1:$PORT_DIST/index.html"
   t "serve-dist 擋住 dist 以外的路徑" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' --path-as-is 'http://127.0.0.1:$PORT_DIST/..%2F..%2Fetc%2Fhosts')\" != 200 ]"
-  t "serve-dist gzip 壓縮 JS" bash -c "curl -s -H 'Accept-Encoding: gzip' -o /dev/null -w '%header{content-encoding}' http://127.0.0.1:$PORT_DIST/index.html | grep -q gzip"
+  JS=$(cd "$W/dist" && ls assets/*.js | head -1)
+  t "serve-dist gzip 壓縮 JS($JS)" bash -c "curl -s -H 'Accept-Encoding: gzip' -o /dev/null -w '%header{content-encoding}' http://127.0.0.1:$PORT_DIST/$JS | grep -q gzip"
   cat > tests/perf/zz-worker.perf.spec.ts <<'TS'
 import { expect, test } from '@playwright/test';
 import { newPage, throttle } from './lib';

@@ -68,23 +68,23 @@ for (const a of doc.assets) {
   metas.set(a.id, meta);
 }
 
-// assets.json 已經沒有的群組:清掉 build-assets 先前產生的檔案(只動有 manifest.json 的資料夾)
-for (const g of existsSync(OUT) ? readdirSync(OUT) : []) {
-  const dir = join(OUT, g);
-  if (groups.has(g) || !existsSync(join(dir, 'manifest.json'))) continue;
-  for (const f of readdirSync(dir)) if (/\.(avif|png|jpg|ogg|m4a)$/.test(f)) rmSync(join(dir, f));
-  writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ group: g, assets: {} }, null, 2) + '\n');
-  console.log(`${g}:assets.json 已沒有這個群組,清空產出`);
+// 既有 manifest:只有 build-assets 自己產生的(generatedBy)才會被覆寫或清理,而且只刪它列出的檔案;
+// 手寫的 manifest(例如 boot 群組的 logo)有內容時拒絕覆寫,空的骨架 manifest 可以接手
+const readManifest = (g) => { try { return JSON.parse(readFileSync(join(OUT, g, 'manifest.json'), 'utf8')); } catch { return undefined; } };
+const ownedFiles = (m) => (m?.generatedBy === 'build-assets' ? Object.values(m.assets ?? {}).flatMap((e) => Object.values(e.files ?? {})) : []);
+for (const g of groups.keys()) {
+  const m = readManifest(g);
+  if (m && m.generatedBy !== 'build-assets' && Object.keys(m.assets ?? {}).length) die(`src/assets/${g}/manifest.json 是手寫的而且有內容;assets.json 不能用同一個群組名(請改群組或把手寫素材移走)`);
 }
 
+// 1) 每個群組先產生到暫存資料夾
+const built = [];
 let over = false;
 for (const [group, list] of groups) {
-  const final = join(OUT, group);
-  // 先產生到暫存資料夾,整組成功才換掉既有產出(中途失敗不會留下半套)
   const dir = join(OUT, `.build-${group}`);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const manifest = { group, assets: {} };
+  const manifest = { group, generatedBy: 'build-assets', assets: {} };
   const kb = { '1x': 0, '0.5x': 0 };
   for (const a of list) {
     const e = { type: a.type, files: {} };
@@ -121,11 +121,6 @@ for (const [group, list] of groups) {
     manifest.assets[a.id] = e;
   }
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-  // 換上新產出:只刪 build-assets 產生的檔案(manifest 與素材),保留同目錄下手寫的程式
-  mkdirSync(final, { recursive: true });
-  for (const f of readdirSync(final)) if (/\.(avif|png|jpg|ogg|m4a)$/.test(f) || f === 'manifest.json') rmSync(join(final, f));
-  for (const f of readdirSync(dir)) renameSync(join(dir, f), join(final, f));
-  rmSync(dir, { recursive: true, force: true });
   const b = BUDGET[group];
   for (const tier of ['1x', '0.5x']) {
     const lim = b?.[tier];
@@ -133,5 +128,28 @@ for (const [group, list] of groups) {
     if (lim !== undefined && kb[tier] > lim) over = true;
     console.log(`${group} ${tier} AVIF ${kb[tier].toFixed(1)} KB ${mark}`);
   }
+  built.push({ group, dir });
 }
-if (over) die('素材超過預算(PX-PERF-07)');
+// 超過預算:不換上任何產出(既有檔案保持原樣)
+if (over) {
+  for (const { dir } of built) rmSync(dir, { recursive: true, force: true });
+  die('素材超過預算(PX-PERF-07);既有產出未變更');
+}
+
+// 2) 全部成功才換上:只刪舊 manifest(build-assets 產生的)列出的檔案,保留手寫檔案
+for (const { group, dir } of built) {
+  const final = join(OUT, group);
+  mkdirSync(final, { recursive: true });
+  for (const f of ownedFiles(readManifest(group))) rmSync(join(final, f), { force: true });
+  for (const f of readdirSync(dir)) renameSync(join(dir, f), join(final, f));
+  rmSync(dir, { recursive: true, force: true });
+}
+// 3) assets.json 已經沒有的群組:只清 build-assets 產生過的
+for (const g of existsSync(OUT) ? readdirSync(OUT) : []) {
+  if (groups.has(g) || g.startsWith('.')) continue;
+  const m = readManifest(g);
+  if (m?.generatedBy !== 'build-assets') continue;
+  for (const f of ownedFiles(m)) rmSync(join(OUT, g, f), { force: true });
+  writeFileSync(join(OUT, g, 'manifest.json'), JSON.stringify({ group: g, generatedBy: 'build-assets', assets: {} }, null, 2) + '\n');
+  console.log(`${g}:assets.json 已沒有這個群組,清空 build-assets 的產出`);
+}

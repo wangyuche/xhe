@@ -56,7 +56,10 @@ export class SceneManager {
     // 素材級別用「轉到正確方向後」的畫面算(直式開機的橫式遊戲,旋轉後也拿 1x)
     const { width, height } = this.app.screen;
     const [w, h] = LANDSCAPE ? [Math.max(width, height), Math.min(width, height)] : [Math.min(width, height), Math.max(width, height)];
-    setTier(computeFit(w, h, readSafeArea()).scale, window.devicePixelRatio);
+    const ins = readSafeArea();
+    // 寬高對調時安全區也要跟著轉 90°
+    const swapped = w !== width;
+    setTier(computeFit(w, h, swapped ? { top: ins.left, right: ins.top, bottom: ins.right, left: ins.bottom } : ins).scale, window.devicePixelRatio);
     const acquired = acquireGroup(def.group);
     let scene: Scene;
     try {

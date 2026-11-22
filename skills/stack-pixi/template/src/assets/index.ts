@@ -75,24 +75,34 @@ async function loadGroup(group: string): Promise<void> {
   const aliases: string[] = [];
   const aliasById = new Map<string, string>();
   const audio = new Map<string, { ogg: string; m4a: string }>();
-  // 所有網址平行解析(每個都是 lazy chunk;逐一 await 在 Slow 4G 下每個多一個 RTT)
-  await Promise.all(Object.entries(manifest.assets).map(async ([id, a]) => {
-    if (a.type === 'sfx' || a.type === 'bgm') {
-      const [ogg, m4a] = await Promise.all([url(group, a.files.ogg!), url(group, a.files.m4a!)]);
-      audio.set(id, { ogg, m4a });
-      return;
-    }
-    const t = tier;
+  // 先佔住每個 alias 的參考計數(在任何 await 之前):載入期間別的群組 release 也不會把它 unload
+  const t = tier;
+  for (const [id, a] of Object.entries(manifest.assets)) {
+    if (a.type === 'sfx' || a.type === 'bgm') continue;
     const alias = aliasOf(id, t);
-    const fallback = a.files[`${t}.png`] ?? a.files[`${t}.jpg`];
-    const src = await Promise.all([url(group, a.files[`${t}.avif`]!), url(group, fallback!)]); // PX-FMT-01:Pixi 依支援度選 avif / 備援
-    await unloading.get(alias);
-    if (!added.has(alias) && !Assets.cache.has(alias)) { Assets.add({ alias, src }); added.add(alias); }
     aliasById.set(id, alias);
     aliases.push(alias);
-  }));
-  if (aliases.length) await Assets.load(aliases.filter((al) => !Assets.cache.has(al)));
-  for (const id of aliases) aliasRefs.set(id, (aliasRefs.get(id) ?? 0) + 1);
+    aliasRefs.set(alias, (aliasRefs.get(alias) ?? 0) + 1);
+  }
+  try {
+    // 所有網址平行解析(每個都是 lazy chunk;逐一 await 在 Slow 4G 下每個多一個 RTT)
+    await Promise.all(Object.entries(manifest.assets).map(async ([id, a]) => {
+      if (a.type === 'sfx' || a.type === 'bgm') {
+        const [ogg, m4a] = await Promise.all([url(group, a.files.ogg!), url(group, a.files.m4a!)]);
+        audio.set(id, { ogg, m4a });
+        return;
+      }
+      const alias = aliasById.get(id)!;
+      const fallback = a.files[`${t}.png`] ?? a.files[`${t}.jpg`];
+      const src = await Promise.all([url(group, a.files[`${t}.avif`]!), url(group, fallback!)]); // PX-FMT-01:Pixi 依支援度選 avif / 備援
+      await unloading.get(alias);
+      if (!added.has(alias) && !Assets.cache.has(alias)) { Assets.add({ alias, src }); added.add(alias); }
+    }));
+    if (aliases.length) await Assets.load(aliases.filter((al) => !Assets.cache.has(al)));
+  } catch (e) {
+    for (const al of aliases) { const n = (aliasRefs.get(al) ?? 1) - 1; if (n > 0) aliasRefs.set(al, n); else aliasRefs.delete(al); }
+    throw e;
+  }
   loaded.set(group, { count: 0, aliases, aliasById, manifest, audio });
 }
 

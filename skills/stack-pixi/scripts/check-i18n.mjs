@@ -18,7 +18,8 @@ if (!existsSync(src)) { console.error(`找不到 ${src}`); process.exit(2); }
 // 值:'…' / "…" / `…`(樣板字串只看 ${} 以外的字面部分)
 const LIT = String.raw`('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|\`(?:[^\`\\]|\\.)*\`)`;
 const SINKS = [
-  new RegExp(String.raw`\bnew\s+(?:Text|BitmapText|HTMLText)\s*\(\s*\{(?:[^{}]|\{[^{}]*\})*?\btext\s*:\s*` + LIT),
+  new RegExp(String.raw`\bnew\s+(?:Text|BitmapText|HTMLText)\s*\(\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?\btext\s*:\s*` + LIT),
+  new RegExp(String.raw`\bnew\s+(?:Text|BitmapText|HTMLText)\s*\(\s*` + LIT), // Pixi 8 舊的位置參數寫法
   new RegExp(String.raw`\.(?:text|textContent|innerText|accessibleTitle|accessibleHint)\s*=(?!=)\s*` + LIT),
   new RegExp(String.raw`\b(?:accessibleTitle|accessibleHint)\s*:\s*` + LIT),
   new RegExp(String.raw`\bsetAttribute\(\s*['"](?:aria-label|aria-description|aria-roledescription|aria-valuetext|title|placeholder)['"]\s*,\s*` + LIT),
