@@ -84,4 +84,4 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 ## 遊戲素材介面(`schemas/`)
 
-`needs.schema.json`(遊戲端寫 `assets.needs.json`)與 `assets.schema.json`(美術寫 `art/assets/assets.json`)。重點:`width` / `height` 是設計座標的**顯示尺寸**;1x 檔案 = 顯示 × `density`(預設 2,但單張與 frames 整張 sheet 都要 ≤ 2048,超過時 density 往下調;以 `sprite.mjs density` 的輸出為準);`frames` 的尺寸是單格;音訊只有 `durationSec` / `loop`;`nineSlice1x` = `nineSlice` × density 四捨五入;`review` 一律先寫 `pending`。完整定義見 `agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」。
+`needs.schema.json`(遊戲端寫 `assets.needs.json`)與 `assets.schema.json`(美術寫 `art/assets/assets.json`)。重點:`width` / `height` 是設計座標的**顯示尺寸**;1x 檔案 = 顯示 × `density`(預設 2,但單張與 frames 整張 sheet 都要 ≤ 2048,超過時 density 往下調;以 `sprite.mjs density` 的輸出為準);`frames` 的尺寸是單格;音訊只有 `durationSec` / `loop`;`nineSlice1x` = `nineSlice` × density 四捨五入;`review` 一律先寫 `pending`。機器可驗證的定義以本 kit 的 schema、`validate.mjs` 與 `sprite.mjs density` 為準(輸出 `lowered: true` 表示 density 被調低);`agent-specs/game-frontend-owner.md`「尺寸定義與素材介面」是文字說明。

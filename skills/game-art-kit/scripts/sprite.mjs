@@ -159,7 +159,6 @@ export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
   const s = Math.min((W - 2 * m) / maxW, (H - (align === 'bottom' ? m + FOOT : 2 * m)) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
-  if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
   if (rows * H > 2048) die(`sheet 高 ${rows * H} 超過 2048`);
   const sheet = blank(W * columns, H * rows);
   imgs.forEach((im, i) => {
@@ -188,7 +187,8 @@ export function density1x(dw, dh, frames = 1, want = 2) {
     // 寬取整後,印出的 density = 寬 ÷ 顯示寬,高也用同一個 density 算(validate 用 round(顯示 × density) 比對)
     const W = Math.floor(dw * d), dens = +(W / dw).toFixed(4), H = Math.round(dh * dens);
     const { columns, rows } = sheetLayout(frames, W);
-    if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows };
+    // lowered:實際 density 低於要求(needs 指定或預設 2),agent 要列在已知限制;< 1 時 agent BLOCKED
+    if (W >= 1 && H >= 1 && W * columns <= 2048 && H * rows <= 2048) return { density: dens, width: W, height: H, columns, rows, ...(dens < want - 1e-4 ? { lowered: true } : {}) };
     d *= 0.98;
   }
   die('找不到合適的 density(顯示尺寸太大)');
