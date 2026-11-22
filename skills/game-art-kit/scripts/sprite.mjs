@@ -7,7 +7,7 @@
 //        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
 //   node sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]
-//        算 1x 尺寸:density 預設 min(2, …) 取到讓單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
+//        算 1x 尺寸:density 預設 2,往下調到單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
 //        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組)
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
