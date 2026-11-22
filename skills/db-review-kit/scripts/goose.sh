@@ -77,7 +77,8 @@ DBSTRING_ENV=1; case "$GOOSE_HELP" in *GOOSE_DBSTRING*) ;; *) DBSTRING_ENV=""; e
 # Copy only versioned *.sql (read-only use of the project dir).
 mkdir -p "$WORK/mig"
 for f in "$MIGDIR"/*.sql; do   # versioned NNNNN_*.sql only: goose fails on any other .sql (seed.sql, schema.sql …)
-  case "$(basename "$f")" in [0-9]*_*.sql) [ -e "$f" ] && cp "$f" "$WORK/mig/" ;; *) [ -e "$f" ] && echo "略過非 migration 檔:$(basename "$f")" >&2 ;; esac
+  [ -e "$f" ] || continue
+  if printf '%s' "$(basename "$f")" | grep -Eq '^[0-9]+_.*\.sql$'; then cp "$f" "$WORK/mig/"; else echo "略過非 migration 檔:$(basename "$f")" >&2; fi
 done
 GOMIG="$(cd "$MIGDIR" && ls | grep -E '^[0-9]+_.*\.go$' | grep -v '_test\.go$' || true)"
 [ -z "$GOMIG" ] || echo "注意:有 Go migration(goose CLI 不會執行):$(echo $GOMIG)" >&2

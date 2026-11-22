@@ -343,6 +343,9 @@ o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$WORK/linked.sql:/x.sql
 if [ -d "$HOME/.ssh" ]; then o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME/.ssh:/s" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount ~/.ssh → 拒絕" || bad "mount .ssh" "$o"; else skip "mount ~/.ssh(本機沒有 ~/.ssh)"; fi
 printf '%s\n' 'A: SELECT 1;' 'b: SELECT 1;' > "$WORK/race-lc.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-lc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:不認得的行(小寫 b:)→ 用法錯誤" || bad "race 未知行" "$o"
+mkdir -p "$WORK/sockdir" && python3 -I -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$WORK/sockdir/x.sock"
+o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$WORK/sockdir:/s" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount 目錄裡有 socket → 拒絕" || bad "mount socket dir" "$o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "SET LOCAL lock_timeout = '1h'; SELECT 1" --hold 'SELECT 1' --monitor-dsn "$SU" --hold-seconds 9 2>&1)"; echo "$o" | grep -q 'lock_timeout 只有' && bad "locks 1h 被當成短" "$o" || ok "locks.sh:SET LOCAL lock_timeout = '1h' 不會被誤判成 1 秒"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --tmpfs-size 0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:--tmpfs-size 0 → 拒絕(size=0 是沒有上限)" || bad "tmpfs 0" "$o"
 echo "dbrev-selftest-nonexistent:0" > "$DB_REVIEW_KIT_TMP/pulled-images"   # makes gc take the lock
 bash -c "source '$S/_common.sh'; image_lock; exec sleep 300" & LOCKER=$!   # exec: the killed pid is the fd holder

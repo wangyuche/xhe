@@ -41,7 +41,7 @@ done
 
 # Warn about DSNs hard-coded in test files that point somewhere other than an env var (e.g. localhost:5432).
 HARD="$(cd "$MOD" && grep -rnE --include='*.go' --exclude-dir=vendor '(postgres(ql)?://[^"`[:space:]]+|host=[^ "`]+|(localhost|127\.0\.0\.1|\[::1\]):5432)' . 2>/dev/null | head -20 || true)"
-[ -z "$HARD" ] || { echo "警告:測試檔裡有寫死的連線字串(確認不會連到非本容器的資料庫):" >&2; echo "$HARD" | sed 's/^/  /' >&2; }
+[ -z "$HARD" ] || { echo "警告:測試檔裡有寫死的連線字串(確認不會連到非本容器的資料庫;密碼已遮蔽):" >&2; echo "$HARD" | sed -E 's#(://[^:/@"`[:space:]]*):[^@/"`[:space:]]*@#\1:***@#g; s#(password=)[^[:space:]"`]*#\1***#Ig' | sed 's/^/  /' >&2; }
 
 ensure_name_dir "$NAME"; D="$(name_dir "$NAME")"
 LOG="$D/gotest-$(date +%Y%m%d-%H%M%S)-$$.jsonl"

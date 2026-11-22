@@ -99,6 +99,11 @@ case "$CMD" in
       hp="$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")"
       case "$hp/" in "$abs"/*|"$abs/") die "--mount 不能掛 / 或家目錄(或其上層):$abs" 4 ;; esac
       [ "$abs" != "/" ] || die "--mount 不能掛 /" 4
+      case "$abs/" in /var/run/*|/run/*|/private/var/run/*|/dev/*|/proc/*|/sys/*|/var/lib/docker/*|/private/var/lib/docker/*)
+        die "--mount 不能掛系統執行期目錄:$abs" 4 ;; esac
+      if [ -d "$abs" ] && [ -n "$(find "$abs" -maxdepth 6 \( -type s -o -type c -o -type b \) -print -quit 2>/dev/null)" ]; then
+        die "--mount 的目錄裡有 socket / device(唯讀掛載擋不住 connect):$abs" 4
+      fi
       for sec in .ssh .aws .config .docker .kube .gnupg .netrc .pgpass .azure .gcloud Library/Keychains; do
         case "$abs/" in "$hp/$sec"/*) die "--mount 不能掛家目錄裡的憑證目錄($sec):$abs" 4 ;; esac
       done

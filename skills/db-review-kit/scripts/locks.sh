@@ -67,15 +67,23 @@ if [ -n "$HOLD" ]; then
   case "$LT" in [0-9]*s) LT_S="${LT%s}" ;; *) die "--hold 模式的 --lock-timeout 用整數秒寫,例如 5s" 2 ;; esac
   case "$LT_S" in *[!0-9]*) die "--lock-timeout 用整數秒寫,例如 5s" 2 ;; esac
   [ "$LT_S" -ge 3 ] || die "--hold 模式的 --lock-timeout 至少 3s(太短時監看還沒拍到就已逾時)" 2
-  [ "$HOLD_S" -gt "$LT_S" ] || die "--hold-seconds 要大於 --lock-timeout" 2
+  [ "$HOLD_S" -ge $((LT_S + 3)) ] || die "--hold-seconds 至少要比 --lock-timeout 多 3 秒(啟動與監看需要時間)" 2
   # with a probe, the DDL must still be waiting after it was observed and the probe was started and observed
   # the SQL's own SET LOCAL lock_timeout (common in goose Up sections) wins inside the transaction: use the shorter one
-  own="$(printf '%s\n' "$SQL" | grep -oiE "(set([[:space:]]+(local|session))?[[:space:]]+lock_timeout[[:space:]]*(=|to)[[:space:]]*|set_config[[:space:]]*\([[:space:]]*'lock_timeout'[[:space:]]*,[[:space:]]*)'?[0-9]+(ms|s|min)?'?" | tail -1 \
-         | grep -oiE "[0-9]+(ms|s|min)?'?$" | tr -d "'" | tail -1 || true)"
-  if [ -n "$own" ]; then
-    own_s=$(printf '%s' "$own" | awk '/ms$/{v=$0+0; print int((v+999)/1000); next} /min$/{print ($0+0)*60; next} /s$/{print $0+0; next} {v=$0+0; print int((v+999)/1000)}')
+  # the SQL's own lock_timeout (SET [LOCAL|SESSION] … / set_config) wins inside the transaction: use the shorter one.
+  # Parsed with comments removed, every PostgreSQL time unit (us ms s min h d) and optional spaces; 0 = no limit.
+  own_s="$(printf '%s\n' "$SQL" | python3 -I -B -c '
+import re, sys
+sys.path.insert(0, sys.argv[1]); from _txcheck import strip
+t = strip(sys.stdin.read(), keep_literals=True)
+pat = r"(?:set(?:\s+(?:local|session))?\s+lock_timeout\s*(?:=|to)\s*|set_config\s*\(\s*.lock_timeout.\s*,\s*)'"'"'?\s*([0-9.]+)\s*(us|ms|s|min|h|d)?\s*'"'"'?"
+vals = re.findall(pat, t, re.I)
+if not vals: sys.exit(0)
+n, u = vals[-1]; f = {"us": 1e-6, "ms": 1e-3, "s": 1, "min": 60, "h": 3600, "d": 86400}.get(u.lower(), 1e-3)
+import math; print(int(math.ceil(float(n) * f)))' "$KIT_DIR/scripts" 2>/dev/null || true)"
+  if [ -n "$own_s" ]; then
     # 0 = no limit in PostgreSQL: keep --lock-timeout
-    if [ "$own_s" -gt 0 ] && [ "$own_s" -lt "$LT_S" ]; then echo "注意:SQL 自己的 SET LOCAL lock_timeout = $own(比 --lock-timeout 短,以它為準)" >&2; LT_S="$own_s"; fi
+    if [ "$own_s" -gt 0 ] && [ "$own_s" -lt "$LT_S" ]; then echo "注意:SQL 自己的 lock_timeout 是 ${own_s}s(比 --lock-timeout 短,以它為準)" >&2; LT_S="$own_s"; fi
   fi
   [ "$LT_S" -ge 3 ] || die "有效的 lock_timeout 只有 ${LT_S}s(SQL 自己設的),監看來不及:這個面向改推導、標缺口" 2
   [ -z "$PROBE" ] || [ "$LT_S" -ge 5 ] || die "有 --probe 時有效的 lock_timeout 至少 5s(目前 ${LT_S}s;migration 自己設較短時,改不帶 --probe 觀察 DDL 被擋,probe 的排隊改推導)" 2
