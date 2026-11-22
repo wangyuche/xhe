@@ -90,7 +90,7 @@ skills:
 6. 範圍估算:migration 支數與面向數超過一次派工能完成的量 → BLOCKED,建議主 agent 依 migration 拆派。
 
 ### 隔離規則(每個實測指令都適用)
-- 只連本次建立的容器。go / goose / psql 一律經 kit 腳本執行:它們用 `env -i PATH=… HOME=<tmp>/home GOCACHE=… GOMODCACHE=… GOTOOLCHAIN=local GOFLAGS=-mod=readonly PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null` 加上**明確列出的 DSN**(只另外放行 `GOPROXY`、`GOSUMDB`、`GOPRIVATE`、`GONOSUMDB`、`GONOPROXY`、`HTTPS_PROXY`、`HTTP_PROXY`、`NO_PROXY`,不放行任何 DB 相關變數),不繼承 shell 的 `DATABASE_URL`、`TEST_*`、`PG*`;`GOCACHE` / `GOMODCACHE` 是使用者真正的 Go 快取。執行前每個 DSN 過守門(host `127.0.0.1`、port 是本容器的埠);回報列出 `guard ok` / `dsn-check` 結果。不自己寫 `go test` / `psql` / `docker exec` 指令繞過腳本。
+- 只連本次建立的容器。go / goose / psql 一律經 kit 腳本執行:它們用 `env -i PATH=… HOME=<tmp>/home GOCACHE=… GOMODCACHE=… GOTOOLCHAIN=local GOFLAGS=-mod=readonly PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null` 加上**明確列出的 DSN**(只另外放行 `GOPROXY`、`GOSUMDB`、`GOPRIVATE`、`GONOSUMDB`、`GONOPROXY`、`GOINSECURE`、`HTTPS_PROXY`、`HTTP_PROXY`、`NO_PROXY`(含小寫寫法),不放行任何 DB 相關變數),不繼承 shell 的 `DATABASE_URL`、`TEST_*`、`PG*`;`GOCACHE` / `GOMODCACHE` 是使用者真正的 Go 快取。執行前每個 DSN 過守門(host `127.0.0.1`、port 是本容器的埠);回報列出 `guard ok` / `dsn-check` 結果。不自己寫 `go test` / `psql` / `docker exec` 指令繞過腳本。
 - 禁止讀 `.env`、`.env.*`(`*.example` 除外)、kubeconfig、`deploy/` 下的 secret;禁止 `kubectl`、`gcloud`、`cnpg`、`go get`、`go mod tidy`、`-mod=mod`。
 - docker 只透過 `pg.sh` 操作自己建立、帶 label `dbrev=<name>` 且名稱前綴 `dbrev-<name>-` 的容器;禁止 `docker system prune`、刪其他容器或 volume、拉設定以外的映像。專案檔一律唯讀掛載。
 

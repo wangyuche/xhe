@@ -15,6 +15,7 @@
 # --goose-up takes the Up section of a goose file; files marked NO TRANSACTION are refused (cannot run in a transaction).
 # Last line: JSON summary. Exit: 0 observed (hold mode: ok true), 1 error / not observed, 2 usage, 4 DSN not this container.
 source "$(dirname "$0")/_common.sh"
+RID=$$   # per-run session-name suffix: parallel runs on one container never see or cancel each other
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
@@ -74,7 +75,7 @@ WORK="$(mktemp -d "$(name_dir "$NAME")/locks.XXXXXX" 2>/dev/null || { mkdir -p "
 PIDS=""
 cleanup() {
   # Cancel our backends first so the background psql sessions end on their own, then reap / kill leftovers.
-  [ -n "$HOLD" ] && printf "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-%%' AND pid <> pg_backend_pid();\n" \
+  [ -n "$HOLD" ] && printf "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-${RID}-%%' AND pid <> pg_backend_pid();\n" \
     | psql_dsn "$MON" -qAt >/dev/null 2>&1 || true
   local p
   for p in $PIDS; do
@@ -102,7 +103,7 @@ LOCKQ="SELECT coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc 
 
 if [ -z "$HOLD" ]; then
   # Relations that exist before the DDL; anything else in pg_locks afterwards was created by this transaction.
-  out="$(printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nSELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
+  out="$(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nSELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\nBEGIN;\n%s\n;\n\\\\echo __DBREV_LOCKS__\n%s\nROLLBACK;\n" "$LT" "$SQL" "$LOCKQ" \
         | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
   if [ $rc -ne 0 ]; then
     echo "$out" | tail -5 >&2
@@ -125,18 +126,18 @@ fi
 
 # ---- hold mode ----
 ST_HOLD="$((HOLD_S + 20))s"
-(printf "SET application_name = 'dbrev-lock-hold';\nBEGIN;\n%s\n;\nSELECT pg_sleep(%s);\nROLLBACK;\n" "$HOLD" "$HOLD_S" \
+(printf "SET application_name = 'dbrev-lock-${RID}-hold';\nBEGIN;\n%s\n;\nSELECT pg_sleep(%s);\nROLLBACK;\n" "$HOLD" "$HOLD_S" \
   | ST_OVERRIDE="$ST_HOLD" psql_dsn "$HOLD_DSN" -qAt > "$WORK/hold.out" 2>&1) & PIDS="$PIDS $!"
 i=0
-until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-hold' AND wait_event = 'PgSleep';\n" | psql_dsn "$MON" -qAt 2>/dev/null)" = "1" ]; do
+until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-${RID}-hold' AND wait_event = 'PgSleep';\n" | psql_dsn "$MON" -qAt 2>/dev/null)" = "1" ]; do
   i=$((i + 1)); [ $i -lt 40 ] || { cat "$WORK/hold.out" >&2; die "hold session 沒有進入等待(hold SQL 失敗?)" 1; }
   sleep 0.25
 done
-(printf "SET application_name = 'dbrev-lock-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$SQL" \
+(printf "SET application_name = 'dbrev-lock-${RID}-ddl';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$SQL" \
   | { set +e; psql_dsn "$DSN" -qAt > "$WORK/ddl.out" 2>&1; echo "rc=$?" >> "$WORK/ddl.out"; }) & DDL_PID=$!; PIDS="$PIDS $DDL_PID"
 wait_lock() { # <session> : until it waits on a lock (max 5 s)
   local i=0
-  until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>/dev/null)" = 1 ]; do
+  until [ "$(printf "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-${RID}-%s' AND wait_event_type = 'Lock';\n" "$1" | psql_dsn "$MON" -qAt 2>/dev/null)" = 1 ]; do
     i=$((i + 1)); [ $i -lt 50 ] || return 1; sleep 0.1
   done
 }
@@ -144,20 +145,20 @@ OBSERVED=true
 wait_lock ddl || OBSERVED=false
 PROBE_PID=""
 if [ -n "$PROBE" ]; then
-  (printf "SET application_name = 'dbrev-lock-probe';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$PROBE" \
+  (printf "SET application_name = 'dbrev-lock-${RID}-probe';\nSET lock_timeout = '%s';\nBEGIN;\n%s\n;\nROLLBACK;\n" "$LT" "$PROBE" \
     | { set +e; psql_dsn "$PROBE_DSN" -qAt > "$WORK/probe.out" 2>&1; echo "rc=$?" >> "$WORK/probe.out"; }) & PROBE_PID=$!; PIDS="$PIDS $PROBE_PID"
   wait_lock probe || OBSERVED=false
 fi
 SNAP="$(printf "%s\n" \
-  "WITH s AS (SELECT pid, application_name AS sess, state, wait_event_type, wait_event FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-%')" \
+  "WITH s AS (SELECT pid, application_name AS sess, state, wait_event_type, wait_event FROM pg_stat_activity WHERE application_name LIKE 'dbrev-lock-${RID}-%')" \
   "SELECT s.sess, s.pid, s.state, coalesce(s.wait_event_type,'') || ':' || coalesce(s.wait_event,''), coalesce((SELECT string_agg(b.sess, ',') FROM s b WHERE b.pid = ANY (pg_blocking_pids(s.pid))), '') FROM s ORDER BY 1;" \
   "\\echo __DBREV_LOCKS__" \
-  "SELECT a.application_name, coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, l.granted FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE a.application_name LIKE 'dbrev-lock-%' AND l.locktype = 'relation' ORDER BY 1, 2, 3;" \
+  "SELECT a.application_name, coalesce((SELECT rn.nspname || '.' || rc.relname FROM pg_class rc JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE rc.oid = l.relation), 'oid:' || l.relation::oid::text), l.mode, l.granted FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE a.application_name LIKE 'dbrev-lock-${RID}-%' AND l.locktype = 'relation' ORDER BY 1, 2, 3;" \
   | psql_dsn "$MON" -qAt -F '|' 2>&1 || true)"
 echo "### sessions(snapshot)"; echo "| session | pid | state | wait | blocked_by |"; echo "|---|---|---|---|---|"
-echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | while IFS='|' read -r s p st w b; do if [ -n "$s" ]; then echo "| ${s#dbrev-lock-} | $p | $st | $w | $(echo "$b" | sed 's/dbrev-lock-//g') |"; fi; done
+echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | while IFS='|' read -r s p st w b; do if [ -n "$s" ]; then echo "| ${s#dbrev-lock-$RID-} | $p | $st | $w | $(echo "$b" | sed "s/dbrev-lock-$RID-//g") |"; fi; done
 echo "### relation locks(snapshot)"; echo "| session | object | mode | granted |"; echo "|---|---|---|---|"
-echo "$SNAP" | sed -n '/^__DBREV_LOCKS__$/,$p' | sed 1d | while IFS='|' read -r s o m g; do if [ -n "$s" ]; then echo "| ${s#dbrev-lock-} | $o | $m | $g |"; fi; done
+echo "$SNAP" | sed -n '/^__DBREV_LOCKS__$/,$p' | sed 1d | while IFS='|' read -r s o m g; do if [ -n "$s" ]; then echo "| ${s#dbrev-lock-$RID-} | $o | $m | $g |"; fi; done
 wait "$DDL_PID" 2>/dev/null || true
 [ -z "$PROBE_PID" ] || wait "$PROBE_PID" 2>/dev/null || true
 outcome() { # file -> ok | timeout(55P03) | error(code)
@@ -171,7 +172,7 @@ outcome() { # file -> ok | timeout(55P03) | error(code)
 DDL_RES="$(outcome "$WORK/ddl.out")"; PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"
 echo "### outcomes"; echo "ddl: $DDL_RES $(grep -m1 ERROR "$WORK/ddl.out" || true)"
 [ -z "$PROBE" ] || echo "probe: $PROBE_RES $(grep -m1 ERROR "$WORK/probe.out" || true)"
-by() { echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | awk -F'|' -v s="dbrev-lock-$1" '$1==s{gsub(/dbrev-lock-/,"",$5); print $5}'; }
+by() { echo "$SNAP" | sed '/^__DBREV_LOCKS__$/,$d' | awk -F'|' -v s="dbrev-lock-$RID-$1" -v pre="dbrev-lock-$RID-" '$1==s{gsub(pre,"",$5); print $5}'; }
 # ok = the DDL (and probe) were seen waiting on a lock; otherwise the hold did not conflict or the run failed.
 OKV=$OBSERVED; case "$DDL_RES" in error*|connect-failed) OKV=false ;; esac
 printf '{"mode":"hold","ddl":"%s","ddl_blocked_by":"%s","probe":"%s","probe_blocked_by":"%s","observed":%s,"ok":%s}\n' \

@@ -10,10 +10,11 @@
 #                             marked "waiting" and the next step is sent (the session keeps waiting in the background)
 #   SLEEP: <seconds>
 #   CHECK: <sql> => <expected> run after both sessions end (check DSN); output compared as trimmed text
-# Sessions: application_name dbrev-race-A / -B, statement_timeout 30s, lock_timeout (default 10s, must exceed
+# Sessions: application_name dbrev-race-<pid>-A / -B (cancelled on exit), statement_timeout 30s, lock_timeout (default 10s, must exceed
 # deadlock_timeout). Session ends roll back anything uncommitted.
 # Last line: JSON {"deadlock":bool,"errors":{code:n},"checks":{"pass":n,"fail":n}}. Exit 1 if a CHECK fails.
 source "$(dirname "$0")/_common.sh"
+RID=$$
 
 usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
@@ -44,6 +45,9 @@ W="$(mktemp -d "$(name_dir "$NAME")/race.XXXXXX")"
 PA=""; PB=""
 cleanup() {
   { exec 7>&- 8>&-; } 2>/dev/null || true
+  # cancel our sessions in the container (they may still wait on locks after an interrupt)
+  printf "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name IN ('dbrev-race-%s-A', 'dbrev-race-%s-B') AND pid <> pg_backend_pid();\n" "$RID" "$RID" \
+    | psql_dsn "$CHK" -qAt >/dev/null 2>&1 || true
   local p k
   for p in $PA $PB; do
     k=0; while kill -0 "$p" 2>/dev/null && [ $k -lt 40 ]; do sleep 0.25; k=$((k + 1)); done
@@ -61,7 +65,7 @@ fi
 
 mkfifo "$W/a.fifo" "$W/b.fifo"
 start_session() { # <label> <dsn> <fifo> <out>
-  (printf "SET application_name = 'dbrev-race-%s';\n" "$1"; cat "$3") \
+  (printf "SET application_name = 'dbrev-race-%s-%s';\n" "$RID" "$1"; cat "$3") \
     | PSQL_MERGE_STDERR=1 ST_OVERRIDE=30s LT_OVERRIDE="$LT" psql_dsn "$2" -q -v ON_ERROR_STOP=0 > "$4" 2>&1
 }
 start_session A "$DSN_A" "$W/a.fifo" "$W/a.out" & PA=$!

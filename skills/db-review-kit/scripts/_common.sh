@@ -164,9 +164,10 @@ check_extra_env() {
     case "$v" in
       postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v"; continue ;;
       *://*) die "$k 的值是非 postgres 的 URL,拒絕" 4 ;;
-      *host=*|*hostaddr=*|*dbname=*|*user=*|*sslmode=*|*port=*|*service=*|*@*)
-        die "$k 的值看起來是連線設定(libpq 關鍵字或 @),拒絕(只接受指向本容器的 postgres:// URL)" 4 ;;
     esac
+    if printf '%s' "$v" | grep -Eq ':[^[:space:]@/]*@[A-Za-z0-9.-]+'; then
+      die "$k 的值看起來是 帳號:密碼@主機,拒絕(只接受指向本容器的 postgres:// URL)" 4
+    fi
     if printf '%s' "$v" | grep -Eqi '(^|[[:space:]])(host|hostaddr|dbname|user|port|service|sslmode|password)[[:space:]]*='; then
       die "$k 的值看起來是 libpq 連線字串,拒絕" 4
     fi
@@ -175,9 +176,10 @@ check_extra_env() {
     fi
     # Connection-looking names (whole _-separated tokens, so REPORT_DIR / FEEDBACK are fine) must carry a guarded URL.
     looks=""
-    case "$ku" in PG*) looks=1 ;; esac
     for tok in $(printf '%s' "$ku" | tr '_' ' '); do
-      case "$tok" in DATABASE|DSN|DB|HOST|POSTGRES|POSTGRESQL|ADDR|PORT|SERVER|SOCKET|URL|URI|CONN|CONNECTION) looks=1 ;; esac
+      case "$tok" in
+        PG*|DATABASE|DSN|DB|HOST|POSTGRES|POSTGRESQL|ADDR|PORT|SERVER|SOCKET|URL|URI|CONN|CONNECTION|INSTANCE|ENDPOINT|DATASOURCE|CLOUDSQL) looks=1 ;;
+      esac
     done
     [ -z "$looks" ] || [ -z "$v" ] || die "$k 看起來是連線設定但不是 postgres:// URL,拒絕(只接受指向本容器的 URL)" 4
   done

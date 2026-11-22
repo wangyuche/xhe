@@ -64,7 +64,8 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOAUTH=sh -c id'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:GOAUTH 等 Go 工具鏈變數不能傳" || bad "GOAUTH 應拒絕" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
-for kv in 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
+o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_ARGS=--report=json' 'NOTIFY=ci@example.com' 'SUPER=superuser=on'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:--report=json、email 這類值不誤擋" || bad "誤擋 report/email" "$o"
+for kv in 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
 done
@@ -155,6 +156,11 @@ j="$(echo "$o" | tail -1)"
 echo "$j" | grep -q '"before": 2' && echo "$j" | grep -q '"down_no_flag": "rejected"' && echo "$j" | grep -q '"down_with_flag": "ok"' \
   && echo "$j" | grep -q '"up_again": "ok"' && echo "$j" | grep -q '"ok": true' && echo "$j" | grep -q 'fx.allow_data_down' && [ $rc -eq 0 ] \
   && ok "goose.sh roundtrip:前一版 → up → down 不帶旗標被拒(RAISE)→ 帶旗標成功 → up" || bad "goose roundtrip" "$o"
+o="$(bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --from 3 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | grep -q 'up 不會真的執行' && ok "goose.sh roundtrip:資料庫已在審查版本、沒給 --dsn-allow → 拒絕(不會假裝 up 過)" || bad "roundtrip 已在版本" "rc=$rc $o"
+o="$(bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --dsn-allow "$MIGA" --from 3 2>&1)"; rc=$?
+echo "$o" | grep -q '== 0 down-to before first' && echo "$o" | tail -1 | grep -q '"ok": true' && [ $rc -eq 0 ] && ok "goose.sh roundtrip:已在審查版本時先用 allow DSN 退回再真的 up" || bad "roundtrip 先退回" "rc=$rc $o"
+bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIGA" -- down-to 2 >/dev/null 2>&1
 o="$(bash "$S/goose.sh" "$N" roundtrip --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "$MIG" --from 3 2>&1)"; rc=$?
 echo "$o" | tail -1 | grep -q '"down_with_flag": "no-allow-dsn"' && [ $rc -eq 1 ] && ok "goose.sh roundtrip:沒給 --dsn-allow 時破壞性 Down 無法完成 → ok=false" || bad "roundtrip 無 allow" "$o"
 o="$(bash "$S/goose.sh" "$N" run --dir "$FX/migrations" --table fx_meta.goose_db_version --dsn "postgres://fx_migrator:x@127.0.0.1:5432/fx_test" -- status 2>&1)"; rc=$?
@@ -288,6 +294,9 @@ printf 'UPDATE fx.accounts SET balance = 0 \\g\nCOMMIT\n' > "$WORK/q3.sql"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --file "$WORK/q3.sql" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:查詢裡有 \\g → 拒絕" || bad "explain meta" "$o"
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -d "postgres://u@10.0.0.5/prod" -c 'SELECT 1' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-d 等連線參數 → 拒絕" || bad "psql -d" "$o"
 o="$(printf '\\c postgres://u@10.0.0.5/prod\nSELECT 1;\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:stdin 裡有 \\c → 拒絕" || bad "psql \\c" "$o"
+o="$(printf '\\if :{?n}\n\\else\n\\set n 1\n\\endif\n\\timing on\nSELECT :n;\n\\quit\n' | bash "$S/pg.sh" psql "$N" "$SU" -qAt 2>&1)"; [ "$(echo "$o" | head -1)" = 1 ] && ok "pg.sh psql:\\if / \\set / \\timing / \\quit 等腳本指令可以用" || bad "psql 允許的指令" "$o"
+o="$(printf 'SELECT 1 \\g |sh\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\g |cmd 等不在允許清單的 psql 指令 → 拒絕" || bad "psql \\g pipe" "$o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_n (i int); /* a /* b */ ' */ COMMIT; -- '" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:巢狀註解後的 COMMIT 也會被抓到" || bad "locks 巢狀註解" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SET work_mem='1MB'; SELECT 1" 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:多個語句 → 用法錯誤" || bad "explain 多語句" "$o"
 o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1" --runs 0 2>&1)"; [ $? -eq 2 ] && ok "explain.sh:--runs 0 → 用法錯誤(不會假通過)" || bad "explain runs 0" "$o"
 printf 'SELECT count(*) FROM fx.accounts\n-- hot path' > "$WORK/q.sql"

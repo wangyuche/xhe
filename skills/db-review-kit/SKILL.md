@@ -30,7 +30,8 @@ bash <kit>/scripts/pg.sh up <name> --image <設定的映像> \
 #   init 腳本失敗或容器提早結束:印最後 40 行 log、刪容器、結束碼 1。同名容器已存在:結束碼 1(先 gc)
 bash <kit>/scripts/pg.sh dsn <name> <角色> <庫> [--options '-c mj.allow_data_down=on']
 bash <kit>/scripts/pg.sh psql <name> <dsn> [-q -A -t -X -F … -v … -P … -c …]   # SQL 從 stdin(容器內 psql,看不到主機檔案,用 < 檔案)
-#   不接受連線參數(-d -h -p -U);SQL 裡有 \c / \connect / \! → 結束碼 4
+#   不接受連線參數(-d -h -p -U);psql 指令只允許 \if \elif \else \endif \set \unset \echo \qecho \warn \pset \gset \timing \x \a \t \f \q \quit \getenv
+#   (\c、\!、\o、\g |…、\copy、\i 等 → 結束碼 4;seed.sh --file 同樣)
 bash <kit>/scripts/pg.sh guard <name> <dsn>...               # 逐一印 guard ok / FAIL;有 FAIL 結束碼 4
 bash <kit>/scripts/pg.sh rm <name> [--purge]                 # 刪容器(--purge 連暫存目錄)
 bash <kit>/scripts/pg.sh gc <name>                           # 第 0 步:清 label dbrev=<name> 且前綴 dbrev-<name>- 的殘留 → gc … remaining=0
@@ -41,7 +42,7 @@ bash <kit>/scripts/goose.sh <name> run --dir <migrations> --table <版本表> --
 bash <kit>/scripts/goose.sh <name> roundtrip --dir <migrations> --table <版本表> \
   --dsn <不帶旗標的 migrator DSN> --dsn-allow <帶破壞性 Down 旗標的 DSN> --from <審查的第一版> [--to <最後一版>]
 # → 前一版 → up-to → down-to 前一版(不帶旗標)→ 被拒時用 --dsn-allow 再 down → up-to;每步印指令與輸出
-#   資料庫目前版本高於 --to、或 --to < --from → 拒絕;go.mod 對 goose 有 replace → 結束碼 1(goose 實測標缺口)
+#   資料庫目前版本高於 --to、或 --to < --from → 拒絕;已高於前一版時用 --dsn-allow 先退回(沒給就拒絕);go.mod 對 goose 有 replace → 結束碼 1(goose 實測標缺口)
 #   最後一行 JSON:{"before","up":"ok|failed","down_no_flag":"ok|rejected|not-run","down_with_flag":"ok|failed|no-allow-dsn|skipped",
 #                  "up_again":"ok|failed|not-run","final_version","reject_message","ok"};範圍內有 Go migration → ok=false(缺口)
 

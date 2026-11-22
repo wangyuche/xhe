@@ -5,7 +5,7 @@ Removed first (so they never count): comments, string literals (incl. E'' backsl
 dollar-quoted bodies ($$…$$, $tag$…$tag$) and SQL-standard bodies (BEGIN ATOMIC … END, CASE … END nested).
 Any backslash left outside those is a psql meta-command (\\g, \\c, \\gexec …) and is refused.
 Usage: _txcheck.py            (check stdin)
-       _txcheck.py --connect  (only refuse \\c / \\connect / \\!, for psql scripts that use \\if, \\set, \\echo …)
+       _txcheck.py --connect  (psql scripts: allow only \\if \\set \\echo \\pset \\gset … ; refuse \\c \\! \\o \\copy \\i …)
 """
 import re
 import sys
@@ -23,8 +23,15 @@ def strip(sql):
             i = n if j < 0 else j
             continue
         if sql.startswith("/*", i):
-            j = sql.find("*/", i + 2)
-            i = n if j < 0 else j + 2
+            depth, j = 1, i + 2          # PostgreSQL block comments nest
+            while j < n and depth:
+                if sql.startswith("/*", j):
+                    depth += 1; j += 2
+                elif sql.startswith("*/", j):
+                    depth -= 1; j += 2
+                else:
+                    j += 1
+            i = j
             out.append(" ")
             continue
         m = re.match(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$", sql[i:])
@@ -83,9 +90,16 @@ def main():
     raw = sys.stdin.read()
     text = strip(raw)
     if "--connect" in sys.argv[1:]:
-        for line in text.splitlines():
-            if re.search(r"\\(c|connect|!)(\s|$)", line):
-                print("psql reconnect / shell: " + line.strip()[:80])
+        # psql scripts may use only these meta-commands (no \\c, \\!, \\o, \\g |cmd, \\copy, \\i, \\setenv …)
+        allowed = {"if", "elif", "else", "endif", "set", "unset", "echo", "qecho", "warn", "pset", "gset", "timing",
+                   "x", "a", "t", "f", "q", "quit", "getenv", "conninfo", "encoding"}
+        for m in re.finditer(r"\\([A-Za-z!?]+|\\)", text):
+            cmd = m.group(1)
+            if cmd == "\\":
+                continue
+            if cmd not in allowed:
+                line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0]
+                print("psql meta-command not allowed: \\" + cmd + " (" + line.strip()[:60] + ")")
                 return 1
         return 0
     if "\\" in text:

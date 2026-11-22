@@ -39,7 +39,12 @@ if [ -z "$MODULE" ]; then
 fi
 grep -qE '^[[:space:]]*(replace[[:space:]]+)?github\.com/pressly/goose/v3([[:space:]]+v[^ ]+)?[[:space:]]*=>' "$MODULE/go.mod" \
   && die "go.mod 對 goose 有 replace;kit 只會編上游版本,行為可能不同 → goose 相關實測標缺口" 1
-GOOSE_VER="$(awk '$1=="github.com/pressly/goose/v3" && $3!="=>"{print $2; exit} $1=="require" && $2=="github.com/pressly/goose/v3"{print $3; exit}' "$MODULE/go.mod")"
+# version only from require (single-line or block), never from exclude / replace / retract blocks
+GOOSE_VER="$(awk '
+  $1 ~ /^(require|exclude|replace|retract)$/ && $2 == "(" { blk = $1; next }
+  $1 == ")" { blk = ""; next }
+  $1 == "require" && $2 == "github.com/pressly/goose/v3" { print $3; exit }
+  blk == "require" && $1 == "github.com/pressly/goose/v3" { print $2; exit }' "$MODULE/go.mod")"
 [ -n "$GOOSE_VER" ] || die "$MODULE/go.mod 沒有 github.com/pressly/goose/v3;goose 版本無法判定" 1
 case "$GOOSE_VER" in v[0-9]*) ;; *) die "從 go.mod 讀到的 goose 版本不合法:$GOOSE_VER" 1 ;; esac
 
@@ -101,6 +106,13 @@ case "$SUB" in
     CUR0="$(goose_cmd "$UPDSN0" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1 || true)"
     [ -z "$CUR0" ] || [ "$CUR0" -le "$TO" ] || die "資料庫目前在版本 $CUR0,高於 --to $TO;roundtrip 會連帶 down 審查範圍外的 migration。先用 goose.sh run 退到 ≤ $TO,或改 --to" 1
     BEFORE="$(versions | awk -v f="$FROM" '$1<f{b=$1} END{print b+0}')"
+    # Already past BEFORE: Up would be a no-op. Step back first (needs the allow DSN for guarded Downs) or refuse.
+    if [ -n "$CUR0" ] && [ "$CUR0" -gt "$BEFORE" ]; then
+      [ -n "$DSN_ALLOW" ] || die "資料庫目前在版本 $CUR0(> 前一版 $BEFORE),up 不會真的執行;給 --dsn-allow 讓 roundtrip 先退回,或先用 goose.sh run 退到 $BEFORE" 1
+      echo "== 0 down-to before first (current $CUR0 > $BEFORE; dsn=allow)"
+      o0="$(goose_cmd "$DSN_ALLOW" down-to "$BEFORE" 2>&1)" || { echo "$o0" | sed 's/^/   /'; die "先退回 $BEFORE 失敗" 1; }
+      echo "$o0" | sed 's/^/   /'
+    fi
     UPDSN="${DSN_ALLOW:-$DSN}"
     step() { # <label> <dsn-label> <dsn> <args...>; prints output, sets RC
       local label="$1" dl="$2" dsn="$3"; shift 3
