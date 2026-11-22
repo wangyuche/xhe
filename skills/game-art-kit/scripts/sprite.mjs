@@ -150,6 +150,7 @@ export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(
 export function fit(imgs, W, H, { align = 'bottom', margin, foot } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
   if (foot != null && (align !== 'bottom' || m === 0)) die('--foot 只用於 --align bottom 且 margin ≠ 0');
+  if (foot != null && H - m - 1 < 2) die(`格子太小(H ${H}、margin ${m}),放不下 --foot;不要用 --foot 或加大 1x 高度`);
   if (foot != null && (foot < 2 || foot >= H - m)) die(`--foot 要在 2 到 ${H - m - 1} 之間(2 px 外框檢查之外、小於 H − margin)`);
   foot ??= FOOT;
   if (W > 2048 || H > 2048) die(`1x 尺寸 ${W}×${H} 超過 2048(PX-RES-01);用 sprite.mjs density 算出的 1x 尺寸(單張與 frames 整張 sheet 都 ≤ 2048)`);
