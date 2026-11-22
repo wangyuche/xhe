@@ -6,11 +6,11 @@
 //     --json 是這次要寫入的完整 assets.json(保留既有項目、只更新這次交付的項目)。
 //   node deliver.mjs --recover --assets <art/assets 目錄>
 //     依上次中斷留下的交付日誌自動收拾:還沒提交 → 把舊檔與舊 assets.json 全部換回;已提交 → 只刪備份。
-// 規則:交付的每個檔都要列在 --json 某項目的 files;內容有變的項目,它的 files 要全部一起交付(例如音訊 .ogg 與 .m4a);
+// 規則:交付的每個檔都要列在 --json 某項目的 files(大小寫完全一致),且該項目在 --json 裡有變更;內容有變的項目,它的 files 要全部一起交付(例如音訊 .ogg 與 .m4a);
 //       相對路徑(不分大小寫)不能重複;assets 目錄有交付日誌(上次中斷)時拒絕,請先 --recover。
 // 步驟:複製到暫存名 → 寫日誌(placing)→ 舊檔改名成備份、暫存名改成正式名 → 驗證 → 換上 assets.json → 日誌改 committed
 //       → 刪備份與日誌。提交前任何一步失敗都還原;提交後清理失敗只警告。
-// 測試用:環境變數 DELIVER_FAIL_AT=copy|place|validate 會在該階段注入失敗(只給 tests/run.sh 用)。
+// 測試用:同時設 DELIVER_TEST=1 與 DELIVER_FAIL_AT=copy|place|validate 才會在該階段注入失敗(只給 tests/run.sh 用)。
 // 結束碼:0 完成(印 {"ok":true,…});1 交付失敗且已還原;2 用法錯誤 / 需要先 --recover。
 import { existsSync, copyFileSync, renameSync, rmSync, rmdirSync, mkdirSync, readFileSync, writeFileSync, realpathSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve, sep, isAbsolute, normalize, relative } from 'node:path';
@@ -33,7 +33,7 @@ function readJson(p, what) {
 export function recover(assets) {
   const jp = join(assets, JOURNAL);
   if (!existsSync(jp)) return { ok: true, recovered: false };
-  let j; try { j = JSON.parse(readFileSync(jp, 'utf8')); } catch (e) { die(`交付日誌 ${jp} 讀不出來(${e.message}):請人工檢查 art/assets 裡的 .deliver- 檔(.bak 結尾是交付前的舊檔),處理完刪掉日誌再重跑`, 1); }
+  let j; try { j = JSON.parse(readFileSync(jp, 'utf8')); if (!Array.isArray(j?.entries) || typeof j.jsonTmp !== 'string' || typeof j.jsonBak !== 'string') throw new Error('格式不對'); } catch (e) { die(`交付日誌 ${jp} 讀不出來(${e.message}):請人工檢查 art/assets 裡的 .deliver- 檔(.bak 結尾是交付前的舊檔),處理完刪掉日誌再重跑`, 1); }
   const errs = [], step = (fn) => { try { fn(); } catch (e) { errs.push(e.message); } };
   if (j.state === 'committed') {
     for (const e of j.entries) if (e.bak) step(() => rmSync(join(assets, e.bak), { force: true }));
@@ -56,7 +56,7 @@ export function recover(assets) {
   return { ok: true, recovered: true, state: j.state ?? 'placing' };
 }
 
-export function deliver({ stage, assets, json, files, failAt = process.env.DELIVER_FAIL_AT }) {
+export function deliver({ stage, assets, json, files, failAt = process.env.DELIVER_TEST === '1' ? process.env.DELIVER_FAIL_AT : undefined }) {
   if (!files.length) die('至少要給一個相對路徑');
   for (const f of files) if (isAbsolute(f) || normalize(f).split(sep).includes('..')) die(`相對路徑不能是絕對路徑或含 ..:${f}`);
   if (new Set(files.map(key)).size !== files.length) die('相對路徑重複(不分大小寫)');
@@ -65,8 +65,8 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
   if (!next || typeof next !== 'object' || !Array.isArray(next.assets) || next.assets.some(a => !a || typeof a !== 'object' || !Array.isArray(a.files)))
     die('--json 格式不對:要是 {"assets":[{…,"files":[…]}]}');
   const delivered = new Set(files.map(key));
-  const listed = new Set(next.assets.flatMap(a => a.files.map(key)));
-  for (const f of files) if (!listed.has(key(f))) die(`--json 的 assets 沒有任何項目的 files 列出 ${f}(交付的檔要和 assets.json 一起更新)`);
+  const owner = new Map(next.assets.flatMap(a => a.files.map(f => [norm(f), a])));
+  for (const f of files) if (!owner.has(norm(f))) die(`--json 的 assets 沒有任何項目的 files 列出 ${f}(路徑大小寫要完全一致;交付的檔要和 assets.json 一起更新)`);
   // 內容有變的項目(新增或和目前 assets.json 不同),它的 files 要全部一起交付
   const target = join(assets, 'assets.json');
   const cur = existsSync(target) ? readJson(target, '目前的 assets.json') : { assets: [] };
@@ -82,8 +82,13 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
   for (const f of files) if (!existsSync(join(stage, f))) die(`stage 沒有 ${f}(先確認該項 check 通過且輸出在 stage)`, 1);
   // 驗證:schema 看整份;檔案存在只看這次有變更的項目(無關的舊項目缺檔只警告,不擋這次交付)
   const changedIds = new Set(next.assets.filter(a => curById.get(a.id) !== canon(a)).map(a => a.id));
+  for (const f of files) { const a = owner.get(norm(f)); if (!changedIds.has(a.id)) die(`${f} 屬於項目 ${a.id},但這個項目在 --json 裡沒有變更:換檔時要一起更新它的 source / review 等欄位`); }
+  // schema:有變更的項目(與整份的頂層欄位)不通過就擋;沒動到的舊項目不符合只警告
   const schemaErrs = validate('assets', next);
-  if (schemaErrs.length) die(`新的 assets.json 格式不通過:${schemaErrs.slice(0, 5).join(';')}`);
+  const idxOf = new Map(next.assets.map((a, i) => [i, a.id]));
+  const blocking = schemaErrs.filter(e => { const m = /^assets\[(\d+)\]/.exec(e); return !m || changedIds.has(idxOf.get(+m[1])); });
+  if (blocking.length) die(`新的 assets.json 格式不通過:${blocking.slice(0, 5).join(';')}`);
+  const legacyErrs = schemaErrs.filter(e => !blocking.includes(e));
   const unrelatedMissing = next.assets.filter(a => !changedIds.has(a.id)).flatMap(a => a.files.filter(f => !delivered.has(key(f)) && !existsSync(join(assets, f))));
 
   const uniq = `.deliver-${process.pid}`;
@@ -121,6 +126,9 @@ export function deliver({ stage, assets, json, files, failAt = process.env.DELIV
   // 已提交:清備份與日誌;失敗只警告
   const warnings = [];
   try { recover(assets); } catch (e) { warnings.push(`清理備份失敗(交付已完成,可稍後跑 --recover):${e.message}`); }
+  if (legacyErrs.length) warnings.push(`沒動到的舊項目不符合目前格式(這次沒擋):${legacyErrs.slice(0, 5).join(';')}`);
+  const orphans = (cur.assets ?? []).filter(a => changedIds.has(a.id)).flatMap(a => a.files.filter(f => !owner.has(norm(f)) && existsSync(join(assets, f))));
+  if (orphans.length) warnings.push(`變更後不再被引用的舊檔(沒刪,請確認):${orphans.join(', ')}`);
   if (unrelatedMissing.length) warnings.push(`assets.json 裡其他項目的檔案不存在(這次沒擋):${unrelatedMissing.join(', ')}`);
   return { ok: true, files, ...(warnings.length ? { warnings } : {}) };
 }
