@@ -337,6 +337,8 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$APP" --query "SELECT balance FROM fx.acco
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
 o="$(printf ':x\n' | bash "$S/pg.sh" psql "$N" "$SU" -v 'x=\c host=10.0.0.5 dbname=prod' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值含反斜線 → 拒絕" || bad "psql -v backslash" "$o"
 o="$(printf "SELECT chr(92)||'! id' AS x \\gset\n:x\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 變數再以 :x 執行 → 拒絕" || bad "psql gset :x" "$o"
+o="$(printf "SELECT chr(92)||'c host=10.0.0.5' AS x \\gset\n\\set y :x\n:y\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\set y :x 複製變數再執行 → 拒絕" || bad "psql set y :x" "$o"
+o="$(printf "SELECT chr(92)||'! id' AS n \\gset\n:n\n" | bash "$S/pg.sh" psql "$N" "$SU" -v n=1 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 覆寫 -v 的變數再執行 → 拒絕" || bad "psql gset 覆寫 -v" "$o"
 o="$(printf "SELECT :'v'::int + :n AS s;\n" | bash "$S/pg.sh" psql "$N" "$SU" -qAt -v v=1 -v n=2 2>&1)"; [ "$o" = 3 ] && ok "pg.sh psql:-v 給的 :n 與 :'v' 可以用" || bad "psql -v 變數" "$o"
 o="$(printf 'SELECT 1 \\g |sh\n' | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\g |cmd 等不在允許清單的 psql 指令 → 拒絕" || bad "psql \\g pipe" "$o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_n (i int); /* a /* b */ ' */ COMMIT; -- '" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:巢狀註解後的 COMMIT 也會被抓到" || bad "locks 巢狀註解" "$o"

@@ -132,13 +132,39 @@ def main():
         # psql re-lexes a bare :name value as if typed (so a value holding "\\c host=…" would run). In SQL lines only
         # :'name' / :"name" (quoted, safe) or a bare :name set by a validated -v (--vars) or a plain \\set are allowed.
         vars_ok = set(v for v in (sys.argv[sys.argv.index("--vars") + 1].split(",") if "--vars" in sys.argv else []) if v)
+        # Untrusted names: anything a \gset may set (every identifier of that statement, or everything if it selects *),
+        # a \set with a non-plain value (e.g. "\set y :x" copies another variable), and \getenv targets.
+        untrusted, untrusted_all, stmt = set(), False, []
         for line in raw.splitlines():
-            m = re.match(r"\s*\\set\s+([A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z0-9_.:+-]*\s*$", line)
+            st = line.lstrip()
+            m = re.match(r"\\set\s+([A-Za-z_][A-Za-z0-9_]*)(\s+(.*))?$", st)
             if m:
-                vars_ok.add(m.group(1))
+                if re.fullmatch(r"[A-Za-z0-9_.+-]*", (m.group(3) or "").strip()):
+                    vars_ok.add(m.group(1))
+                else:
+                    untrusted.add(m.group(1))
+                continue
+            m = re.match(r"\\getenv\s+([A-Za-z_][A-Za-z0-9_]*)", st)
+            if m:
+                untrusted.add(m.group(1))
+                continue
+            if st.startswith("\\"):
+                continue
+            stmt.append(line)
+            if re.search(r"\\gset", line):
+                text_g = "\n".join(stmt)
+                text_g = text_g[text_g.rfind(";") + 1:]
+                quoted = re.findall(r'"([^"]*)"', text_g)
+                bare = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", strip(text_g))
+                untrusted.update(quoted); untrusted.update(b.lower() for b in bare); untrusted.update(bare)
+                if "*" in strip(text_g):
+                    untrusted_all = True
+                stmt = []
+            elif ";" in strip(line):
+                stmt = []
         sql_only = strip("\n".join(l for l in raw.splitlines() if not l.lstrip().startswith("\\")))
         for vm in re.finditer(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", sql_only):
-            if vm.group(1) not in vars_ok:
+            if vm.group(1) not in vars_ok or vm.group(1) in untrusted or untrusted_all:
                 print("bare :%s in SQL (re-lexed by psql); use :'%s' or pass it with -v" % (vm.group(1), vm.group(1)))
                 return 1
         # psql's own lexer decides where a meta-command starts, and emulating it has proven fragile. So in script mode a

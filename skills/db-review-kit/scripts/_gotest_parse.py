@@ -35,6 +35,14 @@ def main(path, elapsed, go_rc=0):
             elif act == "build-fail":
                 pkgs[pkg] = "build-fail"
             elif act in ("pass", "fail", "skip"):
+                if act == "fail" and not test and ev.get("FailedBuild"):
+                    # the package failed because ImportPath FailedBuild (maybe x_test or a dependency) did not build
+                    fb = ev["FailedBuild"].split(" [", 1)[0]
+                    pkgs[pkg] = "build-fail"
+                    if fb != pkg:
+                        outputs.setdefault((pkg, None), []).extend(outputs.get((fb, None), []))
+                        pkgs.pop(fb, None)
+                    continue
                 if test:
                     results[(pkg, test)] = act
                 elif pkgs.get(pkg) != "build-fail":
