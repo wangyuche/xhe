@@ -14,7 +14,8 @@ if (!dirArg) { console.error('用法:node check-assets.mjs <專案目錄> [--bud
 const dir = resolve(dirArg);
 const opt = (n, d) => { const i = rest.indexOf(n); return i >= 0 ? rest[i + 1] : d; };
 const budgetsFile = resolve(dir, opt('--budgets', 'docs/performance-budgets.md'));
-const art = opt('--art');
+const artOpt = opt('--art');
+const art = artOpt ? resolve(dir, artOpt) : undefined; // 和 --budgets 一樣相對專案目錄
 const errors = [];
 const report = [];
 

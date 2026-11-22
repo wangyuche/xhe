@@ -46,6 +46,9 @@ echo "import { Sprite } from 'pixi.js'; export const s = Sprite;" > "$P/src/game
 tf "check-layers 抓到 src/game import pixi" node "$K/scripts/check-layers.mjs" "$P"
 echo "import { Rectangle } from 'pixi.js/math-extras'; export const r = Rectangle;" > "$P/src/game/bad.ts"
 tf "check-layers 抓到 pixi.js 子路徑" node "$K/scripts/check-layers.mjs" "$P"
+printf "export const f = () => import(\n  'pixi.js'\n);\n" > "$P/src/game/bad.ts"
+tf "check-layers 抓到跨行的 dynamic import" node "$K/scripts/check-layers.mjs" "$P"
+echo "import { Rectangle } from 'pixi.js/math-extras'; export const r = Rectangle;" > "$P/src/game/bad.ts"
 tf "vitest no-pixi 測試也擋" npx --no vitest run src/game/no-pixi.test.ts
 printf "// never do: import { Sprite } from 'pixi.js'\nexport const ok = 1;\n" > "$P/src/game/bad.ts"
 t  "check-layers 不把註解裡的 import 當違規" node "$K/scripts/check-layers.mjs" "$P"

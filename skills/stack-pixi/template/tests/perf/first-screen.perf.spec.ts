@@ -25,14 +25,18 @@ test('perf first screen', async ({ browser }) => {
     let interactive = false;
     const pendingSizes: Promise<void>[] = [];
     await page.exposeFunction('__onInteractive', () => { interactive = true; }); // 可互動當下就停止計入,不等下一次輪詢
+    // 可互動之前「開始」的請求都算(包括可互動時還在下載的),完成時才加大小
+    const early = new Set<unknown>();
+    page.on('request', (r) => { if (!interactive) early.add(r); });
     page.on('requestfinished', (r) => {
-      if (interactive) return;
+      if (!early.has(r)) return;
       pendingSizes.push(r.sizes().then((s) => { bytes += s.responseBodySize + s.responseHeadersSize; }, () => {}));
     });
     await page.goto('/');
     await page.waitForFunction(() => (window as any).__interactiveAt, null, { timeout: 90_000 });
     interactive = true;
     await page.waitForTimeout(100); // 讓可互動那個 long task 的 entry 送達
+    await page.waitForLoadState('networkidle').catch(() => {}); // 等可互動前開始的下載完成
     await Promise.all(pendingSizes);
     const m = await page.evaluate(() => {
       const w = window as any;

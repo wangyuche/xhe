@@ -19,7 +19,15 @@ const walk = (p) => {
     if (!/\.(m?ts|m?js|tsx)$/.test(f)) continue;
     const text = readFileSync(full, 'utf8');
     const raw = text.split('\n');
-    stripComments(text).split('\n').forEach((l, i) => { if (RE.test(l)) out.push({ file: relative(dir, full), line: i + 1, text: raw[i].trim() }); });
+    const code = stripComments(text);
+    // 整個檔案一起比對(\s 含換行,跨行的 import(\n 'pixi.js') 也抓得到),位移換回行號
+    const seen = new Set();
+    for (const m of code.matchAll(new RegExp(RE.source, 'gm'))) {
+      const line = code.slice(0, m.index).split('\n').length - 1;
+      if (seen.has(line)) continue;
+      seen.add(line);
+      out.push({ file: relative(dir, full), line: line + 1, text: raw[line].trim() });
+    }
   }
 };
 for (const p of paths) if (existsSync(join(dir, p))) walk(join(dir, p));

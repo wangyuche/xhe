@@ -107,8 +107,8 @@ for (const [group, list] of groups) {
           if (name.endsWith('.avif')) kb[tier] += statSync(join(dir, name)).size / 1024;
         }
       }
-      Object.assign(e, { width: a.width, height: a.height, anchor: a.anchor });
-      if (a.nineSlice) e.nineSlice = a.nineSlice;
+      Object.assign(e, { width: a.width, height: a.height, density: a.density, anchor: a.anchor });
+      if (a.nineSlice) { e.nineSlice = a.nineSlice; e.nineSlice1x = a.nineSlice1x; } // 顯示 px 與貼圖單位(1x px)
       if (a.frames) e.frames = a.frames; // 貼圖單位 = 1x px(0.5x 檔名 @0.5x,Pixi 依此換算)
     } else {
       for (const f of a.files) {

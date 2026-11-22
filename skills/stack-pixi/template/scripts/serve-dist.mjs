@@ -12,9 +12,9 @@ if (!dirArg) { console.error('用法:PORT=<埠> node scripts/serve-dist.mjs <dis
 const dir = path.resolve(dirArg);
 const port = Number(process.env.PORT) || 4175;
 const api = target ? new URL(target) : undefined;
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.jpeg': 'image/jpeg', '.mp3': 'audio/mpeg', '.woff': 'font/woff', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.woff2': 'font/woff2' };
-const COMPRESS = new Set(['.html', '.js', '.css', '.json', '.svg']);
+const COMPRESS = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.wasm']);
 const gz = new Map();
 
 http.createServer((req, res) => {

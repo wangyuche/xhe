@@ -5,6 +5,7 @@ export const en = {
   'common.rotate': 'Please rotate your device to landscape.',
   'common.rotatePortrait': 'Please rotate your device to portrait.',
   'error.boot': 'Something went wrong while starting. Please reload.',
+  'error.load': 'Could not load the next screen. Please check your connection and reload.',
   'error.contextLost': 'The graphics context was lost. Please reload.',
   'title.heading': '__TITLE__',
   'title.start': 'Start',

@@ -1,5 +1,7 @@
 import type { Application, Container } from 'pixi.js';
 import { acquireGroup, releaseGroup, setTier } from '../assets';
+import { t } from '../i18n';
+import { showError } from './app';
 import { LANDSCAPE } from '../config/design';
 import { computeFit, type Fit } from './layout';
 import { watchModalDialogs } from './modal-guard';
@@ -40,6 +42,14 @@ export class SceneManager {
     });
   }
 
+  /** 給場景用:切換失敗(chunk 或素材載入失敗)顯示錯誤畫面與重新載入,不留下沒反應的按鈕。 */
+  goSafe(name: SceneName): Promise<void> {
+    return this.go(name).catch((e: unknown) => {
+      console.warn('scene switch failed', e);
+      showError(t('error.load'));
+    });
+  }
+
   get currentName(): SceneName | undefined {
     return this.current?.name;
   }
@@ -64,7 +74,7 @@ export class SceneManager {
     let scene: Scene;
     try {
       const [mod] = await Promise.all([def.load(), acquired]);
-      scene = mod.default({ app: this.app, go: (n) => this.go(n) });
+      scene = mod.default({ app: this.app, go: (n) => this.goSafe(n) });
     } catch (e) {
       // 載入或建立失敗:已取得的素材群組要還回去(參考計數)
       await acquired.then(() => releaseGroup(def.group), () => {});

@@ -87,7 +87,7 @@ export async function gotoReady(page: Page, query = ''): Promise<void> {
 }
 
 /** 依 Pixi a11y 名稱取 a11y 層的 DOM 元素(Pixi 8 把 accessibleTitle 寫進 div 的 title;accessibleHint 寫進 aria-label)。 */
-export const a11y = (page: Page, title: string) => page.locator(`[title="${title}"]`);
+export const a11y = (page: Page, title: string) => page.locator(`[title="${title.replace(/["\\]/g, '\\$&')}"]`);
 
 /** 等兩個影格(讓 Pixi 更新 world transform)再取 bounds,避免點到上一個位置。 */
 export async function boundsOf(page: Page, title: string): Promise<{ x: number; y: number; width: number; height: number } | null> {

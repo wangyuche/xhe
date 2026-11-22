@@ -1,4 +1,4 @@
-import { Assets, Rectangle, Texture } from 'pixi.js';
+import { Assets, NineSliceSprite, Rectangle, Texture } from 'pixi.js';
 import { chooseTier, type Tier } from './tier';
 
 /**
@@ -12,7 +12,9 @@ export interface ManifestEntry {
   width?: number;
   height?: number;
   anchor?: [number, number];
+  density?: number;
   nineSlice?: [number, number, number, number];
+  nineSlice1x?: [number, number, number, number];
   frames?: { count: number; fps: number; frameWidth: number; frameHeight: number; columns: number };
   files: Record<string, string>; // 例如 { "1x.avif": "hero@1x.avif", "1x.png": …, "0.5x.avif": …, "ogg": …, "m4a": … }
 }
@@ -57,7 +59,7 @@ export async function acquireGroup(group: string): Promise<void> {
   pendingCounts.set(group, (pendingCounts.get(group) ?? 0) + 1);
   let p = pendingLoads.get(group);
   if (!p) {
-    p = loadGroup(group).then(() => {
+    p = loadGroup(group, tier).then(() => {
       pendingLoads.delete(group);
       const g = loaded.get(group)!;
       g.count += pendingCounts.get(group) ?? 0;
@@ -69,14 +71,13 @@ export async function acquireGroup(group: string): Promise<void> {
   await p;
 }
 
-async function loadGroup(group: string): Promise<void> {
+async function loadGroup(group: string, t: Tier): Promise<void> {
   const m = manifests[`./${group}/manifest.json`];
   const manifest: Manifest = m ? await m() : { group, assets: {} };
   const aliases: string[] = [];
   const aliasById = new Map<string, string>();
   const audio = new Map<string, { ogg: string; m4a: string }>();
-  // 先佔住每個 alias 的參考計數(在任何 await 之前):載入期間別的群組 release 也不會把它 unload
-  const t = tier;
+  // 級別在 acquire 當下就決定(t);manifest 載入後立刻佔住每個 alias 的參考計數,之後的 await 期間別的群組 release 也不會把它 unload
   for (const [id, a] of Object.entries(manifest.assets)) {
     if (a.type === 'sfx' || a.type === 'bgm') continue;
     let alias = aliasOf(id, t);
@@ -137,6 +138,22 @@ export const texture = (group: string, id: string): Texture | undefined => {
   return alias && Assets.cache.has(alias) ? Assets.get<Texture>(alias) : undefined;
 };
 export const audioSrc = (group: string, id: string): { ogg: string; m4a: string } | undefined => loaded.get(group)?.audio.get(id);
+
+/**
+ * 九宮格:NineSliceSprite 的邊界是貼圖單位(1x px),所以用 nineSlice1x 與 1x 尺寸建立,再縮放 1/density 回到顯示尺寸。
+ * width / height 是要顯示的大小(設計座標);沒給用 manifest 的顯示尺寸。
+ */
+export function nineSlice(group: string, id: string, width?: number, height?: number): NineSliceSprite | undefined {
+  const e = entry(group, id);
+  const tex = texture(group, id);
+  if (!e?.nineSlice1x || !tex) return undefined;
+  const d = e.density ?? 1;
+  const [top, right, bottom, left] = e.nineSlice1x;
+  const s = new NineSliceSprite({ texture: tex, leftWidth: left, topHeight: top, rightWidth: right, bottomHeight: bottom,
+    width: (width ?? e.width!) * d, height: (height ?? e.height!) * d });
+  s.scale.set(1 / d);
+  return s;
+}
 
 /** frames:用 manifest 的格資訊切出各格(貼圖單位 = 1x px,與檔案級別無關)。同一個 alias 只切一次,群組 unload 時 destroy;呼叫端不要自己 destroy。 */
 export function frameTextures(group: string, id: string): Texture[] | undefined {

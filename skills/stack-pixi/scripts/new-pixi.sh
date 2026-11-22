@@ -62,6 +62,7 @@ if [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then die "$DIR 已有�
 [[ $NAME =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "--name 只能用小寫英數與 -"
 [ -n "$TITLE" ] || TITLE=$NAME
 case $TITLE in *[\<\>\&\"\'\\\|]*) die "--title 不可含 < > & \" ' \\ |" ;; esac
+[[ $TITLE =~ [[:cntrl:]] ]] && die "--title 不可含換行或控制字元"
 SCHEMAS="$KIT/../game-art-kit/schemas"
 [ -f "$SCHEMAS/validate.mjs" ] || die "找不到 $SCHEMAS/validate.mjs(stack-pixi 需要與 game-art-kit 放在同一層 skills 目錄)"
 
