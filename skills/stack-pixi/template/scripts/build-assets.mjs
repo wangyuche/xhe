@@ -2,7 +2,7 @@
 //   node scripts/build-assets.mjs [--src <art/assets 目錄>] [--budgets docs/performance-budgets.md]
 //   預設 --src ../art/assets(相對這個專案)。產出進 git。超過「## 素材預算」的 KB 就結束碼 1(PX-PERF-07)。
 //   需要 sharp(devDependency)。驗證用 scripts/schemas/validate.mjs(new-pixi.sh 從 game-art-kit/schemas 複製)。
-import { mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, statSync, existsSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, statSync, existsSync, readdirSync, renameSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
@@ -45,6 +45,29 @@ const BUDGET = budgets();
 const groups = new Map();
 for (const a of doc.assets) (groups.get(a.group) ?? groups.set(a.group, []).get(a.group)).push(a);
 
+// 先檢查全部素材(尺寸、frames、上限),任何一項不合格就在動到既有產出之前結束
+const metas = new Map();
+for (const a of doc.assets) {
+  if (!IMAGE.has(a.type)) continue;
+  const meta = await sharp(join(SRC, a.files[0])).metadata();
+  if (a.frames) {
+    const { frameWidth: fw, frameHeight: fh, columns, count } = a.frames;
+    if (fw % 2 || fh % 2) die(`${a.id}:frameWidth / frameHeight 要是偶數(0.5x 才能剛好一半、格子不偏移)`);
+    const W = fw * columns, H = fh * Math.ceil(count / columns);
+    if (meta.width !== W || meta.height !== H) die(`${a.id}:frames sheet 應剛好 ${W}×${H}(frameWidth × columns、frameHeight × rows),實際 ${meta.width}×${meta.height}`);
+  } else {
+    const W = Math.round(a.width * a.density), H = Math.round(a.height * a.density);
+    // 容許 ±1 px(sprite.mjs density 的 1x 寬無條件捨去、density 取 4 位小數;同 validate.mjs)
+    if (Math.abs(meta.width - W) > 1 || Math.abs(meta.height - H) > 1) die(`${a.id}:1x 應為 ${W}×${H}(顯示 × density),實際 ${meta.width}×${meta.height}`);
+  }
+  for (const tier of ['1x', '0.5x']) {
+    const w = tier === '1x' ? meta.width : a.frames ? meta.width / 2 : half(meta.width);
+    const h = tier === '1x' ? meta.height : a.frames ? meta.height / 2 : half(meta.height);
+    if (w > MAX[tier] || h > MAX[tier]) die(`${a.id}:${tier} ${w}×${h} 超過 ${MAX[tier]}²(PX-RES-01)`);
+  }
+  metas.set(a.id, meta);
+}
+
 // assets.json 已經沒有的群組:清掉 build-assets 先前產生的檔案(只動有 manifest.json 的資料夾)
 for (const g of existsSync(OUT) ? readdirSync(OUT) : []) {
   const dir = join(OUT, g);
@@ -56,9 +79,10 @@ for (const g of existsSync(OUT) ? readdirSync(OUT) : []) {
 
 let over = false;
 for (const [group, list] of groups) {
-  const dir = join(OUT, group);
-  // 只清掉 build-assets 產生的檔案(manifest 與素材),保留同目錄下手寫的程式
-  if (existsSync(dir)) for (const f of readdirSync(dir)) if (/\.(avif|png|jpg|ogg|m4a)$/.test(f) || f === 'manifest.json') rmSync(join(dir, f));
+  const final = join(OUT, group);
+  // 先產生到暫存資料夾,整組成功才換掉既有產出(中途失敗不會留下半套)
+  const dir = join(OUT, `.build-${group}`);
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const manifest = { group, assets: {} };
   const kb = { '1x': 0, '0.5x': 0 };
@@ -66,17 +90,11 @@ for (const [group, list] of groups) {
     const e = { type: a.type, files: {} };
     if (IMAGE.has(a.type)) {
       const src = join(SRC, a.files[0]);
-      const meta = await sharp(src).metadata();
-      const expectW = a.frames ? a.frames.frameWidth * a.frames.columns : Math.round(a.width * a.density);
-      const expectH = a.frames ? a.frames.frameHeight * Math.ceil(a.frames.count / a.frames.columns) : Math.round(a.height * a.density);
-      if (a.frames && (a.frames.frameWidth % 2 || a.frames.frameHeight % 2)) die(`${a.id}:frameWidth / frameHeight 要是偶數(0.5x 才能剛好一半、格子不偏移)`);
-      // 容許 ±1 px(sprite.mjs density 的 1x 寬無條件捨去、density 取 4 位小數;同 validate.mjs)
-      if (Math.abs(meta.width - expectW) > 1 || Math.abs(meta.height - expectH) > 1) die(`${a.id}:1x 應為 ${expectW}×${expectH}(顯示 × density),實際 ${meta.width}×${meta.height}`);
+      const meta = metas.get(a.id);
       for (const tier of ['1x', '0.5x']) {
         // frames:0.5x 一定剛好一半(格寬高已要求偶數),格子才不偏移;其他圖一半後進位成偶數
         const w = tier === '1x' ? meta.width : a.frames ? meta.width / 2 : half(meta.width);
         const h = tier === '1x' ? meta.height : a.frames ? meta.height / 2 : half(meta.height);
-        if (w > MAX[tier] || h > MAX[tier]) die(`${a.id}:${tier} ${w}×${h} 超過 ${MAX[tier]}²(PX-RES-01)`);
         const img = sharp(src).resize(w, h, { fit: 'fill' });
         const base = `${a.id}@${tier}`;
         const outs = [[`${tier}.avif`, `${base}.avif`, img.clone().avif(AVIF[tier])]];
@@ -103,6 +121,11 @@ for (const [group, list] of groups) {
     manifest.assets[a.id] = e;
   }
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  // 換上新產出:只刪 build-assets 產生的檔案(manifest 與素材),保留同目錄下手寫的程式
+  mkdirSync(final, { recursive: true });
+  for (const f of readdirSync(final)) if (/\.(avif|png|jpg|ogg|m4a)$/.test(f) || f === 'manifest.json') rmSync(join(final, f));
+  for (const f of readdirSync(dir)) renameSync(join(dir, f), join(final, f));
+  rmSync(dir, { recursive: true, force: true });
   const b = BUDGET[group];
   for (const tier of ['1x', '0.5x']) {
     const lim = b?.[tier];

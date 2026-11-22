@@ -99,7 +99,3 @@ export function save(name: string, data: unknown): void {
   appendFileSync(join(dir, 'perf.jsonl'), JSON.stringify({ name, at: new Date().toISOString(), ...(data as object) }) + '\n');
 }
 
-/** 有設定門檻才斷言;未設定時回傳 false(呼叫端加 annotation)。 */
-export function limit(b: Record<string, number | undefined>, key: string): number | undefined {
-  return b[key];
-}

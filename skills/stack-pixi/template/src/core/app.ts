@@ -17,6 +17,7 @@ export async function createApp(host: HTMLElement): Promise<Application> {
 
   // PX-PERF-05:分頁到背景就暫停
   document.addEventListener('visibilitychange', () => setPaused('hidden', document.visibilityState === 'hidden'));
+  setPaused('hidden', document.visibilityState === 'hidden'); // 在背景分頁開機也要先暫停
   bindPauseTicker(app.ticker);
 
   // PX-LIFE-03:context lost 不能變白畫面

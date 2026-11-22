@@ -4,6 +4,7 @@
 // 掃 .ts / .mts / .js(含測試);印 {"ok":…,"violations":[{file,line,text}]},違反時結束碼 1。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { stripComments } from './_strip.mjs';
 
 const [dir, ...rest] = process.argv.slice(2);
 if (!dir) { console.error('用法:node check-layers.mjs <專案目錄> [--paths a,b]'); process.exit(2); }
@@ -16,7 +17,9 @@ const walk = (p) => {
     const full = join(p, f);
     if (statSync(full).isDirectory()) { if (f !== 'node_modules') walk(full); continue; }
     if (!/\.(m?ts|m?js|tsx)$/.test(f)) continue;
-    readFileSync(full, 'utf8').split('\n').forEach((l, i) => { if (RE.test(l)) out.push({ file: relative(dir, full), line: i + 1, text: l.trim() }); });
+    const text = readFileSync(full, 'utf8');
+    const raw = text.split('\n');
+    stripComments(text).split('\n').forEach((l, i) => { if (RE.test(l)) out.push({ file: relative(dir, full), line: i + 1, text: raw[i].trim() }); });
   }
 };
 for (const p of paths) if (existsSync(join(dir, p))) walk(join(dir, p));

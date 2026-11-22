@@ -46,6 +46,8 @@ echo "import { Sprite } from 'pixi.js'; export const s = Sprite;" > "$P/src/game
 tf "check-layers 抓到 src/game import pixi" node "$K/scripts/check-layers.mjs" "$P"
 echo "import { Rectangle } from 'pixi.js/math-extras'; export const r = Rectangle;" > "$P/src/game/bad.ts"
 tf "check-layers 抓到 pixi.js 子路徑" node "$K/scripts/check-layers.mjs" "$P"
+printf "// never do: import { Sprite } from 'pixi.js'\nexport const ok = 1;\n" > "$P/src/game/bad.ts"
+t  "check-layers 不把註解裡的 import 當違規" node "$K/scripts/check-layers.mjs" "$P"
 tf "vitest no-pixi 測試也擋" npx --no vitest run src/game/no-pixi.test.ts
 rm "$P/src/game/bad.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
@@ -101,6 +103,7 @@ tf "check-assets 超過 KB 預算就失敗" node "$K/scripts/check-assets.mjs" "
 repl docs/performance-budgets.md '| title | 0.1 | 100 |' '| title | 300 | 100 |'
 node -e "const f='$A/assets.json';const d=JSON.parse(require('fs').readFileSync(f));d.assets[0].width=121;require('fs').writeFileSync('$W/bad.json',JSON.stringify(d))"; cp "$A/assets.json" "$W/good.json"; cp "$W/bad.json" "$A/assets.json"
 tf "build-assets 1x 尺寸不等於顯示 × density 就失敗" node scripts/build-assets.mjs --src "$A"
+t  "失敗時既有產出不動(manifest 與 hero.idle 還在)" test -f src/assets/play/manifest.json -a -f src/assets/play/hero.idle@1x.avif
 cp "$W/good.json" "$A/assets.json"; node scripts/build-assets.mjs --src "$A" >/dev/null
 
 # --- E2E(dev server,全尺寸) ---

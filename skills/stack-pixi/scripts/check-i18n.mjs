@@ -7,6 +7,7 @@
 //   `.accessibleTitle =` / `.accessibleHint =`、accessibleTitle: / accessibleHint:(物件字面值)、alert(…) / confirm(…) / prompt(…)。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { stripComments } from './_strip.mjs';
 
 const [dir, ...rest] = process.argv.slice(2);
 if (!dir) { console.error('用法:node check-i18n.mjs <專案目錄> [--src src]'); process.exit(2); }
@@ -23,25 +24,6 @@ const SINKS = [
   new RegExp(String.raw`\bsetAttribute\(\s*['"](?:aria-label|aria-description|aria-roledescription|aria-valuetext|title|placeholder)['"]\s*,\s*` + LIT),
   new RegExp(String.raw`(?<![\w.])(?:alert|confirm|prompt)\(\s*` + LIT),
 ];
-// 把註解換成等長空白(保留換行與位移);會跳過字串與樣板字串裡的 // 與 /*
-function stripComments(src) {
-  let out = '';
-  for (let i = 0; i < src.length;) {
-    const c = src[i], n = src[i + 1];
-    if (c === "'" || c === '"' || c === '`') {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) { if (src[j] === '\\') j++; else if (c !== '`' && src[j] === '\n') break; j++; }
-      out += src.slice(i, j + 1); i = j + 1;
-    } else if (c === '/' && n === '/') {
-      let j = src.indexOf('\n', i); if (j < 0) j = src.length;
-      out += ' '.repeat(j - i); i = j;
-    } else if (c === '/' && n === '*') {
-      let j = src.indexOf('*/', i + 2); j = j < 0 ? src.length : j + 2;
-      out += src.slice(i, j).replace(/[^\n]/g, ' '); i = j;
-    } else { out += c; i++; }
-  }
-  return out;
-}
 const hasLetters = (lit) => /\p{L}/u.test(lit.slice(1, -1).replace(/\$\{[^}]*\}/g, ''));
 
 const out = [];

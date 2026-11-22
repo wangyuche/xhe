@@ -20,7 +20,8 @@ const gz = new Map();
 http.createServer((req, res) => {
   if (api && req.url.startsWith('/v1/')) {
     const mod = api.protocol === 'https:' ? https : http;
-    const p = mod.request({ host: api.hostname, port: api.port, path: req.url, method: req.method, headers: req.headers },
+    // Host 改成後端的(https 的 SNI / 憑證比對、虛擬主機都看它);Origin 保留瀏覽器原本的
+    const p = mod.request({ host: api.hostname, port: api.port, path: req.url, method: req.method, headers: { ...req.headers, host: api.host }, servername: api.hostname },
       (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); r.on('error', () => res.destroy()); });
     p.on('error', () => { if (res.headersSent) res.destroy(); else { res.writeHead(502); res.end(); } });
     req.pipe(p);

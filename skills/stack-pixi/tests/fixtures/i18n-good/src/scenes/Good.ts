@@ -19,3 +19,5 @@ const multiOk = new Text({
 /**
  * 範例:btn.accessibleTitle = 'Start'(文件註解,不算)
  */
+const q = s.replace(/'/g, '');
+/** e.g. label.text = 'Hello'(regex 之後的文件註解,不算) */
