@@ -120,7 +120,9 @@ case "$SUB" in
     versions | grep -qx "$FROM" || die "--dir 裡沒有版本 $FROM" 1
     versions | grep -qx "$TO" || die "--dir 裡沒有版本 $TO" 1
     [ "$TO" -ge "$FROM" ] || die "--to 不能小於 --from" 2
-    CUR0="$(goose_cmd "$UPDSN0" version 2>&1 | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1 || true)"
+    vout="$(goose_cmd "$UPDSN0" version 2>&1)" || die "讀不到資料庫目前的 goose 版本(連線 / 版本表權限?):$(echo "$vout" | tail -1)" 1
+    CUR0="$(echo "$vout" | sed -n 's/.*version:\{0,1\} *\([0-9][0-9]*\).*/\1/p' | tail -1 || true)"
+    [ -n "$CUR0" ] || die "goose version 的輸出看不出目前版本:$(echo "$vout" | tail -1)" 1
     [ -z "$CUR0" ] || [ "$CUR0" -le "$TO" ] || die "資料庫目前在版本 $CUR0,高於 --to $TO;roundtrip 會連帶 down 審查範圍外的 migration。先用 goose.sh run 退到 ≤ $TO,或改 --to" 1
     BEFORE="$(versions | awk -v f="$FROM" '$1<f{b=$1} END{print b+0}')"
     # Already past BEFORE: Up would be a no-op. Step back first (needs the allow DSN for guarded Downs) or refuse.

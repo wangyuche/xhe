@@ -16,7 +16,8 @@ TX = re.compile(r"^(COMMIT|END|ROLLBACK|ABORT|BEGIN|START\s+TRANSACTION|SAVEPOIN
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def strip(sql, keep_comments=False):
+def strip(sql, keep_comments=False, keep_literals=False, marks=None):
+    # marks (a list) collects the offsets of top-level ';' — used by --single to cut a trailing ';' and comments
     out, i, n = [], 0, len(sql)
     while i < n:
         c = sql[i]
@@ -72,9 +73,11 @@ def strip(sql, keep_comments=False):
                 if sql[j] == c:
                     break
                 j += 1
+            out.append(sql[i:j + 1] if keep_literals else " x ")
             i = j + 1
-            out.append(" x ")
             continue
+        if c == ";" and marks is not None:
+            marks.append(i)
         out.append(c)
         i += 1
     return "".join(out)
@@ -118,6 +121,19 @@ def drop_atomic(text):
 
 def main():
     raw = sys.stdin.read()
+    if "--single" in sys.argv[1:]:
+        # one statement: cut a trailing top-level ';' (and comments after it) using the real lexer; refuse any other ';'
+        marks = []
+        strip(raw, marks=marks)
+        if not marks:
+            print(raw.rstrip())
+            return 0
+        last = marks[-1]
+        if len(marks) > 1 or strip(raw[last + 1:]).strip():
+            print("more than one statement")
+            return 2
+        print(raw[:last].rstrip())
+        return 0
     if re.search(r"\bU&['\"]", raw, re.I):
         print("U& escapes are not allowed (they hide identifiers and literals from this check)")
         return 2
@@ -127,7 +143,9 @@ def main():
     if re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
             re.search(r"\bSET\s+(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
             re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?\"(standard_conforming_strings|escape_string_warning)\"", raw, re.I) or \
-            re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)", raw, re.I):
+            re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)",
+                      strip(raw, keep_literals=True), re.I) or \
+            re.search(r"\b(UPDATE|INSERT\s+INTO)\s+(pg_catalog\s*\.\s*)?pg_settings\b", strip(raw), re.I):   # UPDATE pg_settings = SET
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
         return 2
@@ -186,7 +204,9 @@ def main():
                 buf.append(line)
                 if re.search(r"\\gset", line):
                     st_txt = strip("\n".join(buf)); st_txt = st_txt[st_txt.rfind(";") + 1:]
-                    if re.search(r"\bSELECT\s+(ALL\s+|DISTINCT\s+)?\*|,\s*\*\s*(,|\bFROM\b|$)", st_txt, re.I):
+                    # columns the script does not spell out: SELECT *, t.*, (expr).*, TABLE x, RETURNING *
+                    if re.search(r"\bSELECT\s+(ALL\s+|DISTINCT\s+)?\*|,\s*\*\s*(,|\bFROM\b|$)|\.\s*\*|\bRETURNING\s+\*|^\s*TABLE\b",
+                                 st_txt, re.I | re.M):
                         star = True
                     buf = []
             assigned |= idents | {p + w for p in prefixes for w in idents}
