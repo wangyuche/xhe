@@ -75,15 +75,15 @@ skills:
 ### 遊戲素材(完成條件:needs 每項都在 assets.json,或列為跳過 / 失敗)
 1. 產出目錄:原圖、下載的音訊、manifest、workflow 放 `art/out/<日期>-assets/`;交付檔放 `art/assets/<group>/<id>.png`、`art/assets/<group>/<id>.ogg` 與 `.m4a`。assets.json 已有同 id、簡報沒寫「重做 <id>」→ 跳過並列出。
 2. 尺寸:1x = 顯示尺寸(needs 的 `width` / `height`)× density。density 照 needs;沒寫時有 `character` 或 `ui` / `sprite` 類為 2,`background` / `tile` 取 `min(2, 2048 ÷ 顯示最長邊)`。生成解析度選和 1x 同比例、長邊約 1024 的 16 倍數(例如 1x 240×320 → 768×1024)。
-3. **透明素材**(`sprite` / `frames` / `ui`,以及 `opaque` 不是 true 的其他圖):
+3. **透明素材**(`sprite` / `frames` / `ui`,且 `opaque` 不是 true):
    - 沒有角色:`qwen-t2i-sprite`;有 `character`:上傳 ref,用 `qwen-edit-1ref-sprite`(`the character in image 1, <姿勢>`)。`bg_model` 用 `background_removal[0].models` 第一個(優先 `RMBG-2.0`)。提示詞 = STYLE.md 正向基底 + 角色提示詞 + 素材內容 + `plain flat light grey background, single subject, full body, centered`(UI:`flat game UI element, front view, centered`)。
    - `node <kit>/scripts/sprite.mjs fit <下載的 png>... --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高> --align <有 character 用 bottom,否則 center>`;`frames` 把同一動作的所有格一次給 fit(同一縮放比例,印出 columns)。**`ui` 類(尤其有 `nineSlice`)加 `--margin 0`**:裁邊後直接縮放到 1x、不留透明邊,切線才對齊圖的邊緣。
    - `sprite.mjs check ... [--frames N --columns C] [--character]` 通過(`--margin 0` 的 UI 加 `--full-bleed`);Read 看過(composite 到素色底看邊緣)。
    - 動作格:每個動作最多 8 格,逐格生成(姿勢描述依序,例如 walk cycle contact / passing / contact / passing);每格寫出至少兩項 `character.md` 外觀特徵比對,有任何一項不同就重出那一格(每格最多 2 次)。
    - 九宮格(`nineSlice`):提示詞要求邊框等寬、中間素色,四條切線內不可有會被拉伸變形的圖案;assets.json 寫 `nineSlice` 與 `nineSlice1x`(× density 四捨五入)。
-4. **不透明素材**(`background`、`tile`,或 `opaque: true`):用 STYLE.md 的 (a) 組(`qwen-t2i` 等),生成解析度和 1x 同比例,下載後 `node <kit>/scripts/sprite.mjs cover <png> --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高>`(等比蓋滿再置中裁切);`sprite.mjs check … --opaque [--tileable]`。地圖塊提示詞加 `seamless tileable texture, top-down`,平鋪檢查不過就重出。
+4. **不透明素材**(`background`、`tile`,或任何 `opaque: true` 的圖):用 STYLE.md 的 (a) 組(`qwen-t2i` 等),生成解析度和 1x 同比例,下載後 `node <kit>/scripts/sprite.mjs cover <png> --out art/assets/<group>/<id>.png --width <1x 寬> --height <1x 高>`(等比蓋滿再置中裁切);`sprite.mjs check … --opaque [--tileable]`。地圖塊提示詞加 `seamless tileable texture, top-down`,平鋪檢查不過就重出。
 5. **音效**(`sfx`):`stable-audio-sfx`(`ckpt` / `clip` 用 check 的 defaults;seconds = durationSec + 1),再 `node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx --duration <durationSec> --out art/assets/<group> --name <id>`,`audio.mjs check` 通過。
-   短於 0.4 秒的音效量不到整體響度,`audio.mjs` 改以峰值正規化(輸出 `normalized: "peak"`、`lufs: null`),assets.json 寫 `"normalized": "peak"`、不寫 `lufs`。
+   短於 0.4 秒的音效量不到整體響度,`audio.mjs` 改以峰值正規化(輸出 `normalized: "peak"`、`lufs: null`),assets.json 寫 `"normalized": "peak"`、不寫 `lufs`,`audio.mjs check` 加 `--peak`。
 6. **配樂**(`bgm`):`ace-step-bgm`(tags = STYLE.md 的氛圍 + 需求;`lyrics` = `[instrumental]`;seconds = durationSec + 1),再 `audio.mjs process … --type bgm [--loop]`;`loop` 輸出為 `approx` 時 assets.json 寫 `"loop": "approx"` 並列在已知限制。音訊回報一律寫「未人耳試聽」。
 7. 寫 assets.json(保留既有項目),`validate.mjs assets art/assets/assets.json --root art/assets` 通過;寫 `art/out/<日期>-assets/manifest.json`。
 

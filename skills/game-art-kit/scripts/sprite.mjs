@@ -149,7 +149,7 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
   const cols = columns ?? (frames > 1 ? sheetLayout(frames, W).columns : 1), rows = Math.ceil(frames / cols);
   if (!opaque && !img.hasAlpha) errs.push('沒有 alpha 通道(應為透明 PNG)');
   if (img.width !== W * cols || img.height !== H * rows) errs.push(`尺寸 ${img.width}×${img.height},應為 ${W * cols}×${H * rows}`);
-  if (errs.length && img.width !== W * cols) return { errs, info };
+  if (img.width !== W * cols || img.height !== H * rows) return { errs, info };
   for (let i = 0; i < frames; i++) {
     const x0 = (i % cols) * W, y0 = Math.floor(i / cols) * H;
     let cover = 0, border = 0, borderN = 0;

@@ -128,19 +128,28 @@ async function check() {
     clip_l: pick(te, /^clip_l/), t5: pick(te, /t5xxl/), flux_vae: pick(vae, /^ae\./),
     zimage_unet: pick(dm, /z.?image/), zimage_clip: pick(te, /qwen_?3_?4b/),
     qwen_controlnet_union: pick(models.controlnet, /qwen.*union/),
-    sfx_ckpt: pick(models.checkpoints, /stable.?audio.*sfx/) ?? pick(models.checkpoints, /stable.?audio/),
-    sfx_clip: pick(te, /t5.?gemma|t5.?base/),
+    // Stable Audio 3 配 t5gemma;Stable Audio Open 配 t5-base(同家族才配對)
+    sfx_ckpt: pick(models.checkpoints, /stable.?audio.?3.*sfx/) ?? pick(models.checkpoints, /stable.?audio.?3/) ?? pick(models.checkpoints, /stable.?audio.?open/),
+    sfx_clip: null,
     bgm_ckpt: pick(models.checkpoints, /ace.?step/),
   };
   // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
   // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
-  const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x : []);
+  d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
+  // Windows 主機回傳反斜線路徑,統一成 /
+  const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : []);
   const opts = (node) => { const m = oi[node]?.input?.required?.model; return Array.isArray(m?.[0]) ? m[0] : []; };
-  const hasFile = (re) => rmbgFiles.some(f => re.test(f));
-  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 每個模型需要的完整檔案(缺任何一個,RMBG 第一次用到時會在主機上下載 → 不列);不認得的模型不列
+  const RMBG_FILES = {
+    'RMBG-2.0': ['model.safetensors', 'config.json', 'birefnet.py', 'BiRefNet_config.py'],
+    INSPYRENET: ['inspyrenet.safetensors'],
+    BEN: ['BEN_Base.pth', 'model.py'],
+    BEN2: ['BEN2_Base.pth', 'BEN2.py'],
+  };
+  const fileSet = new Set(rmbgFiles.map(f => f.toLowerCase()));
   const bg = [];
   if (has('RMBG')) {
-    const ms = opts('RMBG').filter(o => hasFile(new RegExp(`^${esc(o)}/[^/]+\\.(safetensors|pth|bin|onnx|ckpt)$`, 'i')));
+    const ms = opts('RMBG').filter(o => RMBG_FILES[o] && RMBG_FILES[o].every(f => fileSet.has(`${o}/${f}`.toLowerCase())));
     if (ms.length) bg.push({ node: 'RMBG', models: ms });
   }
   const bgOk = bg.length > 0 && has('InvertMask') && has('JoinImageWithAlpha');
@@ -182,7 +191,7 @@ async function check() {
     background_removal: bgOk ? bg : [],
     unsupported_background_removal: unsupportedBg,
     audio_models: {
-      sfx: workflows['stable-audio-sfx'] ? models.checkpoints.filter(n => /stable.?audio/i.test(n)) : [],
+      sfx: workflows['stable-audio-sfx'] ? [d.sfx_ckpt] : [],
       bgm: workflows['ace-step-bgm'] ? models.checkpoints.filter(n => /ace.?step/i.test(n)) : [],
     },
     workflows_available: workflows,
@@ -283,6 +292,9 @@ async function run() {
     if (oi.__status) die(`/object_info 回 HTTP ${oi.__status}`, 3);
     const api = classes.filter(c => oi[c]?.api_node === true);
     if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);
+    // 其他會寫進伺服器 output/ 的輸出節點(CheckpointSave、SaveGLB、自訂 Image Save…):output_node 且不是 Preview*
+    const writers = classes.filter(c => oi[c]?.output_node === true && !/^Preview/.test(c));
+    if (writers.length) die(`workflow 含會寫進伺服器的輸出節點,不能用(只用 PreviewImage / PreviewAudio):${writers.join(', ')}`, 2);
   }
 
   const t0 = Date.now();

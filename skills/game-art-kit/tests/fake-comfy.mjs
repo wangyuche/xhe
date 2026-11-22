@@ -13,17 +13,19 @@ const NODES = ['UNETLoader', 'CLIPLoader', 'DualCLIPLoader', 'VAELoader', 'LoraL
   'EmptySD3LatentImage', 'KSampler', 'VAEDecode', 'PreviewImage', 'SaveImage', 'LoadImage', 'ImageScaleToTotalPixels', 'TextEncodeQwenImageEditPlus',
   'FluxGuidance', 'ConditioningZeroOut', 'FluxKontextImageScale', 'VAEEncode', 'ReferenceLatent', 'ImageScale', 'Canny', 'ControlNetLoader',
   'SetUnionControlNetType', 'ControlNetApplyAdvanced', 'RMBG', 'InvertMask', 'JoinImageWithAlpha', 'CheckpointLoaderSimple', 'ConditioningStableAudio',
-  'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio', 'SaveAudio', 'TextEncodeAceStepAudio1.5', 'EmptyAceStep1.5LatentAudio', 'ConditioningZeroOut', 'BriaRemoveImageBackground', 'FancyApiNode'];
+  'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio', 'SaveAudio', 'TextEncodeAceStepAudio1.5', 'EmptyAceStep1.5LatentAudio', 'ConditioningZeroOut', 'BriaRemoveImageBackground', 'FancyApiNode', 'CheckpointSave'];
+const OUTPUT_NODES = new Set(['PreviewImage', 'PreviewAudio', 'SaveImage', 'SaveAudio', 'CheckpointSave']);
 // 雲端 API 節點(object_info 帶 api_node: true)
 const API_NODES = new Set(['BriaRemoveImageBackground', 'FancyApiNode']);
 // 環境變數 FAKE_NO_RMBG=1:沒有去背模型檔;FAKE_NO_AUDIO=1:沒有音訊模型
-const NO_RMBG = process.env.FAKE_NO_RMBG === '1', NO_AUDIO = process.env.FAKE_NO_AUDIO === '1';
+const NO_RMBG = process.env.FAKE_NO_RMBG === '1', NO_AUDIO = process.env.FAKE_NO_AUDIO === '1', SEP = process.env.FAKE_WIN_PATHS === '1' ? '\\' : '/';
 let MODELS = {
   diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors'],
   text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5gemma_b_b_ul2.safetensors'],
   vae: ['qwen_image_vae.safetensors', 'ae.safetensors'], loras: ['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'],
   checkpoints: NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors'], controlnet: [], clip_vision: [], style_models: [],
-  rmbg: NO_RMBG ? [] : ['RMBG-2.0/model.safetensors', 'RMBG-2.0/.cache/x.metadata', 'BEN/model.py'], background_removal: [],
+  // RMBG-2.0 檔案齊全;BEN 少權重檔、BEN2 少 BEN2.py → 不應列出
+  rmbg: NO_RMBG ? [] : ['RMBG-2.0/model.safetensors', 'RMBG-2.0/config.json', 'RMBG-2.0/birefnet.py', 'RMBG-2.0/BiRefNet_config.py', 'RMBG-2.0/.cache/x.metadata', 'BEN/model.py', 'BEN2/BEN2_Base.pth'].map(f => f.replace(/\//g, SEP)), background_removal: [],
 };
 if (profile === 'ipadapter-only') {
   NODES.push('IPAdapterAdvanced', 'IPAdapterModelLoader', 'CLIPVisionLoader');
@@ -73,7 +75,7 @@ createServer(async (req, res) => {
   const p = u.pathname;
   if (p === '/system_stats') return send(res, 200, { system: { os: 'linux', comfyui_version: '0.0.0-fake' }, devices: [{ name: 'fake', vram_total: 8 * 2 ** 30 }] });
   if (p.startsWith('/models/')) return send(res, 200, MODELS[p.slice(8)] ?? []);
-  if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, k === 'RMBG' ? { input: { required: { image: ['IMAGE'], model: [['RMBG-2.0', 'INSPYRENET', 'BEN', 'BEN2']] } } } : { input: {}, api_node: API_NODES.has(k) }])));
+  if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, k === 'RMBG' ? { input: { required: { image: ['IMAGE'], model: [['RMBG-2.0', 'INSPYRENET', 'BEN', 'BEN2']] } } } : { input: {}, api_node: API_NODES.has(k), output_node: OUTPUT_NODES.has(k) }])));
   if (p === '/upload/image') return send(res, 200, { name: entry.filename, subfolder: '', type: entry.type });
   if (p === '/prompt' && req.method === 'POST') {
     if (/SLOWSUBMIT/.test(JSON.stringify(entry.body ?? {}))) await new Promise(r => setTimeout(r, 1500)); // 送出很慢

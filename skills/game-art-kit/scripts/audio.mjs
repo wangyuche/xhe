@@ -7,9 +7,9 @@
 //        短於 0.4 秒(量不到整體響度)改以峰值正規化到 −3 dBTP,輸出 normalized: "peak"、lufs: null
 //        bgm:裁到 duration(--loop:輸入至少要 duration + 0.5 秒,頭尾 0.5 秒交叉淡化成可循環)→ −18 LUFS、≤ −1.5 dBTP
 //        輸出 <name>.ogg(Opus)與 <name>.m4a(AAC),印 {"files":[…],"durationSec":…,"lufs":…,"truePeak":…,"loop":true|false|"approx"}
-//   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm --duration <秒> [--loop]
+//   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm --duration <秒> [--loop] [--peak]
 //        兩檔都在、長度(sfx ≤ duration + 0.05;bgm 與 duration 差 ≤ 0.5)、非靜音(RMS > −50 dBFS)、
-//        無削波(true peak ≤ −1 dBTP)、響度(sfx −20 至 −12、bgm −20 至 −16 LUFS;短於 0.4 秒不檢查)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
+//        無削波(true peak ≤ −1 dBTP)、響度(sfx −20 至 −12、bgm −20 至 −16 LUFS;--peak(process 輸出 normalized: peak 的短音效)不檢查)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
 //        印 {"ok":…,"errors":[…],"measure":{…}};不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法 / 工具 / 檔案錯誤。
 import { spawnSync } from 'node:child_process';
@@ -90,9 +90,19 @@ function process_(input, { type, dur, out, name, loop }) {
     if (short && !(m0.truePeak > -60)) die('太短而且幾乎沒有聲音', 1);
     // 短於 0.4 秒量不到整體響度(ebur128 至少要一個 400 ms 區塊):改用峰值正規化到 −3 dBTP
     let gain = short ? -3 - m0.truePeak : TARGET[type].lufs - m0.lufs;
-    if (m0.truePeak != null && m0.truePeak + gain > TP_OUT) gain = TP_OUT - m0.truePeak;
+    // 長音訊:增益到目標響度後過限幅器(樣本峰值 −3 dBFS),衝擊感強(峰值因數大)的音效也能同時達到響度與峰值;
+    // 仍超過 −1.5 dBTP(取樣間峰值)再補一次降增益
     const norm = join(tmp, 'n.wav');
-    ff(['-i', stage1, '-af', `volume=${gain.toFixed(2)}dB`, norm]);
+    // 限幅會吃掉響度:量測後補增益再限幅,最多 4 次,直到響度在目標 ±0.5 LU 內
+    for (let i = 0; i < 4; i++) {
+      ff(['-i', stage1, '-af', short ? `volume=${gain.toFixed(2)}dB` : `volume=${gain.toFixed(2)}dB,alimiter=limit=0.708:attack=1:release=50:level=disabled`, norm]);
+      if (short) break;
+      const mi = measure(norm);
+      if (!(mi.lufs > -69) || Math.abs(mi.lufs - TARGET[type].lufs) <= 0.5) break;
+      gain += TARGET[type].lufs - mi.lufs;
+    }
+    const m1 = measure(norm);
+    if (m1.truePeak > TP_OUT) { const fix = join(tmp, 'f.wav'); ff(['-i', norm, '-af', `volume=${(TP_OUT - m1.truePeak - 0.1).toFixed(2)}dB`, fix]); renameSync(fix, norm); }
     mkdirSync(out, { recursive: true });
     const ogg = join(tmp, `${name}.ogg`), m4a = join(tmp, `${name}.m4a`);
     ff(['-i', norm, '-c:a', 'libopus', '-b:a', type === 'bgm' ? '128k' : '96k', ogg]);
@@ -113,7 +123,7 @@ export function seam(f) {
   return Math.abs(head - tail);
 }
 
-export function check([ogg, m4a], { type, dur, loop }) {
+export function check([ogg, m4a], { type, dur, loop, peak }) {
   const errs = [], measureOut = {};
   for (const f of [ogg, m4a]) if (!f || !existsSync(f)) errs.push(`找不到 ${f}`);
   if (!/\.ogg$/.test(ogg ?? '') || !/\.m4a$/.test(m4a ?? '')) errs.push('要給 .ogg 與 .m4a 各一');
@@ -125,7 +135,7 @@ export function check([ogg, m4a], { type, dur, loop }) {
     if (m.rms == null || !(m.rms > -50)) errs.push(`${k} RMS ${m.rms} dBFS(應 > −50;疑似靜音)`);
     if (m.truePeak == null || m.truePeak > TP_MAX) errs.push(`${k} true peak ${m.truePeak} dBTP(應 ≤ ${TP_MAX})`);
     const [lo, hi] = TARGET[type].range;
-    if (d < SHORT) measureOut[k].note = '短於 0.4 秒:不檢查整體響度(以峰值正規化)';
+    if (peak) measureOut[k].note = '峰值正規化的短音效:不檢查整體響度';
     else if (m.lufs == null || !(m.lufs >= lo && m.lufs <= hi)) errs.push(`${k} 響度 ${m.lufs} LUFS(應 ${lo} 至 ${hi})`);
   }
   if (loop) {
@@ -141,12 +151,13 @@ if (isMain) {
   try {
     const [cmd, ...rest] = process.argv.slice(2);
     const flags = {}, pos = [];
-    for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (a === '--loop') flags.loop = true; else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else pos.push(a); }
+    for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (a === '--loop' || a === '--peak') flags[a.slice(2)] = true; else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else pos.push(a); }
     const opts = () => {
       const type = flags.type; if (!['sfx', 'bgm'].includes(type)) die('--type 要 sfx 或 bgm');
       const dur = Number(flags.duration); if (!(dur > 0 && dur <= 600)) die('--duration 要是 0–600 的秒數');
       if (flags.loop && type !== 'bgm') die('--loop 只用於 bgm');
-      return { type, dur, loop: !!flags.loop };
+      if (flags.peak && type !== 'sfx') die('--peak 只用於 sfx');
+      return { type, dur, loop: !!flags.loop, peak: !!flags.peak };
     };
     if (cmd === 'tools') { const e = tools(); console.log(JSON.stringify({ ok: !e.length, errors: e })); process.exit(e.length ? 2 : 0); }
     const te = tools(); if (te.length) die(te.join(';'));

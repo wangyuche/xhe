@@ -22,7 +22,7 @@ ComfyUI 要用 `--listen` 啟動。macOS 連區網被擋(`No route to host`、0 
 
 ```bash
 node <kit>/scripts/comfy.mjs check                     # JSON:models(含 family)、consistency_methods(只列有可用骨架的)、unsupported_consistency(主機有但沒骨架,例如 IP-Adapter)、
-#   background_removal(本機 RMBG 節點與模型檔已在主機上的選項;沒有檔案的不列,避免主機自動下載)、audio_models(sfx / bgm)、workflows_available、defaults(建議檔名)
+#   background_removal(本機 RMBG 節點、模型需要的檔案全在主機上的選項;缺檔的不列,避免主機自動下載)、audio_models(sfx / bgm)、workflows_available、defaults(建議檔名)
 node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
@@ -40,9 +40,9 @@ node <kit>/scripts/sprite.mjs cover <背景.png> --out <id>.png --width <1x 寬>
 node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> [--frames N --columns C] [--character] [--opaque] [--tileable]
 #   有 alpha、尺寸、每格覆蓋率 10–90%、外框 2 px 不透明 < 1%、各格基線差 ≤ 2 px / 高度差 ≤ 10%(--character)、平鋪邊緣差 ≤ 8(--tileable)
 node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
-#   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS;bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
-#   true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
-node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm --duration <秒> [--loop]
+#   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
+#   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
+node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm --duration <秒> [--loop] [--peak]
 #   長度、非靜音(RMS > −50 dBFS)、true peak ≤ −1 dBTP、響度(sfx −20~−12、bgm −20~−16 LUFS)、接縫 RMS 差 ≤ 6 dB(--loop)
 node <kit>/schemas/validate.mjs needs|assets <檔案.json> [--root <art/assets>]   # 遊戲素材介面 schema 驗證(--root 檢查檔案存在)
 bash <kit>/tests/run.sh                                # 離線自我測試(假 ComfyUI)

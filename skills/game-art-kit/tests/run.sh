@@ -138,6 +138,12 @@ for i in $(seq 1 50); do grep -q listening "$W/fake3.out" 2>/dev/null && break; 
 c3="$(C check --url "http://127.0.0.1:$P3" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
 echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(d.background_removal.length===0&&d.audio_models.sfx.length===0&&d.audio_models.bgm.length===0&&w["qwen-t2i-sprite"]===false&&w["stable-audio-sfx"]===false&&w["ace-step-bgm"]===false&&w["qwen-t2i"]===true?0:1)' \
   && ok "check:沒有去背模型檔 / 音訊模型 → background_removal 與 audio_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
+P4=$((PORT - 8000))
+FAKE_WIN_PATHS=1 node "$K/tests/fake-comfy.mjs" "$P4" "$W/req4.log" > "$W/fake4.out" 2>&1 & PID2=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake4.out" 2>/dev/null && break; sleep 0.1; done
+c4="$(C check --url "http://127.0.0.1:$P4" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
+echo "$c4" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(d.background_removal[0]?.models.join()==="RMBG-2.0"?0:1)' \
+  && ok "check:Windows 主機的反斜線路徑也認得 RMBG 模型檔" || bad "check Windows 路徑" "$c4"
 r="$(C run "$K/workflows/qwen-t2i-sprite.json" --out "$W/a" --name sp1 "${QS[@]}" --set width=96 --set height=128 --set bg_model=RMBG-2.0)" && echo "$r" | grep -q '"channels":4' \
   && ok "qwen-t2i-sprite:同一 workflow 去背,下載的 PNG 有 alpha" || bad "qwen-t2i-sprite" "$r"
 r="$(C run "$K/workflows/qwen-edit-1ref-sprite.json" --out "$W/a" --name sp2 "${QS[@]}" --set width=64 --set height=64 --set 'ref1=r.png [temp]' --set bg_model=RMBG-2.0)" && echo "$r" | grep -q '"channels":4' \
@@ -155,6 +161,8 @@ for node in BriaRemoveImageBackground FancyApiNode; do
   o="$(C run "$W/cloud.json" --out "$W/a" --name x "${QS[@]}" --set width=64 --set height=64 2>&1)"; rc=$?
   [ $rc -eq 2 ] && echo "$o" | grep -q "雲端 API 節點.*$node" && [ "$(grep -c '"path":"/prompt"' "$W/req.log")" = "$n0" ] && ok "拒絕雲端 API 節點 $node(名稱黑名單 / api_node 旗標),不送出" || bad "雲端節點 $node" "rc=$rc $o"
 done
+node -e 'const g=require(process.argv[1]);g["99"]={class_type:"CheckpointSave",inputs:{}};require("fs").writeFileSync(process.argv[2],JSON.stringify(g))' "$K/workflows/qwen-t2i.json" "$W/ckptsave.json"
+o="$(C run "$W/ckptsave.json" --out "$W/a" --name x "${QS[@]}" --set width=64 --set height=64 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'CheckpointSave' && ok "拒絕其他會寫進伺服器的輸出節點(output_node,例如 CheckpointSave)" || bad "CheckpointSave 沒被擋" "$o"
 
 S() { node "$K/scripts/sprite.mjs" "$@"; }
 # 產生測試圖:透明底 300×400、主體矩形(位置與高度可調)、可選外框殘留、可選全不透明
@@ -216,7 +224,10 @@ if A tools >/dev/null 2>&1; then
   o="$(A process "$W/au/silent.wav" --type sfx --duration 2 --out "$W/au" --name s 2>&1)"; [ $? -eq 1 ] && ok "audio.mjs:靜音輸入 → 結束碼 1" || bad "audio 靜音" "$o"
   ffmpeg -v error -y -f lavfi -i "anullsrc=r=48000:cl=stereo:d=0.2" -f lavfi -i "sine=f=1200:d=0.15,volume=0.8" -filter_complex "[1]aformat=sample_rates=48000:channel_layouts=stereo[s];[0][s]concat=n=2:v=0:a=1" "$W/au/click.wav"
   o="$(A process "$W/au/click.wav" --type sfx --duration 0.3 --out "$W/au" --name sfx.click)" && echo "$o" | grep -q '"normalized":"peak"' && echo "$o" | grep -q '"lufs":null' \
-    && o2="$(A check "$W/au/sfx.click.ogg" "$W/au/sfx.click.m4a" --type sfx --duration 0.3)" && ok "audio.mjs:短於 0.4 秒的音效改以峰值正規化,check 不套整體響度" || bad "audio 短音效" "$o $o2"
+    && o2="$(A check "$W/au/sfx.click.ogg" "$W/au/sfx.click.m4a" --type sfx --duration 0.3 --peak)" && ok "audio.mjs:短於 0.4 秒的音效改以峰值正規化,check 不套整體響度" || bad "audio 短音效" "$o $o2"
+  ffmpeg -v error -y -f lavfi -i "aevalsrc='if(lt(mod(t\,0.25)\,0.004)\,0.95*sin(2*PI*900*t)\,0.02*sin(2*PI*200*t))':s=48000:d=1.5" -ac 2 "$W/au/punch.wav"
+  o="$(A process "$W/au/punch.wav" --type sfx --duration 1.5 --out "$W/au" --name sfx.hit)" && o2="$(A check "$W/au/sfx.hit.ogg" "$W/au/sfx.hit.m4a" --type sfx --duration 1.5)" \
+    && ok "audio.mjs:峰值因數大的衝擊音效經限幅後同時達到響度與峰值" || bad "audio 衝擊音效" "$o $o2"
   ffmpeg -v error -y -f lavfi -i "sine=f=220:d=6.5,volume=0.5" -f lavfi -i "sine=f=330:d=6.5,volume=0.3" -filter_complex "[0][1]amix=inputs=2,aformat=sample_rates=48000:channel_layouts=stereo" "$W/au/music.wav"
   o="$(A process "$W/au/music.wav" --type bgm --duration 6 --loop --out "$W/au" --name bgm.stage1)" && echo "$o" | grep -q '"loop":true' \
     && o2="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --loop)" && ok "audio.mjs bgm:交叉淡化循環、−18 LUFS、接縫檢查通過" || bad "audio bgm loop" "$o $o2"
@@ -237,10 +248,12 @@ cp "$W/sp/run.png" "$W/v/table/hero.run.png"; printf 'x' > "$W/v/table/sfx.jump.
 echo '{"version":1,"assets":[{"id":"hero.run","type":"frames","group":"table","files":["table/hero.run.png"],"width":60,"height":80,"density":2,"anchor":[0.5,1],"frames":{"count":4,"fps":10,"frameWidth":120,"frameHeight":160,"columns":4},"character":"farmer","source":"out/20261122-assets/manifest.json#hero-run","review":"pending"},{"id":"sfx.jump","type":"sfx","group":"table","files":["table/sfx.jump.ogg","table/sfx.jump.m4a"],"durationSec":0.8,"lufs":-16,"source":"out/20261122-assets/manifest.json#sfx-jump","review":"pending"}]}' > "$W/v/assets.json"
 o="$(V assets "$W/v/assets.json")" && ok "schema:合法 assets 通過" || bad "schema assets 合法" "$o"
 o="$(V assets "$W/v/assets.json" --root "$W/v")"; [ $? -eq 1 ] && echo "$o" | grep -q 'sfx.jump.m4a' && ok "schema:--root 檢查檔案存在(缺 m4a)" || bad "schema --root" "$o"
-echo '{"version":1,"assets":[{"id":"ui.btn","type":"ui","group":"lobby","files":["lobby/ui.btn.png"],"width":200,"height":80,"density":2,"anchor":[0.5,0.5],"nineSlice":[20,20,20,20],"nineSlice1x":[20,20,20,20],"source":"out/x/manifest.json#b","review":"pending"},{"id":"bgm.a","type":"bgm","group":"lobby","files":["lobby/bgm.a.ogg"],"durationSec":60,"lufs":-18,"source":"out/x/manifest.json#a","review":"done"}]}' > "$W/v/a2.json"
+echo '{"version":1,"assets":[{"id":"ui.btn","type":"ui","group":"lobby","files":["lobby/ui.btn.png"],"width":200,"height":80,"density":2,"anchor":[0.5,0.5],"nineSlice":[20,20,20,20],"nineSlice1x":[20,20,20,20],"source":"out/x/manifest.json#b","review":"pending"},{"id":"bgm.a","type":"bgm","group":"lobby","files":["lobby/bgm.a.ogg"],"durationSec":60,"lufs":-18,"source":"out/x/manifest.json#a","review":"pending"},{"id":"sfx.z","type":"sfx","group":"lobby","files":["lobby/sfx.z.ogg","lobby/sfx.z.m4a"],"durationSec":1,"lufs":-16,"source":"out/x/manifest.json#z","review":"done"}]}' > "$W/v/a2.json"
 o="$(V assets "$W/v/a2.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'nineSlice1x 應為 \[40,40,40,40\]' && echo "$o" | grep -q '.ogg 與 .m4a' && echo "$o" | grep -q 'review' && ok "schema:nineSlice1x = nineSlice × density、音訊雙格式、review 值" || bad "schema assets 錯誤" "$o"
 echo '{"version":1,"assets":[{"id":"sfx.click","type":"sfx","group":"ui","files":["ui/sfx.click.ogg","ui/sfx.click.m4a"],"durationSec":0.15,"normalized":"peak","source":"out/x/manifest.json#c","review":"pending"},{"id":"sfx.b","type":"sfx","group":"ui","files":["ui/sfx.b.ogg","ui/sfx.b.m4a"],"durationSec":1,"source":"out/x/manifest.json#b","review":"pending"}]}' > "$W/v/a3.json"
 o="$(V assets "$W/v/a3.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'assets\[1\]: 缺少 lufs' && ! echo "$o" | grep -q 'assets\[0\]' && ok "schema:短音效 normalized: peak 不需要 lufs,一般音訊仍必填" || bad "schema normalized" "$o"
+echo '{"version":1,"design":{"width":10,"height":10},"needs":[{"id":"ui.x","type":"ui","group":"l","purpose":"x","width":10,"height":10,"nineSlice":20},{"id":"a.b","type":"sfx","group":"l","purpose":"x","durationSec":1}]}' > "$W/v/crash.json"
+o="$(V needs "$W/v/crash.json" 2>&1)"; [ $? -eq 1 ] && echo "$o" | grep -q '"ok":false' && echo "$o" | grep -q 'nineSlice: 應為 array' && ok "schema:型別錯誤只回報錯誤,不丟例外" || bad "schema 型別錯誤崩潰" "$o"
 
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束
