@@ -27,7 +27,7 @@ node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
 #   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 180)。預設值已符合下面的規則。兩者相加要比呼叫端(例如 Bash 工具,最長 600 秒)的逾時
-#   少 180 秒以上(送出前要節點旗標:用 `check` 存在 `~/.cache/game-art-kit/` 的快取,1 小時內、而且 workflow 的節點都在快取裡就不另外抓;用 RMBG 的骨架必須先跑過 check;沒有快取時抓 `/object_info` 最多 60 秒,所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
+#   少 180 秒以上(送出前要節點旗標:用 `check` 存在 `~/.cache/game-art-kit/` 的快取,1 小時內、而且 workflow 的節點都在快取裡就不另外抓;用 RMBG 的骨架必須先跑過 check;沒有快取時抓 `/object_info` 最多 30 秒(落在 180 秒餘量內),所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
 #   → <目錄>/<檔名>.png(去背骨架是 RGBA)或 <檔名>.<伺服器給的音訊副檔名>(通常 .flac)、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);
 #     印 {"status":"ok","seconds":…,"files":[{file,width,height,channels} 或 {file,kind:"audio",bytes}]}
 #   逾時印 {"status":"timeout","reason":"run|queue|total","seconds":<設定的上限>,"elapsed":<實際秒數>}
@@ -37,7 +37,7 @@ node <kit>/scripts/sheet.mjs <spec.json> <輸出.png>    # 拼分鏡表 / 標註
 node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]   # 整數 1x 尺寸 + 實際 density(單格與 sheet 都 ≤ 2048)
 node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center] [--margin 0]
 #   裁透明邊 → 同一動作各格用同一縮放比例 → 角色底部對齊(腳底離下緣 3 px)/ 其他置中補到 1x 尺寸;--margin 0(單張 UI / 九宮格)等比放滿,比例差 > 3% 失敗 → 多格拼 sheet(橫向,寬超過 2048 換行);印 columns / rows
-node <kit>/scripts/sprite.mjs cover <背景.png> --out <id>.png --width <1x 寬> --height <1x 高>   # 不透明素材:等比蓋滿再置中裁切
+node <kit>/scripts/sprite.mjs cover <背景.png> --out <id>.png --width <1x 寬> --height <1x 高> [--exact]   # 不透明素材:等比蓋滿再置中裁切;地圖塊加 --exact(同比例、不裁切)
 node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> [--frames N --columns C] [--character] [--opaque] [--tileable] [--full-bleed]
 #   有 alpha、尺寸、每格覆蓋率 10–90%、外框 2 px 不透明 < 1%(--full-bleed:fit --margin 0 的 UI 不查外框與覆蓋率上限)、各格基線差 ≤ 2 px / 高度差 ≤ 10%(--character)、平鋪邊緣差 ≤ 8(--tileable)
 node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]

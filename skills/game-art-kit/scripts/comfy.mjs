@@ -93,9 +93,10 @@ function pngChannels(file) {
 // 節點旗標快取(只存 api_node / output_node 與可用的 RMBG 模型,不含位址;檔名用位址雜湊):~/.cache/game-art-kit/nodeflags-<雜湊>.json
 // 放使用者自己的快取目錄(不放共用的 /tmp,避免別的使用者塞假旗標);可用 GAK_CACHE_DIR 覆寫(測試用)
 const flagsFile = () => { const d = process.env.GAK_CACHE_DIR || join(homedir(), '.cache', 'game-art-kit'); mkdirSync(d, { recursive: true, mode: 0o700 }); return join(d, `nodeflags-${createHash('sha256').update(resolveUrl()).digest('hex').slice(0, 12)}.json`); };
-function writeNodeFlags(oi, rmbg) {
+function writeNodeFlags(oi, rmbg, rmbgT) {
   const flags = Object.fromEntries(Object.entries(oi).map(([k, v]) => [k, { api_node: v?.api_node === true, output_node: v?.output_node === true }]));
-  try { writeFileSync(flagsFile(), JSON.stringify({ t: Date.now(), flags, rmbg: rmbg ?? null }), { mode: 0o600 }); } catch {}
+  // rmbgT:RMBG 清單的時間只由 check 更新(run 重抓旗標時沿用舊時間,不會延長)
+  try { writeFileSync(flagsFile(), JSON.stringify({ t: Date.now(), flags, rmbg: rmbg ?? null, rmbgT: rmbg ? (rmbgT ?? Date.now()) : null }), { mode: 0o600 }); } catch {}
   return flags;
 }
 function readCache() {
@@ -307,13 +308,15 @@ async function run() {
   const cloudByName = classes.filter(c => CLOUD.test(c));
   if (cloudByName.length) die(`workflow 含雲端 API 節點,不能用:${cloudByName.join(', ')}`, 2);
   {
-    // 節點旗標:優先用 check 存下的快取(1 小時內、同一個位址),沒有才抓 /object_info(上限 60 秒,見 SKILL.md 的時間預算)
+    // 節點旗標:優先用 check 存下的快取(1 小時內、同一個位址),沒有才抓 /object_info(上限 30 秒,落在呼叫端 180 秒餘量內,見 SKILL.md)
     let oi = readNodeFlags();
     // 快取裡沒有的節點(check 之後才裝的)一律重抓,不當成安全
     if (!oi || classes.some(c => !(c in oi))) {
-      const full = await json('/object_info', { timeoutMs: 60000 });
+      let full;
+      try { full = await json('/object_info', { timeoutMs: 30000 }); } catch (e) { if (e instanceof Fail && e.code === 5) die('抓 /object_info 超過 30 秒或連不上;先跑 comfy.mjs check(會存節點旗標快取)再 run', 5); throw e; }
       if (full.__status) die(`/object_info 回 HTTP ${full.__status}`, 3);
-      oi = writeNodeFlags(full, readCache()?.rmbg); // 保留 check 存的 RMBG 清單
+      const old = readCache();
+      oi = writeNodeFlags(full, old?.rmbg, old?.rmbgT); // 保留 check 存的 RMBG 清單與它的時間
     }
     const api = classes.filter(c => oi[c]?.api_node === true);
     if (api.length) die(`workflow 含雲端 API 節點,不能用:${api.join(', ')}`, 2);
@@ -321,7 +324,8 @@ async function run() {
     // RMBG 只能用 check 確認檔案齊全的模型(其他的會在主機上自動下載)
     const rmbgUsed = Object.values(graph).filter(n => n?.class_type === 'RMBG').map(n => n.inputs?.model);
     if (rmbgUsed.length) {
-      const ok = readCache()?.rmbg;
+      const c = readCache();
+      const ok = c && c.rmbg && Date.now() - (c.rmbgT ?? 0) < 3600000 ? c.rmbg : null;
       if (!ok) die('用到 RMBG 但沒有 check 的結果(或超過 1 小時);先跑 comfy.mjs check', 2);
       const bad = rmbgUsed.filter(m => !ok.includes(m));
       if (bad.length) die(`RMBG 模型 ${bad.join(', ')} 不在主機上檔案齊全的清單(${ok.join(', ') || '無'});用了會讓主機自動下載`, 2);

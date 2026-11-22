@@ -10,7 +10,7 @@
 //        算 1x 尺寸:density 預設 min(2, …) 取到讓單格與整張 sheet 都不超過 2048;1x 取整數(無條件捨去),
 //        印 {"density":<1x 寬 ÷ 顯示寬,4 位小數>,"width":1x 寬,"height":1x 高,"columns","rows"}(寫進 assets.json 的就是這組)
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
-//        不透明素材(背景、地圖塊):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。
+//        不透明素材(背景):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。--exact(地圖塊):比例須相同,整張縮放不裁切。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
 //        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%(主體 = alpha ≥ 8)、
 //        外框 2 px 內主體像素(alpha ≥ 8)< 1%、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
@@ -49,10 +49,13 @@ export function decodePng(buf) {
   if (![8, 16].includes(depth) && !(ct === 3 && depth <= 8)) die(`不支援的 bit depth ${depth}`);
   const ch = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[ct]; if (!ch) die(`不支援的色彩類型 ${ct}`);
   const bpp = Math.max(1, (ch * depth) / 8), stride = Math.ceil((w * ch * depth) / 8);
-  const raw = inflateSync(Buffer.concat(idat)), px = Buffer.alloc(stride * h);
+  let raw; try { raw = inflateSync(Buffer.concat(idat)); } catch { die('PNG 影像資料損壞'); }
+  if (raw.length < (stride + 1) * h) die('PNG 影像資料不完整');
+  const px = Buffer.alloc(stride * h);
   let prev = Buffer.alloc(stride);
   for (let y = 0; y < h; y++) {
-    const f = raw[y * (stride + 1)], row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), out = px.subarray(y * stride, (y + 1) * stride);
+    const f = raw[y * (stride + 1)]; if (f > 4) die(`PNG 濾波類型錯誤(${f})`);
+    const row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), out = px.subarray(y * stride, (y + 1) * stride);
     for (let i = 0; i < stride; i++) {
       const a = i >= bpp ? out[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
       let v = row[i];
@@ -191,7 +194,9 @@ export function density1x(dw, dh, frames = 1, want = 2) {
   die('找不到合適的 density(顯示尺寸太大)');
 }
 
-export function cover(img, W, H) {
+export function cover(img, W, H, exact = false) {
+  // exact(地圖塊):比例要一致(±1%)、整張縮放不裁切,才不會切掉接得起來的邊
+  if (exact) { if (Math.abs((img.width / img.height) / (W / H) - 1) > 0.01) die(`--exact:原圖 ${img.width}×${img.height} 和 ${W}×${H} 比例不同;用相同比例重出`, 1); return resample(img, 0, 0, img.width, img.height, W, H); }
   const s = Math.max(W / img.width, H / img.height), sw = W / s, sh = H / s;
   return resample(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, W, H);
 }
@@ -244,7 +249,7 @@ if (isMain) {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
-      if (['--opaque', '--tileable', '--character', '--full-bleed'].includes(a)) flags[a.slice(2)] = true;
+      if (['--opaque', '--tileable', '--character', '--full-bleed', '--exact'].includes(a)) flags[a.slice(2)] = true;
       else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`);
       else pos.push(a);
     }
@@ -269,7 +274,7 @@ if (isMain) {
       console.log(JSON.stringify(density1x(int('width'), int('height'), frames, want)));
     } else if (cmd === 'cover') {
       const out = flags.out ?? die('缺 --out');
-      const r = cover(load(pos[0] ?? die('用法:cover <in.png> --out <out.png> --width W --height H')), int('width'), int('height'));
+      const r = cover(load(pos[0] ?? die('用法:cover <in.png> --out <out.png> --width W --height H [--exact]')), int('width'), int('height'), !!flags.exact);
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, encodePng(r));
       console.log(JSON.stringify({ file: out, width: r.width, height: r.height }));

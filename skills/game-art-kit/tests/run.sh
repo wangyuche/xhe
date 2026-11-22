@@ -222,6 +222,8 @@ o="$(S check "$W/sp/mismatch.png" --width 120 --height 160 --frames 2 --columns 
 mk2 "$W/sp/tile.png" 0 0 400 0 0
 o="$(S cover "$W/sp/tile.png" --out "$W/sp/cov.png" --width 200 --height 100)" && [ "$(C pngsize "$W/sp/cov.png")" = '{"width":200,"height":100}' ] && S check "$W/sp/cov.png" --width 200 --height 100 --opaque >/dev/null \
   && ok "sprite.mjs cover:不透明素材等比蓋滿裁切到 1x" || bad "sprite cover" "$o"
+o="$(S cover "$W/sp/tile.png" --out "$W/sp/cov2.png" --width 200 --height 100 --exact 2>&1)"; [ $? -eq 1 ] && o2="$(S cover "$W/sp/tile.png" --out "$W/sp/cov3.png" --width 150 --height 200 --exact)" && ok "sprite.mjs cover --exact:比例不同失敗、同比例整張縮放(地圖塊不裁邊)" || bad "sprite cover --exact" "$o $o2"
+head -c 200 "$W/sp/f1.png" > "$W/sp/trunc.png"; o="$(S info "$W/sp/trunc.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '不完整\|損壞' && ok "sprite.mjs:截斷的 PNG → 結束碼 2" || bad "sprite 截斷 PNG" "$o"
 o="$(S check "$W/sp/tile.png" --width 300 --height 400 --opaque --tileable)" && ok "sprite.mjs check:均勻地圖塊可平鋪" || bad "sprite tileable 均勻" "$o"
 node --input-type=module -e '
 import { encodePng } from "'"$K"'/scripts/sprite.mjs"; import { writeFileSync } from "node:fs";
