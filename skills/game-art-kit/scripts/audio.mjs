@@ -3,23 +3,25 @@
 // 用法:
 //   node audio.mjs tools                                                 → 檢查 ffmpeg / ffprobe / libopus / aac
 //   node audio.mjs process <輸入音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <檔名> [--loop]
-//        sfx:去頭尾靜音(−50 dB)→ 裁到 ≤ duration(結尾 20 ms 淡出)→ 響度 −16 LUFS、true peak ≤ −1.5 dBTP(留編碼餘量)
+//        sfx:去頭尾靜音(−50 dB)→ 裁到 ≤ duration(結尾 20 ms 淡出)→ 響度 −16 LUFS、true peak ≤ −1.5 dBTP(留編碼餘量);
+//        短於 0.4 秒(量不到整體響度)改以峰值正規化到 −3 dBTP,輸出 normalized: "peak"、lufs: null
 //        bgm:裁到 duration(--loop:輸入至少要 duration + 0.5 秒,頭尾 0.5 秒交叉淡化成可循環)→ −18 LUFS、≤ −1.5 dBTP
 //        輸出 <name>.ogg(Opus)與 <name>.m4a(AAC),印 {"files":[…],"durationSec":…,"lufs":…,"truePeak":…,"loop":true|false|"approx"}
 //   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm --duration <秒> [--loop]
 //        兩檔都在、長度(sfx ≤ duration + 0.05;bgm 與 duration 差 ≤ 0.5)、非靜音(RMS > −50 dBFS)、
-//        無削波(true peak ≤ −1 dBTP)、響度(sfx −20 至 −12、bgm −20 至 −16 LUFS)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
+//        無削波(true peak ≤ −1 dBTP)、響度(sfx −20 至 −12、bgm −20 至 −16 LUFS;短於 0.4 秒不檢查)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
 //        印 {"ok":…,"errors":[…],"measure":{…}};不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法 / 工具 / 檔案錯誤。
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, renameSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, renameSync, copyFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 class Fail extends Error { constructor(m, c) { super(m); this.code = c; } }
 const die = (m, c = 2) => { throw new Fail(m, c); };
 const TARGET = { sfx: { lufs: -16, range: [-20, -12] }, bgm: { lufs: -18, range: [-20, -16] } };
-const TP_OUT = -1.5, TP_MAX = -1, XFADE = 0.5;
+const TP_OUT = -1.5, TP_MAX = -1, XFADE = 0.5, SHORT = 0.4;
 
 function sh(cmd, args, { allowFail = false } = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 2 ** 20 });
@@ -47,7 +49,7 @@ export function measure(f, filter = '') {
   const r = sh('ffmpeg', ['-hide_banner', '-nostdin', '-nostats', '-i', f, '-af', `${filter ? filter + ',' : ''}ebur128=peak=true,astats=measure_perchannel=none:measure_overall=RMS_level+Peak_level`, '-f', 'null', '-'], { allowFail: true });
   const t = r.stderr;
   const sum = t.slice(t.lastIndexOf('Summary:'));
-  const num = (re, s = sum) => { const m = re.exec(s); return m ? Number(m[1]) : null; };
+  const num = (re, s = sum) => { const m = re.exec(s); return !m ? null : m[1] === '-inf' ? -Infinity : Number(m[1]); };
   return {
     lufs: num(/I:\s+(-?[\d.]+|-inf) LUFS/),
     truePeak: num(/True peak:\s*\n\s*Peak:\s+(-?[\d.]+|-inf) dBFS/),
@@ -83,8 +85,11 @@ function process_(input, { type, dur, out, name, loop }) {
     }
     // 響度:先量,算增益;增益後 true peak 超過 −1.5 就降增益(響度可能因此低於目標,check 會判斷範圍)
     const m0 = measure(stage1);
-    if (m0.lufs == null || m0.lufs < -69) die('量不到響度(太短或靜音)', 1);
-    let gain = TARGET[type].lufs - m0.lufs;
+    const short = duration(stage1) < SHORT;
+    if (!short && !(m0.lufs > -69)) die('量不到響度(靜音?)', 1);
+    if (short && !(m0.truePeak > -60)) die('太短而且幾乎沒有聲音', 1);
+    // 短於 0.4 秒量不到整體響度(ebur128 至少要一個 400 ms 區塊):改用峰值正規化到 −3 dBTP
+    let gain = short ? -3 - m0.truePeak : TARGET[type].lufs - m0.lufs;
     if (m0.truePeak != null && m0.truePeak + gain > TP_OUT) gain = TP_OUT - m0.truePeak;
     const norm = join(tmp, 'n.wav');
     ff(['-i', stage1, '-af', `volume=${gain.toFixed(2)}dB`, norm]);
@@ -96,7 +101,7 @@ function process_(input, { type, dur, out, name, loop }) {
     const files = [];
     for (const f of [ogg, m4a]) { const dst = join(out, f.split('/').pop()); try { renameSync(f, dst); } catch { copyFileSync(f, dst); } files.push(dst); }
     const m = measure(files[0]);
-    return { files, durationSec: +duration(files[0]).toFixed(3), lufs: m.lufs, truePeak: m.truePeak, gainDb: +gain.toFixed(2), loop: type === 'bgm' ? loopState : undefined };
+    return { files, durationSec: +duration(files[0]).toFixed(3), lufs: short || !isFinite(m.lufs) ? null : m.lufs, truePeak: m.truePeak, gainDb: +gain.toFixed(2), normalized: short ? 'peak' : 'lufs', loop: type === 'bgm' ? loopState : undefined };
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 }
 
@@ -120,7 +125,8 @@ export function check([ogg, m4a], { type, dur, loop }) {
     if (m.rms == null || !(m.rms > -50)) errs.push(`${k} RMS ${m.rms} dBFS(應 > −50;疑似靜音)`);
     if (m.truePeak == null || m.truePeak > TP_MAX) errs.push(`${k} true peak ${m.truePeak} dBTP(應 ≤ ${TP_MAX})`);
     const [lo, hi] = TARGET[type].range;
-    if (m.lufs == null || m.lufs < lo || m.lufs > hi) errs.push(`${k} 響度 ${m.lufs} LUFS(應 ${lo} 至 ${hi})`);
+    if (d < SHORT) measureOut[k].note = '短於 0.4 秒:不檢查整體響度(以峰值正規化)';
+    else if (m.lufs == null || !(m.lufs >= lo && m.lufs <= hi)) errs.push(`${k} 響度 ${m.lufs} LUFS(應 ${lo} 至 ${hi})`);
   }
   if (loop) {
     const s = seam(ogg); measureOut.seamDb = isFinite(s) ? +s.toFixed(2) : null;
@@ -129,7 +135,8 @@ export function check([ogg, m4a], { type, dur, loop }) {
   return { errs, measure: measureOut };
 }
 
-const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+// skill 目錄常是連結:argv[1] 保留連結路徑、import.meta.url 是實際路徑,要比 realpath
+const isMain = (() => { try { return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
 if (isMain) {
   try {
     const [cmd, ...rest] = process.argv.slice(2);

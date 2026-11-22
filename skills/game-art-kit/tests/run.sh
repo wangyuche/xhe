@@ -179,6 +179,14 @@ o="$(S check "$W/sp/dirty.png" --width 300 --height 400)"; [ $? -eq 1 ] && echo 
 o="$(S check "$W/o/q1.png" --width 96 --height 64)"; [ $? -eq 1 ] && echo "$o" | grep -q 'alpha' && ok "sprite.mjs check:沒有 alpha → 不通過" || bad "sprite 沒有 alpha" "$o"
 o="$(S check "$W/sp/one.png" --width 100 --height 160)"; [ $? -eq 1 ] && echo "$o" | grep -q '尺寸' && ok "sprite.mjs check:尺寸不符 → 不通過" || bad "sprite 尺寸" "$o"
 o="$(S fit "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" "$W/sp/f1.png" --out "$W/sp/x.png" --width 64 --height 64 2>&1)"; [ $? -eq 2 ] && ok "sprite.mjs fit:超過 8 格 → 結束碼 2" || bad "sprite 9 格" "$o"
+o="$(S fit "$W/sp/f1.png" --out "$W/sp/ui.png" --width 240 --height 100 --margin 0)" && o2="$(S info "$W/sp/ui.png")" && echo "$o2" | grep -q '"bbox":{"x":0,"y":0,"w":240,"h":100}' \
+  && o3="$(S check "$W/sp/ui.png" --width 240 --height 100 --full-bleed)" && ok "sprite.mjs fit --margin 0(UI / 九宮格):不留透明邊,check --full-bleed 通過" || bad "sprite margin 0" "$o $o2 $o3"
+o="$(S check "$W/sp/ui.png" --width 240 --height 100)"; [ $? -eq 1 ] && ok "sprite.mjs check:不加 --full-bleed 時貼邊的 UI 不通過外框檢查" || bad "sprite full-bleed 對照" "$o"
+mkdir -p "$W/lnk"; ln -s "$K" "$W/lnk/kit"
+o="$(node "$W/lnk/kit/scripts/sprite.mjs" check "$W/sp/dirty.png" --width 300 --height 400)"; rc=$?
+o2="$(node "$W/lnk/kit/schemas/validate.mjs" needs "$W/sp/dirty.png")"; rc2=$?
+o3="$(node "$W/lnk/kit/scripts/audio.mjs" check nope.ogg nope.m4a --type sfx --duration 1 2>&1)"; rc3=$?
+[ $rc -eq 1 ] && echo "$o" | grep -q '外框' && [ $rc2 -eq 1 ] && [ $rc3 -ne 0 ] && ok "從連結路徑(~/.claude/skills 是連結)呼叫 sprite / validate / audio 仍會執行,不會空跑回 0" || bad "連結路徑呼叫" "rc=$rc rc2=$rc2 rc3=$rc3 $o $o2 $o3"
 # 角色各格高度差太大(未用同一縮放、或生成時角色大小不一致)
 node --input-type=module -e '
 import { decodePng, encodePng } from "'"$K"'/scripts/sprite.mjs"; import { readFileSync, writeFileSync } from "node:fs";
@@ -206,6 +214,9 @@ if A tools >/dev/null 2>&1; then
     && ok "audio.mjs sfx:去頭尾靜音(2.3 秒 → 約 0.8 秒)、−16 LUFS、ogg + m4a 通過檢查" || bad "audio sfx" "$o $o2"
   ffmpeg -v error -y -f lavfi -i "anullsrc=r=48000:cl=stereo:d=2" "$W/au/silent.wav"
   o="$(A process "$W/au/silent.wav" --type sfx --duration 2 --out "$W/au" --name s 2>&1)"; [ $? -eq 1 ] && ok "audio.mjs:靜音輸入 → 結束碼 1" || bad "audio 靜音" "$o"
+  ffmpeg -v error -y -f lavfi -i "anullsrc=r=48000:cl=stereo:d=0.2" -f lavfi -i "sine=f=1200:d=0.15,volume=0.8" -filter_complex "[1]aformat=sample_rates=48000:channel_layouts=stereo[s];[0][s]concat=n=2:v=0:a=1" "$W/au/click.wav"
+  o="$(A process "$W/au/click.wav" --type sfx --duration 0.3 --out "$W/au" --name sfx.click)" && echo "$o" | grep -q '"normalized":"peak"' && echo "$o" | grep -q '"lufs":null' \
+    && o2="$(A check "$W/au/sfx.click.ogg" "$W/au/sfx.click.m4a" --type sfx --duration 0.3)" && ok "audio.mjs:短於 0.4 秒的音效改以峰值正規化,check 不套整體響度" || bad "audio 短音效" "$o $o2"
   ffmpeg -v error -y -f lavfi -i "sine=f=220:d=6.5,volume=0.5" -f lavfi -i "sine=f=330:d=6.5,volume=0.3" -filter_complex "[0][1]amix=inputs=2,aformat=sample_rates=48000:channel_layouts=stereo" "$W/au/music.wav"
   o="$(A process "$W/au/music.wav" --type bgm --duration 6 --loop --out "$W/au" --name bgm.stage1)" && echo "$o" | grep -q '"loop":true' \
     && o2="$(A check "$W/au/bgm.stage1.ogg" "$W/au/bgm.stage1.m4a" --type bgm --duration 6 --loop)" && ok "audio.mjs bgm:交叉淡化循環、−18 LUFS、接縫檢查通過" || bad "audio bgm loop" "$o $o2"
@@ -228,6 +239,8 @@ o="$(V assets "$W/v/assets.json")" && ok "schema:合法 assets 通過" || bad "s
 o="$(V assets "$W/v/assets.json" --root "$W/v")"; [ $? -eq 1 ] && echo "$o" | grep -q 'sfx.jump.m4a' && ok "schema:--root 檢查檔案存在(缺 m4a)" || bad "schema --root" "$o"
 echo '{"version":1,"assets":[{"id":"ui.btn","type":"ui","group":"lobby","files":["lobby/ui.btn.png"],"width":200,"height":80,"density":2,"anchor":[0.5,0.5],"nineSlice":[20,20,20,20],"nineSlice1x":[20,20,20,20],"source":"out/x/manifest.json#b","review":"pending"},{"id":"bgm.a","type":"bgm","group":"lobby","files":["lobby/bgm.a.ogg"],"durationSec":60,"lufs":-18,"source":"out/x/manifest.json#a","review":"done"}]}' > "$W/v/a2.json"
 o="$(V assets "$W/v/a2.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'nineSlice1x 應為 \[40,40,40,40\]' && echo "$o" | grep -q '.ogg 與 .m4a' && echo "$o" | grep -q 'review' && ok "schema:nineSlice1x = nineSlice × density、音訊雙格式、review 值" || bad "schema assets 錯誤" "$o"
+echo '{"version":1,"assets":[{"id":"sfx.click","type":"sfx","group":"ui","files":["ui/sfx.click.ogg","ui/sfx.click.m4a"],"durationSec":0.15,"normalized":"peak","source":"out/x/manifest.json#c","review":"pending"},{"id":"sfx.b","type":"sfx","group":"ui","files":["ui/sfx.b.ogg","ui/sfx.b.m4a"],"durationSec":1,"source":"out/x/manifest.json#b","review":"pending"}]}' > "$W/v/a3.json"
+o="$(V assets "$W/v/a3.json")"; [ $? -eq 1 ] && echo "$o" | grep -q 'assets\[1\]: 缺少 lufs' && ! echo "$o" | grep -q 'assets\[0\]' && ok "schema:短音效 normalized: peak 不需要 lufs,一般音訊仍必填" || bad "schema normalized" "$o"
 
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束

@@ -6,7 +6,7 @@
 // 支援的關鍵字:type、const、enum、pattern、minLength、minimum、maximum、exclusiveMinimum、minItems、maxItems、items、
 //   properties、required、additionalProperties:false、$ref(#/$defs/…)、allOf、if / then / else;
 //   自訂:forbidden(列出的鍵不得出現)、uniqueBy(陣列元素該欄位不得重複)。
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -110,7 +110,9 @@ export function validate(kind, obj, { root } = {}) {
   return errs;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// skill 目錄常是連結:比 realpath
+const isMain = (() => { try { return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
+if (isMain) {
   const [kind, file, ...rest] = process.argv.slice(2);
   const ri = rest.indexOf('--root'); const root = ri >= 0 ? rest[ri + 1] : undefined;
   if (!['needs', 'assets'].includes(kind) || !file || (ri >= 0 && !root)) {

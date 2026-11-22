@@ -4,15 +4,17 @@
 //   node sprite.mjs info <png>                                           → {width,height,channels,coverage,bbox}
 //   node sprite.mjs fit <in.png>... --out <out.png> --width W --height H [--align bottom|center] [--margin px]
 //        裁掉透明邊 → 同一個縮放比例(以最大的那張為準,確保每張都放得下)→ 置中 / 底部對齊補到 W×H。
+//        --margin 0(只限單張):裁邊後直接縮放到 W×H、不留透明邊(UI / 九宮格,切線才會對齊圖的邊緣)。
 //        多張輸入 = 同一動作的各格:拼成 sheet(橫向排列,寬超過 2048 換行),印出 columns / rows。
 //   node sprite.mjs cover <in.png> --out <out.png> --width W --height H
 //        不透明素材(背景、地圖塊):等比縮放到蓋滿 W×H 再置中裁切(不留透明邊)。
 //   node sprite.mjs check <png> --width W --height H [--frames N --columns C] [--opaque] [--tileable] [--character]
 //        有 alpha(--opaque 除外)、尺寸 = 1x(frames 時 = W×columns by H×rows)、每格主體覆蓋率 10–90%、
 //        外框 2 px 內 alpha>0 的像素 < 1%、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
-//        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
+//        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { inflateSync, deflateSync, crc32 } from 'node:zlib';
 
@@ -118,8 +120,10 @@ export const sheetLayout = (count, w) => { const columns = Math.max(1, Math.min(
 // 多張(同一動作)用同一縮放比例放進 W×H;回傳 sheet 影像
 export function fit(imgs, W, H, { align = 'bottom', margin } = {}) {
   const m = margin ?? Math.max(4, Math.round(Math.min(W, H) * 0.03));
+  if (m === 0 && imgs.length === 1) { const b = bbox(imgs[0]) ?? die('第 1 張是全透明', 1); return { sheet: resample(imgs[0], b.x, b.y, b.w, b.h, W, H), columns: 1, rows: 1, scale: W / b.w, margin: 0 }; }
   const boxes = imgs.map((im, i) => bbox(im) ?? die(`第 ${i + 1} 張是全透明`, 1));
   const maxW = Math.max(...boxes.map(b => b.w)), maxH = Math.max(...boxes.map(b => b.h));
+  if (m === 0) die('--margin 0 只用於單張(UI / 九宮格:裁邊後直接縮放到 W×H)');
   if (W - 2 * m <= 0 || H - 2 * m <= 0) die('尺寸太小,扣掉邊界後沒有空間');
   const s = Math.min((W - 2 * m) / maxW, (H - 2 * m) / maxH);
   const { columns, rows } = sheetLayout(imgs.length, W);
@@ -140,7 +144,7 @@ export function cover(img, W, H) {
   return resample(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, W, H);
 }
 
-export function checkImage(img, { width: W, height: H, frames = 1, columns, opaque = false, tileable = false, character = false }) {
+export function checkImage(img, { width: W, height: H, frames = 1, columns, opaque = false, tileable = false, character = false, fullBleed = false }) {
   const errs = [], info = [];
   const cols = columns ?? (frames > 1 ? sheetLayout(frames, W).columns : 1), rows = Math.ceil(frames / cols);
   if (!opaque && !img.hasAlpha) errs.push('沒有 alpha 通道(應為透明 PNG)');
@@ -158,8 +162,8 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
     const f = { frame: i + 1, coverage: +(cover / (W * H)).toFixed(3), border: +(border / borderN).toFixed(4), baseline: b ? b.y + b.h : null, height: b?.h ?? 0 };
     info.push(f);
     if (!opaque) {
-      if (f.coverage < 0.1 || f.coverage > 0.9) errs.push(`第 ${i + 1} 格主體覆蓋率 ${(f.coverage * 100).toFixed(1)}%(應 10–90%)`);
-      if (f.border >= 0.01) errs.push(`第 ${i + 1} 格外框 2 px 內有 ${(f.border * 100).toFixed(2)}% 不透明像素(應 < 1%;去背殘留或主體貼邊)`);
+      if (f.coverage < 0.1 || (!fullBleed && f.coverage > 0.9)) errs.push(`第 ${i + 1} 格主體覆蓋率 ${(f.coverage * 100).toFixed(1)}%(應 10–90%)`);
+      if (!fullBleed && f.border >= 0.01) errs.push(`第 ${i + 1} 格外框 2 px 內有 ${(f.border * 100).toFixed(2)}% 不透明像素(應 < 1%;去背殘留或主體貼邊)`);
     }
   }
   if (character && frames > 1 && !opaque) {
@@ -180,18 +184,19 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
 }
 
 // ---------- CLI ----------
-const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+// skill 目錄常是連結:argv[1] 保留連結路徑、import.meta.url 是實際路徑,要比 realpath
+const isMain = (() => { try { return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
 if (isMain) {
   try {
     const [cmd, ...rest] = process.argv.slice(2);
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
-      if (['--opaque', '--tileable', '--character'].includes(a)) flags[a.slice(2)] = true;
+      if (['--opaque', '--tileable', '--character', '--full-bleed'].includes(a)) flags[a.slice(2)] = true;
       else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`);
       else pos.push(a);
     }
-    const int = (k, req = true) => { const v = flags[k]; if (v == null) return req ? die(`缺 --${k}`) : undefined; if (!/^\d+$/.test(v) || +v < 1) die(`--${k} 要是正整數`); return +v; };
+    const int = (k, req = true, min = 1) => { const v = flags[k]; if (v == null) return req ? die(`缺 --${k}`) : undefined; if (!/^\d+$/.test(v) || +v < min) die(`--${k} 要是 ≥ ${min} 的整數`); return +v; };
     const load = (f) => { let b; try { b = readFileSync(f); } catch (e) { die(`讀不到 ${f}:${e.message}`); } return decodePng(b); };
     if (cmd === 'info') {
       const img = load(pos[0] ?? die('用法:info <png>'));
@@ -202,7 +207,7 @@ if (isMain) {
       const out = flags.out ?? die('缺 --out');
       const align = flags.align ?? 'bottom'; if (!['bottom', 'center'].includes(align)) die('--align 只能 bottom 或 center');
       if (pos.length > 8) die('一個動作最多 8 格');
-      const r = fit(pos.map(load), int('width'), int('height'), { align, margin: flags.margin != null ? int('margin') : undefined });
+      const r = fit(pos.map(load), int('width'), int('height'), { align, margin: flags.margin != null ? int('margin', true, 0) : undefined });
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, encodePng(r.sheet));
       console.log(JSON.stringify({ file: out, width: r.sheet.width, height: r.sheet.height, frames: pos.length, columns: r.columns, rows: r.rows, scale: +r.scale.toFixed(4), margin: r.margin }));
@@ -216,7 +221,7 @@ if (isMain) {
       const img = load(pos[0] ?? die('用法:check <png> --width W --height H'));
       const frames = flags.frames != null ? int('frames') : 1;
       if (frames > 8) die('frames 最多 8');
-      const { errs, info } = checkImage(img, { width: int('width'), height: int('height'), frames, columns: flags.columns != null ? int('columns') : undefined, opaque: !!flags.opaque, tileable: !!flags.tileable, character: !!flags.character });
+      const { errs, info } = checkImage(img, { width: int('width'), height: int('height'), frames, columns: flags.columns != null ? int('columns') : undefined, opaque: !!flags.opaque, tileable: !!flags.tileable, character: !!flags.character, fullBleed: !!flags['full-bleed'] });
       console.log(JSON.stringify({ ok: errs.length === 0, errors: errs, frames: info }));
       process.exit(errs.length ? 1 : 0);
     } else die('用法:sprite.mjs info | fit | cover | check(見檔頭)');
