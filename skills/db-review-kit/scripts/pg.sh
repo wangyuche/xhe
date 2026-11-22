@@ -88,14 +88,7 @@ case "$CMD" in
       case "${kv%%=*}" in PGDATA|POSTGRES_INITDB_WALDIR) die "${kv%%=*} 不能用 --env 改(資料與 WAL 必須在映像宣告的 VOLUME,也就是 tmpfs 上)" 2 ;; esac
       RUNARGS+=(-e "$kv")
     done
-    # pull only after every argument check passed (a failed check must not leave a pulled image behind)
-    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; fi
-    # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
-    # anonymous on-disk volume is created and --tmpfs-size really caps the data.
-    VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
-    [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
-    for v in $VOLS; do RUNARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
-    CONTAINER="dbrev-$NAME-$(rand_hex 3)"
+    CONTAINER="dbrev-$NAME-$(rand_hex 3)"   # traps are in place before the pull, so an interrupted pull is cleaned up too
     START=$(date +%s)
     cleanup_fail() {
       docker rm -f -v "$CONTAINER" >/dev/null 2>&1 || true; rm -f "$(state_file "$NAME")"
@@ -105,6 +98,13 @@ case "$CMD" in
     UP_OK=""
     trap '[ -n "$UP_OK" ] || cleanup_fail' EXIT
     trap 'exit 130' INT TERM
+    # pull only after every argument check passed (a failed check must not leave a pulled image behind)
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker pull -q "$IMAGE" >/dev/null || die "拉不到映像 $IMAGE" 1; PULLED=1; fi
+    # tmpfs on every VOLUME the image declares (18+: /var/lib/postgresql; ≤17: /var/lib/postgresql/data), so no
+    # anonymous on-disk volume is created and --tmpfs-size really caps the data.
+    VOLS="$(docker image inspect -f '{{range $k, $v := .Config.Volumes}}{{$k}} {{end}}' "$IMAGE")"
+    [ -n "$VOLS" ] || VOLS="/var/lib/postgresql"
+    for v in $VOLS; do RUNARGS+=(--tmpfs "$v:rw,size=$TMPFS_SIZE"); done
     docker run --name "$CONTAINER" "${RUNARGS[@]}" "$IMAGE" >/dev/null || { cleanup_fail; die "docker run 失敗" 1; }
     # init (docker-entrypoint-initdb.d) runs on a socket-only temp server; TCP on 127.0.0.1 answers only after the final start.
     i=0

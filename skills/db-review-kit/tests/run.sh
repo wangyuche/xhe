@@ -210,6 +210,8 @@ o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'CREATE TABLE fx.tmp_c (i int); 
 gone2="$(echo "SELECT to_regclass('fx.tmp_c') IS NULL;" | bash "$S/pg.sh" psql "$N" "$SU" -At 2>&1)"
 [ $rc -eq 2 ] && [ "$gone2" = t ] && ok "locks.sh:SQL 含 COMMIT → 拒絕,沒有留下物件" || bad "locks COMMIT" "rc=$rc gone=$gone2 $o"
 printf -- '-- +goose NO TRANSACTION\n-- +goose Up\nCREATE INDEX CONCURRENTLY IF NOT EXISTS x ON fx.accounts (name);\n' > "$WORK/nt.sql"
+o="$(bash "$S/locks.sh" "$N" --dsn "$(echo "$MIG" | sed 's#/fx_test?#/fx_nope?#')" --sql 'SELECT 1' 2>&1)"; rc=$?
+[ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":null' && ! echo "$o" | grep -q '重建' && ok "locks.sh:連不上資料庫 → 回報連線錯誤,不會誤報 COMMIT" || bad "locks 連線失敗" "rc=$rc $o"
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql 'ALTER TABLE fx.accounts ADD COLUMN x int' 2>&1)"; rc=$?
 echo "$o" | grep -q '| fx.accounts | AccessExclusiveLock | reads+writes' && echo "$o" | tail -1 | grep -q '"access_exclusive":1' && [ $rc -eq 0 ] \
   && ok "locks.sh:ALTER 既有表不會被標成 new,ACCESS EXCLUSIVE 有算到" || bad "locks 既有表" "rc=$rc $o"
@@ -286,7 +288,7 @@ o="$(bash "$S/race.sh" "$N" --script "$WORK/dup.txt" --dsn A="$MIG" --dsn B="$BA
 echo "$o" | tail -1 | grep -q '"errors":{"23505":1,"connect":1}\|"errors":{"connect":1' && echo "$o" | grep -q 'session B connect failed: .*fx_nope' && echo "$o" | grep -q '^step 6 B (.*→ never-finished)' && [ $rc -ne 141 ] \
   && ok "race.sh:session B 連線失敗(資料庫不存在)→ 不被 SIGPIPE 中斷,回報連線失敗,B 的步驟標 never-finished" || bad "race session 結束" "rc=$rc $o"
 
-printf '%s\n' "A: BEGIN;" "A: UPDATE fx.accounts SET name = name WHERE name = 'race-a';" "B: BEGIN;" "B: UPDATE fx.accounts SET name = name WHERE name = 'race-b';" "A: COMMIT;" "B: COMMIT;" > "$WORK/clean.txt"
+printf '%s\n' "A: BEGIN; -- A starts" "A: UPDATE fx.accounts SET name = name WHERE name = 'race-a';" "B: BEGIN;" "B: UPDATE fx.accounts SET name = name WHERE name = 'race-b';" "A: COMMIT;" "B: COMMIT;" > "$WORK/clean.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/clean.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && echo "$o" | tail -1 | grep -q '"deadlock":false,"errors":{}' && ok "race.sh:沒有任何錯誤時也印 JSON(errors 為空)" || bad "race 無錯誤" "rc=$rc $o"
 

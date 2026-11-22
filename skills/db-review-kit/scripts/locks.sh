@@ -130,6 +130,12 @@ if [ -z "$HOLD" ]; then
   out="$( { printf "SELECT coalesce(array_agg(oid)::text, '{}') AS dbrev_pre FROM pg_class \\\\gset\n"; wrap_sql ddl "$SQL" "$(printf '\\echo __DBREV_LOCKS__\n%s' "$LOCKQ")"; } \
         | PSQL_MERGE_STDERR=1 psql_dsn "$DSN" -qAt -F '|' 2>&1)" && rc=0 || rc=$?
   err="$(echo "$out" | grep -m1 -oE '(ERROR|FATAL): +[0-9A-Z]{5}: .{0,120}' || true)"
+  if ! echo "$out" | grep -q '^__DBREV_TX_BEGIN__'; then   # never reached BEGIN: connection / setup failure, nothing ran
+    echo "$out" | tail -3 >&2
+    python3 -I -c 'import json,sys; print(json.dumps({"mode":"in-transaction","rolled_back":None,"ok":False,"error":sys.argv[1]},ensure_ascii=False,separators=(",",":")))' \
+      "${err:-$(echo "$out" | grep -m1 -E 'psql: error|ERROR|FATAL' | cut -c1-200 || true)}"
+    exit 1
+  fi
   if ! tx_rolled_back "$out"; then
     echo "$out" | grep -E 'ERROR|FATAL' | head -3 >&2
     echo "SQL 結束了交易(COMMIT 等)或無法證明已 ROLLBACK:暫存資料庫可能已被改,後續實測請 pg.sh rm 後重建" >&2
@@ -207,9 +213,10 @@ DDL_RES="$(outcome "$WORK/ddl.out")"
 # end the hold now (cancel its pg_sleep) and wait, so its ROLLBACK TO / AFTER marker is in hold.out before judging
 printf "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = 'dbrev-lock-%s-hold';\n" "$RID" | psql_dsn "$MON" -qAt >/dev/null 2>&1 || true
 k=0; while kill -0 "$HOLD_PID" 2>/dev/null && [ $k -lt 40 ]; do sleep 0.25; k=$((k + 1)); done
-if ! tx_rolled_back "$(cat "$WORK/ddl.out")"; then DDL_RES="committed(not provably rolled back)"; fi
-HOLD_TX=ok; tx_rolled_back "$(cat "$WORK/hold.out")" || HOLD_TX="committed(hold SQL not provably rolled back)"
-PROBE_TX=ok; [ -z "$PROBE" ] || tx_rolled_back "$(cat "$WORK/probe.out")" || PROBE_TX="committed(probe SQL not provably rolled back)"
+began() { grep -q '^__DBREV_TX_BEGIN__' "$1"; }   # no BEGIN marker = the session never ran (e.g. connect-failed)
+if began "$WORK/ddl.out" && ! tx_rolled_back "$(cat "$WORK/ddl.out")"; then DDL_RES="committed(not provably rolled back)"; fi
+HOLD_TX=ok; ! began "$WORK/hold.out" || tx_rolled_back "$(cat "$WORK/hold.out")" || HOLD_TX="committed(hold SQL not provably rolled back)"
+PROBE_TX=ok; [ -z "$PROBE" ] || ! began "$WORK/probe.out" || tx_rolled_back "$(cat "$WORK/probe.out")" || PROBE_TX="committed(probe SQL not provably rolled back)"
 PROBE_RES=""; [ -z "$PROBE" ] || PROBE_RES="$(outcome "$WORK/probe.out")"
 echo "### outcomes"; echo "ddl: $DDL_RES $(grep -m1 ERROR "$WORK/ddl.out" || true)"
 [ -z "$PROBE" ] || echo "probe: $PROBE_RES $(grep -m1 ERROR "$WORK/probe.out" || true)"

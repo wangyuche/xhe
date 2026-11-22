@@ -39,7 +39,7 @@ printf '%s' "$LT" | grep -Eq '^[0-9]+(ms|s|min)$' || die "--lock-timeout 格式�
 bad="$( { grep -E '^(SETUP|A|B):' "$SCRIPT" | sed -E 's/^(SETUP|A|B):[[:space:]]*//' || true; grep -E '^CHECK:' "$SCRIPT" | sed -E 's/^CHECK:[[:space:]]*//; s/(.*)=>.*$/\1/' || true; } \
   | python3 -I "$KIT_DIR/scripts/_txcheck.py" --connect)" \
   || die "腳本裡有不允許的 psql 指令($bad),拒絕" 4
-nosemi="$(grep -E '^(A|B):' "$SCRIPT" | sed -E 's/[[:space:]]+$//' | grep -vE ';$' | head -1 || true)"
+nosemi="$(grep -E '^(A|B):' "$SCRIPT" | sed -E 's/;[[:space:]]*--[^;]*$/;/; s/[[:space:]]+$//' | grep -vE ';$' | head -1 || true)"
 [ -z "$nosemi" ] || die "A: / B: 的每一行都要以 ; 結尾(否則 psql 會先印標記、語句卻還沒送出):$nosemi" 2
 nocmp="$(grep -E '^CHECK:' "$SCRIPT" | grep -v '=>' | head -1 || true)"
 [ -z "$nocmp" ] || die "CHECK 行要寫成 CHECK: <sql> => <預期>:$nocmp" 2
