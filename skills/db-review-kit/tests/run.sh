@@ -67,9 +67,10 @@ for kv in 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=
 done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
 o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?options=-c%20standard_conforming_strings%3Doff')"; [ $? -eq 4 ] && ok "guard:DSN options 改 standard_conforming_strings → 拒絕" || bad "guard scs" "$o"
+o="$(DSNPY guard 6000 'postgres://u:p@127.0.0.1:6000/db?options=--standard-conforming-strings%3Doff')"; [ $? -eq 4 ] && ok "guard:連字號寫法 --standard-conforming-strings 也拒絕" || bad "guard scs dash" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GOOSE_TABLE=fx_meta.goose_db_version'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GOOSE_TABLE 這類專案變數可以傳" || bad "GOOSE_TABLE 誤擋" "$o"
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'TEST_ARGS=--report=json' 'NOTIFY=ci@example.com' 'SUPER=superuser=on'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:--report=json、email 這類值不誤擋" || bad "誤擋 report/email" "$o"
-for kv in 'FX_TARGET=localhost:5432/devdb' 'GOTOOLDIR=/x' 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
+for kv in 'TARGET=app@staging-db.internal:5432' 'FX_TARGET=localhost:5432/devdb' 'GOTOOLDIR=/x' 'TEST_PGHOST=staging-db.internal' 'CLOUDSQL_INSTANCE=proj:region:inst' 'X=app:secret@db.internal/prod' 'APP_TARGET=host = 10.0.0.5 dbname = prod' 'GOFLAGS=-mod=mod' 'GOTOOLCHAIN=auto' 'HOME=/tmp' 'APP_CONN=dbname=lobby user=app sslmode=disable' 'test_db=host=10.0.0.5 port=5432 dbname=prod' 'DB_HOST=10.0.0.5' 'TEST_POSTGRES_ADDR=10.0.0.5:5432' 'OTHER=db.internal:5432' 'APP_TARGET=u:p@10.0.0.5/db' 'X=mysql://u@10.0.0.5/db'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; rc=$?
   [ $rc -eq 4 ] && ok "隔離:--env $kv → 拒絕" || bad "--env $kv 應拒絕" "rc=$rc $o"
 done
@@ -114,6 +115,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker pull -q "$IMAGE" >/dev/null && PULLED=1 || { bad "docker pull $IMAGE"; echo "pass=$PASS fail=$FAIL skip=$SKIP"; exit 1; }
 fi
 GIT_BEFORE="$(git -C "$FX" status --porcelain -- . 2>/dev/null || echo no-git)"
+SKIPTOK="$WORK/skip-txcheck.token"; echo dbrev-selftest-skip-txcheck > "$SKIPTOK"
 VOL_BEFORE="$(docker volume ls -q --filter label=com.docker.volume.anonymous | sort)"
 
 o="$(bash "$S/pg.sh" up "$N" --image "$IMAGE" --mount "$FX/db/init:/docker-entrypoint-initdb.d" --mount "$FX/db/roles.sql:/roles.sql:rw" 2>&1)"; rc=$?
@@ -196,10 +198,10 @@ COMMIT' "SELECT E'a\\'b'; COMMIT;"; do
   [ $rc -eq 2 ] && [ "$left" = 0 ] && ok "locks.sh:交易控制 / psql 指令 → 拒絕(沒有留下物件)" || bad "locks 交易控制" "rc=$rc left=$left $o"
 done
 # the txid check itself (pre-filter switched off for this case only): a COMMIT inside the SQL is detected
-o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1" 2>&1)"; rc=$?
+o="$(DBREV_SELFTEST_SKIP_TXCHECK="$SKIPTOK" bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":false' && ok "locks.sh:SQL 中途 COMMIT 會被 txid 檢查偵測(rolled_back:false、結束碼 1)" || bad "locks txid 偵測" "rc=$rc $o"
 echo "DROP TABLE IF EXISTS fx.tmp_det;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
-o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1/0" 2>&1)"; rc=$?
+o="$(DBREV_SELFTEST_SKIP_TXCHECK="$SKIPTOK" bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_det (i int); COMMIT; SELECT 1/0" 2>&1)"; rc=$?
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"rolled_back":false' && ok "locks.sh:COMMIT 之後又出錯也偵測得到(rolled_back:false)" || bad "locks commit+error" "rc=$rc $o"
 echo "DROP TABLE IF EXISTS fx.tmp_det;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
 o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_err (i int); SELECT 1/0" 2>&1)"; rc=$?
@@ -348,7 +350,10 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$APP" --query "SELECT balance FROM fx.acco
 [ $rc -eq 1 ] && echo "$o" | tail -1 | grep -q '"ok":false' && ok "explain.sh:第一次 EXPLAIN 失敗也印 JSON" || bad "explain 首次失敗" "rc=$rc $o"
 o="$(printf 'SELECT :x;\n' | bash "$S/pg.sh" psql "$N" "$SU" -v "x=1
 \\c host=10.0.0.5" 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值跨行 → 拒絕" || bad "psql -v 跨行" "$o"
-o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql '\c host=10.0.0.5' 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:psql 指令一律拒絕(不受自我測試開關影響)" || bad "locks 反斜線" "$o"
+o="$(bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "DO \$\$BEGIN RAISE EXCEPTION '%', chr(92)||'c host=10.0.0.5'; END\$\$; SELECT :LAST_ERROR_MESSAGE;" 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:裸 psql 變數(:LAST_ERROR_MESSAGE)→ 拒絕" || bad "locks 裸變數" "$o"
+o="$(DBREV_SELFTEST_SKIP_TXCHECK=1 bash "$S/locks.sh" "$N" --dsn "$MIG" --sql "CREATE TABLE fx.tmp_tok (i int); COMMIT;" 2>&1)"; rc=$?
+[ $rc -eq 2 ] && ok "locks.sh:自我測試開關必須指向 token 檔(=1 無效)" || bad "locks skip token" "rc=$rc $o"
+o="$(DBREV_SELFTEST_SKIP_TXCHECK="$SKIPTOK" bash "$S/locks.sh" "$N" --dsn "$MIG" --sql '\c host=10.0.0.5' 2>&1)"; [ $? -eq 2 ] && ok "locks.sh:psql 指令一律拒絕(不受自我測試開關影響)" || bad "locks 反斜線" "$o"
 o="$(printf ':x\n' | bash "$S/pg.sh" psql "$N" "$SU" -v 'x=\c host=10.0.0.5 dbname=prod' 2>&1)"; [ $? -eq 2 ] && ok "pg.sh psql:-v 值含反斜線 → 拒絕" || bad "psql -v backslash" "$o"
 o="$(printf "SELECT chr(92)||'! id' AS x \\gset\n:x\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\gset 變數再以 :x 執行 → 拒絕" || bad "psql gset :x" "$o"
 o="$(printf "SELECT chr(92)||'c host=10.0.0.5' AS x \\gset\n\\set y :x\n:y\n" | bash "$S/pg.sh" psql "$N" "$SU" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh psql:\\set y :x 複製變數再執行 → 拒絕" || bad "psql set y :x" "$o"

@@ -43,13 +43,16 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$DSN" ] && [ -n "$SQL" ] || die "需要 --dsn 與 --sql / --file / --goose-up" 2
 # The DDL runs between BEGIN and ROLLBACK; transaction control inside it would make it permanent.
-# Best-effort pre-filter; the txid check below is the guarantee. DBREV_SELFTEST_SKIP_TXCHECK=1 exists only so the
-# self-test can prove that check without a filter bypass.
+# Best-effort pre-filter; the txid check below is the guarantee. DBREV_SELFTEST_SKIP_TXCHECK=<token file> exists only
+# so the self-test can prove that check without a filter bypass.
 # psql meta-commands are always refused (the txid check proves the rollback, not where psql connected).
 for part in "$SQL" "$HOLD" "$PROBE"; do
   case "$part" in *\\*) die "SQL 不能含反斜線(psql 指令;字串裡請用 chr(92))" 2 ;; esac
 done
-[ "${DBREV_SELFTEST_SKIP_TXCHECK:-}" = 1 ] || for part in "$SQL" "$HOLD" "$PROBE"; do
+# self-test only: the variable must name a token file that tests/run.sh creates in its own temp dir (and deletes)
+skip_pre=""; t="${DBREV_SELFTEST_SKIP_TXCHECK:-}"
+if [ -n "$t" ] && [ -f "$t" ] && [ -O "$t" ] && [ "$(cat "$t")" = "dbrev-selftest-skip-txcheck" ]; then skip_pre=1; fi
+[ -n "$skip_pre" ] || for part in "$SQL" "$HOLD" "$PROBE"; do
   [ -n "$part" ] || continue
   bad="$(printf '%s\n' "$part" | python3 -I "$KIT_DIR/scripts/_txcheck.py")" \
     || die "SQL 裡有交易控制語句或 psql 指令($bad),locks.sh 無法保證 ROLLBACK,拒絕" 2

@@ -198,6 +198,11 @@ def main():
                 return 1
         return 0
     text = strip(raw)
+    # a bare :name is re-read by psql as input (e.g. :LAST_ERROR_MESSAGE after a crafted error): never allowed here
+    vm = re.search(r"(?<![:A-Za-z0-9_]):([A-Za-z_][A-Za-z0-9_]*)", text)
+    if vm:
+        print("bare psql variable :%s is not allowed" % vm.group(1))
+        return 1
     if "\\" in text:
         line = next(l for l in text.splitlines() if "\\" in l)
         print("psql meta-command: " + line.strip()[:80])

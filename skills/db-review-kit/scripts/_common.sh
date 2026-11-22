@@ -127,7 +127,8 @@ iso_base_env() {
   local gocache gomodcache v val
   # The user's real Go caches (resolved outside the sandbox), so modules download only the first time.
   # Never a temp dir: if go cannot report them, stop instead of silently re-downloading everything.
-  gocache="$(go env GOCACHE 2>/dev/null || true)"; gomodcache="$(go env GOMODCACHE 2>/dev/null || true)"
+  # lookups outside the sandbox: GOTOOLCHAIN=local from / so a project's go.mod can never trigger a toolchain download
+  gocache="$(cd / && GOTOOLCHAIN=local go env GOCACHE 2>/dev/null || true)"; gomodcache="$(cd / && GOTOOLCHAIN=local go env GOMODCACHE 2>/dev/null || true)"
   [ -n "$gocache" ] && [ -n "$gomodcache" ] || { echo "錯誤:go env GOCACHE / GOMODCACHE 取不到(go 沒安裝?)" >&2; return 1; }
   echo "PATH=$PATH"
   echo "HOME=$d/home"
@@ -141,7 +142,7 @@ iso_base_env() {
   echo "PGSERVICEFILE=/dev/null"
   # Go download settings: resolved from the user's go env (may come from `go env -w`, which env -i would lose).
   for v in $GO_NET_VARS; do
-    val="$(go env "$v" 2>/dev/null || true)"
+    val="$(cd / && GOTOOLCHAIN=local go env "$v" 2>/dev/null || true)"
     [ -n "$val" ] && echo "$v=$val"
   done
   for v in $PROXY_VARS; do
@@ -171,7 +172,7 @@ check_extra_env() {
       postgres://*|postgresql://*) QUIET_GUARD=1 guard_dsns "$v"; continue ;;
       *://*) die "$k 的值是非 postgres 的 URL,拒絕" 4 ;;
     esac
-    if printf '%s' "$v" | grep -Eq ':[^[:space:]@/]*@[A-Za-z0-9.-]+'; then
+    if printf '%s' "$v" | grep -Eq ':[^[:space:]@/]*@[A-Za-z0-9.-]+|@[A-Za-z0-9.-]+:[0-9]{2,5}'; then
       die "$k 的值看起來是 帳號:密碼@主機,拒絕(只接受指向本容器的 postgres:// URL)" 4
     fi
     if printf '%s' "$v" | grep -Eqi '(^|[[:space:]])(host|hostaddr|dbname|user|port|service|sslmode|password)[[:space:]]*='; then
