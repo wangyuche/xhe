@@ -77,6 +77,7 @@ if [ -n "$HOLD" ]; then
     # 0 = no limit in PostgreSQL: keep --lock-timeout
     if [ "$own_s" -gt 0 ] && [ "$own_s" -lt "$LT_S" ]; then echo "注意:SQL 自己的 SET LOCAL lock_timeout = $own(比 --lock-timeout 短,以它為準)" >&2; LT_S="$own_s"; fi
   fi
+  [ "$LT_S" -ge 3 ] || die "有效的 lock_timeout 只有 ${LT_S}s(SQL 自己設的),監看來不及:這個面向改推導、標缺口" 2
   [ -z "$PROBE" ] || [ "$LT_S" -ge 5 ] || die "有 --probe 時有效的 lock_timeout 至少 5s(目前 ${LT_S}s;migration 自己設較短時,改不帶 --probe 觀察 DDL 被擋,probe 的排隊改推導)" 2
 else
   [ -n "$LT" ] || LT="2s"

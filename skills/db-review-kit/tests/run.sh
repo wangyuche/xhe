@@ -62,7 +62,7 @@ o="$(DB_REVIEW_KIT_TMP="$WORK/gw" bash -c "source '$S/_common.sh' && ensure_name
 [ $rc -eq 4 ] && echo "$o" | grep -q '可被群組或其他人寫入' && ok "暫存目錄:既有目錄群組可寫(0775)→ 拒絕,不改權限" || bad "暫存目錄 0775" "rc=$rc $o"
 o="$(DB_REVIEW_KIT_TMP="$WORK/foreign" bash -c "mkdir -p '$WORK/real' && ln -s '$WORK/real' '$WORK/foreign' && source '$S/_common.sh' && ensure_name_dir x" 2>&1)"; rc=$?
 [ $rc -eq 4 ] && echo "$o" | grep -q 'symlink' && ok "暫存目錄:根目錄是 symlink → 拒絕(結束碼 4)" || bad "暫存目錄 symlink" "rc=$rc $o"
-for kv in 'GOOGLE_APPLICATION_CREDENTIALS=/k.json' 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
+for kv in 'COMPILER_PATH=/tmp/x' 'GOOGLE_APPLICATION_CREDENTIALS=/k.json' 'XDG_CONFIG_HOME=/tmp/x' 'GOCACHEPROG=sh -c id' 'GOAUTH=sh -c id' 'CC=/tmp/evil' 'GIT_SSH_COMMAND=sh -c id' 'DYLD_INSERT_LIBRARIES=/tmp/x.dylib' 'LD_PRELOAD=/tmp/x.so'; do
   o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env '$kv'" 2>&1)"; [ $? -eq 4 ] && ok "隔離:${kv%%=*} 等會被工具鏈執行的變數不能傳" || bad "${kv%%=*} 應拒絕" "$o"
 done
 o="$(bash -c "source '$S/_common.sh'; PORT=6000; check_extra_env 'GORM_LOG=silent'" 2>&1)"; [ $? -eq 0 ] && ok "隔離:GORM_* 這類非工具鏈的 GO 開頭變數可以傳" || bad "GORM 誤擋" "$o"
@@ -332,6 +332,7 @@ o="$(bash "$S/explain.sh" "$N" --dsn "$MIG" --query "SELECT 1; /* note */" --run
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --env POSTGRES_INITDB_WALDIR=/wal 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:POSTGRES_INITDB_WALDIR → 拒絕(WAL 也要在 tmpfs)" || bad "WALDIR" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --role app 2>&1)"; [ $? -eq 2 ] && [ -z "$(docker ps -aq --filter "label=dbrev=$N-x")" ] && ok "pg.sh up:--role 格式錯誤在啟動容器前就拒絕" || bad "pg role 早檢查" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME:/h" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount 家目錄 → 拒絕" || bad "mount HOME" "$o"
+if [ -d "$HOME/.ssh" ]; then o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --mount "$HOME/.ssh:/s" 2>&1)"; [ $? -eq 4 ] && ok "pg.sh up:--mount ~/.ssh → 拒絕" || bad "mount .ssh" "$o"; else skip "mount ~/.ssh(本機沒有 ~/.ssh)"; fi
 printf '%s\n' 'A: SELECT 1;' 'b: SELECT 1;' > "$WORK/race-lc.txt"
 o="$(bash "$S/race.sh" "$N" --script "$WORK/race-lc.txt" --dsn A="$MIG" --dsn B="$MIG" 2>&1)"; [ $? -eq 2 ] && ok "race.sh:不認得的行(小寫 b:)→ 用法錯誤" || bad "race 未知行" "$o"
 o="$(bash "$S/pg.sh" up "$N-x" --image "$IMAGE" --tmpfs-size 0 2>&1)"; [ $? -eq 2 ] && ok "pg.sh up:--tmpfs-size 0 → 拒絕(size=0 是沒有上限)" || bad "tmpfs 0" "$o"
@@ -421,6 +422,10 @@ echo "$o" | tail -1 | grep -qx 'partitions_summary parents=1 runway_violations=1
   && ok "partitions.sql:列出分區、跑道不足、子表 ACL 與父表不同(events_2026_12)、沒有 default 分區" || bad "partitions" "$o"
 o="$(bash "$S/pg.sh" psql "$N" "$SU" -v min_runway_days=-100000 < "$S/partitions.sql" 2>&1 | tail -1)"
 echo "$o" | grep -q 'runway_violations=0' && ok "partitions.sql:min_runway_days 變數生效" || bad "partitions 變數" "$o"
+printf '%s\n' "CREATE TABLE fx.tmp_inf (t timestamptz NOT NULL) PARTITION BY RANGE (t);" "CREATE TABLE fx.tmp_inf_a PARTITION OF fx.tmp_inf FOR VALUES FROM ('2026-01-01') TO ('infinity');" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
+o="$(bash "$S/pg.sh" psql "$N" "$SU" -v min_runway_days=100000 < "$S/partitions.sql" 2>&1 | tail -1)"
+echo "$o" | grep -q 'partitions_summary parents=2 runway_violations=1' && ok "partitions.sql:上界是 infinity 的分區表不算跑道不足,也不會中斷" || bad "partitions infinity" "$o"
+echo "DROP TABLE fx.tmp_inf;" | bash "$S/pg.sh" psql "$N" "$SU" -q >/dev/null 2>&1
 
 # ---------- gotest ----------
 if command -v go >/dev/null 2>&1; then

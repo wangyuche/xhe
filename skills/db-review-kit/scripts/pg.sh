@@ -67,6 +67,9 @@ case "$CMD" in
       r0="${rs%%=*}"; p0="${rs#*=}"
       [ "$r0" != "$rs" ] && [ -n "$r0" ] && [ -n "$p0" ] || die "--role 格式是 ROLE=PWVAR:$rs" 2
       case "$r0" in *[!A-Za-z0-9_-]*) die "--role 的角色名稱只能是英數、底線、連字號:$r0" 2 ;; esac
+      for kv in ${ENVS[@]+"${ENVS[@]}"}; do   # a password given via --env is checked before any pull / run
+        if [ "${kv%%=*}" = "$p0" ]; then case "${kv#*=}" in ""|*[!A-Za-z0-9_-]*) die "--role $rs:密碼只能是英數、底線、連字號(秘密請用 --env-random)" 2 ;; esac; fi
+      done
     done
     for db in ${DBLIST[@]+"${DBLIST[@]}"}; do case "$db" in ""|*[!A-Za-z0-9_]*) die "--db 名稱只能是英數與底線:$db" 2 ;; esac; done
 
@@ -93,6 +96,9 @@ case "$CMD" in
       hp="$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")"
       case "$hp/" in "$abs"/*|"$abs/") die "--mount 不能掛 / 或家目錄(或其上層):$abs" 4 ;; esac
       [ "$abs" != "/" ] || die "--mount 不能掛 /" 4
+      for sec in .ssh .aws .config .docker .kube .gnupg .netrc .pgpass .azure .gcloud Library/Keychains; do
+        case "$abs/" in "$hp/$sec"/*) die "--mount 不能掛家目錄裡的憑證目錄($sec):$abs" 4 ;; esac
+      done
       RUNARGS+=(--mount "type=bind,source=$abs,target=$dest,readonly")
     done
     STATE_RANDOM=""

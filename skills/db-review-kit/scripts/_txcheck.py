@@ -126,6 +126,7 @@ def main():
     # first argument is not a plain literal naming another setting (also catches assembled names)
     if re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
             re.search(r"\bSET\s+(standard_conforming_strings|escape_string_warning)\b", strip(raw), re.I) or \
+            re.search(r"\b(SET|RESET)\s+(SESSION\s+|LOCAL\s+)?\"(standard_conforming_strings|escape_string_warning)\"", raw, re.I) or \
             re.search(r"set_config\s*\(\s*(?!'(?!standard_conforming_strings|escape_string_warning)[A-Za-z0-9_.]+'\s*,)", raw, re.I):
         # with it off, backslashes inside '…' escape quotes and the literal boundaries below would be wrong
         print("changing standard_conforming_strings is not allowed")
