@@ -16,3 +16,6 @@ const multiOk = new Text({
   style: { fill: 0xffffff },
   text: t('play.now'),
 });
+/**
+ * 範例:btn.accessibleTitle = 'Start'(文件註解,不算)
+ */

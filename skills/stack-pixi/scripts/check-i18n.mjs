@@ -35,7 +35,8 @@ const walk = (p) => {
     const text = readFileSync(full, 'utf8');
     const lines = text.split('\n');
     // 整個檔案一起比對(多行的 new Text({ … text: … }) 也抓得到);整行註解換成等長空白,保留位移
-    const code = text.replace(/^[ \t]*\/\/.*$/gm, (m) => ' '.repeat(m.length));
+    const blank = (m) => m.replace(/[^\n]/g, ' ');
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
     const starts = [0];
     for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
     const lineOf = (off) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1; } return lo; };

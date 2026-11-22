@@ -27,6 +27,10 @@ export function setTier(cover: number, dpr: number): void {
 }
 
 const loaded = new Map<string, { count: number; aliases: string[]; manifest: Manifest; audio: Map<string, { ogg: string; m4a: string }> }>();
+/** 載入中的群組被 acquire / release 的淨次數(載入完成後併入 count;歸零就直接 release)。 */
+const pendingCounts = new Map<string, number>();
+/** 已經 Assets.add 過的 alias(unload 後 resolver 仍保留,不要重複 add)。 */
+const added = new Set<string>();
 /** 每個 alias 被幾個已載入群組使用(PX-LOAD-04:跨群組共用的貼圖,計數歸零才 unload)。 */
 const aliasRefs = new Map<string, number>();
 const pendingLoads = new Map<string, Promise<void>>();
@@ -43,13 +47,19 @@ export async function acquireGroup(group: string): Promise<void> {
     cur.count++;
     return;
   }
+  pendingCounts.set(group, (pendingCounts.get(group) ?? 0) + 1);
   let p = pendingLoads.get(group);
   if (!p) {
-    p = loadGroup(group).finally(() => pendingLoads.delete(group));
+    p = loadGroup(group).then(() => {
+      pendingLoads.delete(group);
+      const g = loaded.get(group)!;
+      g.count += pendingCounts.get(group) ?? 0;
+      pendingCounts.delete(group);
+      if (g.count <= 0) { g.count = 1; releaseGroup(group); } // 載入期間已全部 release
+    }, (e: unknown) => { pendingLoads.delete(group); pendingCounts.delete(group); throw e; });
     pendingLoads.set(group, p);
   }
   await p;
-  loaded.get(group)!.count++;
 }
 
 async function loadGroup(group: string): Promise<void> {
@@ -57,22 +67,25 @@ async function loadGroup(group: string): Promise<void> {
   const manifest: Manifest = m ? await m() : { group, assets: {} };
   const aliases: string[] = [];
   const audio = new Map<string, { ogg: string; m4a: string }>();
-  for (const [id, a] of Object.entries(manifest.assets)) {
+  // 所有網址平行解析(每個都是 lazy chunk;逐一 await 在 Slow 4G 下每個多一個 RTT)
+  await Promise.all(Object.entries(manifest.assets).map(async ([id, a]) => {
     if (a.type === 'sfx' || a.type === 'bgm') {
-      audio.set(id, { ogg: await url(group, a.files.ogg!), m4a: await url(group, a.files.m4a!) });
-      continue;
+      const [ogg, m4a] = await Promise.all([url(group, a.files.ogg!), url(group, a.files.m4a!)]);
+      audio.set(id, { ogg, m4a });
+      return;
     }
     const fallback = a.files[`${tier}.png`] ?? a.files[`${tier}.jpg`];
-    const src = [await url(group, a.files[`${tier}.avif`]!), await url(group, fallback!)]; // PX-FMT-01:Pixi 依支援度選 avif / 備援
-    if (!Assets.cache.has(id) && !aliasRefs.has(id)) Assets.add({ alias: id, src });
+    const src = await Promise.all([url(group, a.files[`${tier}.avif`]!), url(group, fallback!)]); // PX-FMT-01:Pixi 依支援度選 avif / 備援
+    if (!added.has(id) && !Assets.cache.has(id)) { Assets.add({ alias: id, src }); added.add(id); }
     aliases.push(id);
-  }
+  }));
   if (aliases.length) await Assets.load(aliases.filter((id) => !Assets.cache.has(id)));
   for (const id of aliases) aliasRefs.set(id, (aliasRefs.get(id) ?? 0) + 1);
   loaded.set(group, { count: 0, aliases, manifest, audio });
 }
 
 export function releaseGroup(group: string): void {
+  if (pendingLoads.has(group)) { pendingCounts.set(group, (pendingCounts.get(group) ?? 0) - 1); return; }
   const cur = loaded.get(group);
   if (!cur || --cur.count > 0) return;
   loaded.delete(group);
@@ -99,3 +112,6 @@ export function frameTextures(group: string, id: string): Texture[] | undefined 
   const { count, frameWidth: fw, frameHeight: fh, columns } = e.frames;
   return Array.from({ length: count }, (_, i) => new Texture({ source: base.source, frame: new Rectangle((i % columns) * fw, Math.floor(i / columns) * fh, fw, fh) }));
 }
+
+/** 測試用:群組目前的參考計數(沒載入 = 0)。 */
+export const __refCount = (group: string): number => loaded.get(group)?.count ?? 0;

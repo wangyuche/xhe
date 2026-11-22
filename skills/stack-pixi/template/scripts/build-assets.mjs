@@ -45,6 +45,15 @@ const BUDGET = budgets();
 const groups = new Map();
 for (const a of doc.assets) (groups.get(a.group) ?? groups.set(a.group, []).get(a.group)).push(a);
 
+// assets.json 已經沒有的群組:清掉 build-assets 先前產生的檔案(只動有 manifest.json 的資料夾)
+for (const g of existsSync(OUT) ? readdirSync(OUT) : []) {
+  const dir = join(OUT, g);
+  if (groups.has(g) || !existsSync(join(dir, 'manifest.json'))) continue;
+  for (const f of readdirSync(dir)) if (/\.(avif|png|jpg|ogg|m4a)$/.test(f)) rmSync(join(dir, f));
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ group: g, assets: {} }, null, 2) + '\n');
+  console.log(`${g}:assets.json 已沒有這個群組,清空產出`);
+}
+
 let over = false;
 for (const [group, list] of groups) {
   const dir = join(OUT, group);
@@ -63,8 +72,9 @@ for (const [group, list] of groups) {
       if (a.frames && (a.frames.frameWidth % 2 || a.frames.frameHeight % 2)) die(`${a.id}:frameWidth / frameHeight 要是偶數(0.5x 才能剛好一半、格子不偏移)`);
       if (meta.width !== expectW || meta.height !== expectH) die(`${a.id}:1x 應為 ${expectW}×${expectH}(顯示 × density),實際 ${meta.width}×${meta.height}`);
       for (const tier of ['1x', '0.5x']) {
-        const w = tier === '1x' ? meta.width : half(meta.width);
-        const h = tier === '1x' ? meta.height : half(meta.height);
+        // frames:0.5x 一定剛好一半(格寬高已要求偶數),格子才不偏移;其他圖一半後進位成偶數
+        const w = tier === '1x' ? meta.width : a.frames ? meta.width / 2 : half(meta.width);
+        const h = tier === '1x' ? meta.height : a.frames ? meta.height / 2 : half(meta.height);
         if (w > MAX[tier] || h > MAX[tier]) die(`${a.id}:${tier} ${w}×${h} 超過 ${MAX[tier]}²(PX-RES-01)`);
         const img = sharp(src).resize(w, h, { fit: 'fill' });
         const base = `${a.id}@${tier}`;

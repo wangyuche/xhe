@@ -6,7 +6,7 @@ const files = import.meta.glob<string>(['../game/**/*.ts', '../services/**/*.ts'
 describe('PX-ARCH-01', () => {
   for (const [path, src] of Object.entries(files)) {
     it(`${path} does not import pixi`, () => {
-      expect(src).not.toMatch(/from\s+['"](pixi\.js|@pixi\/[^'"]+)['"]|import\(\s*['"](pixi\.js|@pixi\/)/);
+      expect(src).not.toMatch(/(from\s+|import\s+)['"](pixi\.js(\/[^'"]*)?|@pixi\/[^'"]+)['"]|import\(\s*['"](pixi\.js|@pixi\/)/);
     });
   }
 });

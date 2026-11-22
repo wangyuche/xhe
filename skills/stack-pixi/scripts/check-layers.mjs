@@ -9,7 +9,7 @@ const [dir, ...rest] = process.argv.slice(2);
 if (!dir) { console.error('用法:node check-layers.mjs <專案目錄> [--paths a,b]'); process.exit(2); }
 const pi = rest.indexOf('--paths');
 const paths = (pi >= 0 ? rest[pi + 1] : 'src/game,src/services').split(',').filter(Boolean);
-const RE = /(from\s+['"](pixi\.js|@pixi\/[^'"]*)['"])|(import\s*\(\s*['"](pixi\.js|@pixi\/))|(require\(\s*['"](pixi\.js|@pixi\/))|(^\s*import\s+['"](pixi\.js|@pixi\/[^'"]*)['"])/;
+const RE = /(from\s+['"](pixi\.js(\/[^'"]*)?|@pixi\/[^'"]*)['"])|(import\s*\(\s*['"](pixi\.js|@pixi\/))|(require\(\s*['"](pixi\.js|@pixi\/))|(^\s*import\s+['"](pixi\.js(\/[^'"]*)?|@pixi\/[^'"]*)['"])/;
 const out = [];
 const walk = (p) => {
   for (const f of readdirSync(p)) {

@@ -7,6 +7,8 @@
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 die() { echo "new-pixi: $*" >&2; exit 2; }
+# 跨平台取代(BSD / GNU sed 的 -i 不相容):repl <檔案> <舊> <新> [<舊> <新>]...
+repl() { node -e 'const fs=require("fs");const [f,...p]=process.argv.slice(1);let s=fs.readFileSync(f,"utf8");for(let i=0;i<p.length;i+=2)s=s.split(p[i]).join(p[i+1]);fs.writeFileSync(f,s)' "$@"; }
 
 REQUIRED=(package.json package-lock.json vite.config.ts tsconfig.json tsconfig.node.json playwright.config.ts index.html .gitignore
   src/main.ts src/config/design.ts src/core/app.ts src/core/pause.ts src/core/scene-manager.ts src/core/announce.ts src/core/modal-guard.ts
@@ -71,9 +73,11 @@ cp "$SCHEMAS/validate.mjs" "$SCHEMAS/assets.schema.json" "$SCHEMAS/needs.schema.
 if [ "$NET" = ws ]; then mkdir -p "$DIR/src/services/net"; cp "$KIT/template/optional/net/"* "$DIR/src/services/net/"; fi
 if [ $IFRAME = 1 ]; then mkdir -p "$DIR/src/services/iframe"; cp "$KIT/template/optional/iframe/"* "$DIR/src/services/iframe/"; fi
 # 取代佔位(只動文字檔)
-LC_ALL=C sed -i '' -e "s/__NAME__/$NAME/g" "$DIR/package.json" "$DIR/package-lock.json"
-LC_ALL=C sed -i '' -e "s|__TITLE__|$TITLE|g" "$DIR/index.html" "$DIR/src/i18n/en.ts"
-LC_ALL=C sed -i '' -e "s/__DESIGN_W__/$W/; s/__DESIGN_H__/$H/" "$DIR/src/config/design.ts"
+repl "$DIR/package.json" __NAME__ "$NAME"
+repl "$DIR/package-lock.json" __NAME__ "$NAME"
+repl "$DIR/index.html" __TITLE__ "$TITLE"
+repl "$DIR/src/i18n/en.ts" __TITLE__ "$TITLE"
+repl "$DIR/src/config/design.ts" __DESIGN_W__ "$W" __DESIGN_H__ "$H"
 if [ $INSTALL = 1 ]; then
   (cd "$DIR" && npm ci --no-audit --no-fund --loglevel=error)
 fi

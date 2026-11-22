@@ -9,6 +9,8 @@ ok()  { echo "PASS  $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL  $1"; [ -n "${2:-}" ] && echo "$2" | tail -20 | sed 's/^/      /'; FAIL=$((FAIL + 1)); }
 t()   { local name=$1; shift; local out; if out=$("$@" 2>&1); then ok "$name"; else bad "$name" "$out"; fi; }
 tf()  { local name=$1; shift; local out; if out=$("$@" 2>&1); then bad "$name(應失敗)" "$out"; else ok "$name"; fi; }
+# 跨平台取代(BSD / GNU sed 的 -i 不相容):repl <檔案> <舊> <新> [<舊> <新>]...
+repl() { node -e 'const fs=require("fs");const [f,...p]=process.argv.slice(1);let s=fs.readFileSync(f,"utf8");for(let i=0;i<p.length;i+=2)s=s.split(p[i]).join(p[i+1]);fs.writeFileSync(f,s)' "$@"; }
 W="$(mktemp -d)"; N="sptest$$"
 cleanup() { bash "$WK/stop.sh" "$N-dev" >/dev/null 2>&1; bash "$WK/stop.sh" "$N-dist" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
@@ -21,7 +23,7 @@ mkdir -p "$W/full" && touch "$W/full/a"
 tf "new-pixi 目錄已有檔案" bash "$K/scripts/new-pixi.sh" "$W/full" --design 1920x1080 --no-install
 t  "new-pixi 建骨架 + npm ci(--net ws --iframe)" bash "$K/scripts/new-pixi.sh" "$P" --design 1920x1080 --title "Self Test" --net ws --iframe
 tf "--check:budgets 未填時失敗" bash "$K/scripts/new-pixi.sh" --check "$P"
-sed -i '' -e 's/__FCP__/3000/;s/__INTERACTIVE__/15000/;s/__TBT__/1000/;s/__SCENE__/5000/;s/__BOOT__/400/;s/__ROUNDS__/5/;s/__HEAP__/50/;s/__NODES__/20/;s/__LISTENERS__/10/;s/__OBJECTS__/0/' "$P/docs/performance-budgets.md"
+repl "$P/docs/performance-budgets.md" __FCP__ 3000 __INTERACTIVE__ 15000 __TBT__ 1000 __SCENE__ 5000 __BOOT__ 400 __ROUNDS__ 5 __HEAP__ 50 __NODES__ 20 __LISTENERS__ 10 __OBJECTS__ 0
 t  "--check:填好後通過" bash "$K/scripts/new-pixi.sh" --check "$P"
 t  "--check:相對路徑也可以" bash -c "cd '$W' && bash '$K/scripts/new-pixi.sh' --check client"
 t  "design.ts 寫入 1920×1080" grep -q 'width: 1920, height: 1080' "$P/src/config/design.ts"
@@ -41,6 +43,8 @@ t  "check-assets 通過" node "$K/scripts/check-assets.mjs" "$P"
 t  "check-early 通過" node "$K/scripts/check-early.mjs" "$P"
 echo "import { Sprite } from 'pixi.js'; export const s = Sprite;" > "$P/src/game/bad.ts"
 tf "check-layers 抓到 src/game import pixi" node "$K/scripts/check-layers.mjs" "$P"
+echo "import { Rectangle } from 'pixi.js/math-extras'; export const r = Rectangle;" > "$P/src/game/bad.ts"
+tf "check-layers 抓到 pixi.js 子路徑" node "$K/scripts/check-layers.mjs" "$P"
 tf "vitest no-pixi 測試也擋" npx --no vitest run src/game/no-pixi.test.ts
 rm "$P/src/game/bad.ts"
 r=$(node "$K/scripts/check-i18n.mjs" "$K/tests/fixtures/i18n-bad"); n=$(echo "$r" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).violations.length)")
@@ -83,13 +87,14 @@ t  "預算表寫入" grep -q '^| title | 300 | 100 |$' docs/performance-budgets.
 t  "build-assets 產生 1x / 0.5x 與 manifest" node scripts/build-assets.mjs --src "$A"
 t  "產出:sprite AVIF + PNG 兩級、背景 JPG、音效複製" test -f src/assets/play/hero.idle@1x.avif -a -f src/assets/play/hero.idle@0.5x.png -a -f src/assets/title/bg.title@1x.jpg -a -f src/assets/play/sfx.hit.ogg
 t  "0.5x 尺寸 = 一半(進位成偶數)" node -e "const s=require('sharp');s('src/assets/play/hero.idle@0.5x.png').metadata().then(m=>process.exit(m.width===120&&m.height===160?0:1))"
+t  "frames 的 0.5x sheet 剛好一半(480→240)" node -e "const s=require('sharp');s('src/assets/play/hero.run@0.5x.png').metadata().then(m=>process.exit(m.width===240&&m.height===80?0:1))"
 t  "manifest 記錄 frames 與顯示尺寸" node -e "const m=require('./src/assets/play/manifest.json');const r=m.assets['hero.run'];process.exit(r.frames.columns===3&&r.width===80&&m.assets['sfx.hit'].files.m4a?0:1)"
 t  "check-assets 通過(含 --art)" node "$K/scripts/check-assets.mjs" "$P" --art "$A"
 t  "接上素材後 build 與 check-early 仍通過" bash -c "npm run build >/dev/null 2>&1 && node '$K/scripts/check-early.mjs' '$P'"
-sed -i '' 's/^| title | 300 | 100 |$/| title | 0.1 | 100 |/' docs/performance-budgets.md
+repl docs/performance-budgets.md '| title | 300 | 100 |' '| title | 0.1 | 100 |'
 tf "build-assets 超過 KB 預算就失敗" node scripts/build-assets.mjs --src "$A"
 tf "check-assets 超過 KB 預算就失敗" node "$K/scripts/check-assets.mjs" "$P"
-sed -i '' 's/^| title | 0.1 | 100 |$/| title | 300 | 100 |/' docs/performance-budgets.md
+repl docs/performance-budgets.md '| title | 0.1 | 100 |' '| title | 300 | 100 |'
 node -e "const f='$A/assets.json';const d=JSON.parse(require('fs').readFileSync(f));d.assets[0].width=121;require('fs').writeFileSync('$W/bad.json',JSON.stringify(d))"; cp "$A/assets.json" "$W/good.json"; cp "$W/bad.json" "$A/assets.json"
 tf "build-assets 1x 尺寸不等於顯示 × density 就失敗" node scripts/build-assets.mjs --src "$A"
 cp "$W/good.json" "$A/assets.json"; node scripts/build-assets.mjs --src "$A" >/dev/null
