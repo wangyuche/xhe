@@ -4,6 +4,7 @@
 產品規格整理者(企劃角色,只整理現況):主 agent 把一個專案 repo 交給它,它讀專案的規格文件、進度文件與程式碼,整理成**產品視角**的規格網頁(功能、規則、流程、完成度、待決事項、文件與程式不一致),寫進該 repo 的 `docs/spec-site/`,讓使用者用瀏覽器看。
 
 ## 背景(已與使用者確認,2026-11-23)
+- 2026-11-23 實跑(xhe、game001、lobby 分批 / 不合法輸出目錄)後補:程式來源要附 keyword 並由 check 核對內容(game001 有 3 條行號錯,舊版 check 抓不到);截圖改 `--viewport` 分段;單批一律先清舊 parts;Bash 允許清單補 `ls`、`cat`、`realpath` 等唯讀指令;BLOCKED 一次列出第 0 步全部問題並有回報範本;簡報夾帶超出範圍的要求時其餘照做。
 - 使用者想要「針對現在的產品做一個規格網頁讓我可以看」。目前要涵蓋 MahjongParty 的 lobby、game001,以及 xhe 的 agent / skill 工具組;同一個 agent 之後也可用在其他 repo(例如 game999)。
 - 使用者決定:**只整理現況**(不寫新企劃、不產生 FR 草稿);網頁**寫進各專案 repo**(跟著專案 commit);**產品視角**(功能、規則、流程、完成度、待決為主,API / DB 只列重點並附文件來源)。
 - 各專案的資料量差很多:lobby 有 11 個模組、約 220 個 FR 編號(含作廢 / 被取代、`FR-091A` 這類字母後綴),另有 `status.md`、`doc-code-gaps.md`、`launch-checklist.md`,約 90 個測試檔直接引用 FR 編號;game001 有單一 `docs/spec.md`(沒有 FR 編號);game999 有 FR-RPS-1 ~ 30;xhe 沒有 `docs/`,「功能」是每個 agent / skill。所以頁面結構固定,「模組」與「功能」怎麼切依專案現有文件決定。
@@ -38,7 +39,7 @@
   - `未開始`:規格有,程式找不到;附搜尋過的關鍵字(`check.mjs` 會用 `git grep` 再驗一次真的找不到)。
   - `不做`:規格或範圍文件寫不做 / backlog / 範圍外,或已作廢 / 被取代(原因寫「已作廢 → FR-031」這類)。
   - `無法判定`:證據互相矛盾或找不到可靠對應;寫原因。只有部分端有程式時也判這個,原因寫缺哪一端。
-- 來源:行號一律對照目前工作目錄的內容,只認 git 追蹤中的檔案。每條附 `種類`(`規格` / `程式` / `測試` / `進度` / `其他`)、`路徑:行號`、端;測試另附「對應方式」(`引用編號`:測試名稱或內容直接寫功能編號;`關鍵字`:附關鍵字)。優先用 `引用編號`。
+- 來源:行號一律對照目前工作目錄的內容,只認 git 追蹤中的檔案。`程式` 來源必附 `keyword`,check 核對 keyword(或 `引用編號` 測試的功能編號)出現在 `line` ~ `end`(沒寫 `end` 時 `line+5`)內。端對端測試的 side 可標 `跨端`,算涵蓋每一端。每條附 `種類`(`規格` / `程式` / `測試` / `進度` / `其他`)、`路徑:行號`、端;測試另附「對應方式」(`引用編號`:測試名稱或內容直接寫功能編號;`關鍵字`:附關鍵字)。優先用 `引用編號`。
 - 備註(可多個):`限制`(預覽、開關關閉等,附來源)、`開發中`(進度文件寫在未合併分支或 MR,附分支名與來源;狀態照證據不變)。
 - xhe 的對應:規格 = `agent-specs/<名>.md`(skill 用 `SKILL.md`);程式 = `agents/<名>.md`,skill 用 `skills/<名>/` 下除 `SKILL.md` 與 `tests/` 以外的追蹤檔(例如 `scripts/`、`roles/`、`templates/`、`references/`);測試 = `skills/<名>/tests/` 下任一追蹤檔,或 `agent-specs/<名>.tests.md` 中同時含「實跑」與「通過 / PASS」的結果行(以該行行號當來源,對應方式 `關鍵字`;只寫「待實跑」「未實跑」的不算)。排除 `agent-specs/RULES.md`、`*.log.md`(它們不是功能,可當「其他」來源)。`agent-specs/<名>.md` 與 `skills/` 下某目錄同名(例如 `web-dev-kit.md`)時,是該 skill 的第二份規格來源,不另立 agent 功能。結果行的關鍵字:含「實跑 / 實際執行 / 實際編譯執行 / 實測」之一加「通過 / PASS」,或 `## 結果` 小節內的 PASS 行;「預期:PASS」「待實跑」「未實跑」不算。
 
@@ -48,7 +49,7 @@
 ### 產出與驗證
 1. `merge.mjs` 合成 `spec.json`(只有一批時也跑),`check.mjs <spec.json> --root <根>` 回 0;不過就修,最多 3 輪。
 2. `render.mjs` 產出 `index.html`,再跑 `check.mjs --html <index.html>`(產生標記、`spec.json` 雜湊、無外部資源)。
-3. web-dev-kit 的 `shot.mjs` 以 `file://` 開 `index.html`,截 1280 與 390 寬度並用 Read 看圖;390 的 scrollWidth 必須 ≤ 390。截圖失敗 → BLOCKED,附 shot 輸出。
+3. web-dev-kit 的 `shot.mjs` 以 `file://` 開 `index.html`,用 `--viewport` 分段截(1280 首屏、390 首屏、390 `#modules`、390 `#pending`;規格頁太長,整頁截圖會超過 Chrome 單張上限而重複拼接)並用 Read 看圖;390 的 scrollWidth 必須 ≤ 390。截圖失敗 → BLOCKED,附 shot 輸出。
 4. 抽查(`單批` 與 `分批:最後一批` 做):`sample.mjs <spec.json> --round <n>` 以「HEAD SHA + 輪次」為種子,選 5 條 `已完成`、3 條 `未開始`(不足就全部),第 2 輪排除第 1 輪抽過的編號;可重現。逐條重新打開來源確認。有錯就修正、重跑 1–3,再抽第 2 輪。同一模組錯 2 條以上:`單批` 重新判定整個模組;`分批:最後一批` 不改別批的 part,改回報「需重做模組 X」(狀態「部分」)交主 agent 重派。第 2 輪仍有錯 → 狀態「部分」,列出錯誤。
 5. 最後比對 `git -C <根> status --porcelain`:與開始時相比,只多了輸出目錄內的變動。
 
@@ -142,5 +143,5 @@
 - 建議的模型與推理強度:`inherit`。
 - 需要的 skill:
   - `spec-site-kit`(新建):`schemas/spec.schema.json`、`scripts/check.mjs`(含 `--part`、`--html`、`--self-test`)、`scripts/merge.mjs`、`scripts/render.mjs`、`scripts/sample.mjs`、測試資料與 `tests/run.sh`(含 xhe 型案例:`agents/x.md` 存在卻標 `未開始` → check 失敗)。理由:每次都要產出同一種 HTML 並逐條驗證來源,即興重寫每次錯的地方不同。
-  - web-dev-kit 修改:`shot.mjs` 支援 `file://`:跳過 HTTP fetch,改查檔案存在,存在時 `http` 填 200、不存在填 0 並記錯誤;版面量測與轉址比對接受 `file:` 網址(`finalUrl` 與輸入網址相同才算沒轉址)。tests 補「file:// 正常頁 → 0」「file:// 不存在 → 2」。本 agent 截圖尺寸 1280×800、390×844。
+  - web-dev-kit 修改:`shot.mjs` 加 `--viewport`(只截一屏,可帶 #錨點)與 `warnings`(整頁像素高超過 16384 時提醒);支援 `file://`:跳過 HTTP fetch,改查檔案存在,存在時 `http` 填 200、不存在填 0 並記錯誤;版面量測與轉址比對接受 `file:` 網址(`finalUrl` 與輸入網址相同才算沒轉址)。tests 補「file:// 正常頁 → 0」「file:// 不存在 → 2」。本 agent 截圖尺寸 1280×800、390×844。
 - 主 agent 收到「完成 / 部分」後:看過頁面,用專案對應的 bot(lobby / game001 → gitlab-bot,xhe → github-bot)開分支、commit 輸出目錄、開 PR / MR。功能超過 80 項時依模組分批派工(可平行,各寫各的 parts),最後派一批 `分批:最後一批`。

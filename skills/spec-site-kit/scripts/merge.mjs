@@ -5,7 +5,7 @@
 // stdout 一行 JSON;結束碼 0 成功、1 失敗、2 用法錯誤。合併後要再跑 check.mjs。
 import { readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { KIT, validateSchema, readJson, git, gitRoot, head, relInside, isMain } from './lib.mjs';
+import { KIT, validateSchema, readJson, git, gitRoot, head, relInside, byOrder, isMain } from './lib.mjs';
 import { countStats } from './check.mjs';
 
 export function merge(outArg) {
@@ -37,6 +37,7 @@ export function merge(outArg) {
   }
   if (stale.length) errors.push(`這些 part 的 commit 不等於 HEAD ${H.slice(0, 7)},要重做:${stale.join('、')}`);
   if (errors.length) return { errors, stale };
+  modules.sort(byOrder);
   const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
   const dirty = git(root, ['status', '--porcelain', '--', '.', `:(exclude)${outRel}`]).trim() !== '';
   const spec = {

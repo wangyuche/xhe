@@ -193,6 +193,12 @@ JS
     printf '<!doctype html><title>f</title><p>file page</p>' > "$WORK/f.html"
     out="$(node "$S/shot.mjs" "file://$WORK/f.html" 390 844 "$WORK/f.png")"; rc=$?
     [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && echo "$out" | grep -q '"redirected":false' && echo "$out" | grep -q '"scrollWidth":390' && [ -s "$WORK/f.png" ] && ok "shot:file:// 正常頁結束碼 0" || bad "shot:file:// 正常頁" "rc=$rc $out"
+    printf '<!doctype html><body style="margin:0"><div style="height:6000px">tall</div><p id="end">end</p>' > "$WORK/tall.html"
+    out="$(node "$S/shot.mjs" "file://$WORK/tall.html" 390 844 "$WORK/t.png" --mobile)"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '超過 Chrome 單張上限' && ok "shot:整頁太高時 warnings 提醒(結束碼仍 0)" || bad "shot:太高警告" "rc=$rc $out"
+    out="$(node "$S/shot.mjs" "file://$WORK/tall.html#end" 390 844 "$WORK/v.png" --mobile --viewport)"; rc=$?
+    VH="$(node -e 'const b=require("fs").readFileSync(process.argv[1]);console.log(b.readUInt32BE(20))' "$WORK/v.png" 2>/dev/null)"
+    [ $rc -eq 0 ] && [ "${VH:-0}" -eq 2532 ] && echo "$out" | grep -q '"warnings":\[\]' && echo "$out" | grep -q '"redirected":false' && ok "shot:--viewport 只截一屏(844×3 = 2532 px),#錨點不算轉址" || bad "shot:--viewport" "rc=$rc h=$VH $out"
     out="$(node "$S/shot.mjs" "file://$WORK/nope.html" 390 844 "$WORK/f2.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '檔案不存在' && ok "shot:file:// 不存在結束碼 2" || bad "shot:file:// 不存在" "rc=$rc $out"
     out="$(node "$S/shot.mjs" "http://127.0.0.1:$DEAD/" 1280 800 "$WORK/x.png")"; rc=$?

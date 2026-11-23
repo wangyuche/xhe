@@ -43,8 +43,8 @@ cat > "$P/m04.json" <<JSON
  "features":[
   {"id":"FR-090","name":"每日領取","summary":"每天可領一次。","sides":["後端","玩家端"],"status":"已完成","sources":[
     {"kind":"規格","path":"docs/specs/m04.md","line":3},
-    {"kind":"程式","path":"server/claim.go","line":4,"side":"後端"},
-    {"kind":"程式","path":"web/reward.ts","line":1,"side":"玩家端"},
+    {"kind":"程式","path":"server/claim.go","line":4,"side":"後端","keyword":"Claim"},
+    {"kind":"程式","path":"web/reward.ts","line":1,"side":"玩家端","keyword":"showReward"},
     {"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"後端","match":"引用編號"},
     {"kind":"測試","path":"tests/reward.test.ts","line":1,"side":"玩家端","match":"引用編號"}]},
   {"id":"FR-091A","name":"補領","summary":"漏領補發。","sides":["後端"],"status":"不做","reason":"backlog","sources":[{"kind":"規格","path":"docs/specs/m04.md","line":6}]},
@@ -61,6 +61,7 @@ if [ -x "${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 else
   expect "self-test:沒有 Chrome 回 1 並說明" 1 '找不到 Google Chrome' -- C --self-test
 fi
+expect "self-test:--shot 指到不存在的檔 → 1" 1 '找不到 web-dev-kit 的 shot.mjs' -- C --self-test --shot /nope/shot.mjs
 expect "self-test:Chrome 路徑不存在 → 1" 1 '找不到 Google Chrome' -- env CHROME_PATH=/nope/chrome node "$S/check.mjs" --self-test
 
 # ---- part ----
@@ -92,6 +93,18 @@ expect "part:未開始沒附關鍵字 → 1" 1 '要附搜尋過的 keywords' -- 
 
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].line=99'
 expect "part:行號超出 → 1" 1 '超出檔案行數' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[2].keyword="noSuchFn"'
+expect "part:程式來源的 keyword 不在那幾行 → 1" 1 '找不到「noSuchFn」' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'delete j.features[0].sources[1].keyword'
+expect "part:程式來源沒附 keyword → 1" 1 '程式來源要附 keyword' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[1].sources=[{"kind":"規格","path":"docs/specs/m04.md","line":6}];j.features[0].sources[3].path="tests/reward.test.ts";j.features[0].id="FR-090";j.features[0].sources[3].path="README.md"'
+expect "part:引用編號的測試那幾行沒有功能編號 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources.splice(3,2,{"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"跨端","match":"引用編號"})'
+expect "part:端對端測試標「跨端」涵蓋每一端" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.mismatches[0].keywords=["showReward"]'
+expect "part:不一致說程式找不到,關鍵字卻在程式裡 → 1" 1 '說程式找不到' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].line=99'
+expect "part:行號超出 → 1" 1 '超出檔案行數' -- C --part "$P/m04.json" --root "$R"
 printf 'x\n' > "$R/server/untracked.go"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].path="server/untracked.go";j.features[0].sources[1].line=1'
 expect "part:未追蹤檔 → 1" 1 '不在 git 追蹤中' -- C --part "$P/m04.json" --root "$R"
@@ -121,6 +134,7 @@ jset "$P/_project.json" 'j.product.no_spec_docs=false'
 
 # ---- merge ----
 cp "$P/m04.json" "$P/m05.json"; jset "$P/m05.json" 'j.module.id="m05";j.module.name="信箱";j.features=[{"id":"FR-100","name":"收信","summary":"看信。","sides":["玩家端"],"status":"無法判定","reason":"對不上","sources":[]}];j.mismatches=[]'
+jset "$P/m05.json" 'j.module.order=1'; jset "$P/m04.json" 'j.module.order=2'
 jset "$P/m05.json" 'j.commit="0000000000000000000000000000000000000000"'
 expect "merge:part 的 commit 不是 HEAD → 1,列出要重做的模組" 1 '要重做:m05' -- node "$S/merge.mjs" "$OUT"
 [ ! -e "$OUT/spec.json" ] && ok "merge:失敗時不寫 spec.json" || bad "merge:失敗時不寫 spec.json"
@@ -128,9 +142,13 @@ jset "$P/m05.json" "j.commit=\"$H\""
 expect "merge:成功,統計 4 項" 0 '"total":4' -- node "$S/merge.mjs" "$OUT"
 expect "spec:check 通過" 0 '"ok":true' -- C "$OUT/spec.json" --root "$R"
 cp "$OUT/spec.json" "$WORK/spec.good.json"
+node -e 'const j=require(process.argv[1]);process.exit(j.modules.map(m=>m.module.id).join()==="m05,m04"?0:1)' "$OUT/spec.json" && ok "merge:依 module.order 排序" || bad "merge:排序"
+jset "$OUT/spec.json" 'j.project.mismatches=[{"text":"專案層不一致","doc":[{"kind":"規格","path":"README.md","line":1}],"code":[],"keywords":["Claim"]}]'
+expect "spec:專案層不一致的關鍵字也用模組 code_paths 聯集驗證 → 1" 1 '說程式找不到' -- C "$OUT/spec.json" --root "$R"
+cp "$WORK/spec.good.json" "$OUT/spec.json"
 jset "$OUT/spec.json" 'j.stats["已完成"]=3'
 expect "spec:統計對不上 → 1" 1 'stats.已完成' -- C "$OUT/spec.json" --root "$R"
-cp "$WORK/spec.good.json" "$OUT/spec.json"; jset "$OUT/spec.json" 'j.modules[1].features[0].id="FR-090"'
+cp "$WORK/spec.good.json" "$OUT/spec.json"; jset "$OUT/spec.json" 'j.modules[0].features[0].id="FR-090"'
 expect "spec:跨模組功能編號重複 → 1" 1 '功能編號重複:FR-090' -- C "$OUT/spec.json" --root "$R"
 cp "$WORK/spec.good.json" "$OUT/spec.json"
 grep -q '"dirty": false' "$OUT/spec.json" && ok "merge:只有輸出目錄有變動時 dirty=false" || bad "merge:dirty" "$(grep dirty "$OUT/spec.json")"
@@ -154,6 +172,7 @@ a="$(node "$S/sample.mjs" "$OUT/spec.json")"; b="$(node "$S/sample.mjs" "$OUT/sp
 [ "$a" = "$b" ] && echo "$a" | grep -q "\"seed\":\"$H:1\"" && ok "sample:同一輪結果可重現,種子 = commit:輪次" || bad "sample:重現" "$a"
 r2="$(node "$S/sample.mjs" "$OUT/spec.json" --round 2)"
 echo "$r2" | grep -q '"excluded":\["FR-090","FR-092"\]' && echo "$r2" | grep -q '"picks":\[\]' && ok "sample:第 2 輪排除第 1 輪抽過的" || bad "sample:第 2 輪" "$r2"
+echo "$a" | grep -q '"shortfall":\["已完成 只剩 1 條可抽(要 5)","未開始 只剩 1 條可抽(要 3)"\]' && ok "sample:不足時 shortfall 說明" || bad "sample:shortfall" "$a"
 expect "sample:輪次不合法 → 2" 2 '' -- node "$S/sample.mjs" "$OUT/spec.json" --round 0
 
 # ---- 截圖(file://)----

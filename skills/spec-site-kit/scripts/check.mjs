@@ -3,17 +3,21 @@
 //   node check.mjs --part <parts/模組.json> --root <專案根>     檢查一個模組(同目錄要先有 _project.json)
 //   node check.mjs <spec.json> --root <專案根>                檢查合併後的 spec.json
 //   node check.mjs --html <index.html> [--spec <spec.json>]   檢查 render 產物(標記、雜湊、無外部資源)
-//   node check.mjs --self-test                                檢查 kit 檔案、web-dev-kit shot.mjs、Chrome、node、git
+//   node check.mjs --self-test [--shot <shot.mjs>]            檢查 kit 檔案、web-dev-kit shot.mjs、Chrome、node、git
+// 來源內容核對:程式來源必附 keyword;有 keyword 的來源(或「引用編號」的測試,找功能編號)要在 line ~ end(沒寫 end 時 line+5)內找得到。
 // stdout 一行 JSON {ok, errors[…], …};結束碼 0 通過、1 不通過、2 用法錯誤。
 import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { KIT, KIT_DIR, STATUSES, SECTIONS, validateSchema, readJson, sha256File, git, gitRoot, head, relInside, tracked, lineCount, scanStrings, isMain } from './lib.mjs';
+import { KIT, KIT_DIR, STATUSES, SECTIONS, validateSchema, readJson, sha256File, git, gitRoot, head, relInside, tracked, lineCount, linesText, scanStrings, isMain } from './lib.mjs';
+
+export const WINDOW = 5; // 沒寫 end 時,關鍵字要出現在 line ~ line+5
+export const ALL_SIDES = '跨端'; // 測試的 side 寫「跨端」(例如端對端測試)算涵蓋每一端
 
 const CODE_KINDS = new Set(['程式', '測試']);
 
 // ---- 來源 ----
-function checkSource(ctx, s, where) {
+function checkSource(ctx, s, where, fid) {
   const { root, errs } = ctx;
   if (!tracked(root).has(s.path)) { errs.push(`${where}: ${s.path} 不在 git 追蹤中(只認追蹤檔)`); return; }
   const abs = join(root, s.path);
@@ -25,9 +29,15 @@ function checkSource(ctx, s, where) {
     if (!s.match) errs.push(`${where}: 測試來源要有 match(引用編號 / 關鍵字)`);
     else if (s.match === '關鍵字' && !s.keyword) errs.push(`${where}: match 是關鍵字時要附 keyword`);
   }
+  if (s.kind === '程式' && !s.keyword) errs.push(`${where}: 程式來源要附 keyword(那幾行裡的函式名、常數、路由或 UI 字串,check 會核對)`);
+  if (s.line > n) return;
+  const to = Math.min(n, s.end ?? s.line + WINDOW);
+  const text = linesText(abs, s.line, to).toLowerCase();
+  const want = s.kind === '測試' && s.match === '引用編號' && !s.keyword ? fid : s.keyword;
+  if (want && !text.includes(want.toLowerCase())) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
 }
-function checkSources(ctx, list, where) {
-  (list ?? []).forEach((s, i) => checkSource(ctx, s, `${where}.sources[${i}]`));
+function checkSources(ctx, list, where, fid) {
+  (list ?? []).forEach((s, i) => checkSource(ctx, s, `${where}.sources[${i}]`, fid));
 }
 
 function pathExists(root, p) {
@@ -42,6 +52,7 @@ function pathExists(root, p) {
 function grepHits(ctx, part, kw) {
   const { root, outRel } = ctx;
   const specs = [...part.code_paths, `:(exclude)${outRel}`, ...part.exclude_paths.map(p => `:(exclude)${p}`)];
+  if (!part.code_paths.length) return [];
   try {
     const out = execFileSync('git', ['-C', root, 'grep', '-I', '-F', '-i', '-l', '-e', kw, '--', ...specs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return out.split('\n').filter(Boolean);
@@ -60,10 +71,10 @@ function checkFeature(ctx, part, f, where) {
   for (const [i, s] of src.entries()) {
     if (CODE_KINDS.has(s.kind)) {
       if (!s.side) errs.push(`${where}.sources[${i}]: ${s.kind}來源要標 side`);
-      else if (!f.sides.includes(s.side)) errs.push(`${where}.sources[${i}]: side「${s.side}」不在 sides ${JSON.stringify(f.sides)}`);
+      else if (!(f.sides.includes(s.side) || (s.kind === '測試' && s.side === ALL_SIDES))) errs.push(`${where}.sources[${i}]: side「${s.side}」不在 sides ${JSON.stringify(f.sides)}(端對端測試可標「${ALL_SIDES}」)`);
     }
   }
-  const sideHas = (side, k) => src.some(s => s.kind === k && s.side === side);
+  const sideHas = (side, k) => src.some(s => s.kind === k && (s.side === side || (k === '測試' && s.side === ALL_SIDES)));
   const missing = (k) => f.sides.filter(side => !sideHas(side, k));
   if (noSpecDocs && ['已完成', '未開始'].includes(f.status)) errs.push(`${where}: 專案無規格文件(no_spec_docs),狀態最多「已實作未測」或「無法判定」`);
   switch (f.status) {
@@ -97,19 +108,30 @@ function checkFeature(ctx, part, f, where) {
       if (!f.reason) errs.push(`${where}: 無法判定要寫 reason`);
       break;
   }
-  checkSources(ctx, src, where);
+  checkSources(ctx, src, where, f.id);
   (f.notes ?? []).forEach((n, i) => checkSources(ctx, n.sources, `${where}.notes[${i}]`));
 }
 
-function checkSections(ctx, obj, where) {
+// scope:grep 用的 part(有 code_paths / exclude_paths);_project 的段落用所有模組 code_paths 的聯集,沒有時(只檢查 _project)不 grep
+function checkSections(ctx, obj, where, scope) {
   for (const sec of SECTIONS) for (const [i, it] of (obj[sec] ?? []).entries()) {
     const w = `${where}.${sec}[${i}]`;
     if (sec === 'mismatches') {
       it.doc.forEach((s, j) => checkSource(ctx, s, `${w}.doc[${j}]`));
       it.code.forEach((s, j) => checkSource(ctx, s, `${w}.code[${j}]`));
-      if (!it.code.length && !(it.keywords ?? []).length) ctx.errs.push(`${w}: 程式那一邊要附來源,或附搜尋過的 keywords`);
+      if (!it.code.length) {
+        const kws = it.keywords ?? [];
+        if (!kws.length) ctx.errs.push(`${w}: 程式那一邊要附來源,或附搜尋過的 keywords`);
+        if (scope) for (const kw of kws) {
+          const hits = grepHits(ctx, scope, kw);
+          if (hits.length) ctx.errs.push(`${w}: 說程式找不到,但關鍵字「${kw}」在程式搜尋範圍內找得到(${hits.slice(0, 3).join('、')});要嘛附程式來源,要嘛換關鍵字`);
+        }
+      }
     } else checkSources(ctx, it.sources, w);
   }
+}
+function unionScope(modules) {
+  return { code_paths: [...new Set(modules.flatMap(m => m.code_paths))], exclude_paths: [...new Set(modules.flatMap(m => m.exclude_paths))] };
 }
 
 function checkPart(ctx, part, where) {
@@ -119,13 +141,13 @@ function checkPart(ctx, part, where) {
   for (const p of part.exclude_paths) if (!pathExists(root, p)) errs.push(`${where}.exclude_paths: ${p} 沒有任何追蹤檔`);
   checkSources(ctx, part.module.sources, `${where}.module`);
   part.features.forEach((f, i) => checkFeature(ctx, part, f, `${where}.features[${i}](${f.id})`));
-  checkSections(ctx, part, where);
+  checkSections(ctx, part, where, part);
 }
 
-function checkProject(ctx, proj, where) {
+function checkProject(ctx, proj, where, scope) {
   if (proj.commit !== ctx.head) ctx.errs.push(`${where}: commit 不等於 HEAD`);
   for (const p of proj.sources_read) if (!pathExists(ctx.root, p)) ctx.errs.push(`${where}.sources_read: ${p} 不是追蹤檔或含追蹤檔的目錄`);
-  checkSections(ctx, proj, where);
+  checkSections(ctx, proj, where, scope);
 }
 
 function ctxFor(root, outAbs) {
@@ -177,7 +199,7 @@ export function checkSpecFile(file, rootArg) {
   if (se.length) return { errors: se };
   if (spec.commit !== ctx.head) ctx.errs.push(`commit ${spec.commit.slice(0, 7)} 不等於 HEAD ${ctx.head.slice(0, 7)}`);
   ctx.noSpecDocs = spec.project.product.no_spec_docs;
-  checkProject(ctx, spec.project, 'project');
+  checkProject(ctx, spec.project, 'project', unionScope(spec.modules));
   const mids = new Set(); const fids = new Map();
   for (const m of spec.modules) {
     if (mids.has(m.module.id)) ctx.errs.push(`模組 id 重複:${m.module.id}`);
@@ -211,12 +233,12 @@ export function checkHtmlFile(file, specArg) {
   return { errors: errs };
 }
 
-export function selfTest() {
+export function selfTest(shotArg) {
   const errs = [];
   for (const f of ['schemas/spec.schema.json', 'scripts/lib.mjs', 'scripts/check.mjs', 'scripts/merge.mjs', 'scripts/render.mjs', 'scripts/sample.mjs']) {
     if (!existsSync(join(KIT_DIR, f))) errs.push(`kit 缺檔:${join(KIT_DIR, f)}`);
   }
-  const shot = join(realpathSync(KIT_DIR), '..', 'web-dev-kit', 'scripts', 'shot.mjs');
+  const shot = shotArg ? resolve(shotArg) : join(realpathSync(KIT_DIR), '..', 'web-dev-kit', 'scripts', 'shot.mjs');
   if (!existsSync(shot)) errs.push(`找不到 web-dev-kit 的 shot.mjs:${shot}`);
   const chrome = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   if (!existsSync(chrome)) errs.push(`找不到 Google Chrome:${chrome}(可用 CHROME_PATH 指定)`);
@@ -232,7 +254,7 @@ if (isMain(import.meta.url)) {
   const usage = () => { console.error('用法:check.mjs --part <檔> --root <根> | <spec.json> --root <根> | --html <index.html> [--spec <spec.json>] | --self-test'); process.exit(2); };
   let r;
   try {
-    if (a[0] === '--self-test') r = selfTest();
+    if (a[0] === '--self-test') r = selfTest(opt('--shot'));
     else if (a[0] === '--html') { if (!a[1]) usage(); r = checkHtmlFile(a[1], opt('--spec')); }
     else if (a[0] === '--part') { if (!a[1] || !opt('--root')) usage(); r = checkPartFile(a[1], opt('--root')); }
     else if (a[0] && !a[0].startsWith('--')) { if (!opt('--root')) usage(); r = checkSpecFile(a[0], opt('--root')); }

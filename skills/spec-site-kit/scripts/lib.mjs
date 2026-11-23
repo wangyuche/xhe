@@ -84,7 +84,7 @@ export function relInside(root, abs) {
   let real = abs;
   try { real = realpathSync(abs); } catch { /* 不存在時用原路徑 */ }
   const r = relative(root, real);
-  if (!r || r.startsWith('..') || isAbsolute(r)) return null;
+  if (!r || r === '..' || r.startsWith('..' + sep) || isAbsolute(r)) return null;
   return r.split(sep).join('/');
 }
 let trackedCache = new Map();
@@ -93,6 +93,13 @@ export function tracked(root) {
   return trackedCache.get(root);
 }
 const lineCache = new Map();
+const textCache = new Map();
+// 取第 from ~ to 行(1 起算,含頭尾)的內容
+export function linesText(abs, from, to) {
+  if (!textCache.has(abs)) textCache.set(abs, readFileSync(abs, 'utf8').split('\n'));
+  return textCache.get(abs).slice(from - 1, to).join('\n');
+}
+export const byOrder = (a, b) => ((a.module.order ?? 1e9) - (b.module.order ?? 1e9)) || a.module.id.localeCompare(b.module.id);
 export function lineCount(abs) {
   if (!lineCache.has(abs)) {
     const t = readFileSync(abs, 'utf8');

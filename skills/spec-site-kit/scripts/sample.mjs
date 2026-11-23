@@ -12,14 +12,15 @@ function rank(seed, id) {
 }
 function pickRound(spec, round, exclude) {
   const seed = `${spec.commit}:${round}`;
-  const picks = [];
+  const picks = []; const shortfall = [];
   for (const [status, n] of Object.entries(QUOTA)) {
     const pool = [];
     for (const m of spec.modules) for (const f of m.features) if (f.status === status && !exclude.has(f.id)) pool.push({ id: f.id, module: m.module.id, status, name: f.name, sources: f.sources, keywords: f.keywords });
     pool.sort((a, b) => rank(seed, a.id).localeCompare(rank(seed, b.id)));
     picks.push(...pool.slice(0, n));
+    if (pool.length < n) shortfall.push(`${status} 只剩 ${pool.length} 條可抽(要 ${n})`);
   }
-  return { seed, picks };
+  return { seed, picks, shortfall };
 }
 export function sample(spec, round) {
   const exclude = new Set();
@@ -28,7 +29,7 @@ export function sample(spec, round) {
     r = pickRound(spec, i, exclude);
     if (i < round) r.picks.forEach(p => exclude.add(p.id));
   }
-  return { round, seed: r.seed, excluded: [...exclude], picks: r.picks };
+  return { round, seed: r.seed, excluded: [...exclude], picks: r.picks, shortfall: r.shortfall };
 }
 
 if (isMain(import.meta.url)) {
