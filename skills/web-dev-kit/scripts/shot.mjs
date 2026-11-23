@@ -5,7 +5,7 @@
 // 伺服器 3xx 與頁面 JS 轉址都算)時結束碼 2(仍產生截圖)。預期會轉址時加 --allow-redirect。
 // --viewport:只截目前畫面(網址可帶 #錨點捲到該段),長頁面用這個才看得清楚。
 // 整頁截圖的像素高度超過 16384(Chrome 單張上限,超過會重複拼接)時 warnings 會提醒改用 --viewport(不影響結束碼)。
-// 第一個參數也可以是本機絕對路徑(/ 開頭),內部用 pathToFileURL 轉成 file:// 網址(路徑含 # ? % 也正確);--anchor <id> 加上 #id。
+// 第一個參數也可以是本機路徑(絕對或相對),內部用 pathToFileURL 轉成 file:// 網址(路徑含 # ? % 也正確);--anchor <id> 加上 #id。
 // file:// 網址:不做 HTTP 檢查,檔案存在時 http 記 200、不存在記 0(結束碼 2);不支援 --cookie / --header。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
@@ -25,7 +25,8 @@ function usage(msg) {
 const args = process.argv.slice(2);
 if (args.length < 4) usage();
 let [url, wStr, hStr, outArg] = args;
-if (url.startsWith('/')) url = pathToFileURL(url).href;
+// 沒有 scheme 的參數當本機路徑(相對路徑以目前目錄為準)
+if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = pathToFileURL(resolve(url)).href;
 const width = Number(wStr), height = Number(hStr);
 if (!Number.isInteger(width) || !Number.isInteger(height)) usage('寬高必須是整數');
 const out = resolve(outArg);

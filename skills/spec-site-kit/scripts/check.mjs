@@ -18,13 +18,13 @@ const CODE_KINDS = new Set(['程式', '測試']);
 
 // ---- 來源 ----
 // 功能編號在文字中出現且前後不是另一個編號的一部分:
-// 後面不能接英數字或「-_. + 英數字」(FR-091A、FR-0910、FR-091-2、FR-091.1);
+// 後面不能接英數字或「-_. + 數字」(FR-091A、FR-0910、FR-091-2、FR-091.1);接 -_. + 字母可以(FR-090_claim、FR-090.spec.ts);
 // 前面不能接英數字或 -(FR-RPS-1 不算 RPS-1),也不能接「英數字 + _ / .」(X_FR-090、M04.FR-090),唯一例外是 test_ / test.(test_FR-090)。
 export function idHit(text, id) {
   let i = -1;
   while ((i = text.indexOf(id, i + 1)) >= 0) {
     const after = text.slice(i + id.length, i + id.length + 2);
-    if (/^[a-z0-9]/.test(after) || /^[-_.][a-z0-9]/.test(after)) continue;
+    if (/^[a-z0-9]/.test(after) || /^[-_.][0-9]/.test(after)) continue;
     const before = text.slice(0, i);
     const p = before.slice(-1);
     if (/[a-z0-9-]/.test(p)) continue;

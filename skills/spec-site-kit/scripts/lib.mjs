@@ -115,6 +115,17 @@ export function lineCount(abs) {
 }
 
 // ---- 內容掃描:絕對路徑、私有 IP、秘密樣式 ----
+// 「password / secret / api_key / token = 值」:值 16 字元以上、含數字;全大寫加底線的環境變數名(OPENAI_API_KEY_V2)不算。
+// 值的大小寫判斷不能用 i 旗標,所以寫成函式。
+const SECRET_KV = /\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?([A-Za-z0-9_\-+/=.]{16,})/gi;
+function suspectSecret(s) {
+  for (const m of s.matchAll(SECRET_KV)) {
+    const v = m[2];
+    if (/^[A-Z0-9_]+$/.test(v)) continue;
+    if (/\d/.test(v)) return true;
+  }
+  return false;
+}
 const FORBIDDEN = [
   [/(^|[^A-Za-z0-9._~-])\/(Users|Volumes|private\/var|var\/folders)\/[^\s/]+/, '本機絕對路徑'],
   [/(^|[^A-Za-z0-9._~-])\/(private|tmp|root)\/[^\s/]+/, '本機絕對路徑', 'route'],
@@ -133,7 +144,7 @@ const FORBIDDEN = [
   [/\bsk-(ant-)?[A-Za-z0-9_-]{20,}/, 'API 金鑰'],
   [/\b\d{8,10}:[A-Za-z0-9_-]{35}\b/, 'Telegram bot token'],
   [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
-  [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?(?![A-Z0-9_]+\b)(?=[A-Za-z0-9_\-+/=.]*\d)[A-Za-z0-9_\-+/=.]{16,}/i, '疑似秘密值'],
+  [suspectSecret, '疑似秘密值'],
 ];
 // keyword / keywords 是程式裡的字串:像路由的 /home/…、/private/…、/tmp/…、/root/… 放行,/Users、/Volumes 等照擋(keyword 也會印在頁面上)。
 // path、sources_read、code_paths、exclude_paths 是 repo 內相對路徑(schema 已限制),不掃(檔名常有 .local、.internal)。
@@ -142,7 +153,7 @@ export function scanStrings(obj, path = '', out = [], key = '') {
   if (SKIP_KEYS.has(key)) return out;
   if (typeof obj === 'string') {
     const isKw = key === 'keyword' || key === 'keywords';
-    for (const [re, what, kind] of FORBIDDEN) if (!(isKw && kind === 'route') && re.test(obj)) out.push(`${path || '(根)'}: 含${what}:${obj.slice(0, 80)}`);
+    for (const [re, what, kind] of FORBIDDEN) if (!(isKw && kind === 'route') && (typeof re === 'function' ? re(obj) : re.test(obj))) out.push(`${path || '(根)'}: 含${what}:${obj.slice(0, 80)}`);
   } else if (Array.isArray(obj)) obj.forEach((x, i) => scanStrings(x, `${path}[${i}]`, out, key));
   else if (obj && typeof obj === 'object') for (const [k, v] of Object.entries(obj)) scanStrings(v, path ? `${path}.${k}` : k, out, k);
   return out;

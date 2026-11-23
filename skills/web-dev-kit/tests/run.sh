@@ -200,6 +200,8 @@ JS
     mkdir -p "$WORK/a#b?c%20d" && cp "$WORK/tall.html" "$WORK/a#b?c%20d/p.html"
     out="$(node "$S/shot.mjs" "$WORK/a#b?c%20d/p.html" 390 844 "$WORK/p.png" --mobile --viewport --anchor end)"; rc=$?
     [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && echo "$out" | grep -q '#end' && ok "shot:絕對路徑(含 # ? %)+ --anchor" || bad "shot:絕對路徑" "rc=$rc $out"
+    out="$(cd "$WORK" && node "$S/shot.mjs" "f.html" 390 844 "$WORK/rel.png" --viewport --anchor x)"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && ok "shot:相對路徑 + --anchor 輸出 JSON" || bad "shot:相對路徑" "rc=$rc $out"
     out="$(node "$S/shot.mjs" "file://$WORK/" 390 844 "$WORK/f3.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '不是檔案' && ok "shot:file:// 指到目錄結束碼 2" || bad "shot:file:// 目錄" "rc=$rc $out"
     out="$(node "$S/shot.mjs" "file://$WORK/nope.html" 390 844 "$WORK/f2.png")"; rc=$?

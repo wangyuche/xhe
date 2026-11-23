@@ -3,7 +3,7 @@
 // 讀 <輸出目錄>/parts/_project.json 與 parts/*.json,合成 <輸出目錄>/spec.json(含 branch、dirty、generated_at、stats)。
 // 任何 part 的 commit 不等於 HEAD、schema 不合、模組 id 重複 → 不寫新檔、刪掉上一輪的 spec.json / index.html,結束碼 1 並列出要重做的模組。
 // stdout 一行 JSON;結束碼 0 成功、1 失敗、2 用法錯誤。合併後要再跑 check.mjs。
-import { readdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { KIT, validateSchema, readJson, git, gitRoot, head, relInside, byOrder, isMain } from './lib.mjs';
 import { countStats } from './check.mjs';
@@ -39,8 +39,19 @@ export function merge(outArg) {
   if (errors.length) {
     // 舊的 spec.json / index.html 是上一輪的結果,留著會被當成目前的頁面(雜湊仍一致),所以刪掉
     const removed = [];
-    for (const f of ['spec.json', 'index.html']) if (existsSync(join(out, f))) { rmSync(join(out, f)); removed.push(join(outRel, f)); }
+    // 只刪本 kit 產生的(spec.json 的 kit 欄位、index.html 的產生標記);其他檔案不碰
+    const ours = {
+      'spec.json': (p) => { try { return readJson(p).kit === KIT; } catch { return false; } },
+      'index.html': (p) => readFileSync(p, 'utf8').includes(`<meta name="generator" content="${KIT}">`),
+    };
+    const kept = [];
+    for (const [f, isOurs] of Object.entries(ours)) {
+      const p = join(out, f);
+      if (!existsSync(p)) continue;
+      if (isOurs(p)) { rmSync(p); removed.push(join(outRel, f)); } else kept.push(join(outRel, f));
+    }
     if (removed.length) errors.push(`已刪除上一輪的 ${removed.join('、')}(避免過期頁面被當成目前結果)`);
+    if (kept.length) errors.push(`${kept.join('、')} 不是本 kit 產生的,沒有刪除`);
     return { errors, stale };
   }
   modules.sort(byOrder);

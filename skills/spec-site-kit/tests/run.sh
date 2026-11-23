@@ -125,13 +125,17 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"�
 expect "part:中文說明 token 規則不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"api_key: OPENAI_API_KEY_V2;token = ACCESS_TOKEN_TTL_3600","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
 expect "part:環境變數名不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+for sec in 'token=abcd1234efgh5678ijkl' 'password: Hunter2Hunter2Hunter2' 'api_key=sk9f8a7d6s5a4d3f2g1h' 'token=abc-1234-efgh-5678'; do
+  node -e 'const fs=require("fs");const f=process.argv[1];const j=JSON.parse(fs.readFileSync(f,"utf8"));j.rules=[{text:process.argv[2],sources:[{kind:"規格",path:"README.md",line:1}]}];fs.writeFileSync(f,JSON.stringify(j))' "$P/m04.json" "$sec"
+  expect "part:小寫 / 混合大小寫秘密要擋:$sec" 1 '疑似秘密值' -- C --part "$P/m04.json" --root "$R"
+done
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.exclude_paths=["*.md"]'
 expect "part:exclude_paths 不可用 glob → 1(schema)" 1 'exclude_paths' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"token = generateAccessToken","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
 expect "part:token = 函式名 不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/home/feedzz"]'
 expect "part:keyword 是 /home/ 開頭的路由不算本機路徑" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
-printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\ntest("test_FR-090 claim", () => {})\ntest("X_FR-090 M04.FR-090", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
+printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\ntest("test_FR-090 claim", () => {})\ntest("X_FR-090 M04.FR-090", () => {})\ntest_FR-090_daily_claim()\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
 H2="$(git -C "$R" rev-parse HEAD)"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.features[0].sources[3].path=\"tests/other.test.ts\""
 jset "$P/_project.json" "j.commit=\"$H2\""
@@ -144,6 +148,8 @@ jset "$P/m04.json" 'j.features[0].notes[0].sources[0].line=3'
 expect "part:X_FR-090 / M04.FR-090 不算引用 FR-090 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 jset "$P/m04.json" 'j.features[0].notes[0].sources[0].line=2;j.features[0].notes[0].sources[0].keyword="FR-0901"'
 expect "part:功能內引用編號一律核對自己的編號(keyword 換不掉)" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].notes[0].sources[0].line=4'
+expect "part:test_FR-090_daily_claim 算引用 FR-090" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.mismatches[0].code=[{\"kind\":\"測試\",\"path\":\"tests/other.test.ts\",\"line\":1,\"match\":\"引用編號\",\"keyword\":\"FR-090\"}]"
 expect "part:段落裡引用編號 + keyword 也套邊界 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 git -C "$R" reset -q --hard HEAD~1; H="$(git -C "$R" rev-parse HEAD)"
@@ -214,9 +220,13 @@ jset "$P/m05.json" 'j.module.order=1'; jset "$P/m04.json" 'j.module.order=2'
 jset "$P/m05.json" 'j.commit="0000000000000000000000000000000000000000"'
 expect "merge:part 的 commit 不是 HEAD → 1,列出要重做的模組" 1 '要重做:m05' -- node "$S/merge.mjs" "$OUT"
 [ ! -e "$OUT/spec.json" ] && ok "merge:失敗時不寫 spec.json" || bad "merge:失敗時不寫 spec.json"
-echo '{}' > "$OUT/spec.json"; echo x > "$OUT/index.html"
+echo '{"kit":"spec-site-kit/1"}' > "$OUT/spec.json"; echo '<meta name="generator" content="spec-site-kit/1">' > "$OUT/index.html"
 expect "merge:失敗時刪掉上一輪的 spec.json / index.html" 1 '已刪除上一輪的' -- node "$S/merge.mjs" "$OUT"
 [ ! -e "$OUT/spec.json" ] && [ ! -e "$OUT/index.html" ] && ok "merge:舊檔確實刪除" || bad "merge:舊檔還在"
+echo '<p>手寫</p>' > "$OUT/index.html"
+expect "merge:失敗時不刪非本 kit 的 index.html" 1 '不是本 kit 產生的' -- node "$S/merge.mjs" "$OUT"
+[ -e "$OUT/index.html" ] && ok "merge:手寫 index.html 還在" || bad "merge:手寫 index.html 被刪"
+rm -f "$OUT/index.html"
 jset "$P/m05.json" "j.commit=\"$H\""
 expect "merge:成功,統計 4 項" 0 '"total":4' -- node "$S/merge.mjs" "$OUT"
 expect "spec:check 通過" 0 '"ok":true' -- C "$OUT/spec.json" --root "$R"
