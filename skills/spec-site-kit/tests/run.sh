@@ -127,7 +127,7 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"to
 expect "part:token = 函式名 不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/home/feedzz"]'
 expect "part:keyword 是 /home/ 開頭的路由不算本機路徑" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
-printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\ntest("test_FR-090 claim", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
+printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\ntest("test_FR-090 claim", () => {})\ntest("X_FR-090 M04.FR-090", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
 H2="$(git -C "$R" rev-parse HEAD)"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.features[0].sources[3].path=\"tests/other.test.ts\""
 jset "$P/_project.json" "j.commit=\"$H2\""
@@ -136,6 +136,10 @@ jset "$P/m04.json" 'j.features[0].sources[3].path="tests/claim.test.ts";j.featur
 expect "part:備註裡引用編號的測試用功能編號核對" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 jset "$P/m04.json" 'j.features[0].notes[0].sources[0].path="tests/other.test.ts";j.features[0].notes[0].sources[0].line=2'
 expect "part:test_FR-090 算引用 FR-090" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].notes[0].sources[0].line=3'
+expect "part:X_FR-090 / M04.FR-090 不算引用 FR-090 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].notes[0].sources[0].line=2;j.features[0].notes[0].sources[0].keyword="FR-0901"'
+expect "part:功能內引用編號一律核對自己的編號(keyword 換不掉)" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.mismatches[0].code=[{\"kind\":\"測試\",\"path\":\"tests/other.test.ts\",\"line\":1,\"match\":\"引用編號\",\"keyword\":\"FR-090\"}]"
 expect "part:段落裡引用編號 + keyword 也套邊界 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 git -C "$R" reset -q --hard HEAD~1; H="$(git -C "$R" rev-parse HEAD)"
@@ -151,6 +155,12 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].source
 expect "part:路徑 ./ 開頭 → 1(schema)" 1 'path' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.code_paths=["."];j.exclude_paths=["docs/","README.md"];j.features[2].keywords=["leaderboardzz"]'
 expect "part:code_paths「.」= 整個 repo" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+mkdir -p "$R/server/newmod" && printf 'package newmod\n' > "$R/server/newmod/a.go"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.code_paths.push("server/newmod/")'
+expect "part:code_paths 指到還沒 commit 的新目錄也可以" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+rm -rf "$R/server/newmod"
+cp "$WORK/m04.good.json" "$WORK/loose.json"
+expect "part:part 不在 parts/ 底下 → 1" 1 '要放在 <輸出目錄>/parts/' -- C --part "$WORK/loose.json" --root "$R"
 printf 'func Leaderboardzz() {}\n' > "$R/server/new.go"
 cp "$WORK/m04.good.json" "$P/m04.json"
 expect "part:未 commit 的新檔裡有關鍵字也不能判未開始 → 1" 1 'server/new.go' -- C --part "$P/m04.json" --root "$R"

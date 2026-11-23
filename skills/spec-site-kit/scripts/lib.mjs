@@ -92,6 +92,11 @@ export function tracked(root) {
   if (!trackedCache.has(root)) trackedCache.set(root, new Set(git(root, ['ls-files', '-z']).split('\0').filter(Boolean)));
   return trackedCache.get(root);
 }
+const untrackedCache = new Map();
+export function untracked(root) {
+  if (!untrackedCache.has(root)) untrackedCache.set(root, new Set(git(root, ['ls-files', '-z', '-o', '--exclude-standard']).split('\0').filter(Boolean)));
+  return untrackedCache.get(root);
+}
 const lineCache = new Map();
 const textCache = new Map();
 // 取第 from ~ to 行(1 起算,含頭尾)的內容

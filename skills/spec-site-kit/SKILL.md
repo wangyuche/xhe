@@ -60,7 +60,7 @@ part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, order?, sources
 |---|---|
 | 已完成 | 有 `規格`;每個 `sides` 都有 `程式` 與 `測試`;不可有 `限制` 備註 |
 | 已實作未測 | 有 `規格`(`no_spec_docs` 時免);每個 side 都有 `程式`;至少一端缺 `測試` 或有 `限制` 備註(否則應判已完成;只有部分端有程式應判無法判定) |
-| 未開始 | 有 `規格`;沒有 `程式`;有 `keywords`,且每個在程式搜尋範圍內 `git grep -i -F` 找不到 |
+| 未開始 | 有 `規格`;沒有 `程式`,也沒有 `測試`(有測試但找不到程式應判無法判定);有 `keywords`,且每個在程式搜尋範圍內 `git grep --untracked -i -F` 找不到 |
 | 不做 | 有 `reason`(例「已作廢 → FR-031」「backlog」)與至少一條來源 |
 | 無法判定 | 有 `reason` |
 

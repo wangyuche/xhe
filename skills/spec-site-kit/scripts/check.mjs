@@ -9,7 +9,7 @@
 import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { KIT, KIT_DIR, STATUSES, SECTIONS, validateSchema, readJson, sha256File, git, gitRoot, head, relInside, tracked, lineCount, linesText, scanStrings, isMain } from './lib.mjs';
+import { KIT, KIT_DIR, STATUSES, SECTIONS, validateSchema, readJson, sha256File, git, gitRoot, head, relInside, tracked, untracked, lineCount, linesText, scanStrings, isMain } from './lib.mjs';
 
 export const MAX_SPAN = 40; // 行範圍(含頭尾)最多 40 行(範圍太寬核對就沒意義)
 export const ALL_SIDES = '跨端'; // 測試的 side 寫「跨端」(例如端對端測試)算涵蓋每一端
@@ -17,6 +17,23 @@ export const ALL_SIDES = '跨端'; // 測試的 side 寫「跨端」(例如端�
 const CODE_KINDS = new Set(['程式', '測試']);
 
 // ---- 來源 ----
+// 功能編號在文字中出現且前後不是另一個編號的一部分:
+// 後面不能接英數字或「-_. + 英數字」(FR-091A、FR-0910、FR-091-2、FR-091.1);
+// 前面不能接英數字或 -(FR-RPS-1 不算 RPS-1),也不能接「英數字 + _ / .」(X_FR-090、M04.FR-090),唯一例外是 test_ / test.(test_FR-090)。
+export function idHit(text, id) {
+  let i = -1;
+  while ((i = text.indexOf(id, i + 1)) >= 0) {
+    const after = text.slice(i + id.length, i + id.length + 2);
+    if (/^[a-z0-9]/.test(after) || /^[-_.][a-z0-9]/.test(after)) continue;
+    const before = text.slice(0, i);
+    const p = before.slice(-1);
+    if (/[a-z0-9-]/.test(p)) continue;
+    if (/[_.]/.test(p) && /[a-z0-9][_.]$/.test(before) && !/(^|[^a-z0-9])test[_.]$/.test(before)) continue;
+    return true;
+  }
+  return false;
+}
+
 function checkSource(ctx, s, where, fid) {
   const { root, errs } = ctx;
   if (!tracked(root).has(s.path)) { errs.push(`${where}: ${s.path} 不在 git 追蹤中(只認追蹤檔)`); return; }
@@ -38,19 +55,19 @@ function checkSource(ctx, s, where, fid) {
   const to = s.end ?? s.line;
   const text = linesText(abs, s.line, to).toLowerCase();
   const byId = s.kind === '測試' && s.match === '引用編號';
-  const want = byId ? (s.keyword ?? fid) : s.keyword;
-  // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910、FR-091-2、FR-091.1 冒充,RPS-1 不能被 FR-RPS-1 冒充;前面接 _ 或 . 可以,例如 test_FR-090);keyword 用包含
-  const hit = !want ? true : byId
-    ? new RegExp(`(^|[^a-z0-9-])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9]|[-_.][a-z0-9])`).test(text)
-    : text.includes(want.toLowerCase());
+  // 功能內的引用編號一律找自己的編號(不能用 keyword 換成別的功能);段落裡沒有 fid 才用 keyword
+  const want = byId ? (fid ?? s.keyword) : s.keyword;
+  // 功能編號要前後有邊界,見 idHit;keyword 用包含
+  const hit = !want ? true : byId ? idHit(text, want.toLowerCase()) : text.includes(want.toLowerCase());
   if (!hit) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
 }
 function checkSources(ctx, list, where, fid) {
   (list ?? []).forEach((s, i) => checkSource(ctx, s, `${where}.sources[${i}]`, fid));
 }
 
+// code_paths / exclude_paths / sources_read:追蹤檔或未忽略的未追蹤檔都算(和 grep --untracked 一致)
 function pathExists(root, p) {
-  const t = tracked(root);
+  const t = new Set([...tracked(root), ...untracked(root)]);
   const pre = p.replace(/\/+$/, '');
   if (pre === '.') return t.size > 0; // 「.」= 整個 repo
   if (t.has(pre)) return true;
@@ -171,6 +188,7 @@ export function checkPartFile(file, rootArg, opts = {}) {
   if (!root) return { errors: [`${rootArg} 不是 git 工作目錄`] };
   const abs = resolve(file);
   const partsDir = dirname(abs);
+  if (basename(partsDir) !== 'parts') return { errors: [`${file} 要放在 <輸出目錄>/parts/ 底下(輸出目錄由它推得,grep 時要排除)`] };
   const ctx = ctxFor(root, dirname(partsDir));
   let part;
   try { part = readJson(abs); } catch (e) { return { errors: [`讀不到或不是 JSON:${e.message}`] }; }
