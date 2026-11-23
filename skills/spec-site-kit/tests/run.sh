@@ -96,6 +96,14 @@ expect "part:行號超出 → 1" 1 '超出檔案行數' -- C --part "$P/m04.json
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[2].keyword="noSuchFn"'
 expect "part:程式來源的 keyword 不在那幾行 → 1" 1 '找不到「noSuchFn」' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'delete j.features[0].sources[1].keyword'
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].line=3'
+expect "part:keyword 在下一行也不行(要剛好在那一行)→ 1" 1 '找不到「Claim」' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].sources[1].end=4'
+expect "part:有 end 時在範圍內就通過" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].end=2'
+OUTX="$(C --part "$P/m04.json" --root "$R")"
+[ "$(printf '%s' "$OUTX" | grep -o 'sources\[1\]' | wc -l | tr -d ' ')" = "1" ] && ok "part:行範圍不合法時只報一個錯" || bad "part:重複報錯" "$OUTX"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'delete j.features[0].sources[1].keyword'
 expect "part:程式來源沒附 keyword → 1" 1 '程式來源要附 keyword' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[1].sources=[{"kind":"規格","path":"docs/specs/m04.md","line":6}];j.features[0].sources[3].path="tests/reward.test.ts";j.features[0].id="FR-090";j.features[0].sources[3].path="README.md"'
 expect "part:引用編號的測試那幾行沒有功能編號 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"

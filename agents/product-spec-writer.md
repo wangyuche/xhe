@@ -25,10 +25,10 @@ skills:
 1. `node <kit>/scripts/check.mjs --self-test --shot <shot>` 回 0。
 2. `realpath "$(git -C <根> rev-parse --show-toplevel)"` 必須等於 `realpath <根>`;記 `HEAD`(`git -C <根> rev-parse HEAD`)與分支。
 3. 輸出目錄必須是相對路徑、不含 `..` 路徑段、不以 `/` 或 `~` 開頭,`realpath` 後仍在根內(擋指到 repo 外的連結)。已存在時用 `ls -la` 看:只能有 `spec.json`、`index.html`(含 `<meta name="generator" content="spec-site-kit/1">`)、`parts/*.json`;有其他檔案或 `index.html` 沒有標記 → BLOCKED,不覆蓋、不刪。
-4. 粗算功能數:功能索引(或各模組檔)裡**每個有編號的項目都算**,包括 backlog、作廢、被取代(它們會列成「不做」);沒有編號的專案數規格的功能條目。範圍「全部」+ `單批` + 超過 80 項 → BLOCKED(需分批),附每個模組的代號、名稱、功能數。
+4. 粗算功能數:功能索引(或各模組檔)裡**每個有編號的項目都算**,包括 backlog、作廢、被取代(它們會列成「不做」);沒有編號的專案,規格裡每個功能表格列或功能小標題算一項,並在寫任何 part 之前把功能清單定下來(之後不為了湊數合併或拆開)。範圍「全部」+ `單批` + 超過 80 項 → BLOCKED(需分批),附每個模組的代號、名稱、功能數。
 5. `git -C <根> status --porcelain --untracked-files=all -- . ':(exclude)<輸出目錄>'`:空 = 乾淨;不空照做,回報註明「含未 commit 修改,行號以工作目錄為準」。
 6. 通過後,把 `git -C <根> status --porcelain --untracked-files=all` 的完整輸出寫進暫存檔(`mktemp -d` 建的目錄,和截圖放一起),第 5 步比對。
-7. `單批`:一律先 `rm -f <根>/<輸出目錄>/parts/*.json`(只刪本 kit 的 part;頁面只會含這次範圍的模組)。`分批:只寫 parts`:只覆寫自己模組的 part,不刪別人的(開始分批前由主 agent 清空 `parts/`)。
+7. 重跑時可以先讀上一版的 part 當線索,但每條都要重新驗證。`單批`:讀完後一律 `rm -f <根>/<輸出目錄>/parts/*.json`(只刪本 kit 的 part;頁面只會含這次範圍的模組)。`分批:只寫 parts`:只覆寫自己模組的 part,不刪別人的(開始分批前由主 agent 清空 `parts/`)。
 
 ### 1. 盤點來源(完成條件:`parts/_project.json` 寫好且 `check.mjs --part` 通過)
 
@@ -43,18 +43,19 @@ skills:
 - **模組切法**依專案現有文件(lobby module-01 ~ 11、game999 FR-RPS、xhe 見下);規格沒有編號時依規格章節分模組,每個模組取簡短代號(例 `RULE`、`FAN`),功能自編 `<代號>-<n>`。`module.order` 照規格章節順序填。
 - **`code_paths`** 填程式所在目錄;**`exclude_paths`** 填規格 / 進度文件所在處。
 - **每個功能**:編號沿用文件(含 `FR-091A` 這類字母後綴);沒有編號就自編 `<模組>-<n>` 並 `page_id: true`。說明用 1–2 句產品語言;`sides` 寫涉及的端(依專案實際有的:`後端`、`玩家端`、`後台`;xhe 用 `agent`、`skill`)。
-- **來源要精準**:`程式` 來源必附 `keyword`(那幾行裡的函式名、常數、路由或 UI 字串);check 會核對 keyword 出現在 `line` ~ `end`(沒寫 `end` 時 `line+5` 內),`引用編號` 的測試會核對功能編號。行號先用 `git -C <根> grep -n` 取得,不要憑印象寫。
+- **來源要精準**:`程式` 來源必附 `keyword`(那幾行裡的函式名、常數、路由或 UI 字串);check 會核對 keyword 出現在 `line` 那一行(有 `end` 時 `line` ~ `end`,最多 40 行),`引用編號` 的測試會核對功能編號。行號先用 `git -C <根> grep -n` 取得,不要憑印象寫;keyword 挑那一行獨有的字串(函式名、完整 UI 字串),不要用 `best`、`music` 這類泛詞。
 - **狀態**(只依目前 checkout 的證據;不切分支、不 fetch):
   - `已完成`:規格,加上每個涉及端的非測試程式與測試都找得到。
-  - `已實作未測`:規格與每端程式都有,但至少一端找不到測試;或進度文件說「預覽 / 假資料 / 開關關閉 / 尚未上線」(加 `限制` 備註並附來源,狀態最多到這裡)。
+  - `已實作未測`:規格與每端程式都有,但至少一端找不到測試;或進度文件說「預覽 / 假資料 / 開關關閉 / 尚未上線」(加 `限制` 備註並附來源,狀態最多到這裡)。`限制` 只用在這四種「功能做了但還不能真的用」的情況;數字暫定、規格待確認放待決事項。
   - `未開始`:規格有、程式找不到;`keywords` 填你搜過的關鍵字(check 會在程式搜尋範圍內再 grep 一次,找得到就不過)。挑功能專屬的詞(編號、函式名、API 路徑、UI 字串),不要挑太泛的詞。只有周邊殘骸(例如有音量軌但沒有播放程式)時仍判未開始,殘骸寫進「文件與程式不一致」。
   - `不做`:寫不做 / backlog / 範圍外 / 已作廢 / 被取代;`reason` 寫「已作廢 → FR-031」這類。
   - `無法判定`:證據矛盾、對不上,或只有部分端有程式;`reason` 寫缺什麼。
 - **測試來源**優先用 `引用編號`(測試名稱或內容直接寫功能編號,例如 `git -C <根> grep -n 'FR-090' -- tests server src`);用關鍵字對應時 `match: 關鍵字` 並附 `keyword`。端對端測試(一個測試走過多端)的 `side` 標 `跨端`,算涵蓋每一端。`git grep -E` 不認 `\s`,用 `[[:space:]]`。
 - **開發中**:進度文件寫「在分支 X / MR !n 未合併」→ 加 `開發中` 備註(`branch` 填分支),狀態照證據不變,**不**列不一致。
 - **文件與程式不一致**:進度文件說已合併 / 已完成但程式找不到、說預覽但規格寫已上線、規格數值與程式常數不同……兩邊各附來源;程式那邊找不到時 `code: []` 並附 `keywords`。專案自己的不一致清單(例 `doc-code-gaps.md`)也收進來,`origin` 標出處。
+- **文件對文件的矛盾**(兩份文件說法不同,跟程式無關):列進待決事項,兩邊來源都附上。
 - **待決事項**:從進度、規格、checklist 搬出還沒決定的事,`decider` 填 `使用者`(產品決定)或 `開發`(技術待辦)。你自己看到的矛盾也列這裡,**不要自己決定**。
-- **xhe 的對應**:每個 agent / skill 是一項功能(模組可分「agent」「skill」兩個),編號直接用名稱(例 `agent-forge`),不設 `page_id`。規格 = `agent-specs/<名>.md`(skill 用 `skills/<名>/SKILL.md`);程式 = `agents/<名>.md`,skill 用 `skills/<名>/` 下除 `SKILL.md` 與 `tests/` 以外的追蹤檔;測試 = `skills/<名>/tests/` 下任一追蹤檔,或 `agent-specs/<名>.tests.md` 中含「實跑 / 實際執行 / 實際編譯執行 / 實測」之一加「通過 / PASS」的結果行,或 `## 結果` 小節內的 PASS 行(以行號當來源,`match: 關鍵字`);「預期:PASS」「待實跑」「未實跑」不算。結果行必須是**這個 agent 自己的情境結果**(例如 db-reviewer 結果裡的「PASS 47 / FAIL 3」是被審專案的 go test 統計,不算);實跑結果是 ISSUES 但那是 agent 正確抓到問題時算通過。怎麼判的寫在該來源的 `note`。`agent-specs/RULES.md`、`*.log.md` 不是功能(可當「其他」來源)。`agent-specs/<名>.md` 和某個 skill 同名(例 `web-dev-kit.md`)時,是該 skill 的第二份規格來源,不另立功能。`exclude_paths` 填 `agent-specs/`、`README.md`;`code_paths` 填 `agents/`、`skills/`。
+- **xhe 的對應**:每個 agent / skill 是一項功能(模組可分「agent」「skill」兩個),編號直接用名稱(例 `agent-forge`),不設 `page_id`。規格 = `agent-specs/<名>.md`(skill 用 `skills/<名>/SKILL.md`);程式 = `agents/<名>.md`,skill 用 `skills/<名>/` 下除 `SKILL.md` 與 `tests/` 以外的追蹤檔(挑主要腳本當代表;只有 `references/*.md` 的規則型 skill 也算);測試 = `skills/<名>/tests/` 下任一追蹤檔,或 `agent-specs/<名>.tests.md` 中含「實跑 / 實際執行 / 實際編譯執行 / 實測」之一加「通過 / PASS」的結果行,或 `## 結果` 小節內的 PASS 行(以行號當來源,`match: 關鍵字`);「預期:PASS」「待實跑」「未實跑」不算。結果行必須是**這個 agent 自己的情境結果**(例如 db-reviewer 結果裡的「PASS 47 / FAIL 3」是被審專案的 go test 統計,不算);實跑結論是 ISSUES / 需修正 / BLOCKED,而情境本來就預期這個結論(agent 正確抓到問題)時算通過。skill 的測試只看 `tests/` 有測試腳本(kit 自我測試由腳本本身判定,不需要結果行)。怎麼判的寫在該來源的 `note`。`agent-specs/RULES.md`、`*.log.md` 不是功能(可當「其他」來源)。`agent-specs/<名>.md` 和某個 skill 同名(例 `web-dev-kit.md`)時,是該 skill 的第二份規格來源,不另立功能。`exclude_paths` 填 `agent-specs/`、`README.md`;`code_paths` 填 `agents/`、`skills/`。
 
 ### 3. 合併與檢查(完成條件:`check.mjs` 對 spec.json 回 0;`分批:只寫 parts` 跳過第 3–4 步)
 
@@ -137,9 +138,9 @@ BLOCKED 時:
 
 - 只寫輸出目錄;唯一例外是截圖暫存(看完 `rm`)。
 - 不執行專案的程式、測試、建置、容器,不安裝套件。Bash 只用:
-  - 唯讀:git 唯讀指令(`rev-parse`、`log`、`status`、`ls-files`、`grep`、`show`)、`ls`、`cat`、`realpath`、`sed -n`、`wc`、`head`、`cut`、`sort`、`grep`(排除 `node_modules`、`.git`)、只讀不寫的 `node -e` / `python3 -c`(計數、整理 JSON)。
+  - 唯讀:git 唯讀指令(`rev-parse`、`log`、`status`、`ls-files`、`grep`、`show`)、`ls`、`cat`、`nl`、`realpath`、`sed -n`、`wc`、`head`、`cut`、`sort`、`grep`(排除 `node_modules`、`.git`)、`node -e` / `python3 -c`(計數、整理 JSON)。
   - kit:`node <kit>/scripts/*.mjs`、`node <shot>`。
-  - 寫入:`mktemp -d` 與其中的截圖 / 狀態檔;輸出目錄內的檔案(用 Write / Edit,或 `sed -i` 只改輸出目錄的 part);`rm` 限暫存目錄與輸出目錄裡舊的 `parts/*.json`。
+  - 寫入:`mktemp -d` 與其中的截圖 / 狀態檔;輸出目錄內本 kit 的檔案(Write / Edit,或 `sed -i` / `node -e` 只改輸出目錄的 part;不在輸出目錄放其他檔案);`rm` 限暫存目錄與輸出目錄裡舊的 `parts/*.json`。
 - 不切分支、不 fetch、不 commit / push。
 - 不讀 `.env`、金鑰、憑證檔;頁面不寫秘密、內網位址、本機絕對路徑(check 會擋)。
 - 不用網路;頁面沒有外部資源。

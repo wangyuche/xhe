@@ -31,6 +31,7 @@ node <kit>/scripts/sample.mjs <輸出目錄>/spec.json [--round 2]          # �
 # 規格頁很長,整頁截圖會超過 Chrome 單張上限而重複拼接:用 --viewport 分段截(scrollWidth 仍量整份文件)
 node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html" 1280 800 <暫存>/d.png --viewport
 node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html" 390 844 <暫存>/m.png --mobile --viewport
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html#modules" 390 844 <暫存>/m-modules.png --mobile --viewport
 node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html#pending" 390 844 <暫存>/m-pending.png --mobile --viewport
 ```
 
@@ -41,7 +42,7 @@ node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.
 來源 `source`:`{kind, path, line, end?, side?, match?, keyword?, note?}`
 - `kind`:`規格` / `程式` / `測試` / `進度` / `其他`。`path` 相對專案根、必須是 git 追蹤檔;`line` 對照**目前工作目錄**的內容。
 - `程式`、`測試` 要有 `side`(必須是功能 `sides` 之一;端對端測試可標 `跨端`,算涵蓋每一端)。`測試` 要有 `match`:`引用編號`(測試直接寫功能編號,優先)或 `關鍵字`(附 `keyword`)。
-- **內容核對**:`程式` 來源必附 `keyword`(那幾行裡的函式名、常數、路由或 UI 字串)。有 `keyword` 的任何來源,keyword 要出現在 `line` ~ `end`(沒寫 `end` 時 `line` ~ `line+5`);`引用編號` 的測試沒附 keyword 時,找功能編號。找不到 = 行號或 keyword 錯,check 不過。
+- **內容核對**:`程式` 來源必附 `keyword`(那幾行裡的函式名、常數、路由或 UI 字串)。有 `keyword` 的任何來源,keyword 要出現在 `line` 那一行(有 `end` 時 `line` ~ `end`,範圍最多 40 行);挑那一行獨有的字串,不要用太泛的詞;`引用編號` 的測試沒附 keyword 時,找功能編號。找不到 = 行號或 keyword 錯,check 不過。
 
 功能 `feature`:`{id, page_id?, name, summary, sides[], status, reason?, keywords?, sources[], notes?[]}`
 - `id` 沿用文件編號(可有字母後綴,例 `FR-091A`、`FR-RPS-12`);文件沒有編號時自編 `<模組>-<n>` 並設 `page_id: true`。
@@ -51,7 +52,7 @@ part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, order?, sources
 - `module.order`:頁面上的模組順序(照規格章節);沒寫的排最後,同序依 id。
 - `code_paths`:程式所在目錄(例 lobby `server/ src/ admin/`)。`exclude_paths`:規格 / 進度文件所在處(例 lobby `docs/`、xhe `agent-specs/ README.md`)。驗證「未開始」只在 `code_paths` 搜、排除 `exclude_paths` 與輸出目錄;**不會**一律排除 `*.md`(xhe 的程式本身就是 `.md`)。
 
-段落:`flows{name, steps[], sources}`、`rules / out_of_scope / tech{text, sources}`、`pending{text, decider: 使用者 | 開發, sources}`、`mismatches{text, doc[], code[], keywords?, origin?}`(程式那邊找不到時 `code: []` 並附 `keywords`,check 會在程式搜尋範圍內 grep,找得到就不過;`_project` 的不一致用所有模組 `code_paths` 的聯集)。
+段落:`flows{name, steps[], sources}`、`rules / out_of_scope / tech{text, sources}`、`pending{text, decider: 使用者 | 開發, sources}`、`mismatches{text, doc[], code[], keywords?, origin?}`(`code` 可放 `程式` / `測試` / `其他` 來源,種類規則同功能來源;程式那邊找不到時 `code: []` 並附 `keywords`,check 會在程式搜尋範圍內 grep,找得到就不過;`_project` 的不一致用所有模組 `code_paths` 的聯集)。
 
 ## check 依狀態的規則
 
@@ -68,6 +69,8 @@ part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, order?, sources
 ## 注意
 
 - 只寫輸出目錄;check 只讀(`git ls-files`、`git grep`、`git rev-parse`)。
+- `git grep` 用 `-I`(跳過圖片、音檔等二進位檔)、`-F -i`。
+- spec.json 的 `dirty` 判斷時排除輸出目錄(輸出目錄本來就會有未追蹤 / 已修改的檔案)。
 - part 的 `commit` 必須等於 HEAD,merge 才會合併;HEAD 變了就要重做那些模組。
 - `index.html` 只能由 render 產生;改 `spec.json` 後要重新 render(`check --html` 會抓雜湊不符)。
 - 自我測試:`bash <kit>/tests/run.sh`(有 Chrome 時含 file:// 截圖)。

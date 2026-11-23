@@ -4,14 +4,14 @@
 //   node check.mjs <spec.json> --root <專案根>                檢查合併後的 spec.json
 //   node check.mjs --html <index.html> [--spec <spec.json>]   檢查 render 產物(標記、雜湊、無外部資源)
 //   node check.mjs --self-test [--shot <shot.mjs>]            檢查 kit 檔案、web-dev-kit shot.mjs、Chrome、node、git
-// 來源內容核對:程式來源必附 keyword;有 keyword 的來源(或「引用編號」的測試,找功能編號)要在 line ~ end(沒寫 end 時 line+5)內找得到。
+// 來源內容核對:程式來源必附 keyword;有 keyword 的來源(或「引用編號」的測試,找功能編號)要出現在 line(有 end 時 line ~ end,最多 40 行)。
 // stdout 一行 JSON {ok, errors[…], …};結束碼 0 通過、1 不通過、2 用法錯誤。
 import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { KIT, KIT_DIR, STATUSES, SECTIONS, validateSchema, readJson, sha256File, git, gitRoot, head, relInside, tracked, lineCount, linesText, scanStrings, isMain } from './lib.mjs';
 
-export const WINDOW = 5; // 沒寫 end 時,關鍵字要出現在 line ~ line+5
+export const MAX_SPAN = 40; // end − line 上限(範圍太寬核對就沒意義)
 export const ALL_SIDES = '跨端'; // 測試的 side 寫「跨端」(例如端對端測試)算涵蓋每一端
 
 const CODE_KINDS = new Set(['程式', '測試']);
@@ -24,14 +24,16 @@ function checkSource(ctx, s, where, fid) {
   if (!existsSync(abs) || !statSync(abs).isFile()) { errs.push(`${where}: ${s.path} 在工作目錄不存在`); return; }
   const n = lineCount(abs);
   if (s.line > n) errs.push(`${where}: ${s.path}:${s.line} 超出檔案行數 ${n}`);
-  if (s.end != null && (s.end < s.line || s.end > n)) errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 不合法(檔案 ${n} 行)`);
+  let rangeOk = s.line <= n;
+  if (s.end != null && (s.end < s.line || s.end > n)) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 不合法(檔案 ${n} 行)`); rangeOk = false; }
+  else if (s.end != null && s.end - s.line > MAX_SPAN) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 超過 ${MAX_SPAN} 行,請指到更精準的位置`); rangeOk = false; }
   if (s.kind === '測試') {
     if (!s.match) errs.push(`${where}: 測試來源要有 match(引用編號 / 關鍵字)`);
     else if (s.match === '關鍵字' && !s.keyword) errs.push(`${where}: match 是關鍵字時要附 keyword`);
   }
   if (s.kind === '程式' && !s.keyword) errs.push(`${where}: 程式來源要附 keyword(那幾行裡的函式名、常數、路由或 UI 字串,check 會核對)`);
-  if (s.line > n) return;
-  const to = Math.min(n, s.end ?? s.line + WINDOW);
+  if (!rangeOk) return;
+  const to = s.end ?? s.line;
   const text = linesText(abs, s.line, to).toLowerCase();
   const want = s.kind === '測試' && s.match === '引用編號' && !s.keyword ? fid : s.keyword;
   if (want && !text.includes(want.toLowerCase())) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
