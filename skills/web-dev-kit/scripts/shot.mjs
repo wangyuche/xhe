@@ -186,8 +186,10 @@ try {
   } else {
     const metrics = await send('Page.getLayoutMetrics');
     const cs = metrics.cssContentSize || metrics.contentSize;
-    const px = Math.ceil(cs.height) * (mobile ? 3 : 1);
+    const dpr = mobile ? 3 : 1;
+    const px = Math.ceil(cs.height) * dpr, pw = Math.max(width, Math.ceil(cs.width)) * dpr;
     if (px > 16384) result.warnings.push(`整頁截圖高 ${px} 像素超過 Chrome 單張上限 16384,圖可能重複拼接;改用 --viewport(可加 #錨點)看各段`);
+    if (pw > 16384) result.warnings.push(`整頁截圖寬 ${pw} 像素超過 Chrome 單張上限 16384,圖可能重複拼接;改用 --viewport`);
     shot = await send('Page.captureScreenshot', {
       format: 'png', captureBeyondViewport: true,
       clip: { x: 0, y: 0, width: Math.max(width, Math.ceil(cs.width)), height: Math.ceil(cs.height), scale: 1 },

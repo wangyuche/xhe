@@ -127,13 +127,15 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"to
 expect "part:token = 函式名 不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/home/feedzz"]'
 expect "part:keyword 是 /home/ 開頭的路由不算本機路徑" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
-printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
+printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\ntest("test_FR-090 claim", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
 H2="$(git -C "$R" rev-parse HEAD)"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.features[0].sources[3].path=\"tests/other.test.ts\""
 jset "$P/_project.json" "j.commit=\"$H2\""
 expect "part:FR-090 的測試指到只有 FR-090A / FR-090-2 / FR-090.1 / X-FR-090 的行 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 jset "$P/m04.json" 'j.features[0].sources[3].path="tests/claim.test.ts";j.features[0].notes=[{"type":"限制","text":"預覽","sources":[{"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"後端","match":"引用編號"}]}];j.features[0].status="已實作未測"'
 expect "part:備註裡引用編號的測試用功能編號核對" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].notes[0].sources[0].path="tests/other.test.ts";j.features[0].notes[0].sources[0].line=2'
+expect "part:test_FR-090 算引用 FR-090" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.mismatches[0].code=[{\"kind\":\"測試\",\"path\":\"tests/other.test.ts\",\"line\":1,\"match\":\"引用編號\",\"keyword\":\"FR-090\"}]"
 expect "part:段落裡引用編號 + keyword 也套邊界 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 git -C "$R" reset -q --hard HEAD~1; H="$(git -C "$R" rev-parse HEAD)"
@@ -145,6 +147,17 @@ expect "part:未追蹤檔 → 1" 1 '不在 git 追蹤中' -- C --part "$P/m04.js
 rm "$R/server/untracked.go"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].path="../etc/passwd"'
 expect "part:路徑含 .. → 1(schema)" 1 'path' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].path="./server/claim.go"'
+expect "part:路徑 ./ 開頭 → 1(schema)" 1 'path' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.code_paths=["."];j.exclude_paths=["docs/","README.md"];j.features[2].keywords=["leaderboardzz"]'
+expect "part:code_paths「.」= 整個 repo" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+printf 'func Leaderboardzz() {}\n' > "$R/server/new.go"
+cp "$WORK/m04.good.json" "$P/m04.json"
+expect "part:未 commit 的新檔裡有關鍵字也不能判未開始 → 1" 1 'server/new.go' -- C --part "$P/m04.json" --root "$R"
+rm "$R/server/new.go"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].line=20;j.features[0].sources[1].end=25'
+OUTX="$(C --part "$P/m04.json" --root "$R")"
+[ "$(printf '%s' "$OUTX" | grep -o 'sources\[1\]' | wc -l | tr -d ' ')" = "1" ] && ok "part:line 與 end 都超出只報一條" || bad "part:超出重複報錯" "$OUTX"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[3].match="關鍵字"'
 expect "part:測試 match 關鍵字沒附 keyword → 1" 1 '要附 keyword' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].side="後台"'
@@ -211,7 +224,7 @@ grep -q '"dirty": false' "$OUT/spec.json" && ok "merge:只有輸出目錄有變�
 # ---- render ----
 expect "render:產出 index.html" 0 '"ok":true' -- node "$S/render.mjs" "$OUT/spec.json"
 expect "html:check --html 通過" 0 '"ok":true' -- C --html "$OUT/index.html"
-grep -q 'FR-091A' "$OUT/index.html" && grep -q '由使用者決定(1)' "$OUT/index.html" && grep -q '搜尋過 <code>leaderboardzz</code>' "$OUT/index.html" && ok "render:功能、待決分類、不一致都在頁面上" || bad "render:內容"
+grep -q '(Claim)' "$OUT/index.html" && grep -q 'FR-091A' "$OUT/index.html" && grep -q '由使用者決定(1)' "$OUT/index.html" && grep -q '搜尋過 <code>leaderboardzz</code>' "$OUT/index.html" && ok "render:功能、待決分類、不一致都在頁面上" || bad "render:內容"
 jset "$OUT/spec.json" 'j.project.product.summary="改過"'
 expect "html:spec.json 改過沒重新 render → 1" 1 'spec-sha256 與目前 spec.json 不符' -- C --html "$OUT/index.html"
 cp "$WORK/spec.good.json" "$OUT/spec.json"; node "$S/render.mjs" "$OUT/spec.json" >/dev/null

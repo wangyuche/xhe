@@ -25,7 +25,8 @@ function checkSource(ctx, s, where, fid) {
   const n = lineCount(abs);
   if (s.line > n) errs.push(`${where}: ${s.path}:${s.line} 超出檔案行數 ${n}`);
   let rangeOk = s.line <= n;
-  if (s.end != null && (s.end < s.line || s.end > n)) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 不合法(檔案 ${n} 行)`); rangeOk = false; }
+  if (!rangeOk) { /* 起始行已超出,上面已報,不再檢查 end */ }
+  else if (s.end != null && (s.end < s.line || s.end > n)) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 不合法(檔案 ${n} 行)`); rangeOk = false; }
   else if (s.end != null && s.end - s.line + 1 > MAX_SPAN) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 超過 ${MAX_SPAN} 行,請指到更精準的位置`); rangeOk = false; }
   if (s.kind === '測試') {
     if (!s.match) errs.push(`${where}: 測試來源要有 match(引用編號 / 關鍵字)`);
@@ -38,9 +39,9 @@ function checkSource(ctx, s, where, fid) {
   const text = linesText(abs, s.line, to).toLowerCase();
   const byId = s.kind === '測試' && s.match === '引用編號';
   const want = byId ? (s.keyword ?? fid) : s.keyword;
-  // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910、FR-091-2 冒充,RPS-1 不能被 FR-RPS-1 冒充);keyword 用包含
+  // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910、FR-091-2、FR-091.1 冒充,RPS-1 不能被 FR-RPS-1 冒充;前面接 _ 或 . 可以,例如 test_FR-090);keyword 用包含
   const hit = !want ? true : byId
-    ? new RegExp(`(^|[^a-z0-9._-])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9]|[-_.][a-z0-9])`).test(text)
+    ? new RegExp(`(^|[^a-z0-9-])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9]|[-_.][a-z0-9])`).test(text)
     : text.includes(want.toLowerCase());
   if (!hit) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
 }
@@ -51,6 +52,7 @@ function checkSources(ctx, list, where, fid) {
 function pathExists(root, p) {
   const t = tracked(root);
   const pre = p.replace(/\/+$/, '');
+  if (pre === '.') return t.size > 0; // 「.」= 整個 repo
   if (t.has(pre)) return true;
   for (const f of t) if (f.startsWith(pre + '/')) return true;
   return false;
@@ -62,7 +64,8 @@ function grepHits(ctx, part, kw) {
   const specs = [...part.code_paths, `:(exclude)${outRel}`, ...part.exclude_paths.map(p => `:(exclude)${p}`)];
   if (!part.code_paths.length) return [];
   try {
-    const out = execFileSync('git', ['-C', root, 'grep', '-I', '-F', '-i', '-l', '-e', kw, '--', ...specs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    // --untracked:工作目錄有還沒 git add 的新程式時也要搜到(.gitignore 的照樣略過)
+    const out = execFileSync('git', ['-C', root, 'grep', '--untracked', '-I', '-F', '-i', '-l', '-e', kw, '--', ...specs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return out.split('\n').filter(Boolean);
   } catch (e) {
     if (e.status === 1) return [];

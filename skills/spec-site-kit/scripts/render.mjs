@@ -14,7 +14,7 @@ const SEC_TITLE = { flows: '主要流程', rules: '規則與數值', pending: '�
 const loc = (s) => `${s.path}:${s.line}${s.end ? `-${s.end}` : ''}`;
 function srcList(list) {
   if (!list?.length) return '';
-  return `<ul class="src">${list.map(s => `<li><span class="kind">${esc(s.kind)}${s.side ? `・${esc(s.side)}` : ''}</span> <code>${esc(loc(s))}</code>${s.match ? ` <span class="muted">(${esc(s.match)}${s.keyword ? `:${esc(s.keyword)}` : ''})</span>` : ''}${s.note ? ` <span class="muted">${esc(s.note)}</span>` : ''}</li>`).join('')}</ul>`;
+  return `<ul class="src">${list.map(s => `<li><span class="kind">${esc(s.kind)}${s.side ? `・${esc(s.side)}` : ''}</span> <code>${esc(loc(s))}</code>${s.match || s.keyword ? ` <span class="muted">(${[s.match, s.keyword].filter(Boolean).map(esc).join(':')})</span>` : ''}${s.note ? ` <span class="muted">${esc(s.note)}</span>` : ''}</li>`).join('')}</ul>`;
 }
 const srcDetails = (list, label = '來源') => list?.length ? `<details><summary>${label}(${list.length})</summary>${srcList(list)}</details>` : '';
 const badge = (st) => `<span class="badge ${STATUS_CLASS[st]}">${esc(st)}</span>`;
