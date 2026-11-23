@@ -36,8 +36,13 @@ function checkSource(ctx, s, where, fid) {
   if (!rangeOk) return;
   const to = s.end ?? s.line;
   const text = linesText(abs, s.line, to).toLowerCase();
-  const want = s.kind === '測試' && s.match === '引用編號' && !s.keyword ? fid : s.keyword;
-  if (want && !text.includes(want.toLowerCase())) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
+  const byId = s.kind === '測試' && s.match === '引用編號' && !s.keyword;
+  const want = byId ? fid : s.keyword;
+  // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910 冒充);keyword 用包含
+  const hit = !want ? true : byId
+    ? new RegExp(`(^|[^a-z0-9])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(text)
+    : text.includes(want.toLowerCase());
+  if (!hit) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
 }
 function checkSources(ctx, list, where, fid) {
   (list ?? []).forEach((s, i) => checkSource(ctx, s, `${where}.sources[${i}]`, fid));
@@ -112,7 +117,7 @@ function checkFeature(ctx, part, f, where) {
       break;
   }
   checkSources(ctx, src, where, f.id);
-  (f.notes ?? []).forEach((n, i) => checkSources(ctx, n.sources, `${where}.notes[${i}]`));
+  (f.notes ?? []).forEach((n, i) => checkSources(ctx, n.sources, `${where}.notes[${i}]`, f.id));
 }
 
 // scope:grep 用的 part 清單(各自的 code_paths / exclude_paths);_project 的段落逐模組各搜一次,沒有模組時(只檢查 _project)不 grep

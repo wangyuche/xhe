@@ -119,6 +119,20 @@ jset "$P/m04.json" 'j.features[0].sources[0].end=41'
 expect "part:行範圍 41 行 → 1" 1 '超過 40 行' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"登入後回傳 token:由後端簽發的短效憑證","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
 expect "part:中文說明 token 規則不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"token = generateAccessToken","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
+expect "part:token = 函式名 不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/home/feedzz"]'
+expect "part:keyword 是 /home/ 開頭的路由不算本機路徑" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+printf 'test("FR-090A 另一條", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
+H2="$(git -C "$R" rev-parse HEAD)"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.features[0].sources[3].path=\"tests/other.test.ts\""
+jset "$P/_project.json" "j.commit=\"$H2\""
+expect "part:FR-090 的測試指到只有 FR-090A 的行 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].sources[3].path="tests/claim.test.ts";j.features[0].notes=[{"type":"限制","text":"預覽","sources":[{"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"後端","match":"引用編號"}]}];j.features[0].status="已實作未測"'
+expect "part:備註裡引用編號的測試用功能編號核對" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+git -C "$R" reset -q --hard HEAD~1; H="$(git -C "$R" rev-parse HEAD)"
+jset "$P/_project.json" "j.commit=\"$H\""
+cp "$WORK/m04.good.json" "$P/m04.json"
 printf 'x\n' > "$R/server/untracked.go"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].path="server/untracked.go";j.features[0].sources[1].line=1'
 expect "part:未追蹤檔 → 1" 1 '不在 git 追蹤中' -- C --part "$P/m04.json" --root "$R"
@@ -196,6 +210,8 @@ r2="$(node "$S/sample.mjs" "$OUT/spec.json" --round 2)"
 echo "$r2" | grep -q '"excluded":\["FR-090","FR-092"\]' && echo "$r2" | grep -q '"picks":\[\]' && ok "sample:第 2 輪排除第 1 輪抽過的" || bad "sample:第 2 輪" "$r2"
 echo "$a" | grep -q '"shortfall":\["已完成 只剩 1 條可抽(要 5)","未開始 只剩 1 條可抽(要 3)"\]' && ok "sample:不足時 shortfall 說明" || bad "sample:shortfall" "$a"
 expect "sample:輪次不合法 → 2" 2 '' -- node "$S/sample.mjs" "$OUT/spec.json" --round 0
+echo '{"commit":"x"}' > "$WORK/badspec.json"
+expect "sample:格式錯的 spec → 1 並輸出 JSON" 1 '"ok":false' -- node "$S/sample.mjs" "$WORK/badspec.json"
 
 # ---- 截圖(file://)----
 SHOT="$S/../../web-dev-kit/scripts/shot.mjs"

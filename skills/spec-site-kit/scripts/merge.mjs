@@ -39,7 +39,7 @@ export function merge(outArg) {
   if (errors.length) return { errors, stale };
   modules.sort(byOrder);
   const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
-  const dirty = git(root, ['status', '--porcelain', '--', '.', `:(exclude)${outRel}`]).trim() !== '';
+  const dirty = git(root, ['status', '--porcelain', '--untracked-files=all', '--', '.', `:(exclude)${outRel}`]).trim() !== '';
   const spec = {
     kit: KIT, commit: H, branch, dirty,
     generated_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
