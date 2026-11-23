@@ -3,10 +3,12 @@
 // 只用 Node 22 內建 fetch / WebSocket,透過 CDP 控制本機 Google Chrome headless,截整頁。
 // stdout 一行 JSON;HTTP 不是 200、consoleErrors > 0,或被轉址到別的網址(finalUrl ≠ url,例如沒登入被導到 /login;
 // 伺服器 3xx 與頁面 JS 轉址都算)時結束碼 2(仍產生截圖)。預期會轉址時加 --allow-redirect。
+// file:// 網址:不做 HTTP 檢查,檔案存在時 http 記 200、不存在記 0(結束碼 2);不支援 --cookie / --header。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readCookieJar, cookieHeader } from './cookiejar.mjs';
 
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -43,6 +45,8 @@ for (let i = 4; i < args.length; i++) {
     headers[v.slice(0, c).trim()] = v.slice(c + 1).trim();
   } else usage(`未知參數:${a}`);
 }
+const isFile = /^file:/i.test(url);
+if (isFile && (cookies.length || Object.keys(headers).length)) usage('file:// 不支援 --cookie / --cookie-jar / --header');
 if (!existsSync(CHROME)) { console.error(`錯誤:找不到 Google Chrome:${CHROME}`); process.exit(1); }
 
 const result = { http: 0, finalUrl: null, redirected: false, width, height, scrollWidth: null, innerWidth: null, pageHeight: null, consoleErrors: 0, errors: [], out };
@@ -60,12 +64,21 @@ function checkRedirect() {
   }
   if (result.redirected && !allowRedirect) result.errors.push(`redirect: ${url} → ${result.finalUrl}(預期轉址時加 --allow-redirect)`);
 }
-try {
-  const r = await fetch(url, { headers: reqHeaders, redirect: 'follow' });
-  result.http = r.status;
-  fetchFinal = r.url || url;
-} catch (e) {
-  result.errors.push(`fetch: ${e.message}`);
+if (isFile) {
+  let p = null;
+  try { p = fileURLToPath(url); } catch (e) { result.errors.push(`fetch: file:// 網址無效:${e.message}`); }
+  if (p !== null) {
+    if (existsSync(p)) { result.http = 200; fetchFinal = url; }
+    else result.errors.push(`fetch: 檔案不存在:${p}`);
+  }
+} else {
+  try {
+    const r = await fetch(url, { headers: reqHeaders, redirect: 'follow' });
+    result.http = r.status;
+    fetchFinal = r.url || url;
+  } catch (e) {
+    result.errors.push(`fetch: ${e.message}`);
+  }
 }
 
 const profile = mkdtempSync(join(tmpdir(), 'web-dev-kit-chrome-'));
@@ -135,7 +148,7 @@ try {
   await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable'); await send('Log.enable');
 
   const u = new URL(url);
-  for (const c of cookies) await send('Network.setCookie', { name: c.name, value: c.value, domain: u.hostname, path: '/' });
+  if (!isFile) for (const c of cookies) await send('Network.setCookie', { name: c.name, value: c.value, domain: u.hostname, path: '/' });
   if (Object.keys(headers).length) await send('Network.setExtraHTTPHeaders', { headers });
 
   await send('Emulation.setDeviceMetricsOverride', mobile
@@ -161,7 +174,7 @@ try {
   const meas = JSON.parse(m.result.value);
   result.scrollWidth = meas.sw; result.innerWidth = meas.iw; result.pageHeight = meas.ph;
   // 載入失敗時 Chrome 停在 chrome-error://(不是轉址):記為導覽錯誤,finalUrl 改用 fetch 的結果
-  if (/^https?:/.test(meas.href)) result.finalUrl = meas.href;
+  if (/^https?:/.test(meas.href) || (isFile && /^file:/.test(meas.href))) result.finalUrl = meas.href;
   else result.errors.push(`navigate: Chrome 沒有載入頁面(停在 ${meas.href})`);
 
   const metrics = await send('Page.getLayoutMetrics');

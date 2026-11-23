@@ -1,0 +1,69 @@
+---
+name: spec-site-kit
+description: 產品規格網頁的固定腳本:spec.schema.json(模組 part、專案資訊、合併後 spec 的格式)、check.mjs(依狀態檢查必填來源:已完成每端要有程式與測試、未開始的關鍵字在程式搜尋範圍內 git grep 必須找不到;來源檔要在 git 追蹤中且行號在範圍內;commit 等於 HEAD;統計一致;禁止本機絕對路徑 / 私有 IP / 秘密樣式;--html 核對產生標記與 spec.json 雜湊、無外部資源;--self-test 檢查 kit、web-dev-kit shot.mjs 與 Chrome)、merge.mjs(合併 parts/*.json,commit 不是 HEAD 的模組要重做)、render.mjs(單一自足 HTML,無 JavaScript、深淺色跟系統、只有固定結構沒有品牌樣式)、sample.mjs(以 commit + 輪次為種子的可重現抽查)。product-spec-writer 整理產品規格頁時使用;任何要把專案現況整理成有來源佐證的規格網頁的情境也可用。
+---
+
+# spec-site-kit
+
+`<kit>` = 這個 skill 的目錄(`~/.claude/skills/spec-site-kit`)。只用 Node 內建模組(≥ 22)與 git。截圖用 web-dev-kit 的 `shot.mjs`(支援 `file://`)。
+
+**沒有預設內容與樣式**:頁面只固定段落、欄位與 5 種狀態;產品名稱、模組切法、說明文字全部來自專案本身。
+
+## 目錄與流程
+
+```
+<專案根>/<輸出目錄,預設 docs/spec-site>/
+  parts/_project.json   產品資訊、讀過的來源、不屬於單一模組的流程 / 規則 / 待決 / 不一致 / 範圍外 / 技術重點(先寫)
+  parts/<模組>.json     一個模組一檔(每做完一個模組就寫)
+  spec.json             merge.mjs 產生
+  index.html            render.mjs 產生
+```
+
+```bash
+node <kit>/scripts/check.mjs --self-test                              # kit、shot.mjs、Chrome、node ≥ 22、git
+node <kit>/scripts/check.mjs --part <輸出目錄>/parts/<模組>.json --root <專案根>   # 每個模組寫完就跑
+node <kit>/scripts/check.mjs --part <輸出目錄>/parts/_project.json --root <專案根>
+node <kit>/scripts/merge.mjs <輸出目錄>                                 # → spec.json(含 branch、dirty、generated_at、stats)
+node <kit>/scripts/check.mjs <輸出目錄>/spec.json --root <專案根>
+node <kit>/scripts/render.mjs <輸出目錄>/spec.json                      # → index.html
+node <kit>/scripts/check.mjs --html <輸出目錄>/index.html
+node <kit>/scripts/sample.mjs <輸出目錄>/spec.json [--round 2]          # 抽 5 條已完成、3 條未開始
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html" 1280 800 <暫存>/d.png
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html" 390 844 <暫存>/m.png --mobile
+```
+
+所有腳本 stdout 一行 JSON;結束碼 0 通過、1 不通過、2 用法錯誤。
+
+## 資料格式(完整定義在 `schemas/spec.schema.json`)
+
+來源 `source`:`{kind, path, line, end?, side?, match?, keyword?, note?}`
+- `kind`:`規格` / `程式` / `測試` / `進度` / `其他`。`path` 相對專案根、必須是 git 追蹤檔;`line` 對照**目前工作目錄**的內容。
+- `程式`、`測試` 要有 `side`(必須是功能 `sides` 之一)。`測試` 要有 `match`:`引用編號`(測試直接寫功能編號,優先)或 `關鍵字`(附 `keyword`)。
+
+功能 `feature`:`{id, page_id?, name, summary, sides[], status, reason?, keywords?, sources[], notes?[]}`
+- `id` 沿用文件編號(可有字母後綴,例 `FR-091A`、`FR-RPS-12`);文件沒有編號時自編 `<模組>-<n>` 並設 `page_id: true`。
+- `notes`:`{type: 限制 | 開發中, text, branch?, sources[]}`。
+
+part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, sources}, code_paths[], exclude_paths[], features[], flows?, rules?, pending?, mismatches?, out_of_scope?, tech?}`
+- `code_paths`:程式所在目錄(例 lobby `server/ src/ admin/`)。`exclude_paths`:規格 / 進度文件所在處(例 lobby `docs/`、xhe `agent-specs/ README.md`)。驗證「未開始」只在 `code_paths` 搜、排除 `exclude_paths` 與輸出目錄;**不會**一律排除 `*.md`(xhe 的程式本身就是 `.md`)。
+
+段落:`flows{name, steps[], sources}`、`rules / out_of_scope / tech{text, sources}`、`pending{text, decider: 使用者 | 開發, sources}`、`mismatches{text, doc[], code[], keywords?, origin?}`(程式那邊找不到時 `code: []` 並附 `keywords`)。
+
+## check 依狀態的規則
+
+| 狀態 | 必須 |
+|---|---|
+| 已完成 | 有 `規格`;每個 `sides` 都有 `程式` 與 `測試`;不可有 `限制` 備註 |
+| 已實作未測 | 有 `規格`(`no_spec_docs` 時免);每個 side 都有 `程式`;至少一端缺 `測試` 或有 `限制` 備註(否則應判已完成;只有部分端有程式應判無法判定) |
+| 未開始 | 有 `規格`;沒有 `程式`;有 `keywords`,且每個在程式搜尋範圍內 `git grep -i -F` 找不到 |
+| 不做 | 有 `reason`(例「已作廢 → FR-031」「backlog」)與至少一條來源 |
+| 無法判定 | 有 `reason` |
+
+`no_spec_docs: true` 時不可有「已完成」「未開始」。
+
+## 注意
+
+- 只寫輸出目錄;check 只讀(`git ls-files`、`git grep`、`git rev-parse`)。
+- part 的 `commit` 必須等於 HEAD,merge 才會合併;HEAD 變了就要重做那些模組。
+- `index.html` 只能由 render 產生;改 `spec.json` 後要重新 render(`check --html` 會抓雜湊不符)。
+- 自我測試:`bash <kit>/tests/run.sh`(有 Chrome 時含 file:// 截圖)。

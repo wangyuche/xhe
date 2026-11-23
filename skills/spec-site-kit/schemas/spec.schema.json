@@ -1,0 +1,523 @@
+{
+  "$comment": "spec-site-kit 資料格式。part = parts/<模組>.json(一個模組);project = parts/_project.json(產品資訊與不屬於單一模組的段落);spec = merge 後的 spec.json。",
+  "$defs": {
+    "sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relpath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![/~])(?!.*(^|/)\\.\\.(/|$))(?![A-Za-z]:)[^\\\\]+$"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "kind",
+        "path",
+        "line"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "規格",
+            "程式",
+            "測試",
+            "進度",
+            "其他"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/relpath"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "side": {
+          "$ref": "#/$defs/text"
+        },
+        "match": {
+          "enum": [
+            "引用編號",
+            "關鍵字"
+          ]
+        },
+        "keyword": {
+          "$ref": "#/$defs/text"
+        },
+        "note": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "sources1": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "keywords": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/text"
+      }
+    },
+    "note": {
+      "type": "object",
+      "required": [
+        "type",
+        "text",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "限制",
+            "開發中"
+          ]
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "branch": {
+          "$ref": "#/$defs/text"
+        },
+        "sources": {
+          "$ref": "#/$defs/sources1"
+        }
+      }
+    },
+    "feature": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "summary",
+        "sides",
+        "status",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9]*([-_.][A-Za-z0-9]+)*$"
+        },
+        "page_id": {
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "sides": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "status": {
+          "enum": [
+            "已完成",
+            "已實作未測",
+            "未開始",
+            "不做",
+            "無法判定"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/text"
+        },
+        "keywords": {
+          "$ref": "#/$defs/keywords"
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          }
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": [
+        "text",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "sources": {
+          "$ref": "#/$defs/sources1"
+        }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "required": [
+        "name",
+        "steps",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "sources": {
+          "$ref": "#/$defs/sources1"
+        }
+      }
+    },
+    "pending": {
+      "type": "object",
+      "required": [
+        "text",
+        "decider",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "decider": {
+          "enum": [
+            "使用者",
+            "開發"
+          ]
+        },
+        "sources": {
+          "$ref": "#/$defs/sources1"
+        }
+      }
+    },
+    "mismatch": {
+      "type": "object",
+      "required": [
+        "text",
+        "doc",
+        "code"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "doc": {
+          "$ref": "#/$defs/sources1"
+        },
+        "code": {
+          "$ref": "#/$defs/sources"
+        },
+        "keywords": {
+          "$ref": "#/$defs/keywords"
+        },
+        "origin": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "part": {
+      "type": "object",
+      "required": [
+        "kit",
+        "commit",
+        "module",
+        "code_paths",
+        "exclude_paths",
+        "features"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kit": {
+          "const": "spec-site-kit/1"
+        },
+        "commit": {
+          "$ref": "#/$defs/sha"
+        },
+        "module": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "summary",
+            "sources"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            },
+            "name": {
+              "$ref": "#/$defs/text"
+            },
+            "summary": {
+              "$ref": "#/$defs/text"
+            },
+            "sources": {
+              "$ref": "#/$defs/sources1"
+            }
+          }
+        },
+        "code_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relpath"
+          }
+        },
+        "exclude_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relpath"
+          }
+        },
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueBy": "id",
+          "items": {
+            "$ref": "#/$defs/feature"
+          }
+        },
+        "flows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/flow"
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending"
+          }
+        },
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mismatch"
+          }
+        },
+        "out_of_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "tech": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "kit",
+        "commit",
+        "product",
+        "sources_read"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kit": {
+          "const": "spec-site-kit/1"
+        },
+        "commit": {
+          "$ref": "#/$defs/sha"
+        },
+        "product": {
+          "type": "object",
+          "required": [
+            "name",
+            "summary",
+            "scope",
+            "no_spec_docs"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/text"
+            },
+            "summary": {
+              "$ref": "#/$defs/text"
+            },
+            "scope": {
+              "$ref": "#/$defs/text"
+            },
+            "no_spec_docs": {
+              "type": "boolean"
+            }
+          }
+        },
+        "sources_read": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relpath"
+          }
+        },
+        "flows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/flow"
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending"
+          }
+        },
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mismatch"
+          }
+        },
+        "out_of_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "tech": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "kit",
+        "commit",
+        "branch",
+        "dirty",
+        "generated_at",
+        "project",
+        "modules",
+        "stats"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kit": {
+          "const": "spec-site-kit/1"
+        },
+        "commit": {
+          "$ref": "#/$defs/sha"
+        },
+        "branch": {
+          "$ref": "#/$defs/text"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "generated_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "modules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/part"
+          }
+        },
+        "stats": {
+          "type": "object",
+          "required": [
+            "total",
+            "已完成",
+            "已實作未測",
+            "未開始",
+            "不做",
+            "無法判定"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "已完成": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "已實作未測": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "未開始": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "不做": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "無法判定": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

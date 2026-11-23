@@ -23,6 +23,7 @@ node <kit>/scripts/shot.mjs <url> 390 844 <out.png> --mobile [--cookie k=v] [--c
 #   檢查:http == 200、redirected == false(finalUrl 等於請求網址;要登入的頁被導到 /login 時 http 仍是 200,
 #   只有這項會抓到)、consoleErrors == 0、scrollWidth <= innerWidth(無橫向捲動);再用 Read 看圖。
 #   --allow-redirect 只用在本來就該轉址的網址(例如測「沒登入會導到登入頁」)
+#   file:///絕對路徑.html:看本機靜態 HTML 用;不做 HTTP 檢查,檔案存在記 http 200、不存在記 0 並結束碼 2;不能加 --cookie / --header
 
 # 前端轉發 vs 後端直連 → 一行 JSON,不一致結束碼 1
 node <kit>/scripts/proxy-diff.mjs <前端url> <後端url> <方法> <路徑> [--data '{"email":"u{uniq}@x"}'] [--cookie-jar <檔>] [--ignore id]... [--structure]
