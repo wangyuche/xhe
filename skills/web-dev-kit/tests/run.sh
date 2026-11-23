@@ -188,6 +188,24 @@ JS
     printf '<!doctype html><script>location.replace("/sub/")</script>' > "$PAGE/js.html"
     out="$(node "$S/shot.mjs" "http://localhost:$PS/js.html" 1280 800 "$WORK/j.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q "\"finalUrl\":\"http://localhost:$PS/sub/\"" && ok "shot:JS 轉址也判失敗" || bad "shot:JS 轉址" "rc=$rc $out"
+    printf '<!doctype html><title>f</title><p>file page</p>' > "$WORK/f.html"
+    out="$(node "$S/shot.mjs" "file://$WORK/f.html" 390 844 "$WORK/f.png")"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && echo "$out" | grep -q '"redirected":false' && echo "$out" | grep -q '"scrollWidth":390' && [ -s "$WORK/f.png" ] && ok "shot:file:// 正常頁結束碼 0" || bad "shot:file:// 正常頁" "rc=$rc $out"
+    printf '<!doctype html><body style="margin:0"><div style="height:6000px">tall</div><p id="end">end</p>' > "$WORK/tall.html"
+    out="$(node "$S/shot.mjs" "file://$WORK/tall.html" 390 844 "$WORK/t.png" --mobile)"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '超過 Chrome 單張上限' && ok "shot:整頁太高時 warnings 提醒(結束碼仍 0)" || bad "shot:太高警告" "rc=$rc $out"
+    out="$(node "$S/shot.mjs" "file://$WORK/tall.html#end" 390 844 "$WORK/v.png" --mobile --viewport)"; rc=$?
+    VH="$(node -e 'const b=require("fs").readFileSync(process.argv[1]);console.log(b.readUInt32BE(20))' "$WORK/v.png" 2>/dev/null)"
+    [ $rc -eq 0 ] && [ "${VH:-0}" -eq 2532 ] && echo "$out" | grep -q '"warnings":\[\]' && echo "$out" | grep -q '"redirected":false' && ok "shot:--viewport 只截一屏(844×3 = 2532 px),#錨點不算轉址" || bad "shot:--viewport" "rc=$rc h=$VH $out"
+    mkdir -p "$WORK/a#b?c%20d" && cp "$WORK/tall.html" "$WORK/a#b?c%20d/p.html"
+    out="$(node "$S/shot.mjs" "$WORK/a#b?c%20d/p.html" 390 844 "$WORK/p.png" --mobile --viewport --anchor end)"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && echo "$out" | grep -q '#end' && ok "shot:絕對路徑(含 # ? %)+ --anchor" || bad "shot:絕對路徑" "rc=$rc $out"
+    out="$(cd "$WORK" && node "$S/shot.mjs" "f.html" 390 844 "$WORK/rel.png" --viewport --anchor x)"; rc=$?
+    [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && ok "shot:相對路徑 + --anchor 輸出 JSON" || bad "shot:相對路徑" "rc=$rc $out"
+    out="$(node "$S/shot.mjs" "file://$WORK/" 390 844 "$WORK/f3.png")"; rc=$?
+    [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '不是檔案' && ok "shot:file:// 指到目錄結束碼 2" || bad "shot:file:// 目錄" "rc=$rc $out"
+    out="$(node "$S/shot.mjs" "file://$WORK/nope.html" 390 844 "$WORK/f2.png")"; rc=$?
+    [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '檔案不存在' && ok "shot:file:// 不存在結束碼 2" || bad "shot:file:// 不存在" "rc=$rc $out"
     # 連不上(伺服器掛了):Chrome 停在 chrome-error://,要報導覽錯誤,不是轉址
     DEAD="$(free_port)"
     out="$(node "$S/shot.mjs" "http://127.0.0.1:$DEAD/" 1280 800 "$WORK/x.png")"; rc=$?
