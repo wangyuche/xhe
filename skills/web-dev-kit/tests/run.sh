@@ -188,8 +188,6 @@ JS
     printf '<!doctype html><script>location.replace("/sub/")</script>' > "$PAGE/js.html"
     out="$(node "$S/shot.mjs" "http://localhost:$PS/js.html" 1280 800 "$WORK/j.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q "\"finalUrl\":\"http://localhost:$PS/sub/\"" && ok "shot:JS 轉址也判失敗" || bad "shot:JS 轉址" "rc=$rc $out"
-    # 連不上(伺服器掛了):Chrome 停在 chrome-error://,要報導覽錯誤,不是轉址
-    DEAD="$(free_port)"
     printf '<!doctype html><title>f</title><p>file page</p>' > "$WORK/f.html"
     out="$(node "$S/shot.mjs" "file://$WORK/f.html" 390 844 "$WORK/f.png")"; rc=$?
     [ $rc -eq 0 ] && echo "$out" | grep -q '"http":200' && echo "$out" | grep -q '"redirected":false' && echo "$out" | grep -q '"scrollWidth":390' && [ -s "$WORK/f.png" ] && ok "shot:file:// 正常頁結束碼 0" || bad "shot:file:// 正常頁" "rc=$rc $out"
@@ -203,6 +201,8 @@ JS
     [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '不是檔案' && ok "shot:file:// 指到目錄結束碼 2" || bad "shot:file:// 目錄" "rc=$rc $out"
     out="$(node "$S/shot.mjs" "file://$WORK/nope.html" 390 844 "$WORK/f2.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '檔案不存在' && ok "shot:file:// 不存在結束碼 2" || bad "shot:file:// 不存在" "rc=$rc $out"
+    # 連不上(伺服器掛了):Chrome 停在 chrome-error://,要報導覽錯誤,不是轉址
+    DEAD="$(free_port)"
     out="$(node "$S/shot.mjs" "http://127.0.0.1:$DEAD/" 1280 800 "$WORK/x.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q '"redirected":false' && echo "$out" | grep -q '"navigate: ' && ! echo "$out" | grep -q chrome-error://chromewebdata/\" && ok "shot:連不上時報導覽錯誤而不是轉址" || bad "shot:連不上" "rc=$rc $out"
     LEFT="$(ps -A -o command= | grep -c '[w]eb-dev-kit-chrome-')"

@@ -68,7 +68,10 @@ expect "self-test:Chrome 路徑不存在 → 1" 1 '找不到 Google Chrome' -- e
 # ---- part ----
 expect "part:正確的模組通過" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 expect "part:_project.json 自己也能檢查" 0 '"ok":true' -- C --part "$P/_project.json" --root "$R"
-mv "$P/_project.json" "$WORK/pj"; expect "part:缺 _project.json → 1" 1 '缺 _project.json' -- C --part "$P/m04.json" --root "$R"; mv "$WORK/pj" "$P/_project.json"
+mv "$P/_project.json" "$WORK/pj"
+expect "part:沒有 _project.json(分批只寫 parts)也能檢查" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+expect "part:沒有 _project.json 時 --no-spec-docs 生效" 1 'no_spec_docs' -- C --part "$P/m04.json" --root "$R" --no-spec-docs
+mv "$WORK/pj" "$P/_project.json"
 
 jset "$P/m04.json" 'j.features[0].sources.splice(4,1)'
 expect "part:已完成但玩家端缺測試 → 1" 1 '缺測試來源:玩家端' -- C --part "$P/m04.json" --root "$R"
@@ -123,11 +126,11 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"to
 expect "part:token = 函式名 不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/home/feedzz"]'
 expect "part:keyword 是 /home/ 開頭的路由不算本機路徑" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
-printf 'test("FR-090A 另一條", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
+printf 'test("FR-090A FR-0901 FR-090-2 FR-090.1 X-FR-090 另一條", () => {})\n' > "$R/tests/other.test.ts"; git -C "$R" add tests/other.test.ts; git -C "$R" commit -qm other
 H2="$(git -C "$R" rev-parse HEAD)"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.features[0].sources[3].path=\"tests/other.test.ts\""
 jset "$P/_project.json" "j.commit=\"$H2\""
-expect "part:FR-090 的測試指到只有 FR-090A 的行 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
+expect "part:FR-090 的測試指到只有 FR-090A / FR-090-2 / FR-090.1 / X-FR-090 的行 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 jset "$P/m04.json" 'j.features[0].sources[3].path="tests/claim.test.ts";j.features[0].notes=[{"type":"限制","text":"預覽","sources":[{"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"後端","match":"引用編號"}]}];j.features[0].status="已實作未測"'
 expect "part:備註裡引用編號的測試用功能編號核對" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 git -C "$R" reset -q --hard HEAD~1; H="$(git -C "$R" rev-parse HEAD)"
@@ -145,6 +148,14 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].source
 expect "part:side 不在 sides → 1" 1 '不在 sides' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="設定在 /Users/someone/x.txt"'
 expect "part:本機絕對路徑 → 1" 1 '本機絕對路徑' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="設定在/Users/someone/x.txt"'
+expect "part:緊接中文的本機路徑 → 1" 1 '本機絕對路徑' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/Users/someone/.config/x"]'
+expect "part:keyword 裡的 /Users 路徑 → 1" 1 '本機絕對路徑' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="連 comfy.local:8188 出圖"'
+expect "part:內網主機名 → 1" 1 '內網主機名' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].sources.push({"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"玩家端","match":"關鍵字","keyword":"FR-090"})'
+expect "part:未開始卻有測試來源 → 1" 1 '未開始不可有測試來源' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="連 192.168.1.20:8188"'
 expect "part:私有 IP → 1" 1 '私有 IP' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="token=ghp_abcdefghijklmnopqrstuvwxyz0123"'
@@ -196,6 +207,8 @@ expect "html:spec.json 改過沒重新 render → 1" 1 'spec-sha256 與目前 sp
 cp "$WORK/spec.good.json" "$OUT/spec.json"; node "$S/render.mjs" "$OUT/spec.json" >/dev/null
 printf '<script>x</script>' >> "$OUT/index.html"
 expect "html:含 script → 1" 1 '不可含 <script>' -- C --html "$OUT/index.html"
+node "$S/render.mjs" "$OUT/spec.json" >/dev/null; sed -i.bak 's/<body>/<body onload="x()">/' "$OUT/index.html"; rm -f "$OUT/index.html.bak"
+expect "html:含 onload → 1" 1 'on* 事件屬性' -- C --html "$OUT/index.html"
 node "$S/render.mjs" "$OUT/spec.json" >/dev/null
 jset "$OUT/spec.json" 'j.project.product.summary="背景用 CSS url(bg.png),主題用 @import 拆檔,圖 src=https://example.com/a.png"'; node "$S/render.mjs" "$OUT/spec.json" >/dev/null
 expect "html:正文提到 url( / @import / src=https 不誤判" 0 '"ok":true' -- C --html "$OUT/index.html"

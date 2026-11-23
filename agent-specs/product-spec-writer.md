@@ -18,7 +18,7 @@
 - 工作目錄是否乾淨:`git -C <根> status --porcelain -- . ':(exclude)<輸出目錄>'` 為空才算乾淨;不乾淨照做,頁面與回報註明「含未 commit 修改,行號以工作目錄為準」。同時存下開始時的 `git -C <根> status --porcelain` 供最後比對。
 - 跑 `node ~/.claude/skills/spec-site-kit/scripts/check.mjs --self-test`:確認 kit 腳本齊全,且 web-dev-kit `shot.mjs` 內定的 Chrome 路徑存在;失敗 → BLOCKED,附缺少的路徑。
 - 範圍是「全部」、批次角色是 `單批`,而功能數(依索引或模組檔粗算)超過 80 → 不動手,狀態 BLOCKED(原因「需分批」),附模組清單與各模組功能數,由主 agent 分批派工。
-- 批次角色是 `單批` 或 `分批:只寫 parts` 且範圍是「全部」時,先刪掉輸出目錄裡舊的 `parts/*.json`(只刪本 kit 產生的)。
+- 批次角色是 `單批` 時,先刪掉輸出目錄裡舊的 `parts/*.json`(只刪本 kit 產生的);`分批:只寫 parts` 只覆寫自己模組的 part(開始分批前由主 agent 清空 `parts/`)。`parts/_project.json` 只由 `單批` 與 `分批:最後一批` 寫,其他批次把跨模組項目寫進自己模組的 part。
 
 ### 盤點來源
 - 先讀 `CLAUDE.md`、`README.md` 的文件地圖,再看 `docs/`;有功能索引(例如 lobby 的 `requirements/INDEX.md`)先讀索引取得功能清單,各模組檔依需要再讀。

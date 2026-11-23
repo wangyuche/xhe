@@ -13,7 +13,7 @@ description: 產品規格網頁的固定腳本:spec.schema.json(模組 part、�
 
 ```
 <專案根>/<輸出目錄,預設 docs/spec-site>/
-  parts/_project.json   產品資訊、讀過的來源、不屬於單一模組的流程 / 規則 / 待決 / 不一致 / 範圍外 / 技術重點(先寫)
+  parts/_project.json   產品資訊、讀過的來源、不屬於單一模組的段落(只由單批 / 分批最後一批寫;平行批次把跨模組項目寫進自己的 part)
   parts/<模組>.json     一個模組一檔(每做完一個模組就寫)
   spec.json             merge.mjs 產生
   index.html            render.mjs 產生
@@ -21,7 +21,7 @@ description: 產品規格網頁的固定腳本:spec.schema.json(模組 part、�
 
 ```bash
 node <kit>/scripts/check.mjs --self-test [--shot <shot.mjs>]          # kit、shot.mjs、Chrome、node ≥ 22、git
-node <kit>/scripts/check.mjs --part <輸出目錄>/parts/<模組>.json --root <專案根>   # 每個模組寫完就跑
+node <kit>/scripts/check.mjs --part <輸出目錄>/parts/<模組>.json --root <專案根> [--no-spec-docs]   # 每個模組寫完就跑;沒有 _project.json 時 no_spec_docs 看旗標
 node <kit>/scripts/check.mjs --part <輸出目錄>/parts/_project.json --root <專案根>
 node <kit>/scripts/merge.mjs <輸出目錄>                                 # → spec.json(含 branch、dirty、generated_at、stats)
 node <kit>/scripts/check.mjs <輸出目錄>/spec.json --root <專案根>
@@ -68,6 +68,8 @@ part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, order?, sources
 
 ## 注意
 
+- 內容掃描擋:本機絕對路徑(`/Users`、`/Volumes`、`/private`、`/tmp`、`/root`、`/home/<名>/`;keyword 裡像路由的 `/home/…` 放行)、私有 IP、`.local` / `.lan` / `.internal` / `.home.arpa` 主機名、常見 token / 私鑰樣式。
+- `check --html` 擋 `<script>`、`on*` 事件屬性、`javascript:`、外部資源標籤、`<style>` 裡的 `@import` / `url()`。
 - 只寫輸出目錄;check 只讀(`git ls-files`、`git grep`、`git rev-parse`)。
 - `git grep` 用 `-I`(跳過圖片、音檔等二進位檔)、`-F -i`。
 - spec.json 的 `dirty` 判斷時排除輸出目錄(輸出目錄本來就會有未追蹤 / 已修改的檔案)。

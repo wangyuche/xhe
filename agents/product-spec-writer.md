@@ -30,10 +30,11 @@ skills:
 6. 通過後,把 `git -C <根> status --porcelain --untracked-files=all` 的完整輸出寫進暫存檔(`mktemp -d` 建的目錄,和截圖放一起),第 5 步比對。
 7. 重跑時可以先讀上一版的 part 當線索,但每條都要重新驗證。`單批`:讀完後一律 `rm -f <根>/<輸出目錄>/parts/*.json`(只刪本 kit 的 part;頁面只會含這次範圍的模組)。`分批:只寫 parts`:只覆寫自己模組的 part,不刪別人的(開始分批前由主 agent 清空 `parts/`)。
 
-### 1. 盤點來源(完成條件:`parts/_project.json` 寫好且 `check.mjs --part` 通過)
+### 1. 盤點來源(完成條件:`單批` / `分批:最後一批` 的 `parts/_project.json` 寫好且 `check.mjs --part` 通過)
 
 - 先讀 `CLAUDE.md`、`README.md`(含文件地圖),再看 `docs/`;有功能索引(例 `requirements/INDEX.md`)先讀索引,各模組檔需要時再讀。
 - 搜尋只用 `git -C <根> grep` / `git -C <根> ls-files`;不得不用 `find` 時排除 `node_modules`、`.git`、`dist`。不讀 `.env`、金鑰、憑證檔。
+- `parts/_project.json` **只由 `單批` 與 `分批:最後一批` 寫**(平行的批次寫同一個檔會互相覆蓋)。`分批:只寫 parts` 不寫它,跨模組的流程 / 待決 / 不一致等寫進自己模組 part 的同名段落;check 時沒有 `_project.json`,專案無規格文件時加 `--no-spec-docs`。
 - 寫 `parts/_project.json`:產品名稱、一句話說明、範圍、`no_spec_docs`(找不到任何規格文件時 `true`)、`sources_read`,以及不屬於單一模組的流程 / 規則 / 待決 / 不一致 / 範圍外 / 技術重點(可以之後再補,補完再 check)。
 
 ### 2. 一個模組一個模組做(完成條件:範圍內每個模組都有 part,且 `check.mjs --part` 各自回 0)
@@ -142,7 +143,7 @@ BLOCKED 時:
   - kit:`node <kit>/scripts/*.mjs`、`node <shot>`。
   - 寫入:`mktemp -d` 與其中的截圖 / 狀態檔;輸出目錄內本 kit 的檔案(Write / Edit,或 `sed -i` / `node -e` 只改輸出目錄的 part;不在輸出目錄放其他檔案);`rm` 限暫存目錄與輸出目錄裡舊的 `parts/*.json`。
 - 不切分支、不 fetch、不 commit / push。
-- 不讀 `.env`、金鑰、憑證檔;頁面不寫秘密、內網位址、本機絕對路徑(check 會擋)。
+- 不讀 `.env`、金鑰、憑證檔;頁面不寫秘密、內網 IP 與主機名、本機絕對路徑(check 擋私有 IP、`.local` / `.lan` / `.internal` / `.home.arpa` 主機名、`/Users` 等本機路徑與常見 token 樣式;擋不到的你自己要避免)。
 - 不用網路;頁面沒有外部資源。
 - 說明用產品語言(繁體中文);UI 字串、錯誤代碼照原文引用。
 

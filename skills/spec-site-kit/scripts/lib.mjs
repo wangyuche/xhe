@@ -110,8 +110,10 @@ export function lineCount(abs) {
 
 // ---- 內容掃描:絕對路徑、私有 IP、秘密樣式 ----
 const FORBIDDEN = [
-  [/(^|[\s"'`(=:])\/(Users|Volumes|home|private|var\/folders)\/[^\s/]+\//, '本機絕對路徑', 'path'],
-  [/\b[A-Za-z]:\\/, 'Windows 絕對路徑', 'path'],
+  [/(^|[^A-Za-z0-9._~-])\/(Users|Volumes|private|var\/folders|tmp|root)\/[^\s/]+/, '本機絕對路徑'],
+  [/(^|[^A-Za-z0-9._~-])\/home\/[^\s/]+\//, '本機絕對路徑(/home)', 'route'],
+  [/\b[a-z0-9][a-z0-9-]*\.(local|lan|internal|home\.arpa)\b/i, '內網主機名'],
+  [/\b[A-Za-z]:\\/, 'Windows 絕對路徑'],
   [/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, '私有 IP(10/8)'],
   [/\b192\.168\.\d{1,3}\.\d{1,3}\b/, '私有 IP(192.168/16)'],
   [/\b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, '私有 IP(172.16/12)'],
@@ -126,11 +128,11 @@ const FORBIDDEN = [
   [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
   [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?(?=[A-Za-z0-9_\-+/=.]*\d)[A-Za-z0-9_\-+/=.]{16,}/i, '疑似秘密值'],
 ];
-// keyword / keywords 是程式裡的字串(例如路由 /home/feed),不套用「絕對路徑」規則,其他規則照樣檢查
+// keyword / keywords 是程式裡的字串:只放過像路由的 /home/…(例如 /home/feed/list),其他規則照樣檢查(keyword 也會印在頁面上)
 export function scanStrings(obj, path = '', out = [], key = '') {
   if (typeof obj === 'string') {
     const isKw = key === 'keyword' || key === 'keywords';
-    for (const [re, what, kind] of FORBIDDEN) if (!(isKw && kind === 'path') && re.test(obj)) out.push(`${path || '(根)'}: 含${what}:${obj.slice(0, 80)}`);
+    for (const [re, what, kind] of FORBIDDEN) if (!(isKw && kind === 'route') && re.test(obj)) out.push(`${path || '(根)'}: 含${what}:${obj.slice(0, 80)}`);
   } else if (Array.isArray(obj)) obj.forEach((x, i) => scanStrings(x, `${path}[${i}]`, out, key));
   else if (obj && typeof obj === 'object') for (const [k, v] of Object.entries(obj)) scanStrings(v, path ? `${path}.${k}` : k, out, k);
   return out;

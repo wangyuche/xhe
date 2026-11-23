@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 用法:
-//   node check.mjs --part <parts/模組.json> --root <專案根>     檢查一個模組(同目錄要先有 _project.json)
+//   node check.mjs --part <parts/模組.json> --root <專案根> [--no-spec-docs]   檢查一個模組(有 _project.json 時讀它的 no_spec_docs,沒有時用旗標)
 //   node check.mjs <spec.json> --root <專案根>                檢查合併後的 spec.json
 //   node check.mjs --html <index.html> [--spec <spec.json>]   檢查 render 產物(標記、雜湊、無外部資源)
 //   node check.mjs --self-test [--shot <shot.mjs>]            檢查 kit 檔案、web-dev-kit shot.mjs、Chrome、node、git
@@ -38,9 +38,9 @@ function checkSource(ctx, s, where, fid) {
   const text = linesText(abs, s.line, to).toLowerCase();
   const byId = s.kind === '測試' && s.match === '引用編號' && !s.keyword;
   const want = byId ? fid : s.keyword;
-  // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910 冒充);keyword 用包含
+  // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910、FR-091-2 冒充,RPS-1 不能被 FR-RPS-1 冒充);keyword 用包含
   const hit = !want ? true : byId
-    ? new RegExp(`(^|[^a-z0-9])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(text)
+    ? new RegExp(`(^|[^a-z0-9._-])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9]|[-_.][a-z0-9])`).test(text)
     : text.includes(want.toLowerCase());
   if (!hit) errs.push(`${where}: ${s.path}:${s.line}-${to} 找不到「${want}」(行號或 keyword 不對)`);
 }
@@ -100,6 +100,7 @@ function checkFeature(ctx, part, f, where) {
     case '未開始': {
       if (!hasSpec) errs.push(`${where}: 未開始要有規格來源`);
       if (kinds('程式').length) errs.push(`${where}: 未開始不可有程式來源`);
+      if (kinds('測試').length) errs.push(`${where}: 未開始不可有測試來源(有測試但找不到程式應判「無法判定」)`);
       const kws = f.keywords ?? [];
       if (!kws.length) errs.push(`${where}: 未開始要附搜尋過的 keywords`);
       for (const kw of kws) {
@@ -162,7 +163,7 @@ function ctxFor(root, outAbs) {
   return { root, outRel, head: head(root), errs: [], noSpecDocs: false };
 }
 
-export function checkPartFile(file, rootArg) {
+export function checkPartFile(file, rootArg, opts = {}) {
   const root = gitRoot(rootArg);
   if (!root) return { errors: [`${rootArg} 不是 git 工作目錄`] };
   const abs = resolve(file);
@@ -178,8 +179,10 @@ export function checkPartFile(file, rootArg) {
     ctx.errs.push(...scanStrings(part));
     return { errors: ctx.errs };
   }
-  if (!existsSync(projFile)) return { errors: [`同目錄缺 _project.json(先寫專案資訊,至少 product 與 sources_read)`] };
-  try { ctx.noSpecDocs = !!readJson(projFile)?.product?.no_spec_docs; } catch { return { errors: ['_project.json 不是 JSON'] }; }
+  // _project.json 只由單批 / 最後一批寫;分批:只寫 parts 的批次可能還沒有它,這時以 --no-spec-docs 旗標為準
+  if (existsSync(projFile)) {
+    try { ctx.noSpecDocs = !!readJson(projFile)?.product?.no_spec_docs; } catch { return { errors: ['_project.json 不是 JSON'] }; }
+  } else ctx.noSpecDocs = !!opts.noSpecDocs;
   const se = validateSchema('part', part);
   if (se.length) return { errors: se };
   checkPart(ctx, part, part.module.id);
@@ -234,6 +237,8 @@ export function checkHtmlFile(file, specArg) {
   else if (m[1] !== sha256File(specFile)) errs.push('spec-sha256 與目前 spec.json 不符(spec.json 改過後要重新 render)');
   // 正文經 render 跳脫(< → &lt;),所以只有真正的標籤會以 < 開頭;CSS 規則只看 <style> 區塊,src / href 只看標籤屬性
   if (/<script\b/i.test(html)) errs.push('不可含 <script>');
+  if (/<[a-z][^>]*\son[a-z]+\s*=/i.test(html)) errs.push('不可含 on* 事件屬性(JavaScript)');
+  if (/<[a-z][^>]*\s(src|href|action)\s*=\s*["']?\s*javascript:/i.test(html)) errs.push('不可含 javascript: 網址');
   if (/<(link|img|iframe|object|embed|source|video|audio)\b/i.test(html)) errs.push('不可含外部資源標籤(link / img / iframe …)');
   const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n');
   if (/@import|url\s*\(/i.test(css)) errs.push('CSS 不可用 @import / url()');
@@ -260,12 +265,12 @@ export function selfTest(shotArg) {
 if (isMain(import.meta.url)) {
   const a = process.argv.slice(2);
   const opt = (k) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : undefined; };
-  const usage = () => { console.error('用法:check.mjs --part <檔> --root <根> | <spec.json> --root <根> | --html <index.html> [--spec <spec.json>] | --self-test'); process.exit(2); };
+  const usage = () => { console.error('用法:check.mjs --part <檔> --root <根> [--no-spec-docs] | <spec.json> --root <根> | --html <index.html> [--spec <spec.json>] | --self-test'); process.exit(2); };
   let r;
   try {
     if (a[0] === '--self-test') r = selfTest(opt('--shot'));
     else if (a[0] === '--html') { if (!a[1]) usage(); r = checkHtmlFile(a[1], opt('--spec')); }
-    else if (a[0] === '--part') { if (!a[1] || !opt('--root')) usage(); r = checkPartFile(a[1], opt('--root')); }
+    else if (a[0] === '--part') { if (!a[1] || !opt('--root')) usage(); r = checkPartFile(a[1], opt('--root'), { noSpecDocs: a.includes('--no-spec-docs') }); }
     else if (a[0] && !a[0].startsWith('--')) { if (!opt('--root')) usage(); r = checkSpecFile(a[0], opt('--root')); }
     else usage();
   } catch (e) { r = { errors: [e.message] }; }
