@@ -7,7 +7,7 @@
 // 整頁截圖的像素高度超過 16384(Chrome 單張上限,超過會重複拼接)時 warnings 會提醒改用 --viewport(不影響結束碼)。
 // file:// 網址:不做 HTTP 檢查,檔案存在時 http 記 200、不存在記 0(結束碼 2);不支援 --cookie / --header。
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,8 +71,8 @@ if (isFile) {
   let p = null;
   try { p = fileURLToPath(url); } catch (e) { result.errors.push(`fetch: file:// 網址無效:${e.message}`); }
   if (p !== null) {
-    if (existsSync(p)) { result.http = 200; fetchFinal = url; }
-    else result.errors.push(`fetch: 檔案不存在:${p}`);
+    if (existsSync(p) && statSync(p).isFile()) { result.http = 200; fetchFinal = url; }
+    else result.errors.push(existsSync(p) ? `fetch: 不是檔案(目錄?):${p}` : `fetch: 檔案不存在:${p}`);
   }
 } else {
   try {

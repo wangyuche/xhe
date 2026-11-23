@@ -124,7 +124,7 @@ const FORBIDDEN = [
   [/\bsk-(ant-)?[A-Za-z0-9_-]{20,}/, 'API 金鑰'],
   [/\b\d{8,10}:[A-Za-z0-9_-]{35}\b/, 'Telegram bot token'],
   [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
-  [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?[^\s'"<>{}$]{8,}/i, '疑似秘密值'],
+  [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?[A-Za-z0-9_\-+/=.]{8,}/i, '疑似秘密值'],
 ];
 export function scanStrings(obj, path = '', out = []) {
   if (typeof obj === 'string') {

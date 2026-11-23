@@ -26,11 +26,12 @@ function checkSource(ctx, s, where, fid) {
   if (s.line > n) errs.push(`${where}: ${s.path}:${s.line} 超出檔案行數 ${n}`);
   let rangeOk = s.line <= n;
   if (s.end != null && (s.end < s.line || s.end > n)) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 不合法(檔案 ${n} 行)`); rangeOk = false; }
-  else if (s.end != null && s.end - s.line > MAX_SPAN) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 超過 ${MAX_SPAN} 行,請指到更精準的位置`); rangeOk = false; }
+  else if (s.end != null && s.end - s.line + 1 > MAX_SPAN) { errs.push(`${where}: ${s.path} 行範圍 ${s.line}-${s.end} 超過 ${MAX_SPAN} 行,請指到更精準的位置`); rangeOk = false; }
   if (s.kind === '測試') {
     if (!s.match) errs.push(`${where}: 測試來源要有 match(引用編號 / 關鍵字)`);
     else if (s.match === '關鍵字' && !s.keyword) errs.push(`${where}: match 是關鍵字時要附 keyword`);
   }
+  if (s.kind === '測試' && s.match === '引用編號' && !fid && !s.keyword) errs.push(`${where}: 不屬於單一功能的測試來源用「引用編號」時要附 keyword(要核對的編號)`);
   if (s.kind === '程式' && !s.keyword) errs.push(`${where}: 程式來源要附 keyword(那幾行裡的函式名、常數、路由或 UI 字串,check 會核對)`);
   if (!rangeOk) return;
   const to = s.end ?? s.line;
@@ -89,7 +90,7 @@ function checkFeature(ctx, part, f, where) {
     case '已實作未測':
       if (!hasSpec && !noSpecDocs) errs.push(`${where}: 已實作未測要有規格來源`);
       if (missing('程式').length) errs.push(`${where}: 已實作未測但這些端缺程式來源:${missing('程式').join('、')}(只有部分端有程式應判「無法判定」)`);
-      if (!missing('測試').length && !limits.length) errs.push(`${where}: 每端都有程式與測試且沒有「限制」備註,應判「已完成」`);
+      if (!noSpecDocs && !missing('測試').length && !limits.length) errs.push(`${where}: 每端都有程式與測試且沒有「限制」備註,應判「已完成」`);
       break;
     case '未開始': {
       if (!hasSpec) errs.push(`${where}: 未開始要有規格來源`);
@@ -114,7 +115,7 @@ function checkFeature(ctx, part, f, where) {
   (f.notes ?? []).forEach((n, i) => checkSources(ctx, n.sources, `${where}.notes[${i}]`));
 }
 
-// scope:grep 用的 part(有 code_paths / exclude_paths);_project 的段落用所有模組 code_paths 的聯集,沒有時(只檢查 _project)不 grep
+// scope:grep 用的 part 清單(各自的 code_paths / exclude_paths);_project 的段落逐模組各搜一次,沒有模組時(只檢查 _project)不 grep
 function checkSections(ctx, obj, where, scope) {
   for (const sec of SECTIONS) for (const [i, it] of (obj[sec] ?? []).entries()) {
     const w = `${where}.${sec}[${i}]`;
@@ -124,17 +125,15 @@ function checkSections(ctx, obj, where, scope) {
       if (!it.code.length) {
         const kws = it.keywords ?? [];
         if (!kws.length) ctx.errs.push(`${w}: 程式那一邊要附來源,或附搜尋過的 keywords`);
-        if (scope) for (const kw of kws) {
-          const hits = grepHits(ctx, scope, kw);
+        for (const sc of scope ?? []) for (const kw of kws) {
+          const hits = grepHits(ctx, sc, kw);
           if (hits.length) ctx.errs.push(`${w}: 說程式找不到,但關鍵字「${kw}」在程式搜尋範圍內找得到(${hits.slice(0, 3).join('、')});要嘛附程式來源,要嘛換關鍵字`);
         }
       }
     } else checkSources(ctx, it.sources, w);
   }
 }
-function unionScope(modules) {
-  return { code_paths: [...new Set(modules.flatMap(m => m.code_paths))], exclude_paths: [...new Set(modules.flatMap(m => m.exclude_paths))] };
-}
+
 
 function checkPart(ctx, part, where) {
   const { root, errs } = ctx;
@@ -143,7 +142,7 @@ function checkPart(ctx, part, where) {
   for (const p of part.exclude_paths) if (!pathExists(root, p)) errs.push(`${where}.exclude_paths: ${p} 沒有任何追蹤檔`);
   checkSources(ctx, part.module.sources, `${where}.module`);
   part.features.forEach((f, i) => checkFeature(ctx, part, f, `${where}.features[${i}](${f.id})`));
-  checkSections(ctx, part, where, part);
+  checkSections(ctx, part, where, [part]);
 }
 
 function checkProject(ctx, proj, where, scope) {
@@ -201,7 +200,7 @@ export function checkSpecFile(file, rootArg) {
   if (se.length) return { errors: se };
   if (spec.commit !== ctx.head) ctx.errs.push(`commit ${spec.commit.slice(0, 7)} 不等於 HEAD ${ctx.head.slice(0, 7)}`);
   ctx.noSpecDocs = spec.project.product.no_spec_docs;
-  checkProject(ctx, spec.project, 'project', unionScope(spec.modules));
+  checkProject(ctx, spec.project, 'project', spec.modules);
   const mids = new Set(); const fids = new Map();
   for (const m of spec.modules) {
     if (mids.has(m.module.id)) ctx.errs.push(`模組 id 重複:${m.module.id}`);
@@ -228,10 +227,13 @@ export function checkHtmlFile(file, specArg) {
   if (!m) errs.push('缺 spec-sha256 標記');
   else if (!existsSync(specFile)) errs.push(`找不到 ${specFile}`);
   else if (m[1] !== sha256File(specFile)) errs.push('spec-sha256 與目前 spec.json 不符(spec.json 改過後要重新 render)');
+  // 正文經 render 跳脫(< → &lt;),所以只有真正的標籤會以 < 開頭;CSS 規則只看 <style> 區塊,src / href 只看標籤屬性
   if (/<script\b/i.test(html)) errs.push('不可含 <script>');
   if (/<(link|img|iframe|object|embed|source|video|audio)\b/i.test(html)) errs.push('不可含外部資源標籤(link / img / iframe …)');
-  if (/@import|url\s*\(/i.test(html)) errs.push('CSS 不可用 @import / url()');
-  if (/\b(src|href)\s*=\s*["']?(https?:|\/\/|file:)/i.test(html)) errs.push('不可引用外部網址');
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n');
+  if (/@import|url\s*\(/i.test(css)) errs.push('CSS 不可用 @import / url()');
+  if (/<[a-z][^>]*\s(src|href)\s*=\s*["']?(https?:|\/\/|file:)/i.test(html)) errs.push('不可引用外部網址');
+  if (/\sstyle\s*=\s*["'][^"']*url\s*\(/i.test(html)) errs.push('style 屬性不可用 url()');
   return { errors: errs };
 }
 

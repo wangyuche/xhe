@@ -199,6 +199,8 @@ JS
     out="$(node "$S/shot.mjs" "file://$WORK/tall.html#end" 390 844 "$WORK/v.png" --mobile --viewport)"; rc=$?
     VH="$(node -e 'const b=require("fs").readFileSync(process.argv[1]);console.log(b.readUInt32BE(20))' "$WORK/v.png" 2>/dev/null)"
     [ $rc -eq 0 ] && [ "${VH:-0}" -eq 2532 ] && echo "$out" | grep -q '"warnings":\[\]' && echo "$out" | grep -q '"redirected":false' && ok "shot:--viewport 只截一屏(844×3 = 2532 px),#錨點不算轉址" || bad "shot:--viewport" "rc=$rc h=$VH $out"
+    out="$(node "$S/shot.mjs" "file://$WORK/" 390 844 "$WORK/f3.png")"; rc=$?
+    [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '不是檔案' && ok "shot:file:// 指到目錄結束碼 2" || bad "shot:file:// 目錄" "rc=$rc $out"
     out="$(node "$S/shot.mjs" "file://$WORK/nope.html" 390 844 "$WORK/f2.png")"; rc=$?
     [ $rc -eq 2 ] && echo "$out" | grep -q '"http":0' && echo "$out" | grep -q '檔案不存在' && ok "shot:file:// 不存在結束碼 2" || bad "shot:file:// 不存在" "rc=$rc $out"
     out="$(node "$S/shot.mjs" "http://127.0.0.1:$DEAD/" 1280 800 "$WORK/x.png")"; rc=$?

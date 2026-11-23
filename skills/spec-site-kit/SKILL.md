@@ -52,7 +52,7 @@ part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, order?, sources
 - `module.order`:頁面上的模組順序(照規格章節);沒寫的排最後,同序依 id。
 - `code_paths`:程式所在目錄(例 lobby `server/ src/ admin/`)。`exclude_paths`:規格 / 進度文件所在處(例 lobby `docs/`、xhe `agent-specs/ README.md`)。驗證「未開始」只在 `code_paths` 搜、排除 `exclude_paths` 與輸出目錄;**不會**一律排除 `*.md`(xhe 的程式本身就是 `.md`)。
 
-段落:`flows{name, steps[], sources}`、`rules / out_of_scope / tech{text, sources}`、`pending{text, decider: 使用者 | 開發, sources}`、`mismatches{text, doc[], code[], keywords?, origin?}`(`code` 可放 `程式` / `測試` / `其他` 來源,種類規則同功能來源;程式那邊找不到時 `code: []` 並附 `keywords`,check 會在程式搜尋範圍內 grep,找得到就不過;`_project` 的不一致用所有模組 `code_paths` 的聯集)。
+段落:`flows{name, steps[], sources}`、`rules / out_of_scope / tech{text, sources}`、`pending{text, decider: 使用者 | 開發, sources}`、`mismatches{text, doc[], code[], keywords?, origin?}`(`code` 可放 `程式` / `測試` / `其他` 來源,`side` 可省;`程式` 要 keyword,`引用編號` 的測試要附 keyword 寫要核對的編號;程式那邊找不到時 `code: []` 並附 `keywords`,check 會在程式搜尋範圍內 grep,找得到就不過;`_project` 的不一致逐模組用各自的 `code_paths` / `exclude_paths` 搜)。
 
 ## check 依狀態的規則
 

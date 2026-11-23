@@ -26,6 +26,7 @@ printf 'test("FR-090 server", () => {})\n' > tests/claim.test.ts
 printf 'test("FR-090 web", () => {})\n' > tests/reward.test.ts
 printf -- '---\nname: x-agent\n---\n你是 x-agent。\n' > agents/x-agent.md
 printf '# 假專案\n' > README.md
+for i in $(seq 1 50); do echo "line $i"; done > docs/long.md
 git add -A && git commit -qm init
 H="$(git rev-parse HEAD)"
 OUT="$R/docs/spec-site"; P="$OUT/parts"; mkdir -p "$P"
@@ -95,7 +96,6 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].source
 expect "part:行號超出 → 1" 1 '超出檔案行數' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[2].keyword="noSuchFn"'
 expect "part:程式來源的 keyword 不在那幾行 → 1" 1 '找不到「noSuchFn」' -- C --part "$P/m04.json" --root "$R"
-cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'delete j.features[0].sources[1].keyword'
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].line=3'
 expect "part:keyword 在下一行也不行(要剛好在那一行)→ 1" 1 '找不到「Claim」' -- C --part "$P/m04.json" --root "$R"
 jset "$P/m04.json" 'j.features[0].sources[1].end=4'
@@ -105,14 +105,20 @@ OUTX="$(C --part "$P/m04.json" --root "$R")"
 [ "$(printf '%s' "$OUTX" | grep -o 'sources\[1\]' | wc -l | tr -d ' ')" = "1" ] && ok "part:行範圍不合法時只報一個錯" || bad "part:重複報錯" "$OUTX"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'delete j.features[0].sources[1].keyword'
 expect "part:程式來源沒附 keyword → 1" 1 '程式來源要附 keyword' -- C --part "$P/m04.json" --root "$R"
-cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[1].sources=[{"kind":"規格","path":"docs/specs/m04.md","line":6}];j.features[0].sources[3].path="tests/reward.test.ts";j.features[0].id="FR-090";j.features[0].sources[3].path="README.md"'
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[3].path="README.md"'
 expect "part:引用編號的測試那幾行沒有功能編號 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources.splice(3,2,{"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"跨端","match":"引用編號"})'
 expect "part:端對端測試標「跨端」涵蓋每一端" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.mismatches[0].keywords=["showReward"]'
 expect "part:不一致說程式找不到,關鍵字卻在程式裡 → 1" 1 '說程式找不到' -- C --part "$P/m04.json" --root "$R"
-cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].line=99'
-expect "part:行號超出 → 1" 1 '超出檔案行數' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.mismatches[0].code=[{"kind":"測試","path":"README.md","line":1,"match":"引用編號"}]'
+expect "part:段落裡的引用編號測試沒附 keyword → 1" 1 '要附 keyword' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[0]={"kind":"規格","path":"docs/long.md","line":1,"end":40}'
+expect "part:行範圍剛好 40 行通過" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+jset "$P/m04.json" 'j.features[0].sources[0].end=41'
+expect "part:行範圍 41 行 → 1" 1 '超過 40 行' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"登入後回傳 token:由後端簽發的短效憑證","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
+expect "part:中文說明 token 規則不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 printf 'x\n' > "$R/server/untracked.go"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[1].path="server/untracked.go";j.features[0].sources[1].line=1'
 expect "part:未追蹤檔 → 1" 1 '不在 git 追蹤中' -- C --part "$P/m04.json" --root "$R"
@@ -138,6 +144,9 @@ expect "part:不一致的程式那邊沒來源也沒關鍵字 → 1" 1 '程式�
 cp "$WORK/m04.good.json" "$P/m04.json"
 jset "$P/_project.json" 'j.product.no_spec_docs=true'
 expect "part:no_spec_docs 時已完成 / 未開始 → 1" 1 'no_spec_docs' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features=[j.features[0]];j.features[0].status="已實作未測";j.mismatches=[]'
+expect "part:no_spec_docs 時每端有測試也能判已實作未測" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"
 jset "$P/_project.json" 'j.product.no_spec_docs=false'
 
 # ---- merge ----
@@ -152,7 +161,10 @@ expect "spec:check 通過" 0 '"ok":true' -- C "$OUT/spec.json" --root "$R"
 cp "$OUT/spec.json" "$WORK/spec.good.json"
 node -e 'const j=require(process.argv[1]);process.exit(j.modules.map(m=>m.module.id).join()==="m05,m04"?0:1)' "$OUT/spec.json" && ok "merge:依 module.order 排序" || bad "merge:排序"
 jset "$OUT/spec.json" 'j.project.mismatches=[{"text":"專案層不一致","doc":[{"kind":"規格","path":"README.md","line":1}],"code":[],"keywords":["Claim"]}]'
-expect "spec:專案層不一致的關鍵字也用模組 code_paths 聯集驗證 → 1" 1 '說程式找不到' -- C "$OUT/spec.json" --root "$R"
+expect "spec:專案層不一致的關鍵字逐模組驗證 → 1" 1 '說程式找不到' -- C "$OUT/spec.json" --root "$R"
+cp "$WORK/spec.good.json" "$OUT/spec.json"
+jset "$OUT/spec.json" 'j.modules[0].code_paths=["server/"];j.modules[0].exclude_paths=["docs/","web/"];j.modules[1].code_paths=["web/"];j.project.mismatches=[{"text":"x","doc":[{"kind":"規格","path":"README.md","line":1}],"code":[],"keywords":["showReward"]}]'
+expect "spec:A 模組排除的路徑是 B 模組的程式,仍會搜到 → 1" 1 '說程式找不到' -- C "$OUT/spec.json" --root "$R"
 cp "$WORK/spec.good.json" "$OUT/spec.json"
 jset "$OUT/spec.json" 'j.stats["已完成"]=3'
 expect "spec:統計對不上 → 1" 1 'stats.已完成' -- C "$OUT/spec.json" --root "$R"
@@ -171,6 +183,8 @@ cp "$WORK/spec.good.json" "$OUT/spec.json"; node "$S/render.mjs" "$OUT/spec.json
 printf '<script>x</script>' >> "$OUT/index.html"
 expect "html:含 script → 1" 1 '不可含 <script>' -- C --html "$OUT/index.html"
 node "$S/render.mjs" "$OUT/spec.json" >/dev/null
+jset "$OUT/spec.json" 'j.project.product.summary="背景用 CSS url(bg.png),主題用 @import 拆檔,圖 src=https://example.com/a.png"'; node "$S/render.mjs" "$OUT/spec.json" >/dev/null
+expect "html:正文提到 url( / @import / src=https 不誤判" 0 '"ok":true' -- C --html "$OUT/index.html"
 jset "$OUT/spec.json" 'j.project.product.name="<b>x</b>"'; node "$S/render.mjs" "$OUT/spec.json" >/dev/null
 grep -q '&lt;b&gt;x&lt;/b&gt;' "$OUT/index.html" && ok "render:HTML 跳脫" || bad "render:跳脫"
 cp "$WORK/spec.good.json" "$OUT/spec.json"; node "$S/render.mjs" "$OUT/spec.json" >/dev/null
