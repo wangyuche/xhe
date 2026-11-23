@@ -22,6 +22,7 @@ cd "$R" && git init -q && git config user.email t@example.com && git config user
 printf '# 每日獎勵\n\n## FR-090 每日領取\n每天一次。\n\n## FR-091A 補領\n不做(backlog)。\n\n## FR-092 排行\n還沒做。關鍵字 leaderboardzz\n' > docs/specs/m04.md
 printf 'package daily\n\n// FR-090\nfunc Claim() {}\n' > server/claim.go
 printf 'export function showReward() {}\n' > web/reward.ts
+printf 'import com.example.internal.Billing\n' > web/app.local.ts
 printf 'test("FR-090 server", () => {})\n' > tests/claim.test.ts
 printf 'test("FR-090 web", () => {})\n' > tests/reward.test.ts
 printf -- '---\nname: x-agent\n---\n你是 x-agent。\n' > agents/x-agent.md
@@ -133,6 +134,8 @@ jset "$P/_project.json" "j.commit=\"$H2\""
 expect "part:FR-090 的測試指到只有 FR-090A / FR-090-2 / FR-090.1 / X-FR-090 的行 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 jset "$P/m04.json" 'j.features[0].sources[3].path="tests/claim.test.ts";j.features[0].notes=[{"type":"限制","text":"預覽","sources":[{"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"後端","match":"引用編號"}]}];j.features[0].status="已實作未測"'
 expect "part:備註裡引用編號的測試用功能編號核對" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" "j.commit=\"$H2\";j.mismatches[0].code=[{\"kind\":\"測試\",\"path\":\"tests/other.test.ts\",\"line\":1,\"match\":\"引用編號\",\"keyword\":\"FR-090\"}]"
+expect "part:段落裡引用編號 + keyword 也套邊界 → 1" 1 '找不到「FR-090」' -- C --part "$P/m04.json" --root "$R"
 git -C "$R" reset -q --hard HEAD~1; H="$(git -C "$R" rev-parse HEAD)"
 jset "$P/_project.json" "j.commit=\"$H\""
 cp "$WORK/m04.good.json" "$P/m04.json"
@@ -154,6 +157,10 @@ cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywor
 expect "part:keyword 裡的 /Users 路徑 → 1" 1 '本機絕對路徑' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="連 comfy.local:8188 出圖"'
 expect "part:內網主機名 → 1" 1 '內網主機名' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].sources[2].path="web/app.local.ts";j.features[0].sources[2].line=1;j.features[0].sources[2].keyword="com.example.internal.Billing"'
+expect "part:檔名 .local、keyword 套件名 .internal 不算內網主機名" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/private/ordersz","/tmp/uploadz"]'
+expect "part:keyword 是 /private、/tmp 路由放行" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].sources.push({"kind":"測試","path":"tests/claim.test.ts","line":1,"side":"玩家端","match":"關鍵字","keyword":"FR-090"})'
 expect "part:未開始卻有測試來源 → 1" 1 '未開始不可有測試來源' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[0].summary="連 192.168.1.20:8188"'
@@ -190,6 +197,9 @@ expect "spec:專案層不一致的關鍵字逐模組驗證 → 1" 1 '說程式�
 cp "$WORK/spec.good.json" "$OUT/spec.json"
 jset "$OUT/spec.json" 'j.modules[0].code_paths=["server/"];j.modules[0].exclude_paths=["docs/","web/"];j.modules[1].code_paths=["web/"];j.project.mismatches=[{"text":"x","doc":[{"kind":"規格","path":"README.md","line":1}],"code":[],"keywords":["showReward"]}]'
 expect "spec:A 模組排除的路徑是 B 模組的程式,仍會搜到 → 1" 1 '說程式找不到' -- C "$OUT/spec.json" --root "$R"
+cp "$WORK/spec.good.json" "$OUT/spec.json"
+jset "$OUT/spec.json" 'const m=j.modules.find(x=>x.module.id==="m04");m.code_paths=["agents/"];const f=m.features.find(x=>x.id==="FR-092");f.keywords=["showReward"];const o=j.modules.find(x=>x.module.id==="m05");o.code_paths=["web/"]'
+expect "spec:未開始的關鍵字在別的模組程式裡 → 1" 1 '在程式搜尋範圍內找得到' -- C "$OUT/spec.json" --root "$R"
 cp "$WORK/spec.good.json" "$OUT/spec.json"
 jset "$OUT/spec.json" 'j.stats["已完成"]=3'
 expect "spec:統計對不上 → 1" 1 'stats.已完成' -- C "$OUT/spec.json" --root "$R"

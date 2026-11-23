@@ -27,7 +27,7 @@ skills:
 3. 輸出目錄必須是相對路徑、不含 `..` 路徑段、不以 `/` 或 `~` 開頭,`realpath` 後仍在根內(擋指到 repo 外的連結)。已存在時用 `ls -la` 看:只能有 `spec.json`、`index.html`(含 `<meta name="generator" content="spec-site-kit/1">`)、`parts/*.json`;有其他檔案或 `index.html` 沒有標記 → BLOCKED,不覆蓋、不刪。
 4. 粗算功能數:功能索引(或各模組檔)裡**每個有編號的項目都算**,包括 backlog、作廢、被取代(它們會列成「不做」);沒有編號的專案,規格裡每個功能表格列或功能小標題算一項,並在寫任何 part 之前把功能清單定下來(之後不為了湊數合併或拆開)。範圍「全部」+ `單批` + 超過 80 項 → BLOCKED(需分批),附每個模組的代號、名稱、功能數。
 5. `git -C <根> status --porcelain --untracked-files=all -- . ':(exclude)<輸出目錄>'`:空 = 乾淨;不空照做,回報註明「含未 commit 修改,行號以工作目錄為準」。
-6. 通過後,把 `git -C <根> status --porcelain --untracked-files=all` 的完整輸出寫進暫存檔(`mktemp -d` 建的目錄,和截圖放一起),第 5 步比對。
+6. 通過後,把 `git -C <根> status --porcelain --untracked-files=all` 的完整輸出寫進暫存檔(`mktemp -d` 建的目錄,和截圖放一起),「### 5. 收尾」時比對。
 7. 重跑時可以先讀上一版的 part 當線索,但每條都要重新驗證。`單批`:讀完後一律 `rm -f <根>/<輸出目錄>/parts/*.json`(只刪本 kit 的 part;頁面只會含這次範圍的模組)。`分批:只寫 parts`:只覆寫自己模組的 part,不刪別人的(開始分批前由主 agent 清空 `parts/`)。
 
 ### 1. 盤點來源(完成條件:`單批` / `分批:最後一批` 的 `parts/_project.json` 寫好且 `check.mjs --part` 通過)

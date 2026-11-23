@@ -11,7 +11,7 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { KIT, KIT_DIR, STATUSES, SECTIONS, validateSchema, readJson, sha256File, git, gitRoot, head, relInside, tracked, lineCount, linesText, scanStrings, isMain } from './lib.mjs';
 
-export const MAX_SPAN = 40; // end − line 上限(範圍太寬核對就沒意義)
+export const MAX_SPAN = 40; // 行範圍(含頭尾)最多 40 行(範圍太寬核對就沒意義)
 export const ALL_SIDES = '跨端'; // 測試的 side 寫「跨端」(例如端對端測試)算涵蓋每一端
 
 const CODE_KINDS = new Set(['程式', '測試']);
@@ -36,8 +36,8 @@ function checkSource(ctx, s, where, fid) {
   if (!rangeOk) return;
   const to = s.end ?? s.line;
   const text = linesText(abs, s.line, to).toLowerCase();
-  const byId = s.kind === '測試' && s.match === '引用編號' && !s.keyword;
-  const want = byId ? fid : s.keyword;
+  const byId = s.kind === '測試' && s.match === '引用編號';
+  const want = byId ? (s.keyword ?? fid) : s.keyword;
   // 功能編號要前後有邊界(FR-091 不能被 FR-091A、FR-0910、FR-091-2 冒充,RPS-1 不能被 FR-RPS-1 冒充);keyword 用包含
   const hit = !want ? true : byId
     ? new RegExp(`(^|[^a-z0-9._-])${want.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9]|[-_.][a-z0-9])`).test(text)
@@ -104,7 +104,7 @@ function checkFeature(ctx, part, f, where) {
       const kws = f.keywords ?? [];
       if (!kws.length) errs.push(`${where}: 未開始要附搜尋過的 keywords`);
       for (const kw of kws) {
-        const hits = grepHits(ctx, part, kw);
+        const hits = (ctx.scopes ?? [part]).flatMap(sc => grepHits(ctx, sc, kw));
         if (hits.length) errs.push(`${where}: 關鍵字「${kw}」在程式搜尋範圍內找得到(${hits.slice(0, 3).join('、')}${hits.length > 3 ? ` 等 ${hits.length} 檔` : ''}),不能判未開始`);
       }
       break;
@@ -148,7 +148,7 @@ function checkPart(ctx, part, where) {
   for (const p of part.exclude_paths) if (!pathExists(root, p)) errs.push(`${where}.exclude_paths: ${p} 沒有任何追蹤檔`);
   checkSources(ctx, part.module.sources, `${where}.module`);
   part.features.forEach((f, i) => checkFeature(ctx, part, f, `${where}.features[${i}](${f.id})`));
-  checkSections(ctx, part, where, [part]);
+  checkSections(ctx, part, where, ctx.scopes ?? [part]);
 }
 
 function checkProject(ctx, proj, where, scope) {
@@ -217,6 +217,7 @@ export function checkSpecFile(file, rootArg) {
       if (fids.has(f.id)) ctx.errs.push(`功能編號重複:${f.id}(${fids.get(f.id)}、${m.module.id})`);
       fids.set(f.id, m.module.id);
     }
+    ctx.scopes = spec.modules; // 合併後:未開始與「程式找不到」逐模組在每個模組的程式範圍搜
     checkPart(ctx, m, m.module.id);
   }
   const st = countStats(spec.modules);

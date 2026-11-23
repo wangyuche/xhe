@@ -110,9 +110,10 @@ export function lineCount(abs) {
 
 // ---- 內容掃描:絕對路徑、私有 IP、秘密樣式 ----
 const FORBIDDEN = [
-  [/(^|[^A-Za-z0-9._~-])\/(Users|Volumes|private|var\/folders|tmp|root)\/[^\s/]+/, '本機絕對路徑'],
+  [/(^|[^A-Za-z0-9._~-])\/(Users|Volumes|private\/var|var\/folders)\/[^\s/]+/, '本機絕對路徑'],
+  [/(^|[^A-Za-z0-9._~-])\/(private|tmp|root)\/[^\s/]+/, '本機絕對路徑', 'route'],
   [/(^|[^A-Za-z0-9._~-])\/home\/[^\s/]+\//, '本機絕對路徑(/home)', 'route'],
-  [/\b[a-z0-9][a-z0-9-]*\.(local|lan|internal|home\.arpa)\b/i, '內網主機名'],
+  [/(^|[\s"'`(=:@/])[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)*\.(local|lan|internal|home\.arpa)(?=$|[\s"'`):/,;!?)]|\.(\s|$))/i, '內網主機名'],
   [/\b[A-Za-z]:\\/, 'Windows 絕對路徑'],
   [/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, '私有 IP(10/8)'],
   [/\b192\.168\.\d{1,3}\.\d{1,3}\b/, '私有 IP(192.168/16)'],
@@ -128,8 +129,11 @@ const FORBIDDEN = [
   [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
   [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?(?=[A-Za-z0-9_\-+/=.]*\d)[A-Za-z0-9_\-+/=.]{16,}/i, '疑似秘密值'],
 ];
-// keyword / keywords 是程式裡的字串:只放過像路由的 /home/…(例如 /home/feed/list),其他規則照樣檢查(keyword 也會印在頁面上)
+// keyword / keywords 是程式裡的字串:像路由的 /home/…、/private/…、/tmp/…、/root/… 放行,/Users、/Volumes 等照擋(keyword 也會印在頁面上)。
+// path、sources_read、code_paths、exclude_paths 是 repo 內相對路徑(schema 已限制),不掃(檔名常有 .local、.internal)。
+const SKIP_KEYS = new Set(['path', 'sources_read', 'code_paths', 'exclude_paths']);
 export function scanStrings(obj, path = '', out = [], key = '') {
+  if (SKIP_KEYS.has(key)) return out;
   if (typeof obj === 'string') {
     const isKw = key === 'keyword' || key === 'keywords';
     for (const [re, what, kind] of FORBIDDEN) if (!(isKw && kind === 'route') && re.test(obj)) out.push(`${path || '(根)'}: 含${what}:${obj.slice(0, 80)}`);

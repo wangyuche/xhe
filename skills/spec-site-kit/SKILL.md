@@ -68,7 +68,7 @@ part:`{kit: "spec-site-kit/1", commit, module{id, name, summary, order?, sources
 
 ## 注意
 
-- 內容掃描擋:本機絕對路徑(`/Users`、`/Volumes`、`/private`、`/tmp`、`/root`、`/home/<名>/`;keyword 裡像路由的 `/home/…` 放行)、私有 IP、`.local` / `.lan` / `.internal` / `.home.arpa` 主機名、常見 token / 私鑰樣式。
+- 內容掃描擋:本機絕對路徑(`/Users`、`/Volumes`、`/private`、`/tmp`、`/root`、`/home/<名>/`;keyword 裡像路由的 `/home/…`、`/private/…`、`/tmp/…`、`/root/…` 放行;`path` 等相對路徑欄位不掃)、私有 IP、`.local` / `.lan` / `.internal` / `.home.arpa` 主機名、常見 token / 私鑰樣式。
 - `check --html` 擋 `<script>`、`on*` 事件屬性、`javascript:`、外部資源標籤、`<style>` 裡的 `@import` / `url()`。
 - 只寫輸出目錄;check 只讀(`git ls-files`、`git grep`、`git rev-parse`)。
 - `git grep` 用 `-I`(跳過圖片、音檔等二進位檔)、`-F -i`。
