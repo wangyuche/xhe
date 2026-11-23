@@ -29,10 +29,11 @@ node <kit>/scripts/render.mjs <輸出目錄>/spec.json                      # �
 node <kit>/scripts/check.mjs --html <輸出目錄>/index.html
 node <kit>/scripts/sample.mjs <輸出目錄>/spec.json [--round 2]          # 抽 5 條已完成、3 條未開始;不足時 shortfall 說明
 # 規格頁很長,整頁截圖會超過 Chrome 單張上限而重複拼接:用 --viewport 分段截(scrollWidth 仍量整份文件)
-node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html" 1280 800 <暫存>/d.png --viewport
-node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html" 390 844 <暫存>/m.png --mobile --viewport
-node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html#modules" 390 844 <暫存>/m-modules.png --mobile --viewport
-node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.html#pending" 390 844 <暫存>/m-pending.png --mobile --viewport
+# 直接給絕對路徑(shot.mjs 內部轉成 file:// 網址,路徑含 # ? % 也沒問題),段落用 --anchor
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs <絕對路徑>/index.html 1280 800 <暫存>/d.png --viewport
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs <絕對路徑>/index.html 390 844 <暫存>/m.png --mobile --viewport
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs <絕對路徑>/index.html 390 844 <暫存>/m-modules.png --mobile --viewport --anchor modules
+node ~/.claude/skills/web-dev-kit/scripts/shot.mjs <絕對路徑>/index.html 390 844 <暫存>/m-pending.png --mobile --viewport --anchor pending
 ```
 
 所有腳本 stdout 一行 JSON;結束碼 0 通過、1 不通過、2 用法錯誤。
@@ -42,7 +43,7 @@ node ~/.claude/skills/web-dev-kit/scripts/shot.mjs "file://<絕對路徑>/index.
 來源 `source`:`{kind, path, line, end?, side?, match?, keyword?, note?}`
 - `kind`:`規格` / `程式` / `測試` / `進度` / `其他`。`path` 相對專案根、必須是 git 追蹤檔;`line` 對照**目前工作目錄**的內容。
 - `程式`、`測試` 要有 `side`(必須是功能 `sides` 之一;端對端測試可標 `跨端`,算涵蓋每一端)。`測試` 要有 `match`:`引用編號`(測試直接寫功能編號,優先)或 `關鍵字`(附 `keyword`)。
-- **內容核對**:`程式` 來源必附 `keyword`(那幾行裡的函式名、常數、路由或 UI 字串)。有 `keyword` 的任何來源,keyword 要出現在 `line` 那一行(有 `end` 時 `line` ~ `end`,範圍最多 40 行);挑那一行獨有的字串,不要用太泛的詞;`引用編號` 的測試沒附 keyword 時,找功能編號。找不到 = 行號或 keyword 錯,check 不過。
+- **內容核對**:`程式` 來源必附 `keyword`(那幾行裡的函式名、常數、路由或 UI 字串)。有 `keyword` 的任何來源,keyword 要出現在 `line` 那一行(有 `end` 時 `line` ~ `end`,範圍最多 40 行);挑那一行獨有的字串,不要用太泛的詞;`引用編號` 的測試:功能內一律核對自己的功能編號(附 keyword 也不生效),只有段落裡不屬於單一功能的才核對 keyword。找不到 = 行號或 keyword 錯,check 不過。
 
 功能 `feature`:`{id, page_id?, name, summary, sides[], status, reason?, keywords?, sources[], notes?[]}`
 - `id` 沿用文件編號(可有字母後綴,例 `FR-091A`、`FR-RPS-12`);文件沒有編號時自編 `<模組>-<n>` 並設 `page_id: true`。

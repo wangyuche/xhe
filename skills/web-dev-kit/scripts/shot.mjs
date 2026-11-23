@@ -1,38 +1,41 @@
 #!/usr/bin/env node
-// 用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--viewport] [--allow-redirect] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...
+// 用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--viewport] [--anchor <id>] [--allow-redirect] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...
 // 只用 Node 22 內建 fetch / WebSocket,透過 CDP 控制本機 Google Chrome headless,截整頁。
 // stdout 一行 JSON;HTTP 不是 200、consoleErrors > 0,或被轉址到別的網址(finalUrl ≠ url,例如沒登入被導到 /login;
 // 伺服器 3xx 與頁面 JS 轉址都算)時結束碼 2(仍產生截圖)。預期會轉址時加 --allow-redirect。
 // --viewport:只截目前畫面(網址可帶 #錨點捲到該段),長頁面用這個才看得清楚。
 // 整頁截圖的像素高度超過 16384(Chrome 單張上限,超過會重複拼接)時 warnings 會提醒改用 --viewport(不影響結束碼)。
+// 第一個參數也可以是本機絕對路徑(/ 開頭),內部用 pathToFileURL 轉成 file:// 網址(路徑含 # ? % 也正確);--anchor <id> 加上 #id。
 // file:// 網址:不做 HTTP 檢查,檔案存在時 http 記 200、不存在記 0(結束碼 2);不支援 --cookie / --header。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readCookieJar, cookieHeader } from './cookiejar.mjs';
 
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 function usage(msg) {
   if (msg) console.error(`錯誤:${msg}`);
-  console.error("用法:node shot.mjs <url> <寬> <高> <輸出.png> [--mobile] [--viewport] [--allow-redirect] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...");
+  console.error("用法:node shot.mjs <url|絕對路徑> <寬> <高> <輸出.png> [--mobile] [--viewport] [--anchor <id>] [--allow-redirect] [--cookie name=value]... [--cookie-jar <檔>] [--header 'K: V']...");
   process.exit(1);
 }
 
 const args = process.argv.slice(2);
 if (args.length < 4) usage();
-const [url, wStr, hStr, outArg] = args;
+let [url, wStr, hStr, outArg] = args;
+if (url.startsWith('/')) url = pathToFileURL(url).href;
 const width = Number(wStr), height = Number(hStr);
 if (!Number.isInteger(width) || !Number.isInteger(height)) usage('寬高必須是整數');
 const out = resolve(outArg);
-let mobile = false; let allowRedirect = false; let viewportOnly = false; const cookies = []; const headers = {};
+let mobile = false; let allowRedirect = false; let viewportOnly = false; let anchor = null; const cookies = []; const headers = {};
 for (let i = 4; i < args.length; i++) {
   const a = args[i];
   if (a === '--mobile') mobile = true;
   else if (a === '--allow-redirect') allowRedirect = true;
   else if (a === '--viewport') viewportOnly = true;
+  else if (a === '--anchor') anchor = args[++i] ?? usage('--anchor 缺值');
   else if (a === '--cookie') {
     const v = args[++i] ?? usage('--cookie 缺值');
     const eq = v.indexOf('=');
@@ -48,6 +51,7 @@ for (let i = 4; i < args.length; i++) {
     headers[v.slice(0, c).trim()] = v.slice(c + 1).trim();
   } else usage(`未知參數:${a}`);
 }
+if (anchor) { const u0 = new URL(url); u0.hash = anchor; url = u0.href; }
 const isFile = /^file:/i.test(url);
 if (isFile && (cookies.length || Object.keys(headers).length)) usage('file:// 不支援 --cookie / --cookie-jar / --header');
 if (!existsSync(CHROME)) { console.error(`錯誤:找不到 Google Chrome:${CHROME}`); process.exit(1); }

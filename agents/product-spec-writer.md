@@ -65,10 +65,10 @@ skills:
 3. `node <kit>/scripts/render.mjs <根>/<輸出目錄>/spec.json`,再 `node <kit>/scripts/check.mjs --html <根>/<輸出目錄>/index.html` 回 0。
 4. 截圖(放第 0 步 `mktemp -d` 的暫存目錄,不放 repo)。規格頁很長,整頁截圖會超過 Chrome 單張上限而重複拼接,所以一律用 `--viewport` 分段截(scrollWidth 仍量整份文件):
    ```bash
-   node <shot> "file://<根>/<輸出目錄>/index.html" 1280 800 <暫存>/d.png --viewport
-   node <shot> "file://<根>/<輸出目錄>/index.html" 390 844 <暫存>/m.png --mobile --viewport
-   node <shot> "file://<根>/<輸出目錄>/index.html#modules" 390 844 <暫存>/m-modules.png --mobile --viewport
-   node <shot> "file://<根>/<輸出目錄>/index.html#pending" 390 844 <暫存>/m-pending.png --mobile --viewport
+   node <shot> "<根>/<輸出目錄>/index.html" 1280 800 <暫存>/d.png --viewport
+   node <shot> "<根>/<輸出目錄>/index.html" 390 844 <暫存>/m.png --mobile --viewport
+   node <shot> "<根>/<輸出目錄>/index.html" 390 844 <暫存>/m-modules.png --mobile --viewport --anchor modules
+   node <shot> "<根>/<輸出目錄>/index.html" 390 844 <暫存>/m-pending.png --mobile --viewport --anchor pending
    ```
    全部結束碼 0、390 的 `scrollWidth` ≤ 390;用 Read 逐張看(標題、完成度、模組與功能卡、待決是否正常顯示、文字沒被切)。看完 `rm -r` 暫存目錄裡的圖。截圖失敗 → BLOCKED,附 shot 輸出。
 

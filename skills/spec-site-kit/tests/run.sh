@@ -123,6 +123,10 @@ jset "$P/m04.json" 'j.features[0].sources[0].end=41'
 expect "part:行範圍 41 行 → 1" 1 '超過 40 行' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"登入後回傳 token:由後端簽發的短效憑證","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
 expect "part:中文說明 token 規則不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"api_key: OPENAI_API_KEY_V2;token = ACCESS_TOKEN_TTL_3600","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
+expect "part:環境變數名不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
+cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.exclude_paths=["*.md"]'
+expect "part:exclude_paths 不可用 glob → 1(schema)" 1 'exclude_paths' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.rules=[{"text":"token = generateAccessToken","sources":[{"kind":"規格","path":"README.md","line":1}]}]'
 expect "part:token = 函式名 不算秘密" 0 '"ok":true' -- C --part "$P/m04.json" --root "$R"
 cp "$WORK/m04.good.json" "$P/m04.json"; jset "$P/m04.json" 'j.features[2].keywords=["/home/feedzz"]'
@@ -210,6 +214,9 @@ jset "$P/m05.json" 'j.module.order=1'; jset "$P/m04.json" 'j.module.order=2'
 jset "$P/m05.json" 'j.commit="0000000000000000000000000000000000000000"'
 expect "merge:part 的 commit 不是 HEAD → 1,列出要重做的模組" 1 '要重做:m05' -- node "$S/merge.mjs" "$OUT"
 [ ! -e "$OUT/spec.json" ] && ok "merge:失敗時不寫 spec.json" || bad "merge:失敗時不寫 spec.json"
+echo '{}' > "$OUT/spec.json"; echo x > "$OUT/index.html"
+expect "merge:失敗時刪掉上一輪的 spec.json / index.html" 1 '已刪除上一輪的' -- node "$S/merge.mjs" "$OUT"
+[ ! -e "$OUT/spec.json" ] && [ ! -e "$OUT/index.html" ] && ok "merge:舊檔確實刪除" || bad "merge:舊檔還在"
 jset "$P/m05.json" "j.commit=\"$H\""
 expect "merge:成功,統計 4 項" 0 '"total":4' -- node "$S/merge.mjs" "$OUT"
 expect "spec:check 通過" 0 '"ok":true' -- C "$OUT/spec.json" --root "$R"
@@ -258,6 +265,17 @@ echo "$a" | grep -q '"shortfall":\["已完成 只剩 1 條可抽(要 5)","未開
 expect "sample:輪次不合法 → 2" 2 '' -- node "$S/sample.mjs" "$OUT/spec.json" --round 0
 echo '{"commit":"x"}' > "$WORK/badspec.json"
 expect "sample:格式錯的 spec → 1 並輸出 JSON" 1 '"ok":false' -- node "$S/sample.mjs" "$WORK/badspec.json"
+
+# ---- SHA-256 repo、輸出目錄 = 專案根 ----
+R2="$WORK/sha256"; mkdir -p "$R2"
+if git -C "$R2" init -q --object-format=sha256 2>/dev/null; then
+  printf '# x\n' > "$R2/README.md"; git -C "$R2" add -A; git -C "$R2" -c user.email=t@example.com -c user.name=t commit -qm i
+  H3="$(git -C "$R2" rev-parse HEAD)"; mkdir -p "$R2/docs/spec-site/parts"
+  printf '{"kit":"spec-site-kit/1","commit":"%s","module":{"id":"m","name":"m","summary":"s","sources":[{"kind":"規格","path":"README.md","line":1}]},"code_paths":["."],"exclude_paths":["README.md"],"features":[{"id":"X-1","name":"x","summary":"x","sides":["後端"],"status":"無法判定","reason":"r","sources":[]}]}' "$H3" > "$R2/docs/spec-site/parts/m.json"
+  expect "sha256 repo:64 位 commit 通過" 0 '"ok":true' -- C --part "$R2/docs/spec-site/parts/m.json" --root "$R2"
+  mkdir -p "$R2/parts"; cp "$R2/docs/spec-site/parts/m.json" "$R2/parts/m.json"
+  expect "輸出目錄 = 專案根 → 1 並說明" 1 '不可以是專案根' -- C --part "$R2/parts/m.json" --root "$R2"
+else skp "sha256 repo:git 不支援 --object-format=sha256"; fi
 
 # ---- 截圖(file://)----
 SHOT="$S/../../web-dev-kit/scripts/shot.mjs"

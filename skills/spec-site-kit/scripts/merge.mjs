@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // 用法:node merge.mjs <輸出目錄>
 // 讀 <輸出目錄>/parts/_project.json 與 parts/*.json,合成 <輸出目錄>/spec.json(含 branch、dirty、generated_at、stats)。
-// 任何 part 的 commit 不等於 HEAD、schema 不合、模組 id 重複 → 不寫檔,結束碼 1 並列出要重做的模組。
+// 任何 part 的 commit 不等於 HEAD、schema 不合、模組 id 重複 → 不寫新檔、刪掉上一輪的 spec.json / index.html,結束碼 1 並列出要重做的模組。
 // stdout 一行 JSON;結束碼 0 成功、1 失敗、2 用法錯誤。合併後要再跑 check.mjs。
-import { readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { KIT, validateSchema, readJson, git, gitRoot, head, relInside, byOrder, isMain } from './lib.mjs';
 import { countStats } from './check.mjs';
@@ -36,7 +36,13 @@ export function merge(outArg) {
     modules.push(p);
   }
   if (stale.length) errors.push(`這些 part 的 commit 不等於 HEAD ${H.slice(0, 7)},要重做:${stale.join('、')}`);
-  if (errors.length) return { errors, stale };
+  if (errors.length) {
+    // 舊的 spec.json / index.html 是上一輪的結果,留著會被當成目前的頁面(雜湊仍一致),所以刪掉
+    const removed = [];
+    for (const f of ['spec.json', 'index.html']) if (existsSync(join(out, f))) { rmSync(join(out, f)); removed.push(join(outRel, f)); }
+    if (removed.length) errors.push(`已刪除上一輪的 ${removed.join('、')}(避免過期頁面被當成目前結果)`);
+    return { errors, stale };
+  }
   modules.sort(byOrder);
   const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
   const dirty = git(root, ['status', '--porcelain', '--untracked-files=all', '--', '.', `:(exclude)${outRel}`]).trim() !== '';

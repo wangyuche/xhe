@@ -84,7 +84,8 @@ export function relInside(root, abs) {
   let real = abs;
   try { real = realpathSync(abs); } catch { /* 不存在時用原路徑 */ }
   const r = relative(root, real);
-  if (!r || r === '..' || r.startsWith('..' + sep) || isAbsolute(r)) return null;
+  if (r === '') throw new Error(`輸出目錄不可以是專案根(${abs})`);
+  if (r === '..' || r.startsWith('..' + sep) || isAbsolute(r)) return null;
   return r.split(sep).join('/');
 }
 let trackedCache = new Map();
@@ -132,7 +133,7 @@ const FORBIDDEN = [
   [/\bsk-(ant-)?[A-Za-z0-9_-]{20,}/, 'API 金鑰'],
   [/\b\d{8,10}:[A-Za-z0-9_-]{35}\b/, 'Telegram bot token'],
   [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
-  [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?(?=[A-Za-z0-9_\-+/=.]*\d)[A-Za-z0-9_\-+/=.]{16,}/i, '疑似秘密值'],
+  [/\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['"]?(?![A-Z0-9_]+\b)(?=[A-Za-z0-9_\-+/=.]*\d)[A-Za-z0-9_\-+/=.]{16,}/i, '疑似秘密值'],
 ];
 // keyword / keywords 是程式裡的字串:像路由的 /home/…、/private/…、/tmp/…、/root/… 放行,/Users、/Volumes 等照擋(keyword 也會印在頁面上)。
 // path、sources_read、code_paths、exclude_paths 是 repo 內相對路徑(schema 已限制),不掃(檔名常有 .local、.internal)。
