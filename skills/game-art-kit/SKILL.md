@@ -85,7 +85,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 - 擴散模型寫不好字:UI 示意上的文字不要求可讀,需要標註時用 `sheet.mjs` 的 caption / note。
 - 定裝圖用素色背景、全身、中性姿勢(`full body, standing, plain light grey background`),參考效果最好。
 - 去背骨架下載的 PNG 是 RGBA(`run` 輸出 `channels: 4`);接著 `sprite.mjs fit` 再 `check`,不要直接交未裁切的生成圖。
-- **影片骨架逐格輸出**:ComfyUI 沒有不存檔的影片預覽節點(`SaveVideo` 會留檔,`run` 拒絕),所以影片骨架用 `PreviewImage` 輸出每一格,`run` 下載成 `<name>-1.png … <name>-N.png`(121 格 704×1280 約 140 MB,有線區網實測 60 秒內下載完;Wi-Fi 等慢速網路用 `--download-timeout` 加大);組成影片用 short-video-kit 的 `frames.sh`。LTX-2.3 會同時生成音訊,骨架直接丟棄。
+- **影片骨架逐格輸出**:ComfyUI 沒有不存檔的影片預覽節點(`SaveVideo` 會留檔,`run` 拒絕),所以影片骨架用 `PreviewImage` 輸出每一格,`run` 下載成 `<name>-1.png … <name>-N.png`(121 格 704×1280 約 140 MB,有線區網實測 60 秒內下載完;Wi-Fi 等慢速網路加大 `--download-timeout` 時要同時調小 `--queue-timeout`,三者合計 ≤ 480,例如 LTX 用 `--queue-timeout 60 --download-timeout 180`);組成影片用 short-video-kit 的 `frames.sh`。LTX-2.3 會同時生成音訊,骨架直接丟棄。
 - 音訊只做機械檢查(長度、響度、峰值、非靜音、接縫),沒有人耳試聽;回報要寫明。
 
 ## 遊戲素材介面(`schemas/`)

@@ -5,7 +5,7 @@
 // Chrome 留在 node 的程序群組裡:外層對整個群組送 SIGKILL(例如 Bash 工具逾時)時會一起被殺。
 // 收到 SIGINT / SIGTERM / SIGHUP 時收掉還開著的 Chrome 再結束(模組層級只註冊一次,關閉的實例會移出名單)。
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,23 +13,33 @@ export const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.ap
 export const KIT_TMP = (process.env.SHORT_VIDEO_KIT_TMP || join(process.env.TMPDIR || tmpdir(), 'short-video-kit')).replace(/\/$/, '');
 
 // 用這次的設定檔路徑找出所有 Chrome 程序(主程序與子程序;主程序先死、子程序被過繼時也找得到)
+const reEscape = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function profilePids(profile) {
-  const r = spawnSync('pgrep', ['-f', '--', `--user-data-dir=${profile}`], { encoding: 'utf8' });
+  // 路徑當正規表示式比對,先跳脫特殊字元(例如 c++、[ ]、( ))
+  const r = spawnSync('pgrep', ['-f', '--', `--user-data-dir=${reEscape(profile)}`], { encoding: 'utf8' });
   return (r.stdout || '').split('\n').map(Number).filter(n => n && n !== process.pid);
 }
-function killProfile(profile) { for (const p of profilePids(profile)) { try { process.kill(p, 'SIGKILL'); } catch {} } }
+// pid:Chrome 主程序,pgrep 比對不到時的保底
+function killProfile(profile, pid) {
+  if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+  for (const p of profilePids(profile)) { try { process.kill(p, 'SIGKILL'); } catch {} }
+}
 // 同步版收尾(訊號處理用,不能等 async):殺 → 等程序都消失(最多 3 秒)→ 刪設定檔,最後再刪一次
-function cleanupSync(profile) {
-  killProfile(profile);
+function cleanupSync(profile, pid) {
+  killProfile(profile, pid);
   for (let i = 0; i < 15 && profilePids(profile).length; i++) { spawnSync('sleep', ['0.2']); killProfile(profile); }
   for (let i = 0; i < 3; i++) { try { rmSync(profile, { recursive: true, force: true }); } catch {} spawnSync('sleep', ['0.2']); if (!existsSync(profile)) break; }
 }
-const live = new Set(); // 還開著的設定檔路徑
+const live = new Map(); // 還開著的設定檔路徑 → Chrome 主程序 pid
+const extraDirs = new Set(); // 呼叫端登記的暫存資料夾(例如 record-web 的影格),被中止時一起刪
+export function cleanupOnSignal(dir) { extraDirs.add(dir); hookSignals(); return () => extraDirs.delete(dir); }
 let signalsHooked = false;
 function hookSignals() {
   if (signalsHooked) return; signalsHooked = true;
   for (const sg of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sg, () => {
-    for (const profile of live) cleanupSync(profile);
+    for (const [profile, pid] of live) cleanupSync(profile, pid);
+    for (const d of extraDirs) { try { rmSync(d, { recursive: true, force: true }); } catch {} }
+    console.error(`short-video-kit:收到 ${sg},已關閉 Chrome 並刪除暫存`);
     process.exit({ SIGINT: 130, SIGHUP: 129 }[sg] ?? 143);
   });
 }
@@ -37,7 +47,7 @@ function hookSignals() {
 export async function launchChrome() {
   if (!existsSync(CHROME)) throw new Error(`找不到 Google Chrome:${CHROME}`);
   mkdirSync(KIT_TMP, { recursive: true });
-  const profile = mkdtempSync(join(KIT_TMP, 'chrome-'));
+  const profile = realpathSync(mkdtempSync(join(KIT_TMP, 'chrome-'))); // 正規化(// 與 /var → /private/var),和 Chrome 子程序看到的一致
   const chrome = spawn(CHROME, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     '--no-first-run', '--no-default-browser-check', '--disable-extensions',
@@ -45,14 +55,14 @@ export async function launchChrome() {
     '--disable-component-update', '--disable-sync', '--metrics-recording-only',
     '--font-render-hinting=none', 'about:blank',
   ], { stdio: 'ignore' });
-  live.add(profile); hookSignals();
+  live.set(profile, chrome.pid); hookSignals();
 
   let ws;
   const exited = new Promise(r => { if (chrome.exitCode !== null || chrome.signalCode !== null) r(); else chrome.once('exit', r); });
   let closing = null;
   const close = () => closing ??= (async () => {
     try { ws?.close(); } catch {}
-    killProfile(profile);
+    killProfile(profile, chrome.pid);
     await Promise.race([exited, new Promise(r => setTimeout(r, 3000))]);
     for (let i = 0; i < 15 && profilePids(profile).length; i++) { await new Promise(r => setTimeout(r, 200)); killProfile(profile); }
     for (let i = 0; i < 3; i++) {
