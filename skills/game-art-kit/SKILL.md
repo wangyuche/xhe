@@ -27,7 +27,7 @@ node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
 #   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 180)。預設值已符合下面的規則。兩者相加要比呼叫端(例如 Bash 工具,最長 600 秒)的逾時
-#   少 180 秒以上(送出前要節點旗標:用 `check` 存在 `~/.cache/game-art-kit/` 的快取,1 小時內、而且 workflow 的節點都在快取裡就不另外抓;用 RMBG 的骨架必須先跑過 check;沒有快取時抓 `/object_info` 最多 30 秒(落在 180 秒餘量內),所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 60 秒、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
+#   少 180 秒以上(送出前要節點旗標:用 `check` 存在 `~/.cache/game-art-kit/` 的快取,1 小時內、而且 workflow 的節點都在快取裡就不另外抓;用 RMBG 的骨架必須先跑過 check;沒有快取時抓 `/object_info` 最多 30 秒(落在 180 秒餘量內),所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 `--download-timeout`(預設 60 秒)、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
 #   → <目錄>/<檔名>.png(去背骨架是 RGBA)或 <檔名>.<伺服器給的音訊副檔名>(通常 .flac)、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);
 #     印 {"status":"ok","seconds":…,"files":[{file,width,height,channels} 或 {file,kind:"audio",bytes}]}
 #   逾時印 {"status":"timeout","reason":"run|queue|total","seconds":<設定的上限>,"elapsed":<實際秒數>}
@@ -72,8 +72,8 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 | `qwen-t2i-sprite` | **透明 sprite / UI**:文生圖 → RMBG 去背 → `InvertMask` → `JoinImageWithAlpha`,同一個 workflow | 同 qwen-t2i;`bg_model` 用 `RMBG-2.0`(768×1024 全身角色去背乾淨,約 30 秒)。提示詞要 `plain flat light grey background, single subject, full body, centered` |
 | `qwen-edit-1ref-sprite` | **角色一致的透明 sprite / 動作格**:以角色 ref 生成新姿勢 + 去背 | 同 qwen-edit-1ref + `bg_model` |
 | `stable-audio-sfx` | 音效(Stable Audio 3,本機) | `ckpt` = `defaults.sfx_ckpt`、`clip` = `defaults.sfx_clip`(t5gemma,CLIPLoader type stable_audio);steps 50、cfg 6、dpmpp_3m_sde_gpu / exponential;seconds 比目標長 1 秒(3 秒約 4 秒) |
-| `ltx23-i2v` | **圖生影片(優先)**:第一格 = 參考圖,LTX-2.3 + 8 步蒸餾 LoRA,cfg 1(負向提示詞固定在骨架裡) | 704×1280、`length` = 8k+1(24 fps,121 格 ≈ 5 秒):121 格約 110 秒(含載入模型),49 格約 40 秒。動作與運鏡明顯,但背景偶爾冒出亂碼字,逐格看圖 |
-| `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1、steps 20、cfg 5、shift 8、uni_pc/simple:121 格約 340 秒(`--timeout 400 --queue-timeout 20`),49 格約 110 秒。畫面穩、動作小 |
+| `ltx23-i2v` | **圖生影片(優先)**:第一格 = 參考圖,LTX-2.3 + 8 步蒸餾 LoRA,cfg 1(負向提示詞固定在骨架裡) | 704×1280、`length` = 8k+1(24 fps,121 格 ≈ 5 秒):121 格約 110 秒(含載入模型),49 格約 40 秒。`run` 加 `--queue-timeout 120 --download-timeout 120`(121 張 PNG 約 140 MB;240 + 120 + 50 + 120 + 40 = 570 秒 < 600)。動作與運鏡明顯,但背景偶爾冒出亂碼字,逐格看圖 |
+| `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1、steps 20、cfg 5、shift 8、uni_pc/simple:121 格約 340 秒(`--timeout 400 --queue-timeout 20`,下載維持預設 60 秒:400 + 20 + 50 + 60 + 40 = 570 秒;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
 | `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;另需 `bpm`、`timesignature`(2 / 3 / 4 / 6)、`keyscale`(例如 `C major`);seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
 
 模型檔名用 `check` 的 `defaults` 或 STYLE.md 的生成設定,不要寫死。
@@ -85,7 +85,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 - 擴散模型寫不好字:UI 示意上的文字不要求可讀,需要標註時用 `sheet.mjs` 的 caption / note。
 - 定裝圖用素色背景、全身、中性姿勢(`full body, standing, plain light grey background`),參考效果最好。
 - 去背骨架下載的 PNG 是 RGBA(`run` 輸出 `channels: 4`);接著 `sprite.mjs fit` 再 `check`,不要直接交未裁切的生成圖。
-- **影片骨架逐格輸出**:ComfyUI 沒有不存檔的影片預覽節點(`SaveVideo` 會留檔,`run` 拒絕),所以影片骨架用 `PreviewImage` 輸出每一格,`run` 下載成 `<name>-1.png … <name>-N.png`(121 格 704×1280 約 140 MB,區網 60 秒內可下載完);組成影片用 short-video-kit 的 `frames.sh`。LTX-2.3 會同時生成音訊,骨架直接丟棄。
+- **影片骨架逐格輸出**:ComfyUI 沒有不存檔的影片預覽節點(`SaveVideo` 會留檔,`run` 拒絕),所以影片骨架用 `PreviewImage` 輸出每一格,`run` 下載成 `<name>-1.png … <name>-N.png`(121 格 704×1280 約 140 MB,有線區網實測 60 秒內下載完;Wi-Fi 等慢速網路用 `--download-timeout` 加大);組成影片用 short-video-kit 的 `frames.sh`。LTX-2.3 會同時生成音訊,骨架直接丟棄。
 - 音訊只做機械檢查(長度、響度、峰值、非靜音、接縫),沒有人耳試聽;回報要寫明。
 
 ## 遊戲素材介面(`schemas/`)

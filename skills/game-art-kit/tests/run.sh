@@ -142,12 +142,13 @@ c3="$(C check --url "http://127.0.0.1:$P3" 2>&1)"; kill "$PID2" 2>/dev/null; wai
 echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(d.background_removal.length===0&&d.audio_models.sfx.length===0&&d.audio_models.bgm.length===0&&w["qwen-t2i-sprite"]===false&&w["stable-audio-sfx"]===false&&w["ace-step-bgm"]===false&&w["ltx23-i2v"]===false&&w["wan22-i2v"]===false&&d.video_models.length===0&&w["qwen-t2i"]===true?0:1)' \
   && ok "check:沒有去背模型檔 / 音訊 / 影片模型 → background_removal、audio_models、video_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
 echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available,f=d.defaults;
-const ok=w["ltx23-i2v"]===true&&w["wan22-i2v"]===true&&d.video_models[0]===f.ltx_ckpt&&f.ltx_te==="gemma_3_12B_it_fp4_mixed.safetensors"&&/distill/.test(f.ltx_distill_lora)&&f.wan_ti2v_unet==="wan2.2_ti2v_5B_fp16.safetensors"&&f.wan_clip==="umt5_xxl_fp8_e4m3fn_scaled.safetensors"&&f.wan_vae==="wan2.2_vae.safetensors";process.exit(ok?0:1)' \
-  && ok "check:影片模型 LTX-2.3 / Wan 2.2 偵測、video_models 以 LTX 優先" || bad "check 影片模型" "$c"
+const ok=w["ltx23-i2v"]===true&&w["wan22-i2v"]===true&&d.video_models[0]===f.ltx_ckpt&&f.ltx_ckpt==="ltx-2.3-22b-dev-fp8.safetensors"&&f.ltx_te==="gemma_3_12B_it_fp4_mixed.safetensors"&&/distill/.test(f.ltx_distill_lora)&&f.wan_ti2v_unet==="wan2.2_ti2v_5B_fp16.safetensors"&&f.wan_clip==="umt5_xxl_fp8_e4m3fn_scaled.safetensors"&&f.wan_vae==="wan2.2_vae.safetensors";process.exit(ok?0:1)' \
+  && ok "check:影片模型 LTX-2.3(不選已蒸餾的 checkpoint)/ Wan 2.2 偵測、video_models 以 LTX 優先" || bad "check 影片模型" "$c"
 r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v" --name clip-1 --set ckpt=a --set te=b --set lora=c --set lora_strength=1 --set prompt=steam --set width=704 --set height=1280 --set length=121 --set seed=1 --set 'ref=x.png [temp]')" \
   && [ -s "$W/v/clip-1-1.png" ] && [ -s "$W/v/clip-1-3.png" ] && ok "ltx23-i2v:送出並逐格下載成 <name>-1..N.png" || bad "ltx23-i2v 逐格" "$r"
 r="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]')" \
   && [ -s "$W/v/w-3.png" ] && ok "wan22-i2v:送出並逐格下載" || bad "wan22-i2v" "$r"
+C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w2 --download-timeout 0 >/dev/null 2>&1; [ $? -eq 2 ] && ok "run:--download-timeout 不是正數 → 結束碼 2" || bad "--download-timeout 驗證"
 P4=$((PORT - 8000))
 FAKE_WIN_PATHS=1 node "$K/tests/fake-comfy.mjs" "$P4" "$W/req4.log" > "$W/fake4.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake4.out" 2>/dev/null && break; sleep 0.1; done

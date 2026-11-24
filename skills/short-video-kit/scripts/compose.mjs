@@ -135,6 +135,8 @@ if (tl.mode === 'narration') {
     const D = r3(en - st);
     const idx = inputs.length;
     takeSfx(s, j, st);
+    if (s.image && s.fit !== undefined) fail(`scenes[${j}] 是圖片鏡頭,fit 只給影片鏡頭;AI 圖要蓋滿用 fill 或 motion`, 2);
+    if (s.video && (s.motion !== undefined || s.fill !== undefined)) fail(`scenes[${j}] 是影片鏡頭,motion / fill 只給圖片鏡頭`, 2);
     if (s.image) {
       const f = P(s.image); if (!existsSync(f)) fail(`找不到圖片:${s.image}`, 2);
       if (s.motion !== undefined && !MOTIONS.includes(s.motion)) fail(`scenes[${j}].motion 只能是 ${MOTIONS.join(' / ')}`, 2);
@@ -174,7 +176,6 @@ if (tl.mode === 'narration') {
       summary.scenes.push({ start: r3(st), end: r3(en), video: s.video, ...info });
       return;
     } else fail(`scenes[${j}] 需要 image 或 video`, 2);
-    summary.scenes.push({ start: r3(st), end: r3(en), image: s.image });
   });
   vfilters.push(`${scenes.map((_, j) => `[v${j}]`).join('')}concat=n=${scenes.length}:v=1:a=0[base]`);
 } else if (tl.mode === 'original') {

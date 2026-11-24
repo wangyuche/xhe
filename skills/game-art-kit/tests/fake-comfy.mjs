@@ -26,7 +26,7 @@ let MODELS = {
   diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors', ...(NO_VIDEO ? [] : ['wan2.2_ti2v_5B_fp16.safetensors'])],
   text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5gemma_b_b_ul2.safetensors', ...(NO_VIDEO ? [] : ['umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'])],
   vae: ['qwen_image_vae.safetensors', 'ae.safetensors', ...(NO_VIDEO ? [] : ['wan2.2_vae.safetensors'])], loras: ['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors', ...(NO_VIDEO ? [] : ['ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors'])],
-  checkpoints: [...(NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors', 'ace_step_v1_3.5b.safetensors']), ...(NO_VIDEO ? [] : ['ltx-2.3-22b-dev-fp8.safetensors'])], controlnet: [], clip_vision: [], style_models: [],
+  checkpoints: [...(NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors', 'ace_step_v1_3.5b.safetensors']), ...(NO_VIDEO ? [] : ['ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors'])], controlnet: [], clip_vision: [], style_models: [],
   // RMBG-2.0 檔案齊全;BEN 少權重檔、BEN2 少 BEN2.py → 不應列出
   rmbg: NO_RMBG ? [] : ['RMBG-2.0/model.safetensors', 'RMBG-2.0/config.json', 'RMBG-2.0/birefnet.py', 'RMBG-2.0/BiRefNet_config.py', 'RMBG-2.0/.cache/x.metadata', 'BEN/model.py', 'BEN2/BEN2_Base.pth'].map(f => f.replace(/\//g, SEP)), background_removal: [],
 };

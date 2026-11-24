@@ -192,8 +192,13 @@ const fs=require("fs");const n=JSON.parse(process.argv[1]).map((x,i)=>({...x,fil
 const mk=(sc,extra={})=>JSON.stringify({mode:"narration",work:"../work/ai",out:"ai",narration:n,...extra,scenes:sc});
 fs.writeFileSync("job/1/ai.json",mk([{image:"../../ai/img-1.png",motion:"in",sfx:{path:"../../ai/sfx-1.wav",volume:0.8},sentences:[0]},{video:"../../ai/clip.mp4",fit:"crop",sentences:[1]}]));
 fs.writeFileSync("job/1/ai-badm.json",mk([{image:"../../ai/img-1.png",motion:"zoom",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-vmotion.json",mk([{video:"../../ai/clip.mp4",motion:"in",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-ifit.json",mk([{image:"../../ai/img-1.png",fit:"crop",sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-fill.json",mk([{image:"../../ai/img-1.png",fill:true,sentences:[0,1]}],{out:"aif",work:"../work/aif"}));' "$tts"
 node "$S/compose.mjs" job/1/ai-badm.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs motion 不合法 → 結束碼 2" || bad "compose.mjs motion 不合法沒被擋"
+node "$S/compose.mjs" job/1/ai-vmotion.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 影片鏡頭帶 motion → 結束碼 2" || bad "影片鏡頭 motion 沒被擋"
+node "$S/compose.mjs" job/1/ai-ifit.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 圖片鏡頭帶 fit → 結束碼 2" || bad "圖片鏡頭 fit 沒被擋"
+mkdir -p 'p%d' && cp ai/clip-1.png ai/clip-2.png 'p%d/' && { bash "$S/frames.sh" 'p%d' clip x.mp4 >/dev/null 2>&1; [ $? -eq 2 ]; } && ok "frames.sh 目錄含 % → 結束碼 2" || bad "frames.sh % 目錄沒被擋"
 ca="$(node "$S/compose.mjs" job/1/ai.json)"; rc=$?
 node -e '
 const c=JSON.parse(process.argv[1]);const s=c.scenes;

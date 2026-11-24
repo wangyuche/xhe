@@ -17,6 +17,7 @@ while [ $# -gt 0 ]; do
 done
 [[ "$fps" =~ ^[0-9]+$ ]] && [ "$fps" -ge 1 ] && [ "$fps" -le 60 ] || die "--fps 要是 1–60 的整數" 2
 [ -d "$dir" ] || die "找不到影格目錄:$dir" 2
+case "$dir" in *%*) die "影格目錄路徑不能有 %(ffmpeg 會當成編號樣式):$dir" 2 ;; esac
 case "$name" in *[!A-Za-z0-9_.-]*|'') die "名稱只能用英數、底線、點、連字號:$name" 2 ;; esac
 
 # 數連續編號;中間缺號或之後還有更大的編號都算不合格
