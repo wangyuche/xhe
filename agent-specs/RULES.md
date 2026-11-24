@@ -41,6 +41,8 @@
 | 規則 | 強制方式 | 來源(哪次錯誤) |
 |---|---|---|
 | kit 沒有預設配色:用到 theme 的卡片、headline 缺 theme 結束碼 2,置頂鏡頭缺 `theme.bg` 結束碼 2;agent 依 repo logo / 網站主色或影片畫面選色,`script.md` 寫配色與來源 | 結構(render.mjs / compose.mjs 檢查)+ 測試(kit tests、tests 情境 7)+ 成功標準 11 | 使用者 2026-11-21 指示:各專案不同,不要共用模板(原本寫死深藍 / 天藍,每支影片同色) |
+| 例外:`template` 模式的版型與配色由模板(`template.json`)決定;預設模板在 motion-video-kit 內(走 PR),專案模板在 `<out>/_templates/<名稱>/`(派工要求才建 / 改)。其他模式仍適用上一列 | 結構(motion-video-kit 只讀模板配色,storyboard 沒有配色欄位)+ 成功標準 20 | 使用者 2026-11-24 要求做成可快速大量產出的模板,並說「我們有一些預設模板,但它也可以創專案用的模板」 |
+| template 模式旁白用 Qwen3-TTS 聲音設計(台灣口音),不用 CustomVoice 預設聲音(大陸口音)、不用 `say`(除非派工寫「允許 say」) | 結構(`tts.mjs` 預設 `qwen3-tts-design`)+ 第 0 步檢查 | 使用者 2026-11-24 試聽後:「Qwen3 我不要預設大陸口音那個」;台灣女聲 / 男聲兩個設計都說可以 |
 | 未 commit 檔案指紋要在 repo 根目錄算:`(cd <repo> && git ls-files -m -o --exclude-standard -z \| xargs -0 shasum \| shasum)` | 文字(agent 第 0 步)+ 說明空雜湊 `da39a3ee…` 的意義 | 2026-11-17 測試時在 repo 外執行,得到空輸入雜湊,比對永遠一致 |
 | 本機 repo clone 用 `file://` | 文字 | 2026-11-17 `--depth is ignored in local clones` |
 | repo-cards 封面不疊標題卡 | 結構(render.mjs `cover` 可不放圖片)+ 文字 | 2026-11-17 封面兩層標題 |
