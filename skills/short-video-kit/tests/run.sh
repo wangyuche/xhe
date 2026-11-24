@@ -159,6 +159,21 @@ v="$(bash "$S/verify.sh" job/1/final.mp4 chk4 --boxes job/work/1/subtitles/boxes
 [ $rc -eq 1 ] && echo "$v" | grep -q '鏡頭表 gap' && ok "verify.sh 鏡頭表沒涵蓋整支 → 失敗" || bad "verify.sh 鏡頭表不符" "$v"
 [ "$(jget "$c" scenes.1.layout)" = top ] && [ "$(jget "$c" scenes.1.uiBottom)" -le 1280 ] && ok "橫式錄影鏡頭置頂、下緣 ≤ 1280(不被 fit 裁切)" || bad "橫式鏡頭置頂" "$c"
 
+# 7a. verify.sh --size / --safe-json(motion-video-kit 用;依 boxes 的 kind 比對,沒有 kind 當 subtitle)
+v="$(bash "$S/verify.sh" job/1/final.mp4 chk5 --boxes job/work/1/subtitles/boxes.json --cover job/1/cover.png --scenes job/work/1/scenes.json --size 1080x1440)"; rc=$?
+[ $rc -eq 1 ] && echo "$v" | grep -q '應為 1080x1440' && ok "verify.sh --size 1080x1440 對 1080×1920 成品 → 失敗(影片與封面都比)" || bad "verify.sh --size" "$v"
+echo '{"subtitle":[60,1300,930,1620],"headline":[0,0,1080,400]}' > safe.json
+v="$(bash "$S/verify.sh" job/1/final.mp4 chk6 --boxes job/work/1/subtitles/boxes.json --cover job/1/cover.png --scenes job/work/1/scenes.json --safe-json safe.json)"; rc=$?
+[ $rc -eq 0 ] && ok "verify.sh --safe-json:沒有 kind 的框當 subtitle 比對" || bad "verify.sh --safe-json 無 kind" "$v"
+echo '[{"file":"h1","kind":"headline","x":40,"y":100,"w":700,"h":250},{"file":"s1","kind":"subtitle","x":100,"y":1350,"w":500,"h":80}]' > kb.json
+v="$(bash "$S/verify.sh" job/1/final.mp4 chk7 --boxes kb.json --cover job/1/cover.png --scenes job/work/1/scenes.json --safe-json safe.json)"; rc=$?
+[ $rc -eq 0 ] && ok "verify.sh --safe-json:headline 框用 headline 矩形" || bad "verify.sh kind headline" "$v"
+echo '[{"file":"h1","kind":"headline","x":40,"y":300,"w":700,"h":250}]' > kb2.json
+v="$(bash "$S/verify.sh" job/1/final.mp4 chk8 --boxes kb2.json --cover job/1/cover.png --scenes job/work/1/scenes.json --safe-json safe.json)"; rc=$?
+[ $rc -eq 1 ] && echo "$v" | grep -q 'h1(headline)' && ok "verify.sh --safe-json:headline 框超出 → 失敗並指出" || bad "verify.sh headline 越界" "$v"
+e="$(bash "$S/verify.sh" job/1/final.mp4 chk9 --boxes kb.json --cover job/1/cover.png --scenes job/work/1/scenes.json --size 1080 2>&1)"; [ $? -eq 2 ] && ok "verify.sh --size 格式錯 → 結束碼 2" || bad "verify.sh --size 格式" "$e"
+out="$(bash "$S/check.sh" --no-say)"; [ $? -eq 0 ] && echo "$out" | grep -q 'skip    say' && ok "check.sh --no-say 不檢查 say" || bad "check.sh --no-say" "$out"
+
 # 7b. 置頂鏡頭:第二版的設定(1000×1400 錄影、整支 fit crop、沒有 region)要被擋;設 region 後 UI 在字幕區上方
 node -e '
 const fs=require("fs");const n=JSON.parse(process.argv[1]).map((x,i)=>({...x,file:"../work/1/"+require("path").basename(x.file)}));

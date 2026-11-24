@@ -29,6 +29,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkTheme } from './_theme.mjs';
+import { narrationVoice, mixWav, measureLoudness, loudnormFilter } from './_mix.mjs';
 
 const KIT = dirname(fileURLToPath(import.meta.url));
 const MAX = 60, FPS = 30;
@@ -268,47 +269,27 @@ if (cards.length) {
 }
 if (!subs.length) writeFileSync(join(subDir, 'boxes.json'), '[]');
 
-// 2. 混音 → mix.wav(48 kHz 立體聲,長度 = 片長)
+// 2. 混音 → mix.wav(48 kHz 立體聲,長度 = 片長)(共用 _mix.mjs)
 const mix = join(work, 'mix.wav');
 {
-  const ai = []; const af = []; let voice;
+  let voice;
   if (tl.mode === 'narration') {
-    tl.narration.forEach((n, i) => { ai.push('-i', P(n.file)); af.push(`[${i}:a]aresample=48000,aformat=channel_layouts=stereo,adelay=${Math.round(subs[i].start * 1000)}:all=1[n${i}]`); });
-    af.push(`${tl.narration.map((_, i) => `[n${i}]`).join('')}amix=inputs=${tl.narration.length}:normalize=0:duration=longest,apad,atrim=0:${total}[voice]`);
+    voice = narrationVoice(tl.narration.map((n, i) => ({ path: P(n.file), at: subs[i].start })), total);
   } else if (summary.audioSource) {
     const expr = summary.keep.map(([s, e]) => `between(t,${s},${e})`).join('+');
-    ai.push('-i', tl._src);
-    af.push(`[0:a]aresample=48000,aformat=channel_layouts=stereo,aselect='${expr}',asetpts=N/SR/TB,apad,atrim=0:${total}[voice]`);
+    voice = { inputs: ['-i', tl._src], filters: [`[0:a]aresample=48000,aformat=channel_layouts=stereo,aselect='${expr}',asetpts=N/SR/TB,apad,atrim=0:${total}[voice]`] };
   } else {
-    af.push(`anullsrc=r=48000:cl=stereo,atrim=0:${total}[voice]`);
+    voice = { inputs: [], filters: [`anullsrc=r=48000:cl=stereo,atrim=0:${total}[voice]`] };
   }
-  if (music) {
-    const mi = ai.filter(x => x === '-i').length;
-    ai.push('-stream_loop', '-1', '-i', music.path);
-    af.push(`[${mi}:a]aresample=48000,aformat=channel_layouts=stereo,volume=${music.volume},atrim=0:${total},afade=t=out:st=${Math.max(0, total - 1.5)}:d=1.5[mus]`);
-    af.push(`[voice]asplit[v1][v2];[mus][v2]sidechaincompress=threshold=0.02:ratio=10:attack=20:release=500[duck];[v1][duck]amix=inputs=2:normalize=0:duration=first[mix]`);
-    voice = '[mix]';
-  } else voice = '[voice]';
-  if (sfxList.length) {
-    sfxList.forEach((x, k) => {
-      const si = ai.filter(y => y === '-i').length;
-      ai.push('-i', x.path);
-      af.push(`[${si}:a]aresample=48000,aformat=channel_layouts=stereo,volume=${x.volume},adelay=${Math.round(x.at * 1000)}:all=1[fx${k}]`);
-    });
-    af.push(`${voice}${sfxList.map((_, k) => `[fx${k}]`).join('')}amix=inputs=${sfxList.length + 1}:normalize=0:duration=first[withfx]`);
-    voice = '[withfx]';
-  }
-  run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...ai, '-filter_complex', af.join(';'), '-map', voice, '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', '-t', String(total), mix], '混音');
+  mixWav({ voice, total, music, sfx: sfxList, out: mix, run });
 }
 
 // 3. 響度量測(loudnorm 第一階段)
 let ln = null;
 {
-  const r = run('ffmpeg', ['-hide_banner', '-nostats', '-i', mix, '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json', '-f', 'null', '-'], '響度量測');
-  const m = r.stderr.match(/\{[\s\S]*?\}/g);
-  const j = m ? JSON.parse(m[m.length - 1]) : null;
-  if (j && Number.isFinite(Number(j.input_i)) && Number(j.input_i) > -70) ln = j;
-  summary.loudnessIn = j ? Number(j.input_i) : null;
+  const m = measureLoudness(mix, run);
+  ln = m.ln;
+  summary.loudnessIn = m.raw ? Number(m.raw.input_i) : null;
 }
 
 // 4. 最終合成
@@ -326,9 +307,7 @@ const finalOut = join(outDir, 'final.mp4');
     ov.push(`${cur}[${k}:v]overlay=0:0:enable='between(t,0,3)'[ovh]`); cur = '[ovh]'; k++;
   }
   fin.push('-i', mix); const mixIdx = k;
-  const anorm = ln
-    ? `[${mixIdx}:a]loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${ln.input_i}:measured_TP=${ln.input_tp}:measured_LRA=${ln.input_lra}:measured_thresh=${ln.input_thresh}:offset=${ln.target_offset}:linear=true,aresample=48000[aout]`
-    : `[${mixIdx}:a]anull[aout]`;
+  const anorm = loudnormFilter(ln, `[${mixIdx}:a]`, '[aout]');
   const graph = [...vfilters, ...ov, `${cur}scale=in_range=auto:out_range=tv,format=yuv420p[vout]`, anorm].join(';');
   run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...fin, '-filter_complex', graph, '-map', '[vout]', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-r', String(FPS),

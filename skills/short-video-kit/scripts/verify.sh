@@ -1,29 +1,39 @@
 #!/bin/bash
-# 用法:verify.sh <影片> <checks 目錄> --boxes <boxes.json> --cover <cover.png> --scenes <scenes.json>
+# 用法:verify.sh <影片> <checks 目錄> --boxes <boxes.json> --cover <cover.png> --scenes <scenes.json> [--size WxH] [--safe-json <safe.json>]
 # 檢查成品規格,並在 0%、25%、50%、75%、末 1 秒各擷一張圖到 <checks 目錄>;
 # 另外每個鏡頭(compose.mjs 寫的 <work>/scenes.json)在中點與結尾前 0.2 秒各擷一張:scene-NN-mid.png、scene-NN-end.png。
 # stdout 一行 JSON(含 ok 與 failures);任何一項不合格結束碼 1。
-#   1080×1920、30 fps、h264 + yuv420p、aac 48000 Hz、faststart(moov 在 mdat 前)、長度 ≤ 60 秒
+#   尺寸(--size,預設 1080×1920;影片與封面都用)、30 fps、h264 + yuv420p、aac 48000 Hz、faststart(moov 在 mdat 前)、長度 ≤ 60 秒
 #   響度 −15 ~ −13 LUFS、true peak ≤ −1.0 dBTP
 #   5 張擷圖平均亮度(Y)最小值 > 5
-#   boxes.json 每個字幕框 x∈[60,930]、y∈[1300,1620](檔案找不到算失敗;空陣列表示沒有字幕)
-#   cover.png 為 1080×1920
+#   boxes.json 每個框都在安全區內(檔案找不到算失敗;空陣列表示沒有字幕):
+#     沒給 --safe-json → x∈[60,930]、y∈[1300,1620];
+#     有給 → safe.json = {"subtitle":[x0,y0,x1,y1],"headline":[x0,y0,x1,y1]},依每筆的 kind 比對(沒有 kind 當 subtitle)
+#   cover.png 為 --size 尺寸
 #   scenes.json 第一個鏡頭從 0 開始、鏡頭首尾相接、最後一個鏡頭結束在片長 ±0.1 秒(找不到算失敗)
 source "$(dirname "$0")/_common.sh"
-[ $# -ge 2 ] || die "用法:verify.sh <影片> <checks 目錄> --boxes <boxes.json> --cover <cover.png> --scenes <scenes.json>"
+[ $# -ge 2 ] || die "用法:verify.sh <影片> <checks 目錄> --boxes <boxes.json> --cover <cover.png> --scenes <scenes.json> [--size WxH] [--safe-json <safe.json>]"
 IN="$1"; CHK="$2"; shift 2; need_file "$IN"
-BOXES=""; COVER=""; SCENES=""
+BOXES=""; COVER=""; SCENES=""; SIZE="1080x1920"; SAFE_JSON=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --boxes) BOXES="$2"; shift 2 ;;
     --cover) COVER="$2"; shift 2 ;;
     --scenes) SCENES="$2"; shift 2 ;;
+    --size) SIZE="${2:-}"; shift 2 ;;
+    --safe-json) SAFE_JSON="${2:-}"; shift 2 ;;
     *) die "未知參數:$1" ;;
   esac
 done
 [ -n "$BOXES" ] || die "缺 --boxes"
 [ -n "$COVER" ] || die "缺 --cover"
 [ -n "$SCENES" ] || die "缺 --scenes(compose.mjs 寫的 <work>/scenes.json)"
+echo "$SIZE" | grep -Eq '^[1-9][0-9]*x[1-9][0-9]*$' || die "--size 要是 WxH(例如 1080x1440):$SIZE" 2
+if [ -n "$SAFE_JSON" ]; then
+  need_file "$SAFE_JSON"
+  node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const ok=r=>Array.isArray(r)&&r.length===4&&r.every(Number.isFinite)&&r[0]<r[2]&&r[1]<r[3];process.exit(ok(s.subtitle)&&(s.headline===undefined||ok(s.headline))?0:1)' "$SAFE_JSON" 2>/dev/null \
+    || die "--safe-json 格式要是 {\"subtitle\":[x0,y0,x1,y1],\"headline\":[x0,y0,x1,y1]}:$SAFE_JSON" 2
+fi
 mkdir -p "$CHK"
 
 PROBE="$(ffprobe -v error -print_format json -show_format -show_streams "$IN")"
@@ -68,7 +78,7 @@ if [ -f "$COVER" ]; then
   COVER_DIM="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$COVER")"
 fi
 
-PROBE="$PROBE" LOUD="$LOUD" BRIGHT="[$BRIGHT]" SHOTS="[$SHOTS]" SCENES="$SCENES" BOXES="$BOXES" COVER_DIM="$COVER_DIM" IN="$IN" node -e '
+SIZE="$SIZE" SAFE_JSON="$SAFE_JSON" PROBE="$PROBE" LOUD="$LOUD" BRIGHT="[$BRIGHT]" SHOTS="[$SHOTS]" SCENES="$SCENES" BOXES="$BOXES" COVER_DIM="$COVER_DIM" IN="$IN" node -e '
 const fs = require("fs");
 const p = JSON.parse(process.env.PROBE);
 const v = p.streams.find(s => s.codec_type === "video") ?? {};
@@ -98,9 +108,15 @@ const bright = JSON.parse(process.env.BRIGHT);
 const minBrightness = Math.min(...bright.map(b => b.yavg));
 let subtitleBoxes = "ok"; let boxes = null;
 try { boxes = JSON.parse(fs.readFileSync(process.env.BOXES, "utf8")); } catch { subtitleBoxes = "missing"; }
+// 安全區:沒給 --safe-json 用 short-video-kit 的字幕區;有給就依 kind(沒有 kind 當 subtitle)
+const safe = process.env.SAFE_JSON ? JSON.parse(fs.readFileSync(process.env.SAFE_JSON, "utf8")) : { subtitle: [60, 1300, 930, 1620] };
 if (boxes) {
-  const bad = boxes.filter(b => !(b.x >= 60 && b.x + b.w <= 930 && b.y >= 1300 && b.y + b.h <= 1620));
-  if (bad.length) subtitleBoxes = `out-of-safe-area: ${bad.map(b => b.file).join(",")}`;
+  const bad = boxes.filter(b => {
+    const r = safe[b.kind ?? "subtitle"];
+    if (!r) return true; // 這個 kind 沒有安全區定義
+    return !(b.x >= r[0] && b.x + b.w <= r[2] && b.y >= r[1] && b.y + b.h <= r[3]);
+  });
+  if (bad.length) subtitleBoxes = `out-of-safe-area: ${bad.map(b => `${b.file}${b.kind ? `(${b.kind})` : ""}`).join(",")}`;
 }
 const duration = Math.round(Number(p.format.duration) * 1000) / 1000;
 let scenes = null; let sceneCheck = "ok";
@@ -116,7 +132,8 @@ const out = {
   lufs, truePeak, minBrightness, subtitles: boxes ? boxes.length : null, subtitleBoxes, scenes: scenes ? scenes.length : null, sceneCheck, cover: process.env.COVER_DIM || "missing",
 };
 const f = [];
-if (out.width !== 1080 || out.height !== 1920) f.push(`解析度 ${out.width}x${out.height}`);
+const size = process.env.SIZE;
+if (`${out.width}x${out.height}` !== size) f.push(`解析度 ${out.width}x${out.height}(應為 ${size})`);
 if (Math.abs(fps - 30) > 0.01) f.push(`fps ${fps}`);
 if (out.vcodec !== "h264") f.push(`vcodec ${out.vcodec}`);
 if (out.pixFmt !== "yuv420p") f.push(`pix_fmt ${out.pixFmt}`);
@@ -128,7 +145,7 @@ if (lufs === null || lufs < -15 || lufs > -13) f.push(`響度 ${lufs} LUFS`);
 if (truePeak === null || truePeak > -1.0) f.push(`true peak ${truePeak}`);
 if (!(minBrightness > 5)) f.push(`擷圖太暗 ${minBrightness}`);
 if (subtitleBoxes !== "ok") f.push(`字幕框 ${subtitleBoxes}`);
-if (out.cover !== "1080x1920") f.push(`封面 ${out.cover}`);
+if (out.cover !== size) f.push(`封面 ${out.cover}(應為 ${size})`);
 if (sceneCheck !== "ok") f.push(`鏡頭表 ${sceneCheck}`);
 out.checks = bright.map(b => b.file);
 out.sceneChecks = JSON.parse(process.env.SHOTS);
