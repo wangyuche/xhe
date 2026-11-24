@@ -147,6 +147,7 @@ const ok=w["ltx23-i2v"]===true&&w["wan22-i2v"]===true&&d.video_models[0]===f.ltx
 P5=$((PORT - 7000))
 FAKE_LTX_NOLORA=1 node "$K/tests/fake-comfy.mjs" "$P5" "$W/req5.log" > "$W/fake5.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake5.out" 2>/dev/null && break; sleep 0.1; done
+grep -q listening "$W/fake5.out" || bad "第 5 個假 ComfyUI 沒有啟動" "$(cat "$W/fake5.out")"
 c5="$(C check --url "http://127.0.0.1:$P5" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
 echo "$c5" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const f=d.defaults;process.exit(f.ltx_ckpt==="ltx-2.3-22b-distilled-fp8.safetensors"&&f.ltx_distill_lora==="none"&&d.workflows_available["ltx23-i2v"]===true?0:1)' \
   && ok "check:沒有蒸餾 LoRA → 改用已蒸餾 checkpoint、lora=none,ltx23-i2v 仍可用" || bad "check 已蒸餾 LTX" "$c5"

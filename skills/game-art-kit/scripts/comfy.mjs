@@ -170,7 +170,7 @@ async function check() {
     ltx_ckpt: null, ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: null,
   };
   {
-    const dev = pick(models.checkpoints, /ltx.?2\.?3(?!.*distill)/), distilled = pick(models.checkpoints, /ltx.?2\.?3.*distill/), lo = pick(lora, /ltx.?2\.?3.*distill/);
+    const dev = pick(models.checkpoints, /ltx.?2\.?3.*dev(?!.*distill)/), distilled = pick(models.checkpoints, /ltx.?2\.?3.*distill/), lo = pick(lora, /ltx.?2\.?3.*distill/);
     if (dev && lo) { d.ltx_ckpt = dev; d.ltx_distill_lora = lo; }          // dev + 蒸餾 LoRA(實測組合)
     else if (distilled) { d.ltx_ckpt = distilled; d.ltx_distill_lora = 'none'; } // 已蒸餾 checkpoint:不加 LoRA
   }

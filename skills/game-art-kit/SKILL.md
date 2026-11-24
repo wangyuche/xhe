@@ -73,7 +73,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 | `qwen-edit-1ref-sprite` | **角色一致的透明 sprite / 動作格**:以角色 ref 生成新姿勢 + 去背 | 同 qwen-edit-1ref + `bg_model` |
 | `stable-audio-sfx` | 音效(Stable Audio 3,本機) | `ckpt` = `defaults.sfx_ckpt`、`clip` = `defaults.sfx_clip`(t5gemma,CLIPLoader type stable_audio);steps 50、cfg 6、dpmpp_3m_sde_gpu / exponential;seconds 比目標長 1 秒(3 秒約 4 秒) |
 | `ltx23-i2v` | **圖生影片(優先)**:第一格 = 參考圖,LTX-2.3 + 8 步蒸餾 LoRA,cfg 1(負向提示詞固定在骨架裡) | 704×1280、`length` = 8k+1(24 fps,121 格 ≈ 5 秒):121 格約 110 秒(含載入模型),49 格約 40 秒。`run` 加 `--queue-timeout 120 --download-timeout 90`(121 張 PNG 約 140 MB;240 + 120 + 抓 /object_info 30 + 偵測 50 + 90 + 收尾 40 = 570 秒 < 600)。`lora` 用 `defaults.ltx_distill_lora`(主機只有已蒸餾的 checkpoint 時是 `none`)。同名重跑時 `run` 只覆寫 `<name>-1..N`,上一輪多出來的格數還在:組影片用 short-video-kit 的 `frames.sh --frames N`(N = 這次的 `length`)只取 1..N。動作與運鏡明顯,但背景偶爾冒出亂碼字,逐格看圖 |
-| `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1、steps 20、cfg 5、shift 8、uni_pc/simple:121 格約 340 秒(`--timeout 380 --queue-timeout 10`,下載維持預設 60 秒:380 + 10 + 30 + 50 + 60 + 40 = 570 秒;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
+| `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1、steps 20、cfg 5、shift 8、uni_pc/simple:121 格約 340 秒(`--timeout 360 --queue-timeout 40`,下載維持預設 60 秒:360 + 40 + 30 + 50 + 60 + 40 = 580 秒;主機忙碌排隊超過 40 秒會逾時,改用 LTX 或稍後再試;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
 | `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;另需 `bpm`、`timesignature`(2 / 3 / 4 / 6)、`keyscale`(例如 `C major`);seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
 
 模型檔名用 `check` 的 `defaults` 或 STYLE.md 的生成設定,不要寫死。

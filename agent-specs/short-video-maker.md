@@ -53,7 +53,7 @@
   3. 每個鏡頭先出一張靜態圖:`qwen-t2i`,928×1664(9:16),提示詞 = 風格基底 + 鏡頭內容 + `no text, no letters, no watermark, no logo`。同一個主角出現在多個鏡頭 → 第一張當定裝圖,其他鏡頭用 `qwen-edit-1ref` 以它為參考(`only one person, single character`)。Read 每張圖檢查:有任何文字或類文字圖樣(含亂碼)、肢體錯誤、主體不符就換 seed 重出(新名稱 `img-<k>-r2`…),每個鏡頭最多 3 次;仍不行改用另一個構圖再試 1 次,還是不合格 → 狀態 ISSUES,列出該鏡頭與問題。`qwen-t2i` / `qwen-edit-1ref` 在第 0 步之後連不上或逾時(結束碼 4 / 5)重試 1 次仍失敗 → 刪除工作目錄後 BLOCKED。
   4. 動態鏡頭:先用第 3 步的靜態圖寫 timeline(每個鏡頭都是圖片鏡頭)跑 `compose.mjs --dry-run` 取得每個鏡頭長度 D(最後一個鏡頭含結尾 0.6 秒)。只從 D ≤ 5.0 秒的鏡頭挑 1–3 個最重要的(鉤子優先);D 較長又必須動態的,把那句旁白拆成兩句重跑 tts 與 dry-run(後半句用同一張靜態圖 + `motion`)。以該鏡頭的靜態圖為起始格生成:
      - `ltx23-i2v`(優先):704×1280,格數 = 8k+1 且 ≥ D × 24 + 1(上限 121),`run` 加 `--queue-timeout 120 --download-timeout 90`(121 張 PNG 約 140 MB)。
-     - `wan22-i2v`(`ltx23-i2v` 不可用時):格數 = 4k+1 且 ≥ D × 24 + 1(上限 121),`run` 加 `--timeout 380 --queue-timeout 10`(合計加收尾、下載不超過 Bash 的 600 秒)。
+     - `wan22-i2v`(`ltx23-i2v` 不可用時):格數 = 4k+1 且 ≥ D × 24 + 1(上限 121),`run` 加 `--timeout 360 --queue-timeout 40`(合計加收尾、下載不超過 Bash 的 600 秒)。
      - `frames.sh <ai 目錄> <名稱> <ai 目錄>/<名稱>.mp4 --frames <length>` 組成 MP4,timeline 影片鏡頭設 `"fit":"crop"`。Read 首 / 中 / 末格:出現任何文字或類文字圖樣(含亂碼招牌)、主體變形或場景跳掉就換 seed 重出,重出一律用新名稱(`clip-<k>-r2`、`-r3`,避免舊影格混入)。重出 2 次仍不合格、生成失敗或逾時 → 該鏡頭改用靜態圖 + `motion`,回報寫明。其他鏡頭用靜態圖加 `motion`(緩慢推近 / 拉遠 / 平移)。
   5. 封面用第一個鏡頭的畫面;配色從鉤子鏡頭的靜態圖取色(同影片模式的取色方式,圖用鉤子鏡頭最後採用的靜態圖,即 AI 素材表上的那一份)。
 - **既有模式的 AI 素材**(ComfyUI 可用時自動加):
@@ -238,7 +238,7 @@
 - `scripts/render.mjs <卡片.json> <輸出目錄> [--asset-root <目錄>]`:Chrome headless(CDP)用內建版型 `title` / `code` / `point` / `end` / `subtitle` / `cover` 渲染 1080×1920 透明 PNG。內容一律以 `textContent` 放入;圖片只接受 `--asset-root` 內的相對路徑(解析 symlink 後再檢查,沒給 `--asset-root` 就不接受圖片);用 CDP `Fetch` 擋掉非 `file://` 請求。`subtitle` 依「最多 2 行、64→44 px」自動縮字，量出邊界框寫進 `boxes.json`,超出安全區結束碼 4。
 - `scripts/record-web.mjs <網址> <動作.json> <輸出.mp4>`:CDP screencast,540×960 @2x,動作 `goto` / `wait` / `scroll` / `click` / `type`,輸出 30 fps MP4;只允許 `localhost` / `127.0.0.1` 網址。
 - `scripts/compose.mjs <timeline.json> <輸出目錄>`:依 timeline 組 ffmpeg 濾鏡圖(剪段、縮放 / 模糊背景 / 裁切、疊圖、旁白與原聲混音、背景音樂 sidechain、`loudnorm` 兩階段)產生 `final.mp4` 與 `work/<n>/first-frame.png`;依固定規則排字幕時間(原聲拆句依字數比例切分)，產生 `subtitles.srt`(原聲模式把剪掉的區間重新對應);`--dry-run` 只印指令與 SRT。
-- `scripts/frames.sh <影格目錄> <名稱> <輸出.mp4> [--fps 24] [--frames N]`(`--frames` 只取 1..N,同名重跑留下的舊格數不會混入):把 `comfy.mjs run` 下載的 `<名稱>-1.png … <名稱>-N.png` 組成 H.264 MP4(檢查編號連續、尺寸一致),印 `{frames,fps,duration,width,height}`。
+- `scripts/frames.sh <影格目錄> <名稱> <輸出.mp4> --frames N [--fps 24]`(`--frames` 必填 = 骨架的 length,只取 1..N,同名重跑留下的舊格數不會混入):把 `comfy.mjs run` 下載的 `<名稱>-1.png … <名稱>-N.png` 組成 H.264 MP4(檢查編號連續、尺寸一致),印 `{frames,fps,duration,width,height}`。
 - `compose.mjs` 旁白模式的鏡頭新增欄位(2026-11-24):圖片鏡頭 `fill: true`(等比蓋滿再置中裁切,AI 圖用;卡片不用)與 `motion: "in" | "out" | "left" | "right"`(緩慢推近 / 拉遠 / 平移,自動蓋滿,不需另設 `fill`);影片鏡頭 `fit` 覆寫整支的設定;任一鏡頭 `sfx: {"path", "volume"}` 在鏡頭開始時播放。摘要的每個影片鏡頭附 `hold`(來源不夠長、停在最後一格的秒數)。
 - `scripts/verify.sh <影片> <checks 目錄> --boxes <boxes.json> --cover <cover.png>`:檢查成功標準 1–3 的機械部分，印一行 JSON,失敗結束碼 1;`boxes.json` 或 cover 找不到算失敗。
 - `tests/run.sh`:用 ffmpeg 產生測試影片(色塊 + 正弦波 + 停頓 + 橫式 / 直式)與 `say` 句子，跑每個腳本並檢查輸出，包含:SRT 時間等於 tts 長度公式、原聲拆句依字數比例切分、condense 剪後長度、字幕過長時縮字或結束碼 4、卡片內容含 `<script>` 與外部 `<img>` 時不執行也不連線、`verify.sh` 對錯誤規格影片失敗。`transcribe.sh` 只在有模型檔時跑。缺 ffmpeg 時印 SKIP,**SKIP 不算通過**。結束時刪除暫存目錄。
