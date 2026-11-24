@@ -12,6 +12,10 @@
 //            影片鏡頭:region(選填,來源像素)先裁出要放大的區域。區域比 9:16 寬時一律「置頂」:
 //            放大到寬 1080、放在字幕區上方(下緣 ≤ 1280),不受 fit 影響,所以不會被左右裁掉;
 //            放大後高 > 1240 → 結束碼 6(縮小 region 的高,或拆成兩個鏡頭)。不比 9:16 寬的照 fit 處理。
+//            AI 素材(2026-11-24):圖片鏡頭 fill:true = 等比蓋滿再置中裁切(預設是等比縮小 + 黑邊,給 1080×1920 卡片用);
+//            motion:"in"|"out"|"left"|"right" = 緩慢推近 / 拉遠 / 往左 / 往右平移(自動 fill)。影片鏡頭 fit:"blur"|"crop" 覆寫整支的 fit。
+//            任一鏡頭 sfx:{"path":…,"volume":0.8} = 鏡頭開始時播放的音效(不被背景音樂壓低,也不壓低背景音樂)。
+//            摘要的影片鏡頭附 hold = 來源不夠長、停在最後一格的秒數。
 //            字幕時間(固定規則):第 1 句 start=0.3;第 i 句 start=第 i−1 句 end+0.25;end=start+duration。
 //            片長 = 最後一句 end + 0.6。鏡頭從它第一句的 start 開始(第一個鏡頭從 0),到下一個鏡頭開始為止。
 // original:source = 來源影片;keep = [[s,e],…](精華)或 cut = [[s,e],…](精簡;每個剪掉區間前後各留 0.1 秒)
@@ -55,8 +59,8 @@ const probeDur = (f) => Number(run('ffprobe', ['-v', 'error', '-show_entries', '
 const hasAudio = (f) => run('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', f], 'ffprobe').stdout.trim() !== '';
 
 // 依來源比例縮放到 1080×1920:blur = 模糊背景置中,crop = 中央裁切
-function fitChain(inLabel, outLabel, tag) {
-  if (fit === 'crop') return `${inLabel}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1${outLabel}`;
+function fitChain(inLabel, outLabel, tag, f = fit) {
+  if (f === 'crop') return `${inLabel}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1${outLabel}`;
   return `${inLabel}split[${tag}a][${tag}b];[${tag}a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=40,eq=brightness=-0.08[${tag}bg];` +
     `[${tag}b]scale=1080:1920:force_original_aspect_ratio=decrease[${tag}fg];[${tag}bg][${tag}fg]overlay=(W-w)/2:(H-h)/2,setsar=1${outLabel}`;
 }
@@ -80,6 +84,25 @@ function topLayout(j, [x, y, w, h]) {
     `color=c=${topBg}:s=1080x1920:r=${FPS}[${tag}bg];[${tag}bg][${tag}fg]overlay=0:${top}:shortest=1,setsar=1${outLabel}` };
 }
 const imageChain =(inLabel, outLabel) => `${inLabel}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1${outLabel}`;
+const fillChain = (inLabel, outLabel) => `${inLabel}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1${outLabel}`;
+// 緩慢運鏡:先放大到 2 倍再 zoompan(減少抖動),縮放幅度 12%
+const MOTIONS = ['in', 'out', 'left', 'right'];
+function motionChain(inLabel, outLabel, motion, frames) {
+  const N = Math.max(1, frames - 1), Z = 0.12;
+  const z = motion === 'in' ? `1+${Z}*on/${N}` : motion === 'out' ? `${1 + Z}-${Z}*on/${N}` : `${1 + Z}`;
+  const cx = 'iw/2-(iw/zoom/2)', cy = 'ih/2-(ih/zoom/2)';
+  const x = motion === 'left' ? `(iw-iw/zoom)*(1-on/${N})` : motion === 'right' ? `(iw-iw/zoom)*on/${N}` : cx;
+  return `${inLabel}scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,` +
+    `zoompan=z='${z}':x='${x}':y='${cy}':d=${frames}:s=1080x1920:fps=${FPS},setsar=1${outLabel}`;
+}
+const sfxList = []; // {path, volume, at}
+function takeSfx(s, j, at) {
+  if (s.sfx === undefined) return;
+  const p = s.sfx?.path; const v = Number(s.sfx?.volume ?? 0.8);
+  if (typeof p !== 'string' || !(v > 0 && v <= 2)) fail(`scenes[${j}].sfx 要是 {"path":…,"volume":0~2}`, 2);
+  if (!existsSync(P(p))) fail(`找不到音效:${p}`, 2);
+  sfxList.push({ path: P(p), volume: v, at });
+}
 
 const subs = []; // {start,end,text,text2}
 let total = 0;
@@ -111,14 +134,30 @@ if (tl.mode === 'narration') {
     const en = j + 1 < scenes.length ? subs[scenes[j + 1].sentences[0]].start : total;
     const D = r3(en - st);
     const idx = inputs.length;
+    takeSfx(s, j, st);
     if (s.image) {
       const f = P(s.image); if (!existsSync(f)) fail(`找不到圖片:${s.image}`, 2);
-      inputs.push(['-loop', '1', '-framerate', String(FPS), '-t', String(D), '-i', f]);
-      vfilters.push(imageChain(`[${idx}:v]`, `[s${j}f]`) + `;[s${j}f]fps=${FPS},trim=duration=${D},setpts=PTS-STARTPTS,format=yuv420p[v${j}]`);
-      if (j === 0) firstFrameArgs = ['-loop', '1', '-i', f, '-filter_complex', imageChain('[0:v]', '[o]'), '-map', '[o]'];
+      if (s.motion !== undefined && !MOTIONS.includes(s.motion)) fail(`scenes[${j}].motion 只能是 ${MOTIONS.join(' / ')}`, 2);
+      if (s.fill !== undefined && typeof s.fill !== 'boolean') fail(`scenes[${j}].fill 要是 true / false`, 2);
+      if (s.motion) {
+        const frames = Math.ceil(D * FPS) + 1;
+        inputs.push(['-i', f]);
+        vfilters.push(motionChain(`[${idx}:v]`, `[s${j}f]`, s.motion, frames) + `;[s${j}f]trim=duration=${D},setpts=PTS-STARTPTS,format=yuv420p[v${j}]`);
+        if (j === 0) firstFrameArgs = ['-i', f, '-filter_complex', motionChain('[0:v]', '[o]', s.motion, frames), '-map', '[o]'];
+      } else {
+        const chain = s.fill ? fillChain : imageChain;
+        inputs.push(['-loop', '1', '-framerate', String(FPS), '-t', String(D), '-i', f]);
+        vfilters.push(chain(`[${idx}:v]`, `[s${j}f]`) + `;[s${j}f]fps=${FPS},trim=duration=${D},setpts=PTS-STARTPTS,format=yuv420p[v${j}]`);
+        if (j === 0) firstFrameArgs = ['-loop', '1', '-i', f, '-filter_complex', chain('[0:v]', '[o]'), '-map', '[o]'];
+      }
+      summary.scenes.push({ start: r3(st), end: r3(en), image: s.image, ...(s.motion ? { motion: s.motion } : s.fill ? { fill: true } : {}) });
+      return;
     } else if (s.video) {
       const f = P(s.video); if (!existsSync(f)) fail(`找不到影片:${s.video}`, 2);
       const inT = Number(s.in ?? 0);
+      const sfit = s.fit ?? fit;
+      if (!['blur', 'crop'].includes(sfit)) fail(`scenes[${j}].fit 只能是 blur 或 crop`, 2);
+      const hold = r3(Math.max(0, D - Math.max(0, probeDur(f) - inT)));
       const [sw, sh] = probeSize(f);
       const region = s.region ?? [0, 0, sw, sh];
       if (!Array.isArray(region) || region.length !== 4 || region.some(v => !Number.isInteger(v) || v < 0) || !(region[2] > 0 && region[3] > 0)
@@ -126,8 +165,9 @@ if (tl.mode === 'narration') {
       const wide = region[2] / region[3] > 9 / 16 + 0.01;
       let chain, info;
       if (wide) { const t = topLayout(j, region); chain = t.chain; info = { layout: 'top', region, uiBottom: t.top + t.H }; }
-      else if (s.region) { const [x, y, w, h] = region; chain = (i, o, tag) => `${i}crop=${w}:${h}:${x}:${y}[${tag}c];` + fitChain(`[${tag}c]`, o, tag); info = { layout: fit, region }; }
-      else { chain = fitChain; info = { layout: fit }; }
+      else if (s.region) { const [x, y, w, h] = region; chain = (i, o, tag) => `${i}crop=${w}:${h}:${x}:${y}[${tag}c];` + fitChain(`[${tag}c]`, o, tag, sfit); info = { layout: sfit, region }; }
+      else { chain = (i, o, tag) => fitChain(i, o, tag, sfit); info = { layout: sfit }; }
+      info.hold = hold;
       inputs.push(['-ss', String(inT), '-i', f]);
       vfilters.push(chain(`[${idx}:v]`, `[s${j}f]`, `s${j}`) + `;[s${j}f]fps=${FPS},tpad=stop_mode=clone:stop_duration=${D},trim=duration=${D},setpts=PTS-STARTPTS,format=yuv420p[v${j}]`);
       if (j === 0) firstFrameArgs = ['-ss', String(inT), '-i', f, '-filter_complex', chain('[0:v]', '[o]', 'ff'), '-map', '[o]'];
@@ -198,6 +238,7 @@ if (tl.mode === 'narration') {
   tl._src = src;
 } else fail('mode 只能是 narration 或 original', 2);
 
+if (sfxList.length) summary.sfx = sfxList.map(x => ({ at: r3(x.at), volume: x.volume }));
 summary.duration = total;
 if (total > MAX) { console.log(JSON.stringify(summary)); fail(`片長 ${total} 秒超過 ${MAX} 秒`, 5); }
 
@@ -246,6 +287,15 @@ const mix = join(work, 'mix.wav');
     af.push(`[voice]asplit[v1][v2];[mus][v2]sidechaincompress=threshold=0.02:ratio=10:attack=20:release=500[duck];[v1][duck]amix=inputs=2:normalize=0:duration=first[mix]`);
     voice = '[mix]';
   } else voice = '[voice]';
+  if (sfxList.length) {
+    sfxList.forEach((x, k) => {
+      const si = ai.filter(y => y === '-i').length;
+      ai.push('-i', x.path);
+      af.push(`[${si}:a]aresample=48000,aformat=channel_layouts=stereo,volume=${x.volume},adelay=${Math.round(x.at * 1000)}:all=1[fx${k}]`);
+    });
+    af.push(`${voice}${sfxList.map((_, k) => `[fx${k}]`).join('')}amix=inputs=${sfxList.length + 1}:normalize=0:duration=first[withfx]`);
+    voice = '[withfx]';
+  }
   run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...ai, '-filter_complex', af.join(';'), '-map', voice, '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', '-t', String(total), mix], '混音');
 }
 

@@ -1,6 +1,6 @@
 ---
 name: short-video-kit
-description: 9:16 短影音的固定腳本:工具檢查、影片探測、whisper 轉文字、停頓偵測、macOS say 旁白、Chrome 渲染卡片與字幕(安全區檢查)、Chrome 錄網頁、ffmpeg 合成(剪段 / 模糊背景 / 疊字幕 / 混音 / 響度 −14 LUFS)、成品規格驗證。short-video-maker 製作短片時使用;任何要把 repo 或影片做成直式短片的情境也可用。
+description: 9:16 短影音的固定腳本:工具檢查、影片探測、whisper 轉文字、停頓偵測、macOS say 旁白、Chrome 渲染卡片與字幕(安全區檢查)、Chrome 錄網頁、ffmpeg 合成(剪段 / 模糊背景 / 疊字幕 / 混音 / 響度 −14 LUFS / AI 圖運鏡 / 音效)、ComfyUI 逐格輸出組成影片、成品規格驗證。short-video-maker 製作短片時使用;任何要把 repo 或影片做成直式短片的情境也可用。
 ---
 
 # short-video-kit
@@ -18,6 +18,7 @@ bash <kit>/scripts/tts.sh <句子檔> <輸出目錄> [--voice Meijia] [--rate 19
 node <kit>/scripts/render.mjs <cards.json> <輸出目錄> [--asset-root <目錄>]  # 卡片 / 字幕 PNG;字幕放不下結束碼 4
 node <kit>/scripts/record-web.mjs <本機網址> <actions.json> <out.mp4>        # 1080×1920 30fps 無聲
 node <kit>/scripts/compose.mjs <timeline.json> [--dry-run]                  # final.mp4 + subtitles.srt;超過 60 秒結束碼 5
+bash <kit>/scripts/frames.sh <影格目錄> <名稱> <out.mp4> [--fps 24]          # comfy.mjs 下載的 <名稱>-1..N.png → MP4;缺號 / 尺寸不一結束碼 2
 bash <kit>/scripts/verify.sh <final.mp4> <checks 目錄> --boxes <boxes.json> --cover <cover.png>
 bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算通過)
 ```
@@ -78,6 +79,20 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 - 字幕時間是固定規則:第 1 句 0.3 秒開始,之後每句 start = 前一句 end + 0.25,end = start + 實測長度;片長 = 最後一句 end + 0.6。
 - 鏡頭從它第一句的 start 開始(第一個鏡頭從 0),到下一個鏡頭開始為止。影片太短就停在最後一格。
 - `sentences` 要依序涵蓋每一句各一次。
+- **AI 素材欄位**(ComfyUI 生成的圖與影片用;卡片不要用):
+  - 圖片鏡頭 `"fill": true`:等比蓋滿再置中裁切(預設是等比縮小加黑邊,給 1080×1920 卡片用)。
+  - 圖片鏡頭 `"motion": "in" | "out" | "left" | "right"`:緩慢推近 / 拉遠 / 往左 / 往右平移(幅度 12%,自動蓋滿)。
+  - 影片鏡頭 `"fit": "blur" | "crop"`:覆寫整支的 `fit`(AI 影片 704×1280 接近 9:16,用 `crop`)。
+  - 任一鏡頭 `"sfx": {"path": "../work/1/ai/sfx-1.ogg", "volume": 0.8}`:鏡頭開始時播放,不會被背景音樂壓低。
+  - 摘要的影片鏡頭有 `hold`:來源不夠長、停在最後一格的秒數(AI 鏡頭要 ≤ 0.5)。
+
+```json
+{"mode":"narration","work":"../work/1","theme":{…},"music":{"path":"../work/1/ai/bgm.flac","volume":0.2},
+ "narration": <tts.sh 輸出>,
+ "scenes":[{"video":"../work/1/ai/clip-1.mp4","fit":"crop","sentences":[0]},
+           {"image":"../work/1/ai/img-2.png","motion":"in","sfx":{"path":"../work/1/ai/sfx-1.ogg","volume":0.8},"sentences":[1,2]},
+           {"image":"../work/1/ai/img-3.png","motion":"left","sentences":[3]}]}
+```
 
 **原聲模式**(影片精華 / 精簡):
 
@@ -97,6 +112,20 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 **輸出**:`<out>/final.mp4`、`<out>/subtitles.srt`、`<work>/subtitles/*.png` + `boxes.json`、`<work>/first-frame.png`(封面用,沒有字幕)、`<work>/mix.wav`、`<work>/scenes.json`(每個鏡頭的成品起訖,給 `verify.sh --scenes`)。stdout 摘要含 `duration`、`scenes`(置頂鏡頭有 `uiBottom`)、`keep`、`cuts`、`totalCut`、`sourceDuration`、`actualDuration`。
 
 **字幕版面**:最多 2 行,字級 64 px 起往下縮到 44 px;字幕框必須在 x∈[60,930]、y∈[1300,1620]。放不下時 compose 結束碼 4,把該句改成 `texts` 拆句(原聲),或把旁白拆成兩句重跑 tts。
+
+## ComfyUI AI 素材(搭配 game-art-kit)
+
+ComfyUI 的連線、骨架、上傳、下載都用 game-art-kit 的 `comfy.mjs`(見它的 SKILL.md),本 kit 不重寫。短影音常用:
+
+| 素材 | 骨架 | 建議參數 | 接進 timeline |
+|---|---|---|---|
+| 插圖 / 背景 | `qwen-t2i` | 928×1664(9:16),Lightning 4 步 | 圖片鏡頭 + `motion`(或 `fill`);卡片的 `image`(`render.mjs --asset-root <ai 目錄>`) |
+| 同一角色多鏡頭 | `qwen-edit-1ref` | 第一張當參考 | 同上 |
+| 動態鏡頭 | `ltx23-i2v`(優先)/ `wan22-i2v` | 704×1280、121 格 ≈ 5 秒;起始格 = 上面的插圖 | `frames.sh` → 影片鏡頭 + `"fit":"crop"` |
+| 配樂 | `ace-step-bgm` | `lyrics` `[instrumental]`、seconds = 片長 + 2 | `music`(volume 0.2) |
+| 音效 | `stable-audio-sfx` | 先 `audio.mjs process --type sfx` | 鏡頭的 `sfx` |
+
+所有輸出放 `<job>/work/<n>/ai/`(`run --out` 指這裡),跟著 `work/` 刪除。擴散模型寫不好字:畫面上的字一律用 `render.mjs` 疊。
 
 ## verify.sh 檢查項目
 

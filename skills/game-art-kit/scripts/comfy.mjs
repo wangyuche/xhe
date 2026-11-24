@@ -125,6 +125,9 @@ function family(name) {
   if (/flux.*redux/.test(n)) return 'flux-redux';
   if (/flux/.test(n)) return 'flux';
   if (/z.?image/.test(n)) return 'z-image';
+  if (/wan2\.?2.*ti2v/.test(n)) return 'wan2.2-ti2v';
+  if (/wan2\.?2.?vae/.test(n)) return 'wan2.2';
+  if (/ltx.?2/.test(n)) return 'ltx-2';
   if (/t5xxl|umt5/.test(n)) return 't5';
   if (/sdxl|(^|[_-])xl([_.-])|pony|illustrious/.test(n)) return 'sdxl';
   if (/sd.?1\.?5|v1-5/.test(n)) return 'sd15';
@@ -160,6 +163,10 @@ async function check() {
     sfx_ckpt: pick(models.checkpoints, /stable.?audio.?3.*sfx/) ?? pick(models.checkpoints, /stable.?audio.?3/) ?? pick(models.checkpoints, /stable.?audio.?open/),
     sfx_clip: null,
     bgm_ckpt: pick(models.checkpoints, /ace.?step.?(v)?1[._]5/),
+    // 影片:Wan 2.2 TI2V 5B(文生 / 圖生影片同一個模型),text encoder umt5,VAE 用 2.2 專用的
+    wan_ti2v_unet: pick(dm, /wan2\.?2.*ti2v/), wan_clip: pick(te, /umt5/), wan_vae: pick(vae, /wan2\.?2.?vae/),
+    // LTX-2.3:checkpoint 內含 VAE 與音訊 VAE;文字編碼用 Gemma 3 12B;8 步蒸餾 LoRA
+    ltx_ckpt: pick(models.checkpoints, /ltx.?2\.?3/), ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: pick(lora, /ltx.?2\.?3.*distill/),
   };
   // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
   // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
@@ -192,6 +199,11 @@ async function check() {
   workflows['qwen-t2i-sprite'] = workflows['qwen-t2i'] && bgOk;
   workflows['qwen-edit-1ref-sprite'] = workflows['qwen-edit-1ref'] && bgOk;
   workflows['stable-audio-sfx'] = !!(d.sfx_ckpt && d.sfx_clip && ['CheckpointLoaderSimple', 'CLIPLoader', 'ConditioningStableAudio', 'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
+  const wanOk = !!(d.wan_ti2v_unet && d.wan_clip && d.wan_vae && ['UNETLoader', 'CLIPLoader', 'ModelSamplingSD3', 'Wan22ImageToVideoLatent', 'KSampler', 'VAEDecode', 'PreviewImage'].every(has));
+  workflows['wan22-i2v'] = wanOk && has('LoadImage') && has('ImageScale');
+  workflows['ltx23-i2v'] = !!(d.ltx_ckpt && d.ltx_te && d.ltx_distill_lora && ['CheckpointLoaderSimple', 'LTXAVTextEncoderLoader', 'LoraLoaderModelOnly', 'LTXVConditioning',
+    'LoadImage', 'ImageScale', 'LTXVPreprocess', 'EmptyLTXVLatentVideo', 'LTXVImgToVideoInplace', 'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent',
+    'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled', 'PreviewImage'].every(has));
   workflows['ace-step-bgm'] = !!(d.bgm_ckpt && ['CheckpointLoaderSimple', 'ModelSamplingAuraFlow', 'TextEncodeAceStepAudio1.5', 'ConditioningZeroOut', 'EmptyAceStep1.5LatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
   // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
   // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。
@@ -216,6 +228,8 @@ async function check() {
       sfx: workflows['stable-audio-sfx'] ? [d.sfx_ckpt] : [],
       bgm: workflows['ace-step-bgm'] ? [d.bgm_ckpt] : [],
     },
+    // 影片骨架(只有圖生影片):ltx23-i2v 優先(5 秒約 110 秒),wan22-i2v 備援(5 秒約 340 秒)
+    video_models: [workflows['ltx23-i2v'] && d.ltx_ckpt, workflows['wan22-i2v'] && d.wan_ti2v_unet].filter(Boolean),
     workflows_available: workflows,
     defaults: d,
   };
