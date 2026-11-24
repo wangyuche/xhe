@@ -288,3 +288,76 @@ export const srtTime = (x) => {
   const ms = Math.round(x * 1000); const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms % 1000).padStart(3, '0')}`;
 };
+
+// ---------- 念法對照表(pronunciation.json)----------
+// {"words":{"網站":"網 站"}}:TTS 念的文字裡出現 key 就換成 value(字幕不變)。
+// 一次掃過、長的 key 優先,替換結果不會再被替換。
+export function loadLexicon(files) {
+  const words = {};
+  for (const f of files) {
+    let j; try { j = JSON.parse(readFileSync(f, 'utf8')); } catch (e) { fail(`讀不到念法對照表 ${f}:${e.message}`, 2); }
+    if (!j || typeof j.words !== 'object' || Array.isArray(j.words)) fail(`念法對照表 ${f} 要有 "words" 物件`, 2);
+    for (const [k, v] of Object.entries(j.words)) {
+      if (!k || typeof v !== 'string' || !v.trim()) fail(`念法對照表 ${f}:「${k}」的值要是非空字串`, 2);
+      words[k] = v;   // 後面的檔案(專案)蓋過前面的(kit)
+    }
+  }
+  return words;
+}
+export function applyLexicon(text, words) {
+  const keys = Object.keys(words).sort((a, b) => b.length - a.length);
+  if (!keys.length) return text;
+  const re = new RegExp(keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  return text.replace(re, m => words[m]);
+}
+
+// ---------- 語音辨識比對(asr.mjs)----------
+// 只比字母與數字(去標點、空白、大小寫);繁簡 / 同音代名詞等辨識常見差異視為相同。
+const ASR_SAME = { '臺': '台', '裏': '裡', '它': '他', '她': '他', '牠': '他', '妳': '你' };
+export function normAsr(s) { return asrChars(s).map(x => x.c); }
+// 每個保留的字附「詞編號」:英數字連在一起(中間沒有空白或標點)是同一個詞,其他字各自一個
+function asrChars(s) {
+  const out = []; let wid = 0, prevW = false;
+  for (const ch of String(s).normalize('NFKC').toLowerCase()) {
+    if (!/[\p{L}\p{N}]/u.test(ch)) { prevW = false; continue; }
+    const c = ASR_SAME[ch] ?? ch, w = /[a-z0-9]/.test(c);
+    if (!(w && prevW)) wid++;
+    out.push({ c, wid }); prevW = w;
+  }
+  return out;
+}
+// 逐字最長共同子序列 → 不一致的片段 [{expected, heard}];similarity = 共同字數 / 原文字數
+export function asrDiff(expected, heard) {
+  const A = asrChars(expected), B = asrChars(heard), a = A.map(x => x.c), b = B.map(x => x.c);
+  const n = a.length, m = b.length;
+  const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  // 先找出不一致的區段(以位置記錄),碰到英數字時擴大到整個英數字詞(Rust → rest 列成一筆,不逐字母)
+  const spans = []; let i = 0, j = 0, s0 = null;
+  const close = () => { if (s0) { spans.push([s0[0], i, s0[1], j]); s0 = null; } };
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { close(); i++; j++; }
+    else { if (!s0) s0 = [i, j]; if (j < m && (i === n || L[i][j + 1] >= L[i + 1][j])) j++; else i++; }
+  }
+  close();
+  // 區段碰到英數字詞時擴大到整個詞(依原文的空白 / 標點分詞)
+  const grow = (W, x, y) => {
+    const isW = k => k >= 0 && k < W.length && /[a-z0-9]/.test(W[k].c);
+    if (x < y) { if (isW(x)) while (x > 0 && isW(x - 1) && W[x - 1].wid === W[x].wid) x--; if (isW(y - 1)) while (y < W.length && isW(y) && W[y].wid === W[y - 1].wid) y++; }
+    else {   // 空區段(漏字):碰到哪邊的英數字詞就擴到那個詞
+      const L0 = x, wl = isW(L0 - 1) ? W[L0 - 1].wid : null, wr = isW(y) ? W[y].wid : null;
+      if (wl !== null) while (x > 0 && isW(x - 1) && W[x - 1].wid === wl) x--;
+      if (wr !== null) while (y < W.length && isW(y) && W[y].wid === wr) y++;
+    }
+    return [x, y];
+  };
+  const merged = [];
+  for (const [x0, x1, y0, y1] of spans) {
+    const [p0, p1] = grow(A, x0, x1), [q0, q1] = grow(B, y0, y1);
+    const last = merged[merged.length - 1];
+    if (last && (p0 < last[1] || q0 < last[3])) { last[1] = Math.max(last[1], p1); last[3] = Math.max(last[3], q1); }
+    else merged.push([p0, p1, q0, q1]);
+  }
+  const diffs = merged.map(([x0, x1, y0, y1]) => ({ expected: a.slice(x0, x1).join(''), heard: b.slice(y0, y1).join('') }));
+  return { similarity: n ? r3(L[0][0] / n) : (m ? 0 : 1), diffs };
+}

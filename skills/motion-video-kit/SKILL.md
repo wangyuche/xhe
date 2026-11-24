@@ -1,6 +1,6 @@
 ---
 name: motion-video-kit
-description: 模板動畫短片(資訊圖動畫型,例如米色底 + 吉祥物 + 兩行大標 + 白色卡片內容依旁白彈出 + 逐詞字幕)的固定腳本:模板解析與檢查(kit 預設模板 / 專案模板)、storyboard.json 驗證(schema + at / 圖檔 / focus / 同圖次數)、Qwen3-TTS 旁白(ComfyUI,台灣口音聲音設計或預設聲音;或 macOS say)、固定規則排時間軸與節奏檢查(rhythm)、Chrome CDP + Web Animations 逐格渲染(可重現、網路隔離)、混音(共用 short-video-kit)、擷格、縮圖總表。第一個預設模板 github-hot-pastel(1080×1440、30 fps)。short-video-maker 的 template 模式使用;任何要用模板快速大量產出動畫解說短片的情境也可用。
+description: 模板動畫短片(資訊圖動畫型,例如米色底 + 吉祥物 + 兩行大標 + 白色卡片內容依旁白彈出 + 逐詞字幕)的固定腳本:模板解析與檢查(kit 預設模板 / 專案模板)、storyboard.json 驗證(schema + at / 圖檔 / focus / 同圖次數)、Qwen3-TTS 旁白(ComfyUI,台灣口音聲音設計或預設聲音;或 macOS say;念法對照表)、旁白念錯字檢查(whisper 轉回文字比對)、固定規則排時間軸與節奏檢查(rhythm)、Chrome CDP + Web Animations 逐格渲染(可重現、網路隔離)、混音(共用 short-video-kit)、擷格、縮圖總表。第一個預設模板 github-hot-pastel(1080×1440、30 fps)。short-video-maker 的 template 模式使用;任何要用模板快速大量產出動畫解說短片的情境也可用。
 ---
 
 # motion-video-kit
@@ -17,7 +17,10 @@ node <kit>/scripts/check.mjs [--template <名稱或路徑>] [--template-dir <路
 node <kit>/scripts/tts.mjs <storyboard.json> <輸出目錄> [--design "<聲音描述>"] [--design-seed 11] [--ref "<參考句>"] [--seed 7] [--only 3,5]
 node <kit>/scripts/tts.mjs <storyboard.json> <輸出目錄> --preset Vivian [--instruct "<語氣>"]      # Qwen3 預設聲音(偏大陸口音)
 node <kit>/scripts/tts.mjs <storyboard.json> <輸出目錄> --engine say [--voice Meijia]           # 派工寫「允許 say」時
-#   → <輸出目錄>/NNN.wav(48 kHz)、tts.json [{i,text,say,file,duration,maxVolume,seed,retries,ok,…}]、tts-voice.json(聲音參數)、raw/workflows/(實際送出的參數,不含位址)
+#   選填 [--lexicon <專案念法對照表.json>] [--no-lexicon];kit 的 pronunciation.json 預設套用
+#   → <輸出目錄>/NNN.wav(48 kHz)、tts.json [{i,text,say,spoken,file,duration,maxVolume,seed,retries,ok,…}]、tts-voice.json(聲音參數)、raw/workflows/(實際送出的參數,不含位址)
+node <kit>/scripts/asr.mjs <tts 目錄> [--model <ggml 檔>] [--only 3,5]
+#   旁白念錯字檢查:whisper 轉回文字和字幕 text 比對 → <tts 目錄>/asr.json [{i,text,spoken,heard,similarity,diffs:[{expected,heard}]}];有出入也結束碼 0
 node <kit>/scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--dry-run]
 #   輸出目錄:silent.mp4、boxes.json、safe.json、timing.json、scenes.json;交付目錄:subtitles.srt、cover.png;進度印 stderr
 node <kit>/scripts/render.mjs --sample [--template-dir <路徑> | --template <名稱>]   # 模板 preview/scene-NN.png + contact.png
@@ -80,6 +83,8 @@ bash <kit>/tests/run.sh                                                 # 自我
 - `--preset <聲音>`:`qwen3-tts`(CustomVoice 1.7B 預設聲音,偏大陸口音),可加 `--instruct`。
 - 第 0 步:`comfy.mjs check` 的 `workflows_available.qwen3-tts-design`(或用 `--preset` 時 `qwen3-tts`)要是 `true`。
 - 每句去頭尾靜音、轉 48 kHz;長度 > 0.5 秒且 max_volume > −30 dB,不合格換 seed(+101、+202)重生,最多 2 次;仍不合格 `ok:false`、結束碼 1 → 改寫 `say` 後 `--only <句號>` 重跑。
+- **念法對照表** `<kit>/pronunciation.json`(`{"words":{"網站":"網 站"}}`):tts.mjs 把念的文字(`say`,沒有就是 `text`)裡的詞換掉再送 TTS,字幕不變,實際念的記在 `tts.json` 的 `spoken`。專案另加或覆蓋用 `--lexicon <檔>`(同格式),`--no-lexicon` 全部不套。每一筆都要有證據:換之前 asr 列出、換之後 asr 正確(來源寫在檔案的 `_來源`)。新增到 kit 的對照表走 xhe PR。
+- **念錯字檢查(asr.mjs)**:tts 之後跑。whisper 也會聽錯(專有名詞、台灣口音:2026-11-25 craft-anything 21 句中 9 句有出入,使用者實聽只有「網站」真的念錯),所以**有出入 ≠ 念錯**,不擋交片。處理:有出入的詞改寫 `say` 後 `tts.mjs --only` + `asr.mjs --only`,辨識變正確才採用;改寫法依序試「把詞拆開加空格(網 站)」→ 同音字(往站)→ 換說法(把「例如」換成「像是」對「網站」無效);都不對就保留原句,在回報列「辨識有出入的詞」請人聽。
 - 實測(2026-11-24,區網 ComfyUI GB10):聲音設計模式每句約 2–3 秒(模型已載入時)。
 
 ## 時間軸與節奏(render.mjs 依固定規則排,不手排)

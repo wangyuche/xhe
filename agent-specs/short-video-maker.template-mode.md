@@ -80,7 +80,7 @@
    - 其餘同主規格(模式、`<slug>`、工作目錄、來源指紋、旗標)。
 2. 內容:repo 輸入照 `repo-cards` 第 1 步讀 repo、挑亮點(沒有執行旗標就不執行);主題 / 文案照 `topic` 第 1 步。截圖來源只能是:repo 內圖檔(`--asset-root <job>/work/repo` 或本機非 git 目錄本身)、`repo-record` 錄影(有執行旗標)用 `frame.mjs` 擷格、派工給的本機影片(`frame.mjs`)或圖片(`--asset-root` 指到其目錄)。不讓 AI 圖冒充產品畫面。
 3. 寫 `<job>/work/<n>/storyboard.json`:每 2–4 秒一個畫面變化(換場景、或同場景內卡片元素依 `at` 出現);每個場景指定吉祥物姿勢,同一姿勢不連續超過 3 個場景;卡片類型(不含 `title`、`cta`)至少 4 種。
-4. `tts.mjs` 逐句生成(念 `say` 或 `text`)→ 每檔長度 > 0.5 秒且 max_volume > −30 dB,不合就換 seed 重生,最多 2 次。`render.mjs --dry-run` 算片長:> 59 秒 → repo / 主題模式刪減句子後重跑;完整文案 → 刪除工作目錄後 BLOCKED(附片長)。
+4. `tts.mjs` 逐句生成(念 `say` 或 `text`)→ 每檔長度 > 0.5 秒且 max_volume > −30 dB,不合就換 seed 重生,最多 2 次。kit 念法對照表(`pronunciation.json`)自動套用;接著 `asr.mjs` 念錯字檢查,有出入的詞改寫 `say` 並以辨識結果驗證(2026-11-25 追加)。`render.mjs --dry-run` 算片長:> 59 秒 → repo / 主題模式刪減句子後重跑;完整文案 → 刪除工作目錄後 BLOCKED(附片長)。
 5. `render.mjs <job>/work/<n>/storyboard.json <job>/work/<n>/tts.json <job>/work/<n> --deliver <job>/<n> --asset-root …`(進度印到 stderr;可能超過單次 Bash 600 秒時,用背景執行並等完成通知)→ 中間檔在 `<job>/work/<n>/`:`silent.mp4`、`boxes.json`、`safe.json`、`timing.json`、`scenes.json`;交付檔在 `<job>/<n>/`:`subtitles.srt`、`cover.png`(第一個場景最終狀態那一格,大標已在畫面上,不另疊字)。
 6. AI 配樂(同主規格,`ace-step-bgm`)、轉場音效 ≤ 3;`mix.mjs <job>/work/<n>/silent.mp4 <job>/work/<n>/tts.json <job>/work/<n>/timing.json <job>/<n>/final.mp4 …` 混音。
 7. 驗證:

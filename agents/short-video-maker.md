@@ -163,7 +163,7 @@ skills:
 1. 第 0 步:`check.sh --no-say`(派工寫「允許 say」時不加);`node <mvk>/scripts/check.mjs --template <名稱或路徑>`;`comfy.mjs check` 的 `workflows_available.qwen3-tts-design` 須為 `true`;其餘同一般第 0 步。(完成條件:三個 check 結束碼 0。)
 2. 內容:repo 照 `repo-cards` 第 1 步(沒有執行旗標不執行);主題 / 文案照 `topic` 第 1 步。截圖只能來自 repo 內圖檔、`repo-record` 錄影或派工給的本機影片 / 圖片(影片用 `frame.mjs` 擷格到 `<job>/work/<n>/`),`render.mjs --asset-root` 指到這些目錄。不讓 AI 圖冒充產品畫面。
 3. 寫 `<job>/work/<n>/storyboard.json`:每 2–4 秒一個畫面變化(換場景,或場景內元素依 `at` 出現,同場景兩個 `at` 相隔 ≥ 2 秒);每句顯示字數 ≤ 模板 `maxLineChars`;吉祥物同一姿勢不連續超過 3 個場景;卡片類型(不含 `title`、`cta`)≥ 4 種;同一圖檔 ≤ 2 個場景;截圖寬度 > 卡片內寬 1.5 倍時一定給 `focus`(放大旁白講到的區域)。英文詞念法怪時用 `{"text","say"}`。
-4. `node <mvk>/scripts/tts.mjs <storyboard> <job>/work/<n>/tts`(預設台灣女聲聲音設計;派工指定男聲或描述時用 `--design`)→ 不合格的句子 `--only` 重生;`render.mjs … --dry-run` 看片長與 `rhythm`:片長 > 59 秒 → repo / 主題刪句重跑,完整文案 → 刪 `<job>` 後 BLOCKED;`rhythm.ok` 為 `false` → 改 storyboard 重跑。
+4. `node <mvk>/scripts/tts.mjs <storyboard> <job>/work/<n>/tts`(預設台灣女聲聲音設計;派工指定男聲或描述時用 `--design`;kit 念法對照表自動套用)→ 不合格的句子 `--only` 重生;`node <mvk>/scripts/asr.mjs <job>/work/<n>/tts` 念錯字檢查:有出入的詞改寫 `say`(先拆開加空格「網 站」,再試同音字)後 `tts.mjs --only` + `asr.mjs --only`,辨識變正確才採用,每詞最多試 3 種;都不對就保留原句(辨識也會聽錯,有出入 ≠ 念錯);`render.mjs … --dry-run` 看片長與 `rhythm`:片長 > 59 秒 → repo / 主題刪句重跑,完整文案 → 刪 `<job>` 後 BLOCKED;`rhythm.ok` 為 `false` → 改 storyboard 重跑。
 5. `render.mjs <job>/work/<n>/storyboard.json <job>/work/<n>/tts/tts.json <job>/work/<n> --deliver <job>/<n> --asset-root …`(60 秒片約 90 秒;可能超過單次 Bash 600 秒時用背景執行)。
 6. AI 配樂(`ace-step-bgm`,同一般流程)、音效 ≤ 3 → `mix.mjs <job>/work/<n>/silent.mp4 <tts.json> <job>/work/<n>/timing.json <job>/<n>/final.mp4 --music … --sfx …`。
 7. `verify.sh <job>/<n>/final.mp4 <job>/<n>/checks --size <模板尺寸> --safe-json <job>/work/<n>/safe.json --boxes <job>/work/<n>/boxes.json --cover <job>/<n>/cover.png --scenes <job>/work/<n>/scenes.json`;`contact.mjs <job>/<n>/final.mp4 <job>/<n>/checks/contact.png --every 1`。Read contact 與每個 `scene-NN-mid/end.png`,逐張描述。
@@ -173,7 +173,7 @@ skills:
 15. `verify.sh --size <模板尺寸>` 結束碼 0、`ok:true`(尺寸 / fps 同模板、h264 yuv420p、aac 48 kHz、faststart、≤ 60 秒、封面為模板尺寸)。
 16. `minBrightness` > 5;`subtitleBoxes` 為 `ok`;`timing.json` 的 `rhythm.maxEmpty` ≤ 2;已 Read contact 與每個場景 mid / end 擷圖並逐張描述,沒有錯字、截圖重點清楚、吉祥物沒被裁。
 17. `subtitles.srt` 第 i 句 = storyboard 依序第 i 句 `text` 去掉 `*` 與分段空白;時間符合時間軸公式(誤差 ≤ 0.05 秒)。
-18. 每個 TTS 檔長度 > 0.5 秒且 max_volume > −30 dB(`tts.json` 的值);`script.md` 記錄聲音設定、seed、重生次數、念法改寫。
+18. 每個 TTS 檔長度 > 0.5 秒且 max_volume > −30 dB(`tts.json` 的值);`script.md` 記錄聲音設定、seed、重生次數、念法改寫。`asr.json` 存在且句數 = `tts.json`;每個為了念錯字改寫的 `say` 都附改寫前後的辨識結果(改寫前列出、改寫後正確);最終仍有出入的詞列在回報「辨識有出入的詞(請人聽)」,附句號與辨識結果。
 19. `timing.json` 的 `rhythm.ok` 為 `true`;同一姿勢不連續超過 3 個場景;卡片類型(不含 `title`、`cta`)≥ 4 種;同一圖檔 ≤ 2 個場景。
 20. 有建立 / 修改專案模板時:`check.mjs --template-dir` 結束碼 0;`preview/contact.png` 已 Read;`README.md` 有來源模板、改動、日期。
 
@@ -246,7 +246,7 @@ skills:
   - 有執行旗標時：在 `<job>/work/repo` 內執行 repo 的套件管理器 install / build / start
   - 有授權旗標時:`yt-dlp`
   - ComfyUI:`node <gak>/scripts/comfy.mjs check` / `upload` / `run` / `scrub-check`(`run --out` 只能是 `<job>/work/<n>/ai`);`node <gak>/scripts/audio.mjs process`(`--out` 只能是 `<job>/work/<n>/ai`)/ `check`
-  - template 模式:`node <mvk>/scripts/*.mjs`(`check`、`tts`、`render`、`mix`、`frame`、`contact`;`frame` 輸出只能在 `<job>/work/<n>/`);派工要求建立 / 修改專案模板時另可用 `cp -R <預設模板> <out>/_templates/<名稱>`、`mkdir -p <out>/_templates/<名稱>/…`,`comfy.mjs run --out <out>/_templates/<名稱>/assets/mascot`
+  - template 模式:`node <mvk>/scripts/*.mjs`(`check`、`tts`、`asr`、`render`、`mix`、`frame`、`contact`;`frame` 輸出只能在 `<job>/work/<n>/`);派工要求建立 / 修改專案模板時另可用 `cp -R <預設模板> <out>/_templates/<名稱>`、`mkdir -p <out>/_templates/<名稱>/…`,`comfy.mjs run --out <out>/_templates/<名稱>/assets/mascot`
   - 檢查 AI 影片格:`ffmpeg -y [-loglevel error] -ss <秒> -i <job>/work/<n>/ai/<clip>.mp4 -frames:v 1 <job>/work/<n>/ai/<名稱>.jpg`(只用這個形式)
 - 不上傳、不安裝(`brew`、`pip`、`npm -g`、模型下載)、不用 `sudo`、不用付費或需要金鑰的服務。
 - 沒有執行旗標時，不執行 repo 的任何程式碼。

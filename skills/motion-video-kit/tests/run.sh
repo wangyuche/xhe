@@ -164,10 +164,49 @@ o="$(COMFYUI_URL="http://127.0.0.1:$PORT" HOME="$T/fh" GAK_CACHE_DIR="$T/fh/cach
 [ $rc -eq 0 ] && grep -q '"voice": "Vivian"' tp/raw/workflows/001-try0.json && grep -q 'Shared Runtime' tp/raw/workflows/001-try0.json && ok "tts.mjs --preset Vivian:走 CustomVoice 骨架(Shared Runtime)" || bad "tts.mjs --preset" "rc=$rc $o"
 e="$(node "$S/tts.mjs" tts-sb.json tx --design x --preset Vivian 2>&1)"; [ $? -eq 2 ] && ok "tts.mjs:--design 與 --preset 同時給 → 結束碼 2" || bad "tts.mjs 參數衝突" "$e"
 o="$(COMFYUI_URL="http://127.0.0.1:1" HOME="$T/fh" GAK_CACHE_DIR="$T/fh/c2" node "$S/tts.mjs" tts-sb.json tz 2>&1)"; [ $? -eq 5 ] && ok "tts.mjs:ComfyUI 連不上 → 結束碼 5" || bad "tts.mjs 連不上" "$o"
+# 10b. 念法對照表:kit 的 pronunciation.json 自動套用(字幕不變)、--lexicon 專案覆蓋、--no-lexicon
+cat > lex-sb.json <<'EOF2'
+{"scenes":[{"headline":[["測試",""]],"lines":["例如 *一個網站*",{"text":"再一個網站","say":"再一個網站喔"}]}]}
+EOF2
+echo '{"words":{"網站":"往站"}}' > proj-lex.json
+CF() { COMFYUI_URL="http://127.0.0.1:$PORT" HOME="$T/fh" GAK_CACHE_DIR="$T/fh/cache" node "$S/tts.mjs" "$@"; }
+o="$(CF lex-sb.json tl 2>/dev/null)"; rc=$?
+[ $rc -eq 0 ] && grep -q '網 站' tl/raw/workflows/001-try0.json && grep -q '網 站喔' tl/raw/workflows/002-try0.json \
+  && node -e 'const a=JSON.parse(process.argv[1]);process.exit(a[0].text==="例如一個網站"&&a[0].spoken==="例如一個網 站"&&a[1].spoken==="再一個網 站喔"?0:1)' "$o" \
+  && ok "tts.mjs:套用 kit pronunciation.json(網站 → 網 站,text 與 say 都套,字幕 text 不變,tts.json 記 spoken)" || bad "tts.mjs 念法對照表" "rc=$rc $o"
+o="$(CF lex-sb.json tl2 --lexicon proj-lex.json 2>/dev/null)"; [ $? -eq 0 ] && grep -q '往站' tl2/raw/workflows/001-try0.json && ok "tts.mjs --lexicon:專案對照表覆蓋 kit 的同一個詞" || bad "tts.mjs --lexicon" "$o"
+o="$(CF lex-sb.json tl3 --no-lexicon 2>/dev/null)"; [ $? -eq 0 ] && ! grep -q '網 站' tl3/raw/workflows/001-try0.json && grep -q '網站' tl3/raw/workflows/001-try0.json && ok "tts.mjs --no-lexicon:不套對照表" || bad "tts.mjs --no-lexicon" "$o"
+echo '{"words":{"網站":""}}' > bad-lex.json
+e="$(CF lex-sb.json tl4 --lexicon bad-lex.json 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '網站' && ok "tts.mjs:對照表的值是空字串 → 結束碼 2 並指出詞" || bad "tts.mjs 壞對照表" "$e"
+node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).words["網站"]==="網 站"||process.exit(1)' "$KIT/pronunciation.json" && ok "kit pronunciation.json 格式正確(含 2026-11-25 使用者回報的「網站」)" || bad "kit pronunciation.json"
 kill "$FPID" 2>/dev/null; wait "$FPID" 2>/dev/null; FPID=""
 if say -v '?' 2>/dev/null | grep -q '^Meijia '; then
   o="$(node "$S/tts.mjs" tts-sb.json ts --engine say 2>/dev/null)"; [ $? -eq 0 ] && node -e 'const a=JSON.parse(process.argv[1]);process.exit(a.length===3&&a.every(x=>x.ok&&x.voice==="Meijia"&&x.duration>0.5)?0:1)' "$o" && ok "tts.mjs --engine say(Meijia)" || bad "tts.mjs say" "$o"
 else skip "tts.mjs --engine say(沒有 Meijia 聲音)"; fi
+
+# 10c. asr.mjs:比對邏輯(不需模型)+ 實際辨識(需 whisper-cli、模型、Meijia)
+node --input-type=module -e '
+import { asrDiff } from "'"$S"'/_lib.mjs";
+const eq=(x,y)=>JSON.stringify(x)===JSON.stringify(y);
+const c=[["選要重做什麼例如一個網站","選要重做什麼?例如一個獎斬。",[{expected:"網站",heard:"獎斬"}]],
+ ["問它會傳什麼內建引擎","問他會傳什麼?內建引擎",[]],["開源工具叫Craft Anything","開源工具叫CraftAnything,",[]],
+ ["純 Rust MIT或Apache雙授權","純REST MIT或APACH雙試拳",[{expected:"rust",heard:"rest"},{expected:"apache",heard:"apach"},{expected:"授權",heard:"試拳"}]],
+ ["還能下載Ghidra反編譯","還能謝罪Gidre反編譯",[{expected:"下載",heard:"謝罪"},{expected:"ghidra",heard:"gidre"}]],["進階工作台","進階工作臺",[]]];
+const bad=c.filter(([e,h,d])=>!eq(asrDiff(e,h).diffs,d));if(bad.length){console.log(JSON.stringify(bad.map(([e,h])=>asrDiff(e,h))));process.exit(1)}' \
+  && ok "asrDiff:去標點、臺/台與它/他視為相同、英數字詞整個列出(Rust → rest)、網站 → 獎斬 被抓出" || bad "asrDiff"
+mkdir -p ta && echo '[{"i":1,"text":"x","file":"001.wav","duration":1}]' > ta/tts.json
+e="$(node "$S/asr.mjs" ta --model "$T/nope.bin" 2>&1)"; [ $? -eq 3 ] && ok "asr.mjs:缺模型檔或 whisper-cli → 結束碼 3" || bad "asr.mjs 缺模型" "$e"
+WM="${SHORT_VIDEO_WHISPER_MODEL:-$HOME/.cache/whisper/ggml-large-v3-turbo.bin}"
+if command -v whisper-cli >/dev/null 2>&1 && [ -s "$WM" ] && say -v '?' 2>/dev/null | grep -q '^Meijia '; then
+  cat > asr-sb.json <<'EOF2'
+{"scenes":[{"headline":[["測試",""]],"lines":["今天天氣很好",{"text":"這是一個網站","say":"這是一個獎斬"}]}]}
+EOF2
+  node "$S/tts.mjs" asr-sb.json tw --engine say --no-lexicon >/dev/null 2>&1
+  o="$(node "$S/asr.mjs" tw 2>/dev/null)"; rc=$?
+  [ $rc -eq 0 ] && [ -f tw/asr.json ] && node -e 'const a=JSON.parse(process.argv[1]);process.exit(a.length===2&&a[0].diffs.length===0&&a[1].diffs.some(d=>d.expected.includes("網站"))?0:1)' "$o" \
+    && ok "asr.mjs:念對的句子沒有出入;念成「獎斬」的句子列出「網站」(寫 asr.json)" || bad "asr.mjs 實際辨識" "rc=$rc $o"
+  o="$(node "$S/asr.mjs" tw --only 2 2>/dev/null)"; [ $? -eq 0 ] && node -e 'process.exit(JSON.parse(process.argv[1]).length===2?0:1)' "$o" && ok "asr.mjs --only 2:只重測第 2 句,其他沿用" || bad "asr.mjs --only" "$o"
+else skip "asr.mjs 實際辨識(缺 whisper-cli、模型 $WM 或 Meijia)"; fi
 
 # 11. 60 秒片的渲染時間(印出,供估算)+ 成品驗證
 mkfix long60.json 'const s=b.scenes.map(x=>JSON.parse(JSON.stringify(x)));b.scenes=[...s,...s.slice(1)]'
