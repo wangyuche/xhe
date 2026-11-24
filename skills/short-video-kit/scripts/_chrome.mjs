@@ -1,7 +1,7 @@
 // 共用:啟動本機 Google Chrome headless 並用 CDP 控制(只用 Node 內建 fetch / WebSocket)。
 // 每次使用自己的設定檔目錄(放在 SHORT_VIDEO_KIT_TMP 底下),await close() 時刪除。
 // Chrome 會開子程序(網路服務等),只殺主程序時子程序會在資料夾刪掉後再寫回檔案(實測留下 Default/Reporting and NEL-journal),
-// 所以關閉時連同所有子孫程序一起殺(pgrep -P 逐層找)、等主程序結束後再刪,最後重試刪除。
+// 所以關閉時用設定檔路徑找出所有 Chrome 程序一起殺(pgrep -f --user-data-dir=…)、等它們都消失後再刪,最後重試刪除。
 // Chrome 留在 node 的程序群組裡:外層對整個群組送 SIGKILL(例如 Bash 工具逾時)時會一起被殺。
 // 收到 SIGINT / SIGTERM / SIGHUP 時收掉還開著的 Chrome 再結束(模組層級只註冊一次,關閉的實例會移出名單)。
 import { spawn, spawnSync } from 'node:child_process';
@@ -12,27 +12,24 @@ import { join } from 'node:path';
 export const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 export const KIT_TMP = (process.env.SHORT_VIDEO_KIT_TMP || join(process.env.TMPDIR || tmpdir(), 'short-video-kit')).replace(/\/$/, '');
 
-// 主程序與所有子孫程序的 PID(子孫先找,避免主程序先死後子程序被過繼找不到)
-function processTree(pid) {
-  const out = []; const queue = [pid];
-  while (queue.length) {
-    const p = queue.shift();
-    const r = spawnSync('pgrep', ['-P', String(p)], { encoding: 'utf8' });
-    for (const c of (r.stdout || '').split('\n').map(Number).filter(Boolean)) { out.push(c); queue.push(c); }
-  }
-  return [pid, ...out];
+// 用這次的設定檔路徑找出所有 Chrome 程序(主程序與子程序;主程序先死、子程序被過繼時也找得到)
+function profilePids(profile) {
+  const r = spawnSync('pgrep', ['-f', '--', `--user-data-dir=${profile}`], { encoding: 'utf8' });
+  return (r.stdout || '').split('\n').map(Number).filter(n => n && n !== process.pid);
 }
-const live = new Set(); // 還開著的 { chrome, profile }
-function killNow(x) {
-  if (x.chrome.exitCode === null && x.chrome.signalCode === null) {
-    for (const p of processTree(x.chrome.pid).reverse()) { try { process.kill(p, 'SIGKILL'); } catch {} }
-  }
+function killProfile(profile) { for (const p of profilePids(profile)) { try { process.kill(p, 'SIGKILL'); } catch {} } }
+// 同步版收尾(訊號處理用,不能等 async):殺 → 等程序都消失(最多 3 秒)→ 刪設定檔,最後再刪一次
+function cleanupSync(profile) {
+  killProfile(profile);
+  for (let i = 0; i < 15 && profilePids(profile).length; i++) { spawnSync('sleep', ['0.2']); killProfile(profile); }
+  for (let i = 0; i < 3; i++) { try { rmSync(profile, { recursive: true, force: true }); } catch {} spawnSync('sleep', ['0.2']); if (!existsSync(profile)) break; }
 }
+const live = new Set(); // 還開著的設定檔路徑
 let signalsHooked = false;
 function hookSignals() {
   if (signalsHooked) return; signalsHooked = true;
   for (const sg of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sg, () => {
-    for (const x of live) { killNow(x); try { rmSync(x.profile, { recursive: true, force: true }); } catch {} }
+    for (const profile of live) cleanupSync(profile);
     process.exit({ SIGINT: 130, SIGHUP: 129 }[sg] ?? 143);
   });
 }
@@ -48,22 +45,22 @@ export async function launchChrome() {
     '--disable-component-update', '--disable-sync', '--metrics-recording-only',
     '--font-render-hinting=none', 'about:blank',
   ], { stdio: 'ignore' });
-  const inst = { chrome, profile };
-  live.add(inst); hookSignals();
+  live.add(profile); hookSignals();
 
   let ws;
   const exited = new Promise(r => { if (chrome.exitCode !== null || chrome.signalCode !== null) r(); else chrome.once('exit', r); });
   let closing = null;
   const close = () => closing ??= (async () => {
     try { ws?.close(); } catch {}
-    killNow(inst);
+    killProfile(profile);
     await Promise.race([exited, new Promise(r => setTimeout(r, 3000))]);
+    for (let i = 0; i < 15 && profilePids(profile).length; i++) { await new Promise(r => setTimeout(r, 200)); killProfile(profile); }
     for (let i = 0; i < 3; i++) {
       try { rmSync(profile, { recursive: true, force: true }); } catch {}
       await new Promise(r => setTimeout(r, 200));
       if (!existsSync(profile)) break;
     }
-    live.delete(inst);
+    live.delete(profile);
   })();
   try {
     const portFile = join(profile, 'DevToolsActivePort');

@@ -121,7 +121,7 @@ ComfyUI 的連線、骨架、上傳、下載都用 game-art-kit 的 `comfy.mjs`(
 |---|---|---|---|
 | 插圖 / 背景 | `qwen-t2i` | 928×1664(9:16),Lightning 4 步 | 圖片鏡頭 + `motion`(或 `fill`);卡片的 `image`(`render.mjs --asset-root <ai 目錄>`) |
 | 同一角色多鏡頭 | `qwen-edit-1ref` | 第一張當參考 | 同上 |
-| 動態鏡頭 | `ltx23-i2v`(優先)/ `wan22-i2v` | 704×1280、121 格 ≈ 5 秒;起始格 = 上面的插圖 | `frames.sh --frames <length>` → 影片鏡頭 + `"fit":"crop"` |
+| 動態鏡頭 | `ltx23-i2v`(優先)/ `wan22-i2v` | 704×1280;LTX 上限 121 格(≈ 5 秒)、Wan 上限 97 格(≈ 4 秒,骨架強制);起始格 = 上面的插圖 | `frames.sh --frames <length>` → 影片鏡頭 + `"fit":"crop"` |
 | 配樂 | `ace-step-bgm` | `lyrics` `[instrumental]`、seconds = 片長 + 2 | `music`(volume 0.2) |
 | 音效 | `stable-audio-sfx` | 先 `audio.mjs process --type sfx` | 鏡頭的 `sfx` |
 

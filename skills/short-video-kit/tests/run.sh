@@ -224,15 +224,18 @@ vol() { ffmpeg -hide_banner -nostats -i "$1" -ss "$2" -t "$3" -af volumedetect -
 node -e 'process.exit(Number(process.argv[1])>-30?0:1)' -- "$(vol job/1/ai/final.mp4 0 0.3)" && ok "sfx 在鏡頭開始(旁白前 0.3 秒有聲音)" || bad "sfx 沒混進去" "$(vol job/1/ai/final.mp4 0 0.3)"
 
 # 7d. Chrome 設定檔不殘留:正常結束與被 SIGTERM 中止都要刪掉 chrome-* 並殺掉 Chrome(子程序會寫回 Reporting and NEL-journal)
-chromes() { pgrep -f -- "--user-data-dir=$SHORT_VIDEO_KIT_TMP/chrome-" | wc -l | tr -d ' '; }
+# $TMPDIR 結尾有 / 時路徑會有 //,Chrome 參數用的是正規化後的路徑:用資料夾名稱比對
+chromes() { pgrep -f -- "--user-data-dir=.*/$(basename "$SHORT_VIDEO_KIT_TMP")/chrome-" | wc -l | tr -d ' '; }
 left() { find "$SHORT_VIDEO_KIT_TMP" -maxdepth 1 -name 'chrome-*' | wc -l | tr -d ' '; }
 sleep 1
 [ "$(left)" = 0 ] && [ "$(chromes)" = 0 ] && ok "前面各項跑完後沒有殘留 chrome-* 設定檔與 Chrome 程序" || bad "Chrome 殘留" "dirs=$(left) procs=$(chromes) $(find "$SHORT_VIDEO_KIT_TMP" | head -5 | tr '\n' ' ')"
-node -e 'const c=[];for(let i=0;i<400;i++)c.push({type:"subtitle",file:`s${i}.png`,text:`第 ${i} 句字幕測試`});require("fs").writeFileSync("many.json",JSON.stringify({cards:c}))'
+node -e 'const c=[];for(let i=0;i<1500;i++)c.push({type:"subtitle",file:`s${i}.png`,text:`第 ${i} 句字幕測試`});require("fs").writeFileSync("many.json",JSON.stringify({cards:c}))'
 mkdir -p rk; node "$S/render.mjs" many.json rk >/dev/null 2>&1 & RP=$!
-for i in $(seq 1 50); do [ "$(chromes)" != 0 ] && break; sleep 0.1; done
+found=0; for i in $(seq 1 100); do [ "$(chromes)" != 0 ] && found=1 && break; sleep 0.1; done
 sleep 0.3; kill -TERM $RP 2>/dev/null; wait $RP; rc=$?; sleep 1
-[ $rc -eq 143 ] && [ "$(left)" = 0 ] && [ "$(chromes)" = 0 ] && ok "render.mjs 被 SIGTERM 中止 → 結束碼 143、Chrome 與設定檔都清掉" || bad "SIGTERM 收尾" "rc=$rc dirs=$(left) procs=$(chromes)"
+if [ $found = 1 ] && [ $rc -eq 143 ]; then
+  [ "$(left)" = 0 ] && [ "$(chromes)" = 0 ] && ok "render.mjs 被 SIGTERM 中止 → 結束碼 143、Chrome 與設定檔都清掉" || bad "SIGTERM 收尾" "dirs=$(left) procs=$(chromes)"
+else bad "SIGTERM 收尾:沒有在 render 執行中送到訊號(found=$found rc=$rc),測試無法判定" ""; fi
 
 # 8. compose.mjs 原聲精簡(cut 用 silence.sh 輸出)+ 拆句比例
 mkdir -p job/2
