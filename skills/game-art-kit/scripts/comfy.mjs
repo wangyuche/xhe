@@ -166,8 +166,10 @@ async function check() {
     // 影片:Wan 2.2 TI2V 5B(文生 / 圖生影片同一個模型),text encoder umt5,VAE 用 2.2 專用的
     wan_ti2v_unet: pick(dm, /wan2\.?2.*ti2v/), wan_clip: pick(te, /umt5/), wan_vae: pick(vae, /wan2\.?2.?vae/),
     // LTX-2.3:checkpoint 內含 VAE 與音訊 VAE;文字編碼用 Gemma 3 12B;8 步蒸餾 LoRA
-    ltx_ckpt: pick(models.checkpoints, /ltx.?2\.?3(?!.*distill)/), ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: pick(lora, /ltx.?2\.?3.*distill/),
+    // dev 版配蒸餾 LoRA;主機只有已蒸餾的 checkpoint 時用它、LoRA 填 none(骨架會拿掉 LoRA 節點)
+    ltx_ckpt: pick(models.checkpoints, /ltx.?2\.?3(?!.*distill)/) ?? pick(models.checkpoints, /ltx.?2\.?3.*distill/), ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: null,
   };
+  d.ltx_distill_lora = !d.ltx_ckpt ? null : /distill/i.test(d.ltx_ckpt) ? 'none' : pick(lora, /ltx.?2\.?3.*distill/);
   // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
   // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
   d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
@@ -509,6 +511,12 @@ async function run() {
       }
       if (STOPPING) await halt();
       mkdirSync(join(out, 'workflows'), { recursive: true });
+      // 同名重跑時先刪掉上一輪的 <name>-<數字>.<副檔名>(影片逐格輸出:格數變少時,舊的多餘影格會被 frames.sh 一起組進去)
+      if (existsSync(out)) {
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const old = new RegExp(`^${esc}-\\d+\\.[a-z0-9]+$`, 'i');
+        for (const e of readdirSync(out)) if (old.test(e)) rmSync(join(out, e), { force: true });
+      }
       for (const f of files) { renameOrCopy(join(stage, f.fname), join(out, f.fname)); f.file = join(out, f.fname); delete f.fname; }
     } finally {
       if (!STOPPING) { rmSync(stage, { recursive: true, force: true }); stage = null; }

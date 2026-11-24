@@ -103,8 +103,8 @@ skills:
       1. 先用第 3 步的靜態圖寫 timeline(每個鏡頭都是 `{"image":…,"motion":…}`),`compose.mjs --dry-run` 取得每個鏡頭長度 D = end − start(最後一個鏡頭含結尾 0.6 秒)。
       2. 只從 D ≤ 5.0 秒的鏡頭挑 1–3 個最重要的(鉤子優先)。D 較長又必須動態的:把那句旁白拆成兩句,重跑 tts 與 dry-run,後半句用同一張靜態圖 + `motion`。
       3. 生成(起始格 = 該鏡頭的靜態圖,先 `comfy.mjs upload`):
-         - `ltx23-i2v`(優先):704×1280,格數 = 8k+1 且 ≥ D × 24 + 1(上限 121),`run` 加 `--queue-timeout 120 --download-timeout 120`(121 張 PNG 約 140 MB)。
-         - `wan22-i2v`(`ltx23-i2v` 為 `false` 時):格數 = 4k+1 且 ≥ D × 24 + 1(上限 121),加 `--timeout 400 --queue-timeout 20`。
+         - `ltx23-i2v`(優先):704×1280,格數 = 8k+1 且 ≥ D × 24 + 1(上限 121),`run` 加 `--queue-timeout 120 --download-timeout 90`(121 張 PNG 約 140 MB)。
+         - `wan22-i2v`(`ltx23-i2v` 為 `false` 時):格數 = 4k+1 且 ≥ D × 24 + 1(上限 121),加 `--timeout 380 --queue-timeout 10`。
          - 提示詞用英文,寫主體動作與運鏡(例如 `steam rising, slow camera push in`),加上風格基底。
       4. `bash <kit>/scripts/frames.sh <ai> clip-<k> <ai>/clip-<k>.mp4`,timeline 的這個鏡頭改成 `{"video":"…/clip-<k>.mp4","fit":"crop",…}`。
       5. 用 `ffmpeg -y -ss <秒> -i <ai>/clip-<k>.mp4 -frames:v 1 <ai>/clip-<k>-<首|中|末>.jpg` 各抽一格(秒數 0、長度一半、長度 − 0.1),Read 三張:有任何文字或類文字圖樣(LTX 常冒出亂碼招牌)、主體變形、場景跳掉 → 換 seed 用新名稱(`clip-<k>-r2`)重出。重出 2 次仍不合格、生成失敗或逾時 → 該鏡頭改回靜態圖 + `motion`,回報寫明。
