@@ -59,7 +59,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 ## workflow 骨架(`workflows/`)
 
-只放節點結構;`{{key}}` 由 `--set` 填。只有 `_meta.numeric` 列的參數會轉成數字(seed 不可超過 2^53−1),其他(提示詞、檔名)一律是字串。缺參數或多給參數都會結束碼 2(例如 Flux 骨架沒有 `negative`,不能給)。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
+只放節點結構;`{{key}}` 由 `--set` 填。只有 `_meta.numeric` 列的參數會轉成數字(`_meta.max` 列了上限的參數超過就結束碼 2,例如 `wan22-i2v` 的 `length` ≤ 97)(seed 不可超過 2^53−1),其他(提示詞、檔名)一律是字串。缺參數或多給參數都會結束碼 2(例如 Flux 骨架沒有 `negative`,不能給)。每個檔的 `_meta.params` 列出所有參數與說明。`lora=none` 會拿掉 LoRA 節點。
 
 | 骨架 | 用途 | 實測參數(2026-11,秒數依硬體而異) |
 |---|---|---|

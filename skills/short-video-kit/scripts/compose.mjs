@@ -98,7 +98,7 @@ function motionChain(inLabel, outLabel, motion, frames) {
 const sfxList = []; // {path, volume, at}
 function takeSfx(s, j, at) {
   if (s.sfx === undefined) return;
-  const p = s.sfx?.path; const v = Number(s.sfx?.volume ?? 0.8);
+  const p = s.sfx?.path; const raw = s.sfx?.volume; const v = raw === undefined ? 0.8 : (typeof raw === 'number' ? raw : NaN);
   if (typeof p !== 'string' || !(v >= 0 && v <= 2)) fail(`scenes[${j}].sfx 要是 {"path":…,"volume":0~2}`, 2);
   if (!existsSync(P(p))) fail(`找不到音效:${p}`, 2);
   if (v === 0) return; // 0 = 靜音,保留欄位但不混

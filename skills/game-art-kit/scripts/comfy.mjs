@@ -274,6 +274,9 @@ function fill(skel, sets) {
     const x = Number(vals[k]);
     if (!/^-?\d+(\.\d+)?$/.test(vals[k]) || !Number.isFinite(x)) die(`${k} 必須是數字:${vals[k]}`, 2);
     if (Number.isInteger(x) && !Number.isSafeInteger(x)) die(`${k} 超過 ${Number.MAX_SAFE_INTEGER},精度會跑掉;seed 請用較小的整數`, 2);
+    // _meta.max:骨架宣告的上限(例如 wan22-i2v 的 length ≤ 97,超過會逼近時限)
+    const mx = _meta?.max?.[k];
+    if (mx !== undefined && x > mx) die(`${k} = ${x} 超過這個骨架的上限 ${mx}(見骨架 _meta.params 的說明)`, 2);
   }
   const missing = new Set(), used = new Set();
   const walk = (v) => {
