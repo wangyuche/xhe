@@ -14,6 +14,8 @@
 #   bot.sh jobs <pipeline id>               列出 pipeline 的 job(id、stage、名稱、狀態)
 #   bot.sh log <job id> [行數]              印 job log 的最後幾行(預設 200,最多 5000)
 #   bot.sh retry <pipeline id>              重跑 pipeline 裡失敗 / 取消的 job
+#   bot.sh rebase <MR iid>                  請 GitLab 把 MR 的來源分支 rebase 到目標分支（同網頁上的 Rebase 按鈕；
+#                                           本機不 force-push），等到完成後印出新的 head SHA（要重新 review / 等 CI）
 # 多專案:主機與專案路徑一律從 origin 解析(https://host/group/sub/proj.git 或 git@host:group/proj.git),
 #   token 在鑰匙圈:service=gitlab-bot、account=<主機>。同一主機所有專案共用一筆。
 #   測試用環境變數(只接受本機,避免 token 被送到別處):
@@ -409,6 +411,24 @@ case $cmd in
   retry)
     [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh retry <pipeline id>"
     api POST "/projects/$PID_ENC/pipelines/$1/retry" | jq -r '"pipeline #\(.id) \(.status)"' ;;
+  rebase)
+    [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh rebase <MR iid>"
+    iid=$1
+    m=$(api GET "/projects/$PID_ENC/merge_requests/$iid") || die "查不到 MR !$iid"
+    [[ $(jq -r .state <<<"$m") == opened ]] || die "MR !$iid 不是 open"
+    before=$(jq -r .sha <<<"$m")
+    api PUT "/projects/$PID_ENC/merge_requests/$iid/rebase" '{}' >/dev/null || die "GitLab 拒絕 rebase"
+    for _ in $(seq 1 40); do
+      m=$(api GET "/projects/$PID_ENC/merge_requests/$iid?include_rebase_in_progress=true")
+      if [[ $(jq -r '.rebase_in_progress // false' <<<"$m") == false ]]; then
+        err=$(jq -r '.merge_error // empty' <<<"$m")
+        [[ -z $err ]] || die "rebase 失敗:$err"
+        echo "rebased: $before -> $(jq -r .sha <<<"$m")"
+        exit 0
+      fi
+      sleep 3
+    done
+    die "rebase 2 分鐘內沒有完成" ;;
   *)
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
+    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
 esac

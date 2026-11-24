@@ -56,6 +56,7 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
    - 已知限制:最後一次確認到送出合併之間(約 1 秒)若 CI 狀態改變不會發現;合併後目標分支的 pipeline 不在檢查範圍。
    - CI 失敗時看原因:`bash $BOT jobs <pipeline id>`(job 與狀態)、`bash $BOT log <job id> [行數]`(log 最後幾行,去色碼)。
      確定是和這次變更無關的不穩定測試才 `bash $BOT retry <pipeline id>` 重跑,並回報是哪個測試、要另外修。
+   - MR 落後目標分支(例如修正已經合進目標分支)時 `bash $BOT rebase <iid>`:由 GitLab 伺服器 rebase(同網頁按鈕,本機不 force-push),印出新的 head SHA;之後要重新 review / 等 CI,合併時用新的 SHA。
 5. 回報:MR 網址、review 結論、merge commit SHA。使用者沒授權自動合併時,停在第 3 步回報即可。
 
 ## 自我測試

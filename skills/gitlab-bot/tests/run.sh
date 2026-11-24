@@ -240,6 +240,11 @@ check "log 行數超過上限拒絕" bash -c "! bash '$BOT' log 501 99999 2>/dev
 : > "$TMP/req.log"
 check "retry 送 POST 並印狀態" bash -c "[ \"\$(bash '$BOT' retry 50)\" = 'pipeline #50 pending' ] && grep -q '^POST .*/pipelines/50/retry' '$TMP/req.log'"
 
+# --- rebase ---
+: > "$TMP/req.log"
+check "rebase 送 PUT、印新的 head SHA" bash -c "out=\$(bash '$BOT' rebase 13); grep -q '^rebased: a\{40\} -> 7\{40\}$' <<<\"\$out\" && grep -q '^PUT .*/merge_requests/13/rebase' '$TMP/req.log'"
+check "rebase 已關閉的 MR 拒絕" bash -c "! bash '$BOT' rebase 8 2>/dev/null"
+
 # --- 反向驗證:在暫存複本上拿掉修正,對應測試必須失敗 ---
 mkdir -p "$TMP/mut"
 mutate() {  # mutate <名稱> <python 取代式:舊字串> <新字串>

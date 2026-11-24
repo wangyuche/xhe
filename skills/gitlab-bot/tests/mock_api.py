@@ -296,6 +296,12 @@ class H(BaseHTTPRequestHandler):
         p, _ = self.route()
         if self.token() is None:
             return self.send(401, {"message": "401 Unauthorized"})
+        if p.startswith(PROJ + "/merge_requests/") and p.endswith("/rebase"):
+            iid = int(p.split("/")[-2])
+            if iid not in MRS or MRS[iid]["state"] != "opened":
+                return self.send(403, {"message": "403 Forbidden"})
+            MRS[iid]["sha"] = "7" * 40  # 伺服器端 rebase 後的新 head
+            return self.send(202, {"rebase_in_progress": True})
         if p.startswith(PROJ + "/merge_requests/") and p.endswith("/merge"):
             iid = int(p.split("/")[-2])
             m = MRS.get(iid)
