@@ -111,6 +111,7 @@ HEAD_PIPELINES = {19: {"id": 30, "sha": S4, "ref": "feat/19", "status": "success
 MR_PIPELINES = {14: [{"id": 7, "status": "running"}], 24: [{"id": 40, "status": "success"}]}
 LATE = {}  # sha → pipelines 查詢次數
 RECHECK = {}  # iid → 帶 recheck 的 GET 次數
+REBASED = {}  # iid → rebase 後 GET 次數
 
 
 def scenario():
@@ -226,6 +227,10 @@ class H(BaseHTTPRequestHandler):
             if iid not in MRS:
                 return self.send(404, {"message": "404 Not found"})
             m = dict(MRS[iid])
+            if iid in REBASED:
+                REBASED[iid] += 1
+                if REBASED[iid] >= 3:
+                    m["sha"] = "7" * 40
             if iid == 17 and RECHECK.get(17, 0) == 0:  # 剛 push 完:第一次查詢是舊 sha、舊衝突狀態,還在 checking
                 RECHECK[17] = 1
                 m.update(sha="0" * 40, has_conflicts=True, detailed_merge_status="checking")
@@ -300,7 +305,7 @@ class H(BaseHTTPRequestHandler):
             iid = int(p.split("/")[-2])
             if iid not in MRS or MRS[iid]["state"] != "opened":
                 return self.send(403, {"message": "403 Forbidden"})
-            MRS[iid]["sha"] = "7" * 40  # 伺服器端 rebase 後的新 head
+            REBASED[iid] = 0  # 伺服器端 rebase：之後的第 3 次 GET 起才看到新 head（模擬 sha 延遲更新）
             return self.send(202, {"rebase_in_progress": True})
         if p.startswith(PROJ + "/merge_requests/") and p.endswith("/merge"):
             iid = int(p.split("/")[-2])

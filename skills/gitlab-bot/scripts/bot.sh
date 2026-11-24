@@ -418,17 +418,22 @@ case $cmd in
     [[ $(jq -r .state <<<"$m") == opened ]] || die "MR !$iid 不是 open"
     before=$(jq -r .sha <<<"$m")
     api PUT "/projects/$PID_ENC/merge_requests/$iid/rebase" '{}' >/dev/null || die "GitLab 拒絕 rebase"
-    for _ in $(seq 1 40); do
+    # rebase_in_progress 變回 false 之後，MR 的 sha 還可能是舊的一陣子（實測 2026-11-25）：等到 sha 變了才算完成；
+    # 一直沒變（本來就在目標分支最新的 commit 上）最多再等 30 秒，印出「unchanged」
+    done_at=0
+    for i in $(seq 1 60); do
       m=$(api GET "/projects/$PID_ENC/merge_requests/$iid?include_rebase_in_progress=true")
       if [[ $(jq -r '.rebase_in_progress // false' <<<"$m") == false ]]; then
         err=$(jq -r '.merge_error // empty' <<<"$m")
         [[ -z $err ]] || die "rebase 失敗:$err"
-        echo "rebased: $before -> $(jq -r .sha <<<"$m")"
-        exit 0
+        after=$(jq -r .sha <<<"$m")
+        if [[ $after != "$before" ]]; then echo "rebased: $before -> $after"; exit 0; fi
+        (( done_at > 0 )) || done_at=$i
+        if (( i - done_at >= 10 )); then echo "unchanged: $before"; exit 0; fi
       fi
       sleep 3
     done
-    die "rebase 2 分鐘內沒有完成" ;;
+    die "rebase 3 分鐘內沒有完成" ;;
   *)
     sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
 esac
