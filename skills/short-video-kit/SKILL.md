@@ -83,7 +83,7 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
   - 圖片鏡頭 `"fill": true`:等比蓋滿再置中裁切(預設是等比縮小加黑邊,給 1080×1920 卡片用)。
   - 圖片鏡頭 `"motion": "in" | "out" | "left" | "right"`:緩慢推近 / 拉遠 / 往左 / 往右平移(幅度 12%,自動蓋滿)。
   - 影片鏡頭 `"fit": "blur" | "crop"`:覆寫整支的 `fit`(AI 影片 704×1280 接近 9:16,用 `crop`)。
-  - 任一鏡頭 `"sfx": {"path": "../work/1/ai/sfx-1.ogg", "volume": 0.8}`:鏡頭開始時播放,不會被背景音樂壓低。
+  - 任一鏡頭 `"sfx": {"path": "../work/1/ai/sfx-1.ogg", "volume": 0.8}`:鏡頭開始時播放,不會被背景音樂壓低。`volume` 是 0–2 的 JSON 數字(省略 = 0.8,0 = 靜音不混;字串會結束碼 2)。
   - 摘要的影片鏡頭有 `hold`:來源不夠長、停在最後一格的秒數(AI 鏡頭要 ≤ 0.5)。
 
 ```json
@@ -121,7 +121,7 @@ ComfyUI 的連線、骨架、上傳、下載都用 game-art-kit 的 `comfy.mjs`(
 |---|---|---|---|
 | 插圖 / 背景 | `qwen-t2i` | 928×1664(9:16),Lightning 4 步 | 圖片鏡頭 + `motion`(或 `fill`);卡片的 `image`(`render.mjs --asset-root <ai 目錄>`) |
 | 同一角色多鏡頭 | `qwen-edit-1ref` | 第一張當參考 | 同上 |
-| 動態鏡頭 | `ltx23-i2v`(優先)/ `wan22-i2v` | 704×1280、121 格 ≈ 5 秒;起始格 = 上面的插圖 | `frames.sh --frames <length>` → 影片鏡頭 + `"fit":"crop"` |
+| 動態鏡頭 | `ltx23-i2v`(優先)/ `wan22-i2v` | 704×1280;LTX 上限 121 格(≈ 5 秒)、Wan 上限 97 格(≈ 4 秒,骨架強制);起始格 = 上面的插圖 | `frames.sh --frames <length>` → 影片鏡頭 + `"fit":"crop"` |
 | 配樂 | `ace-step-bgm` | `lyrics` `[instrumental]`、seconds = 片長 + 2 | `music`(volume 0.2) |
 | 音效 | `stable-audio-sfx` | 先 `audio.mjs process --type sfx` | 鏡頭的 `sfx` |
 

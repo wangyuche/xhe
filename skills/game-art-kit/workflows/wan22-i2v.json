@@ -10,7 +10,7 @@
    "negative": "負向提示詞",
    "width": "寬(32 的倍數;直式用 704)",
    "height": "高(32 的倍數;直式用 1280)",
-   "length": "格數 = 4k+1(24 fps;49 ≈ 2 秒、121 ≈ 5 秒)",
+   "length": "格數 = 4k+1(24 fps;49 ≈ 2 秒、97 ≈ 4 秒),上限 97(121 格冷啟動會逼近時限)",
    "seed": "seed",
    "steps": "steps(20)",
    "cfg": "cfg(5)",
@@ -25,7 +25,10 @@
    "steps",
    "cfg",
    "shift"
-  ]
+  ],
+  "max": {
+   "length": 97
+  }
  },
  "1": {
   "class_type": "UNETLoader",

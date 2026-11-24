@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { launchChrome, guardNetwork, KIT_TMP } from './_chrome.mjs';
+import { launchChrome, guardNetwork, KIT_TMP, cleanupOnSignal } from './_chrome.mjs';
 
 function usage(msg) {
   if (msg) console.error(`錯誤:${msg}`);
@@ -29,6 +29,7 @@ const out = resolve(outArg);
 mkdirSync(dirname(out), { recursive: true });
 mkdirSync(KIT_TMP, { recursive: true });
 const tmp = mkdtempSync(join(KIT_TMP, 'rec-'));
+const unregisterTmp = cleanupOnSignal(tmp); // 被中止時一起刪掉暫存影格
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const result = { out, duration: 0, frames: 0, marks: [], blockedRequests: [], errors: [] };
@@ -114,7 +115,7 @@ try {
 } catch (e) {
   result.errors.push(`record: ${e.message}`);
 } finally {
-  cdp?.close();
+  await cdp?.close();
 }
 
 let failed = result.errors.some(e => e.startsWith('record:'));
@@ -137,6 +138,6 @@ if (!failed) {
   if (ff.status !== 0) { result.errors.push(`record: ffmpeg 失敗 ${ff.stderr.slice(-400)}`); failed = true; }
   else { result.duration = Math.round(total * 1000) / 1000; result.frames = frames.length; }
 }
-rmSync(tmp, { recursive: true, force: true });
+rmSync(tmp, { recursive: true, force: true }); unregisterTmp();
 console.log(JSON.stringify(result));
 process.exit(failed ? 1 : 0);

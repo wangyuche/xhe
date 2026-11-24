@@ -14,7 +14,7 @@
 //            放大後高 > 1240 → 結束碼 6(縮小 region 的高,或拆成兩個鏡頭)。不比 9:16 寬的照 fit 處理。
 //            AI 素材(2026-11-24):圖片鏡頭 fill:true = 等比蓋滿再置中裁切(預設是等比縮小 + 黑邊,給 1080×1920 卡片用);
 //            motion:"in"|"out"|"left"|"right" = 緩慢推近 / 拉遠 / 往左 / 往右平移(自動 fill)。影片鏡頭 fit:"blur"|"crop" 覆寫整支的 fit。
-//            任一鏡頭 sfx:{"path":…,"volume":0.8} = 鏡頭開始時播放的音效(不被背景音樂壓低,也不壓低背景音樂)。
+//            任一鏡頭 sfx:{"path":…,"volume":0.8} = 鏡頭開始時播放的音效(volume 是 0–2 的數字,0 = 靜音)(不被背景音樂壓低,也不壓低背景音樂)。
 //            摘要的影片鏡頭附 hold = 來源不夠長、停在最後一格的秒數。
 //            字幕時間(固定規則):第 1 句 start=0.3;第 i 句 start=第 i−1 句 end+0.25;end=start+duration。
 //            片長 = 最後一句 end + 0.6。鏡頭從它第一句的 start 開始(第一個鏡頭從 0),到下一個鏡頭開始為止。
@@ -98,9 +98,10 @@ function motionChain(inLabel, outLabel, motion, frames) {
 const sfxList = []; // {path, volume, at}
 function takeSfx(s, j, at) {
   if (s.sfx === undefined) return;
-  const p = s.sfx?.path; const v = Number(s.sfx?.volume ?? 0.8);
-  if (typeof p !== 'string' || !(v > 0 && v <= 2)) fail(`scenes[${j}].sfx 要是 {"path":…,"volume":0~2}`, 2);
+  const p = s.sfx?.path; const raw = s.sfx?.volume; const v = raw === undefined ? 0.8 : (typeof raw === 'number' ? raw : NaN);
+  if (typeof p !== 'string' || !(v >= 0 && v <= 2)) fail(`scenes[${j}].sfx 要是 {"path":…,"volume":0~2}`, 2);
   if (!existsSync(P(p))) fail(`找不到音效:${p}`, 2);
+  if (v === 0) return; // 0 = 靜音,保留欄位但不混
   sfxList.push({ path: P(p), volume: v, at });
 }
 

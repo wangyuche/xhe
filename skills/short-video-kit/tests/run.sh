@@ -199,10 +199,14 @@ fs.writeFileSync("job/1/ai.json",mk([{image:"../../ai/img-1.png",motion:"in",sfx
 fs.writeFileSync("job/1/ai-badm.json",mk([{image:"../../ai/img-1.png",motion:"zoom",sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-vmotion.json",mk([{video:"../../ai/clip.mp4",motion:"in",sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-ifit.json",mk([{image:"../../ai/img-1.png",fit:"crop",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-sfxs.json",mk([{image:"../../ai/img-1.png",fill:true,sfx:{path:"../../ai/sfx-1.wav",volume:""},sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-sfx0.json",mk([{image:"../../ai/img-1.png",fill:true,sfx:{path:"../../ai/sfx-1.wav",volume:0},sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-fill.json",mk([{image:"../../ai/img-1.png",fill:true,sentences:[0,1]}],{out:"aif",work:"../work/aif"}));' "$tts"
 node "$S/compose.mjs" job/1/ai-badm.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs motion 不合法 → 結束碼 2" || bad "compose.mjs motion 不合法沒被擋"
 node "$S/compose.mjs" job/1/ai-vmotion.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 影片鏡頭帶 motion → 結束碼 2" || bad "影片鏡頭 motion 沒被擋"
 node "$S/compose.mjs" job/1/ai-ifit.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 圖片鏡頭帶 fit → 結束碼 2" || bad "圖片鏡頭 fit 沒被擋"
+node "$S/compose.mjs" job/1/ai-sfxs.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs sfx volume 空字串 → 結束碼 2(不當成靜音)" || bad "sfx volume 空字串沒被擋"
+o0="$(node "$S/compose.mjs" job/1/ai-sfx0.json --dry-run 2>&1)" && ! echo "$o0" | grep -q '"sfx"' && ok "compose.mjs sfx volume 0 → 接受、不混音" || bad "sfx volume 0" "$o0"
 mkdir -p 'p%d' && cp ai/clip-1.png ai/clip-2.png 'p%d/' && { bash "$S/frames.sh" 'p%d' clip x.mp4 --frames 2 >/dev/null 2>&1; [ $? -eq 2 ]; } && ok "frames.sh 目錄含 % → 結束碼 2" || bad "frames.sh % 目錄沒被擋"
 ca="$(node "$S/compose.mjs" job/1/ai.json)"; rc=$?
 node -e '
@@ -218,6 +222,20 @@ cf="$(node "$S/compose.mjs" job/1/ai-fill.json)" && node -e 'const p=process.arg
   && ok "fill:等比蓋滿,左上角不是黑邊" || bad "fill" "$cf px=$(px job/work/aif/first-frame.png 4 4)"
 vol() { ffmpeg -hide_banner -nostats -i "$1" -ss "$2" -t "$3" -af volumedetect -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB.*/\1/p'; }
 node -e 'process.exit(Number(process.argv[1])>-30?0:1)' -- "$(vol job/1/ai/final.mp4 0 0.3)" && ok "sfx 在鏡頭開始(旁白前 0.3 秒有聲音)" || bad "sfx 沒混進去" "$(vol job/1/ai/final.mp4 0 0.3)"
+
+# 7d. Chrome 設定檔不殘留:正常結束與被 SIGTERM 中止都要刪掉 chrome-* 並殺掉 Chrome(子程序會寫回 Reporting and NEL-journal)
+# $TMPDIR 結尾有 / 時路徑會有 //,Chrome 參數用的是正規化後的路徑:用資料夾名稱比對
+chromes() { pgrep -f -- "--user-data-dir=.*/$(basename "$SHORT_VIDEO_KIT_TMP")/chrome-" | wc -l | tr -d ' '; }
+left() { find "$SHORT_VIDEO_KIT_TMP" -maxdepth 1 -name 'chrome-*' | wc -l | tr -d ' '; }
+sleep 1
+[ "$(left)" = 0 ] && [ "$(chromes)" = 0 ] && ok "前面各項跑完後沒有殘留 chrome-* 設定檔與 Chrome 程序" || bad "Chrome 殘留" "dirs=$(left) procs=$(chromes) $(find "$SHORT_VIDEO_KIT_TMP" | head -5 | tr '\n' ' ')"
+node -e 'const c=[];for(let i=0;i<1500;i++)c.push({type:"subtitle",file:`s${i}.png`,text:`第 ${i} 句字幕測試`});require("fs").writeFileSync("many.json",JSON.stringify({cards:c}))'
+mkdir -p rk; node "$S/render.mjs" many.json rk >/dev/null 2>rk.err & RP=$!
+found=0; for i in $(seq 1 100); do [ "$(chromes)" != 0 ] && found=1 && break; sleep 0.1; done
+sleep 0.3; kill -TERM $RP 2>/dev/null; wait $RP; rc=$?; sleep 1
+if [ $found = 1 ] && [ $rc -eq 143 ]; then
+  [ "$(left)" = 0 ] && [ "$(chromes)" = 0 ] && grep -q "收到 SIGTERM" rk.err && ok "render.mjs 被 SIGTERM 中止 → 結束碼 143、Chrome 與設定檔都清掉" || bad "SIGTERM 收尾" "dirs=$(left) procs=$(chromes) stderr=$(cat rk.err)"
+else bad "SIGTERM 收尾:沒有在 render 執行中送到訊號(found=$found rc=$rc),測試無法判定" ""; fi
 
 # 8. compose.mjs 原聲精簡(cut 用 silence.sh 輸出)+ 拆句比例
 mkdir -p job/2

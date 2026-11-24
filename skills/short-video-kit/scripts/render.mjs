@@ -232,7 +232,7 @@ try {
 } catch (e) {
   console.error(`錯誤:${e.message}`); exitCode = 1;
 } finally {
-  cdp?.close();
+  await cdp?.close();
 }
 console.log(JSON.stringify(result));
 process.exit(exitCode);

@@ -274,6 +274,9 @@ function fill(skel, sets) {
     const x = Number(vals[k]);
     if (!/^-?\d+(\.\d+)?$/.test(vals[k]) || !Number.isFinite(x)) die(`${k} 必須是數字:${vals[k]}`, 2);
     if (Number.isInteger(x) && !Number.isSafeInteger(x)) die(`${k} 超過 ${Number.MAX_SAFE_INTEGER},精度會跑掉;seed 請用較小的整數`, 2);
+    // _meta.max:骨架宣告的上限(例如 wan22-i2v 的 length ≤ 97,超過會逼近時限)
+    const mx = _meta?.max?.[k];
+    if (mx !== undefined && x > mx) die(`${k} = ${x} 超過這個骨架的上限 ${mx}(見骨架 _meta.params 的說明)`, 2);
   }
   const missing = new Set(), used = new Set();
   const walk = (v) => {
@@ -323,6 +326,8 @@ async function run() {
   // 下載所有輸出的總時限;影片骨架逐格輸出(121 張約 140 MB)時加大,並從 --queue-timeout 扣回,合計仍要比 Bash 逾時少 180 秒
   const dlTimeout = Number(flags['download-timeout'] ?? 60);
   if (!Number.isFinite(dlTimeout) || dlTimeout <= 0) die(`--download-timeout 要是正數(秒):${flags['download-timeout']}`, 2);
+  // 三者合計上限 480 秒:再加抓 /object_info 30、偵測 50、收尾 40 = 600 秒(Bash 工具的上限),超過就會在印出結果前被外部中止
+  if (timeout + queueTimeout + dlTimeout > 480) die(`--timeout ${timeout} + --queue-timeout ${queueTimeout} + --download-timeout ${dlTimeout} = ${timeout + queueTimeout + dlTimeout} 秒,超過 480(加上 /object_info、偵測、收尾約 120 秒會超過 Bash 的 600 秒);調小其中一項`, 2);
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);
