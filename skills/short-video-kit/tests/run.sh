@@ -199,10 +199,12 @@ fs.writeFileSync("job/1/ai.json",mk([{image:"../../ai/img-1.png",motion:"in",sfx
 fs.writeFileSync("job/1/ai-badm.json",mk([{image:"../../ai/img-1.png",motion:"zoom",sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-vmotion.json",mk([{video:"../../ai/clip.mp4",motion:"in",sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-ifit.json",mk([{image:"../../ai/img-1.png",fit:"crop",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-sfx0.json",mk([{image:"../../ai/img-1.png",fill:true,sfx:{path:"../../ai/sfx-1.wav",volume:0},sentences:[0,1]}]));
 fs.writeFileSync("job/1/ai-fill.json",mk([{image:"../../ai/img-1.png",fill:true,sentences:[0,1]}],{out:"aif",work:"../work/aif"}));' "$tts"
 node "$S/compose.mjs" job/1/ai-badm.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs motion 不合法 → 結束碼 2" || bad "compose.mjs motion 不合法沒被擋"
 node "$S/compose.mjs" job/1/ai-vmotion.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 影片鏡頭帶 motion → 結束碼 2" || bad "影片鏡頭 motion 沒被擋"
 node "$S/compose.mjs" job/1/ai-ifit.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 圖片鏡頭帶 fit → 結束碼 2" || bad "圖片鏡頭 fit 沒被擋"
+o0="$(node "$S/compose.mjs" job/1/ai-sfx0.json --dry-run 2>&1)" && ! echo "$o0" | grep -q '"sfx"' && ok "compose.mjs sfx volume 0 → 接受、不混音" || bad "sfx volume 0" "$o0"
 mkdir -p 'p%d' && cp ai/clip-1.png ai/clip-2.png 'p%d/' && { bash "$S/frames.sh" 'p%d' clip x.mp4 --frames 2 >/dev/null 2>&1; [ $? -eq 2 ]; } && ok "frames.sh 目錄含 % → 結束碼 2" || bad "frames.sh % 目錄沒被擋"
 ca="$(node "$S/compose.mjs" job/1/ai.json)"; rc=$?
 node -e '

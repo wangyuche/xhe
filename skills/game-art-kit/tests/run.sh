@@ -159,6 +159,8 @@ r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v" --name clip-1 --set ckpt=a
 r="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]')" \
   && [ -s "$W/v/w-3.png" ] && ok "wan22-i2v:送出並逐格下載" || bad "wan22-i2v" "$r"
 e="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w2 --download-timeout 0 --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]' 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'download-timeout 要是正數' && ok "run:--download-timeout 不是正數 → 結束碼 2" || bad "--download-timeout 驗證"
+e="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w3 --timeout 400 --queue-timeout 60 --download-timeout 60 --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]' 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '超過 480' && ok "run:三個時限合計 > 480 秒 → 結束碼 2" || bad "時限合計上限" "$e"
+e="$(C run "$K/workflows/qwen-t2i.json" --out "$W/o" --name lim "${QS[@]}" --set width=64 --set height=64 --timeout 240 --queue-timeout 180 2>&1)"; [ $? -eq 0 ] && ok "run:預設時限(240 + 180 + 60 = 480)仍可執行" || bad "預設時限被擋" "$e"
 P4=$((PORT - 8000))
 FAKE_WIN_PATHS=1 node "$K/tests/fake-comfy.mjs" "$P4" "$W/req4.log" > "$W/fake4.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake4.out" 2>/dev/null && break; sleep 0.1; done

@@ -323,6 +323,8 @@ async function run() {
   // 下載所有輸出的總時限;影片骨架逐格輸出(121 張約 140 MB)時加大,並從 --queue-timeout 扣回,合計仍要比 Bash 逾時少 180 秒
   const dlTimeout = Number(flags['download-timeout'] ?? 60);
   if (!Number.isFinite(dlTimeout) || dlTimeout <= 0) die(`--download-timeout 要是正數(秒):${flags['download-timeout']}`, 2);
+  // 三者合計上限 480 秒:再加抓 /object_info 30、偵測 50、收尾 40 = 600 秒(Bash 工具的上限),超過就會在印出結果前被外部中止
+  if (timeout + queueTimeout + dlTimeout > 480) die(`--timeout ${timeout} + --queue-timeout ${queueTimeout} + --download-timeout ${dlTimeout} = ${timeout + queueTimeout + dlTimeout} 秒,超過 480(加上 /object_info、偵測、收尾約 120 秒會超過 Bash 的 600 秒);調小其中一項`, 2);
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);

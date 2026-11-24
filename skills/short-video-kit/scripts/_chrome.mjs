@@ -1,5 +1,7 @@
 // 共用:啟動本機 Google Chrome headless 並用 CDP 控制(只用 Node 內建 fetch / WebSocket)。
-// 每次使用自己的設定檔目錄(放在 SHORT_VIDEO_KIT_TMP 底下),close() 時刪除。
+// 每次使用自己的設定檔目錄(放在 SHORT_VIDEO_KIT_TMP 底下),await close() 時刪除。
+// Chrome 會開子程序(網路服務等),只殺主程序時子程序會在資料夾刪掉後再寫回檔案(實測留下 Default/Reporting and NEL-journal),
+// 所以用獨立程序群組啟動、殺整個群組、等主程序結束後再刪,最後再刪一次。收到 SIGINT / SIGTERM / SIGHUP 也會收尾。
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,14 +20,25 @@ export async function launchChrome() {
     '--hide-scrollbars', '--mute-audio', '--disable-background-networking',
     '--disable-component-update', '--disable-sync', '--metrics-recording-only',
     '--font-render-hinting=none', 'about:blank',
-  ], { stdio: 'ignore' });
+  ], { stdio: 'ignore', detached: true });
 
   let ws;
-  const close = () => {
+  const exited = new Promise(r => { if (chrome.exitCode !== null || chrome.signalCode !== null) r(); else chrome.once('exit', r); });
+  const killGroup = () => { try { process.kill(-chrome.pid, 'SIGKILL'); } catch { try { chrome.kill('SIGKILL'); } catch {} } };
+  let closing = null;
+  const close = () => closing ??= (async () => {
     try { ws?.close(); } catch {}
-    try { chrome.kill('SIGKILL'); } catch {}
-    try { rmSync(profile, { recursive: true, force: true }); } catch {}
-  };
+    killGroup();
+    await Promise.race([exited, new Promise(r => setTimeout(r, 3000))]);
+    for (let i = 0; i < 3; i++) {
+      try { rmSync(profile, { recursive: true, force: true }); } catch {}
+      await new Promise(r => setTimeout(r, 200));
+      if (!existsSync(profile)) break;
+    }
+  })();
+  // 被中止時:同步殺群組、刪資料夾後結束(訊號處理不能等 async)
+  const onSignal = (sig) => { killGroup(); try { rmSync(profile, { recursive: true, force: true }); } catch {} process.exit({ SIGINT: 130, SIGHUP: 129 }[sig] ?? 143); };
+  for (const sg of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sg, onSignal);
   try {
     const portFile = join(profile, 'DevToolsActivePort');
     let port;
@@ -37,7 +50,7 @@ export async function launchChrome() {
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
     ws = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP WebSocket 連線失敗')); });
-  } catch (e) { close(); throw e; }
+  } catch (e) { await close(); throw e; }
 
   let id = 0; const pending = new Map(); const listeners = [];
   ws.onmessage = (ev) => {

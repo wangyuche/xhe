@@ -27,7 +27,7 @@ node <kit>/scripts/comfy.mjs upload <圖> --prefix <專案>-<角色id>
 #   → {"loadImage":"<prefix>-<雜湊8>.png [temp]"}:放 ComfyUI temp 區(重開即清),workflow 的 ref 參數填 loadImage
 node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --name <檔名> --set key=value ... [--timeout 240] [--queue-timeout 180]
 #   --timeout 只算開始執行後;排隊等待另算(--queue-timeout,預設 180)。預設值已符合下面的規則。兩者相加要比呼叫端(例如 Bash 工具,最長 600 秒)的逾時
-#   少 180 秒以上(送出前要節點旗標:用 `check` 存在 `~/.cache/game-art-kit/` 的快取,1 小時內、而且 workflow 的節點都在快取裡就不另外抓;用 RMBG 的骨架必須先跑過 check;沒有快取時抓 `/object_info` 最多 30 秒(落在 180 秒餘量內),所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 `--download-timeout`(預設 60 秒)、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
+#   少 180 秒以上(`--timeout` + `--queue-timeout` + `--download-timeout` > 480 直接結束碼 2;送出前要節點旗標:用 `check` 存在 `~/.cache/game-art-kit/` 的快取,1 小時內、而且 workflow 的節點都在快取裡就不另外抓;用 RMBG 的骨架必須先跑過 check;沒有快取時抓 `/object_info` 最多 30 秒(落在 180 秒餘量內),所以**先跑 check 再 run**;時限到了之後:偵測最多約 50 秒、下載上限 `--download-timeout`(預設 60 秒)、收尾上限 40 秒),例如 --timeout 240 --queue-timeout 180 配 600 秒;否則會被外部中止而拿不到 timeout 結果。被 Ctrl-C / SIGHUP / SIGTERM 中止時取消自己的工作再結束(130 / 129 / 143)
 #   → <目錄>/<檔名>.png(去背骨架是 RGBA)或 <檔名>.<伺服器給的音訊副檔名>(通常 .flac)、<目錄>/workflows/<檔名>.json(實際送出的參數,不含位址);
 #     印 {"status":"ok","seconds":…,"files":[{file,width,height,channels} 或 {file,kind:"audio",bytes}]}
 #   逾時印 {"status":"timeout","reason":"run|queue|total","seconds":<設定的上限>,"elapsed":<實際秒數>}
@@ -73,7 +73,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 | `qwen-edit-1ref-sprite` | **角色一致的透明 sprite / 動作格**:以角色 ref 生成新姿勢 + 去背 | 同 qwen-edit-1ref + `bg_model` |
 | `stable-audio-sfx` | 音效(Stable Audio 3,本機) | `ckpt` = `defaults.sfx_ckpt`、`clip` = `defaults.sfx_clip`(t5gemma,CLIPLoader type stable_audio);steps 50、cfg 6、dpmpp_3m_sde_gpu / exponential;seconds 比目標長 1 秒(3 秒約 4 秒) |
 | `ltx23-i2v` | **圖生影片(優先)**:第一格 = 參考圖,LTX-2.3 + 8 步蒸餾 LoRA,cfg 1(負向提示詞固定在骨架裡) | 704×1280、`length` = 8k+1(24 fps,121 格 ≈ 5 秒):121 格約 110 秒(含載入模型),49 格約 40 秒。`run` 加 `--queue-timeout 120 --download-timeout 90`(121 張 PNG 約 140 MB;240 + 120 + 抓 /object_info 30 + 偵測 50 + 90 + 收尾 40 = 570 秒 < 600)。`lora` 用 `defaults.ltx_distill_lora`(主機只有已蒸餾的 checkpoint 時是 `none`)。同名重跑時 `run` 只覆寫 `<name>-1..N`,上一輪多出來的格數還在:組影片用 short-video-kit 的 `frames.sh --frames N`(N = 這次的 `length`)只取 1..N。動作與運鏡明顯,但背景偶爾冒出亂碼字,逐格看圖 |
-| `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1、steps 20、cfg 5、shift 8、uni_pc/simple:121 格約 340 秒(`--timeout 360 --queue-timeout 40`,下載維持預設 60 秒:360 + 40 + 30 + 50 + 60 + 40 = 580 秒;主機忙碌排隊超過 40 秒會逾時,改用 LTX 或稍後再試;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
+| `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1,**上限 97 格(≈ 4 秒)**、steps 20、cfg 5、shift 8、uni_pc/simple:97 格約 270 秒,121 格約 340 秒(冷啟動再加載入模型的時間,會逼近時限,所以不用 121 格;`--timeout 360 --queue-timeout 40`,下載維持預設 60 秒:360 + 40 + 30 + 50 + 60 + 40 = 580 秒;主機忙碌排隊超過 40 秒會逾時,改用 LTX 或稍後再試;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
 | `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;另需 `bpm`、`timesignature`(2 / 3 / 4 / 6)、`keyscale`(例如 `C major`);seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
 
 模型檔名用 `check` 的 `defaults` 或 STYLE.md 的生成設定,不要寫死。

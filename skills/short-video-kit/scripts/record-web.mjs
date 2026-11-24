@@ -114,7 +114,7 @@ try {
 } catch (e) {
   result.errors.push(`record: ${e.message}`);
 } finally {
-  cdp?.close();
+  await cdp?.close();
 }
 
 let failed = result.errors.some(e => e.startsWith('record:'));
