@@ -1,6 +1,6 @@
 ---
 name: game-art-kit
-description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:位址解析(本機設定,不進 git)、check(模型、模型家族、可用的角色一致性方法、本機去背、音訊模型)、上傳參考圖到 temp、送 workflow 並輪詢下載圖片與音訊(含逾時、刪 history、不在伺服器留檔、拒絕雲端 API 節點)、workflow 技術骨架(Qwen-Image、Qwen-Image-Edit 1–3 張參考圖、Flux、Flux Kontext、Z-Image、ControlNet canny、同 workflow 去背的透明 sprite、Stable Audio 音效、ACE-Step 配樂、LTX-2.3 / Wan 2.2 圖生影片(逐格輸出))、拼分鏡表、sprite.mjs(純 Node PNG 裁切 / 對齊 / 拼 sheet / 檢查)、audio.mjs(ffmpeg 響度 / 循環 / ogg + m4a / 檢查)、遊戲素材介面 schema(needs / assets)、產出不含位址檢查。game-concept-artist 出圖與做遊戲素材時使用;game-frontend-owner 用 schema 寫素材需求;short-video-maker 生成短影音的 AI 插圖、動態鏡頭、配樂、音效時也使用;任何要用區網 ComfyUI 批次出圖、出影片或出音效的情境也可用。
+description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:位址解析(本機設定,不進 git)、check(模型、模型家族、可用的角色一致性方法、本機去背、音訊模型)、上傳參考圖到 temp、送 workflow 並輪詢下載圖片與音訊(含逾時、刪 history、不在伺服器留檔、拒絕雲端 API 節點)、workflow 技術骨架(Qwen-Image、Qwen-Image-Edit 1–3 張參考圖、Flux、Flux Kontext、Z-Image、ControlNet canny、同 workflow 去背的透明 sprite、Stable Audio 音效、ACE-Step 配樂、Qwen3-TTS 旁白(預設聲音 / 台灣口音聲音設計)、LTX-2.3 / Wan 2.2 圖生影片(逐格輸出))、拼分鏡表、sprite.mjs(純 Node PNG 裁切 / 對齊 / 拼 sheet / 檢查)、audio.mjs(ffmpeg 響度 / 循環 / ogg + m4a / 檢查)、遊戲素材介面 schema(needs / assets)、產出不含位址檢查。game-concept-artist 出圖與做遊戲素材時使用;game-frontend-owner 用 schema 寫素材需求;short-video-maker 生成短影音的 AI 插圖、動態鏡頭、配樂、音效、旁白時也使用;任何要用區網 ComfyUI 批次出圖、出影片或出音效的情境也可用。
 ---
 
 # game-art-kit
@@ -75,6 +75,8 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 | `ltx23-i2v` | **圖生影片(優先)**:第一格 = 參考圖,LTX-2.3 + 8 步蒸餾 LoRA,cfg 1(負向提示詞固定在骨架裡) | 704×1280、`length` = 8k+1(24 fps,121 格 ≈ 5 秒):121 格約 110 秒(含載入模型),49 格約 40 秒。`run` 加 `--queue-timeout 120 --download-timeout 90`(121 張 PNG 約 140 MB;240 + 120 + 抓 /object_info 30 + 偵測 50 + 90 + 收尾 40 = 570 秒 < 600)。`lora` 用 `defaults.ltx_distill_lora`(主機只有已蒸餾的 checkpoint 時是 `none`)。同名重跑時 `run` 只覆寫 `<name>-1..N`,上一輪多出來的格數還在:組影片用 short-video-kit 的 `frames.sh --frames N`(N = 這次的 `length`)只取 1..N。動作與運鏡明顯,但背景偶爾冒出亂碼字,逐格看圖 |
 | `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1,**上限 97 格(≈ 4 秒)**、steps 20、cfg 5、shift 8、uni_pc/simple:97 格約 270 秒,121 格約 340 秒(冷啟動再加載入模型的時間,會逼近時限,所以不用 121 格;`--timeout 360 --queue-timeout 40`,下載維持預設 60 秒:360 + 40 + 30 + 50 + 60 + 40 = 580 秒;主機忙碌排隊超過 40 秒會逾時,改用 LTX 或稍後再試;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
 | `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;另需 `bpm`、`timesignature`(2 / 3 / 4 / 6)、`keyscale`(例如 `C major`);seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
+| `qwen3-tts-design` | **旁白(台灣口音,motion-video-kit `tts.mjs` 預設)**:VoiceDesign 1.7B 依 `design` 描述設計聲音(念 `ref` 參考句)→ Base 1.7B 複製該聲音念 `text`;兩個 engine 都 `⚠️ Shared Runtime` | 同一支片 `design` / `ref` / `dseed` 固定,聲音才一致;`seed` 控制念法。`check`:`workflows_available.qwen3-tts-design` 要主機有 `local:Qwen3-TTS-12Hz-1.7B-VoiceDesign` 與 `-Base` 和 `UnifiedVoiceDesignerNode`。`--timeout 200 --queue-timeout 60` |
+| `qwen3-tts` | 旁白(Qwen3 預設聲音,偏大陸口音):CustomVoice 1.7B,`voice`(Vivian 等)+ `instruct` 語氣指示 | `variant` = `defaults.tts_variant`;`runtime_mode` 固定 `⚠️ Shared Runtime`(2026-11-24 實測 Main Environment 載入失敗,只回 1 秒靜音);seed ≤ 4294967295 |
 
 模型檔名用 `check` 的 `defaults` 或 STYLE.md 的生成設定,不要寫死。
 

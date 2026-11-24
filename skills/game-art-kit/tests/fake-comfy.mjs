@@ -16,10 +16,17 @@ const NODES = ['UNETLoader', 'CLIPLoader', 'DualCLIPLoader', 'VAELoader', 'LoraL
   'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio', 'SaveAudio', 'TextEncodeAceStepAudio1.5', 'EmptyAceStep1.5LatentAudio', 'ConditioningZeroOut', 'BriaRemoveImageBackground', 'FancyApiNode', 'CheckpointSave',
   // 影片(Wan 2.2 TI2V、LTX-2.3)
   'ModelSamplingSD3', 'Wan22ImageToVideoLatent', 'LTXAVTextEncoderLoader', 'LTXVConditioning', 'LTXVPreprocess', 'EmptyLTXVLatentVideo', 'LTXVImgToVideoInplace',
-  'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent', 'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled'];
+  'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent', 'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled',
+  // 旁白(TTS Audio Suite 的 Qwen3-TTS)
+  'Qwen3TTSEngineNode', 'UnifiedTTSTextNode', 'UnifiedVoiceDesignerNode'];
 const OUTPUT_NODES = new Set(['PreviewImage', 'PreviewAudio', 'SaveImage', 'SaveAudio', 'CheckpointSave']);
 // 雲端 API 節點(object_info 帶 api_node: true)
 const API_NODES = new Set(['BriaRemoveImageBackground', 'FancyApiNode']);
+// 環境變數 FAKE_NO_TTS=1:Qwen3-TTS 只有線上下載的選項(沒有 local: 模型);FAKE_TTS_MAIN_ONLY=1:沒有 Shared Runtime
+// 旁白:文字含 SILENT → 回 1 秒靜音(測重生);其他回 1 秒 440 Hz
+const NO_TTS = process.env.FAKE_NO_TTS === '1', TTS_MAIN_ONLY = process.env.FAKE_TTS_MAIN_ONLY === '1';
+const QWEN3_INPUT = { required: { model_variant: [['TTS - Base 1.7B (Voice Clone)', 'TTS - CustomVoice 1.7B (Presets + Instruction)', ...(NO_TTS ? [] : ['local:Qwen3-TTS-12Hz-1.7B-Base', 'local:Qwen3-TTS-12Hz-1.7B-CustomVoice', 'local:Qwen3-TTS-12Hz-1.7B-VoiceDesign'])]] },
+  optional: { runtime_mode: [['Main Environment', ...(TTS_MAIN_ONLY ? [] : ['⚠️ Shared Runtime'])]] } };
 // 環境變數 FAKE_NO_RMBG=1:沒有去背模型檔;FAKE_NO_AUDIO=1:沒有音訊模型;FAKE_NO_VIDEO=1:沒有影片模型
 const NO_RMBG = process.env.FAKE_NO_RMBG === '1', NO_AUDIO = process.env.FAKE_NO_AUDIO === '1', NO_VIDEO = process.env.FAKE_NO_VIDEO === '1', LTX_NOLORA = process.env.FAKE_LTX_NOLORA === '1', SEP = process.env.FAKE_WIN_PATHS === '1' ? '\\' : '/';
 let MODELS = {
@@ -53,11 +60,11 @@ function pngRGBA(w, h) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 // 1 秒 440 Hz 的 WAV(模擬 PreviewAudio 輸出)
-function wav() {
+function wav(silent = false) {
   const sr = 8000, n = sr, b = Buffer.alloc(44 + n * 2);
   b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
   b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40);
-  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 8000), 44 + i * 2);
+  for (let i = 0; i < n; i++) b.writeInt16LE(silent ? 0 : Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 8000), 44 + i * 2);
   return b;
 }
 const jobs = new Map(); // id → {graph, done, error, w, h}
@@ -78,7 +85,7 @@ createServer(async (req, res) => {
   const p = u.pathname;
   if (p === '/system_stats') return send(res, 200, { system: { os: 'linux', comfyui_version: '0.0.0-fake' }, devices: [{ name: 'fake', vram_total: 8 * 2 ** 30 }] });
   if (p.startsWith('/models/')) return send(res, 200, MODELS[p.slice(8)] ?? []);
-  if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, k === 'RMBG' ? { input: { required: { image: ['IMAGE'], model: [['RMBG-2.0', 'INSPYRENET', 'BEN', 'BEN2']] } } } : { input: {}, api_node: API_NODES.has(k), output_node: OUTPUT_NODES.has(k) }])));
+  if (p === '/object_info') return send(res, 200, Object.fromEntries(NODES.map(k => [k, k === 'Qwen3TTSEngineNode' ? { input: QWEN3_INPUT, api_node: false, output_node: false } : k === 'RMBG' ? { input: { required: { image: ['IMAGE'], model: [['RMBG-2.0', 'INSPYRENET', 'BEN', 'BEN2']] } } } : { input: {}, api_node: API_NODES.has(k), output_node: OUTPUT_NODES.has(k) }])));
   if (p === '/upload/image') return send(res, 200, { name: entry.filename, subfolder: '', type: entry.type });
   if (p === '/prompt' && req.method === 'POST') {
     if (/SLOWSUBMIT/.test(JSON.stringify(entry.body ?? {}))) await new Promise(r => setTimeout(r, 1500)); // 送出很慢
@@ -89,7 +96,7 @@ createServer(async (req, res) => {
     const lat = Object.values(g).find(v => ['EmptySD3LatentImage', 'EmptyLTXVLatentVideo', 'Wan22ImageToVideoLatent'].includes(v.class_type))?.inputs ?? {};
     const frames = Object.values(g).some(v => ['EmptyLTXVLatentVideo', 'Wan22ImageToVideoLatent'].includes(v.class_type)) ? 3 : 1; // 影片:逐格輸出 3 張
     const text = JSON.stringify(g);
-    const job = { frames, audio: Object.values(g).some(v => v.class_type === 'PreviewAudio'), alpha: Object.values(g).some(v => v.class_type === 'JoinImageWithAlpha'), w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEDOWN/.test(text) ? 1e9 : /QUEUEERR/.test(text) ? 3 : 0, histDrop: /FLAKYHIST/.test(text) ? 2 : 0 };
+    const job = { frames, audio: Object.values(g).some(v => v.class_type === 'PreviewAudio'), alpha: Object.values(g).some(v => v.class_type === 'JoinImageWithAlpha'), w: lat.width ?? 64, h: lat.height ?? 64, done: false, error: /FAIL/.test(text), slow: /SLOW/.test(text), dropview: /DROPVIEW/.test(text), silent: /SILENT/.test(text), pending: /QUEUED/.test(text), queueErr: /QUEUEDOWN/.test(text) ? 1e9 : /QUEUEERR/.test(text) ? 3 : 0, histDrop: /FLAKYHIST/.test(text) ? 2 : 0 };
     jobs.set(id, job);
     // QUEUED:先排隊 2.5 秒(queue_pending),再執行 0.3 秒
     if (job.pending) setTimeout(() => { job.pending = false; setTimeout(() => { job.done = true; }, 300); }, 2500);
@@ -109,7 +116,7 @@ createServer(async (req, res) => {
     const id = u.searchParams.get('filename').replace(/(_\d+)?\.(png|wav)$/, ''), j = jobs.get(id);
     if (!j) return send(res, 404, {});
     if (j.dropview) return req.socket.destroy();
-    if (j.audio) return send(res, 200, wav(), 'audio/wav');
+    if (j.audio) return send(res, 200, wav(j.silent), 'audio/wav');
     return send(res, 200, png(j.w, j.h, j.alpha), 'image/png');
   }
   if (p === '/queue' && req.method === 'GET' && [...jobs.values()].some(j => j.queueErr > 0 && !j.done)) { for (const j of jobs.values()) if (j.queueErr > 0) j.queueErr--; return send(res, 500, { error: 'busy' }); }

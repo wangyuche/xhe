@@ -181,6 +181,23 @@ r="$(C run "$K/workflows/stable-audio-sfx.json" --out "$W/a" --name sfx "${SA[@]
   && ok "stable-audio-sfx:下載 PreviewAudio 的音訊(副檔名照伺服器)" || bad "stable-audio-sfx" "$r"
 r="$(C run "$K/workflows/ace-step-bgm.json" --out "$W/a" --name bgm --set ckpt=a --set tags=cozy --set 'lyrics=[instrumental]' --set seconds=10 --set bpm=100 --set timesignature=4 --set 'keyscale=C major' --set seed=1 --set steps=8 --set cfg=1 --set shift=3 --set sampler=euler --set scheduler=simple)" && [ -s "$W/a/bgm.wav" ] \
   && ok "ace-step-bgm:送出並下載音訊" || bad "ace-step-bgm" "$r"
+# 旁白:Qwen3-TTS(CustomVoice 預設聲音 / VoiceDesign + Base 台灣口音)
+c="$(C check)"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available,f=d.defaults;process.exit(w["qwen3-tts"]===true&&w["qwen3-tts-design"]===true&&f.tts_variant==="local:Qwen3-TTS-12Hz-1.7B-CustomVoice"&&d.audio_models.tts.join()==="qwen3-tts-design,qwen3-tts"?0:1)' \
+  && ok "check:Qwen3-TTS 本機模型 + Shared Runtime → qwen3-tts / qwen3-tts-design 可用、defaults.tts_variant" || bad "check qwen3-tts" "$(echo "$c" | grep -n 'tts' )"
+r="$(C run "$K/workflows/qwen3-tts.json" --out "$W/a" --name t1 --set variant=local:Qwen3-TTS-12Hz-1.7B-CustomVoice --set voice=Vivian --set 'instruct=輕快' --set 'text=你好,世界' --set seed=7)" && [ -s "$W/a/t1.wav" ] \
+  && grep -q '"runtime_mode": "⚠️ Shared Runtime"' "$W/a/workflows/t1.json" && ok "qwen3-tts:送出並下載音訊(runtime_mode 固定 Shared Runtime)" || bad "qwen3-tts" "$r"
+r="$(C run "$K/workflows/qwen3-tts-design.json" --out "$W/a" --name t2 --set 'design=台灣年輕女生' --set 'ref=大家好' --set 'text=你好' --set seed=7 --set dseed=11)" && [ -s "$W/a/t2.wav" ] \
+  && [ "$(grep -c '"runtime_mode": "⚠️ Shared Runtime"' "$W/a/workflows/t2.json")" = 2 ] && grep -q '"seed": 11' "$W/a/workflows/t2.json" && ok "qwen3-tts-design:聲音設計 + Base 複製,兩個 engine 都 Shared Runtime、dseed 是數字" || bad "qwen3-tts-design" "$r"
+o="$(C run "$K/workflows/qwen3-tts.json" --out "$W/a" --name t3 --set variant=x --set voice=Vivian --set instruct= --set text=x --set seed=4294967296 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "qwen3-tts:seed 超過 4294967295 → 結束碼 2" || bad "qwen3-tts seed 上限" "$o"
+for envv in FAKE_NO_TTS FAKE_TTS_MAIN_ONLY; do
+  P6=$((PORT - 7000))
+  env "$envv=1" node "$K/tests/fake-comfy.mjs" "$P6" "$W/req6.log" > "$W/fake6.out" 2>&1 & PID2=$!
+  for i in $(seq 1 50); do grep -q listening "$W/fake6.out" 2>/dev/null && break; sleep 0.1; done
+  c6="$(C check --url "http://127.0.0.1:$P6" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""; rm -f "$W/fake6.out"
+  echo "$c6" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(w["qwen3-tts"]===false&&w["qwen3-tts-design"]===false&&d.audio_models.tts.length===0?0:1)' \
+    && ok "check:$envv(沒有本機模型 / 沒有 Shared Runtime)→ qwen3-tts 不可用" || bad "check $envv" "$c6"
+done
 sed 's/"PreviewAudio"/"SaveAudio"/' "$K/workflows/stable-audio-sfx.json" > "$W/saveaudio.json"
 o="$(C run "$W/saveaudio.json" --out "$W/a" --name x "${SA[@]}" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'Save' && ok "拒絕 SaveAudio(不在伺服器留檔)" || bad "SaveAudio 沒被擋" "$o"
 for node in BriaRemoveImageBackground FancyApiNode; do
