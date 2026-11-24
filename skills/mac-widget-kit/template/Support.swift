@@ -89,7 +89,12 @@ enum AppEnv {
         }
         do {
             let data = try Data(contentsOf: url)
-            return (try JSONDecoder().decode(WidgetConfig.self, from: data), nil)
+            let c = try JSONDecoder().decode(WidgetConfig.self, from: data)
+            // level 打錯字(Floating、top…)不能悄悄退回桌面層
+            if let lv = c.level, lv != "desktop", lv != "floating" {
+                return (.fallback, "widget.json 的 level 只能是 desktop 或 floating(目前是「\(lv)」)")
+            }
+            return (c, nil)
         } catch {
             return (.fallback, "widget.json 格式錯誤:\(error.localizedDescription)")
         }

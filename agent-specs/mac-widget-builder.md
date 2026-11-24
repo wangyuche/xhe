@@ -88,7 +88,7 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
 6. agent 以 Write / Edit / skill 腳本寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `<dir>/build/` 和 `~/Library/Application Support/com.widget.<name>/` 的 `state.json` 與 `instance.lock`。例外:`swiftc` 的編譯快取(`$TMPDIR`、`~/Library/Caches`),以及使用者確認後的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
 7. `grep -iE 'token|apikey|api_key|secret|password' <dir>/*.swift` 的結果只出現在讀取 `credentials.json`、環境變數或(有旗標時)鑰匙圈的程式,以及非秘密的欄位名稱(例如 `input_tokens`)。
 8. 回報格式符合「輸出」,狀態與證據一致。
-9. `<app>/Contents/MacOS/<Name> --self-check` 結束碼為 0:實際建立視窗和 / 或選單列項目,等第一次取資料完成後印出 `placement`、`window: level=<數字>`(desktop / both)、`statusItem: <文字>`(menubar / both)再結束;不需要螢幕錄影權限。`--self-check` 不算「啟動」,不需要同意旗標:視窗 `alphaValue = 0` 不會被看見、不寫 `state.json`,選單列項目只存在一瞬間。第一次取資料失敗時仍印出 `statusItem: ⚠︎ <displayName>`,結束碼為 0(這條只檢查 UI 結構,資料正確性由第 2 條負責)。輸出要和 `placement` 一致,視窗層級等於 `kCGDesktopIconWindowLevel + 1`。
+9. `<app>/Contents/MacOS/<Name> --self-check` 結束碼為 0:實際建立視窗和 / 或選單列項目,等第一次取資料完成後印出 `placement`、`window: level=<數字>`(desktop / both)、`statusItem: <文字>`(menubar / both)再結束;不需要螢幕錄影權限。`--self-check` 不算「啟動」,不需要同意旗標:視窗 `alphaValue = 0` 不會被看見、不寫 `state.json`,選單列項目只存在一瞬間。第一次取資料失敗時仍印出 `statusItem: ⚠︎ <displayName>`,結束碼為 0(這條只檢查 UI 結構,資料正確性由第 2 條負責)。輸出要和 `placement` 一致,視窗層級等於 expected:沒有 `level` 或 `desktop` 時為 `kCGDesktopIconWindowLevel + 1`,`level: floating` 時為 3(`NSWindow.Level.floating`)且 `fullScreenAuxiliary=true`(2026-11-24 加入選填 `level`)。
 
 ## 限制與禁忌
 - 不執行 `sudo`、不改系統設定、不要求輔助使用或螢幕錄影權限。
@@ -141,7 +141,7 @@ Mac 桌面 widget 工程師:主 agent 把使用者想在桌面上看到的內容
   - `Credentials.swift`:讀 `~/.config/<name>/credentials.json`,`--once` 時允許環境變數覆寫。
   - `Widget.swift`(範例 view,可改):`struct WidgetView: View { let data: Provider.Output }`,以及 `static func menuBarText(_ data: Provider.Output) -> String`(選單列文字)。錯誤畫面由骨架負責,這裡不用處理。
   - `Provider.swift`(範例資料,可改):`struct Provider { struct Output: Codable, Sendable {...}; func fetch() async throws -> Output }`;骨架在 `WIDGET_FORCE_ERROR=1` 時於呼叫前拋出模擬錯誤。
-  - `widget.json`(可改):`{"kit":"mac-widget-kit","name":"","displayName":"","width":320,"height":160,"placement":"desktop","position":"top-right","refreshSeconds":5}`。
+  - `widget.json`(可改):`{"kit":"mac-widget-kit","name":"","displayName":"","width":320,"height":160,"placement":"desktop","position":"top-right","refreshSeconds":5}`;選填 `level`:`desktop`(預設)/ `floating`(浮在所有一般視窗之上),其他值算格式錯誤。
   - `README.md`(可改):範本。
 - `scripts/new-widget.sh <name> <dir>`:複製骨架、只在 `widget.json` 填入 `name` 與 `displayName`(預設等於 `name`);目錄已存在則失敗。
 - `scripts/build.sh <dir>`:`swiftc -swift-version 6` 編譯所有 `.swift`、印出警告數、產生 `build/<Name>.app`(`Info.plist` 含 `LSUIElement`、`WidgetProjectDir`)、`codesign -s -`。

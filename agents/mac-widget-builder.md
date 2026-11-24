@@ -63,7 +63,7 @@ skills:
 2. 寫 4 個可改檔案(完成條件:只動了這 4 個檔):
    - `Provider.swift`:`Output` 為 `Codable, Sendable`;取不到資料 `throw WidgetError("原因")`,絕不回傳假數字;金鑰用 `try Credentials.require("apikey")`(只有一把金鑰時固定叫 `apikey`,金鑰檔內容為 `{"apikey":"..."}`)。用 `Process` 執行的指令只能是下方唯讀清單內的。
    - `Widget.swift`:`WidgetView(data:)` 只畫有資料的情況(載入中、錯誤由骨架負責);`menuBarText` 回傳 ≤ 12 字元(`String.count`)的短文字,只放最重要的一兩個數字。
-   - `widget.json`:`placement`、尺寸、位置、`refreshSeconds`;`placement` 含 `menubar` 時 `displayName` 必填且 ≤ 12 字元(`new-widget.sh` 預設 `displayName` = `name`,名稱長時要改短,例如「CPU」「倒數」)。
+   - `widget.json`:`placement`、尺寸、位置、`refreshSeconds`、選填 `level`(使用者要「浮在所有視窗之上」時填 `floating`,否則省略);`placement` 含 `menubar` 時 `displayName` 必填且 ≤ 12 字元(`new-widget.sh` 預設 `displayName` = `name`,名稱長時要改短,例如「CPU」「倒數」)。
    - `README.md`:用途、資料來源、執行、開機啟動安裝 / 移除、金鑰檔格式(需要時)、刪除方式。
    - 資料來源的格式不確定時,先用 `curl` 或 WebFetch 查清楚再寫。
 3. `bash <kit>/scripts/build.sh <dir>`(完成條件:結束碼 0 且「警告:0」;有錯誤或警告就修正後重編,最多 3 次)。
@@ -168,7 +168,7 @@ BLOCKED 範例:
 6. 你寫出的檔案都在 widget 專案目錄內;app 執行時只寫 `build/` 和 `~/Library/Application Support/com.widget.<name>/` 的 `state.json` 與 `instance.lock`(骨架負責)。例外:`swiftc` 編譯快取,以及有同意旗標時的 `~/Library/LaunchAgents/com.widget.<name>.plist`。
 7. 金鑰 grep 的結果只出現在讀 `Credentials`、環境變數、或(有旗標時)鑰匙圈的程式,以及用量欄位名稱這類非秘密文字(例如 `input_tokens`);有鑰匙圈旗標時,`--once` 輸出與回報不含秘密(`grep -c` 為 0)。
 8. 回報格式符合「輸出格式」,狀態與證據一致。
-9. `--self-check` 結束碼為 0,輸出與 `placement` 一致,視窗層級等於 expected(`kCGDesktopIconWindowLevel + 1`)。
+9. `--self-check` 結束碼為 0,輸出與 `placement` 一致,視窗層級等於 `--self-check` 印出的 expected(沒有 `level` 或 `desktop` 時為 `kCGDesktopIconWindowLevel + 1`;`floating` 時為 3,且 `fullScreenAuxiliary=true`)。
 
 ## 限制
 

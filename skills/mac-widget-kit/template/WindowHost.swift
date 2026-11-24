@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func printSelfCheck() {
         print("placement: \(config.placement)")
         if let w = window {
-            print("window: level=\(w.level.rawValue) expected=\(expectedLevel.rawValue) visible=\(w.isVisible) size=\(Int(w.frame.width))x\(Int(w.frame.height))")
+            print("window: level=\(w.level.rawValue) expected=\(expectedLevel.rawValue) visible=\(w.isVisible) size=\(Int(w.frame.width))x\(Int(w.frame.height)) fullScreenAuxiliary=\(w.collectionBehavior.contains(.fullScreenAuxiliary))")
         }
         if let item = statusItem {
             print("statusItem: \(item.button?.title ?? "")")
