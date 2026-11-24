@@ -64,6 +64,17 @@ for placement in desktop menubar both; do
   [ $good -eq 1 ] && ok "[$placement] --self-check" || ng "[$placement] --self-check" "$(tr '\n' '|' <<<"$sc")"
 done
 
+# level(選填):floating → NSWindow.Level.floating(3),在一般視窗之上;拿掉 level 回到預設的桌面圖示層 + 1
+setlevel() { node -e 'const fs=require("fs");const f=process.argv[1];const j=JSON.parse(fs.readFileSync(f,"utf8"));if(process.argv[2])j.level=process.argv[2];else delete j.level;fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$D/widget.json" "$1"; }
+setlevel floating
+bash "$S/build.sh" "$D" >/dev/null 2>&1 && sc="$("$BIN" --self-check 2>&1)"
+lv=$(sed -nE 's/^window: level=(-?[0-9]+) expected=(-?[0-9]+).*/\1 \2/p' <<<"$sc")
+[ "$lv" = "3 3" ] && ok "level floating → 視窗層級 3(一般視窗之上)" || ng "level floating" "$(tr '\n' '|' <<<"$sc")"
+setlevel ""
+bash "$S/build.sh" "$D" >/dev/null 2>&1 && sc="$("$BIN" --self-check 2>&1)"
+lv=$(sed -nE 's/^window: level=(-?[0-9]+) expected=(-?[0-9]+).*/\1 \2/p' <<<"$sc")
+[ -n "$lv" ] && [ "${lv% *}" = "${lv#* }" ] && [ "${lv% *}" != 3 ] && ok "沒有 level → 預設桌面圖示層 + 1(${lv% *})" || ng "level 預設" "$(tr '\n' '|' <<<"$sc")"
+
 # self-check 不寫 state.json
 [ ! -e "$D/state.json" ] && ok "--self-check 未寫 state.json" || ng "--self-check 寫了 state.json"
 

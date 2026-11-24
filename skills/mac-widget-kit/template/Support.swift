@@ -30,11 +30,13 @@ struct WidgetConfig: Codable, Sendable {
     var placement: String      // desktop | menubar | both
     var position: String       // top-right | top-left | bottom-right | bottom-left | "x,y"(距可視範圍左上角)
     var refreshSeconds: Double
+    var level: String? = nil   // 選填:desktop(預設,桌面圖示層 + 1,在一般視窗之下)| floating(在所有一般視窗之上)
 
     static let fallback = WidgetConfig(
         kit: "mac-widget-kit", name: "widget", displayName: "Widget",
         width: 320, height: 160, placement: "desktop", position: "top-right", refreshSeconds: 5)
 
+    var floatsOnTop: Bool { level == "floating" }
     var showsDesktop: Bool { placement == "desktop" || placement == "both" }
     var showsMenuBar: Bool { placement == "menubar" || placement == "both" }
     var title: String { displayName.isEmpty ? name : displayName }

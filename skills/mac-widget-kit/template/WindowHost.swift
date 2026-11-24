@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func printSelfCheck() {
         print("placement: \(config.placement)")
         if let w = window {
-            print("window: level=\(w.level.rawValue) expected=\(Int(CGWindowLevelForKey(.desktopIconWindow)) + 1) visible=\(w.isVisible) size=\(Int(w.frame.width))x\(Int(w.frame.height))")
+            print("window: level=\(w.level.rawValue) expected=\(expectedLevel.rawValue) visible=\(w.isVisible) size=\(Int(w.frame.width))x\(Int(w.frame.height))")
         }
         if let item = statusItem {
             print("statusItem: \(item.button?.title ?? "")")
@@ -135,6 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // MARK: 桌面浮窗
+
+    private var expectedLevel: NSWindow.Level {
+        config.floatsOnTop ? .floating : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+    }
 
     private func makeWindow() {
         let size = NSSize(width: config.width, height: config.height)
@@ -144,9 +148,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         w.isOpaque = false
         w.backgroundColor = .clear
         w.hasShadow = false
-        // 桌面圖示層 + 1:在 Finder 桌面圖示之上、一般視窗之下。
-        w.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
-        w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // 預設桌面圖示層 + 1:在 Finder 桌面圖示之上、一般視窗之下;level = floating 時在所有一般視窗之上。
+        w.level = expectedLevel
+        w.collectionBehavior = config.floatsOnTop
+            ? [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            : [.canJoinAllSpaces, .stationary, .ignoresCycle]
         w.isMovableByWindowBackground = true
         w.isReleasedWhenClosed = false
         w.contentView = DraggableHostingView(rootView: RootView(model: model, config: config))
