@@ -3,7 +3,7 @@
 // 用法(run 的 --timeout 只算開始執行後的時間,預設 240 秒;排隊等待另有 --queue-timeout,預設 180 秒;合計配 Bash 600 秒逾時):
 //   node comfy.mjs check                                   → 模型、模型家族、可用的一致性方法、本機去背、音訊模型、建議的 workflow 預設值(JSON)
 //   node comfy.mjs upload <圖檔> --prefix <專案-角色>       → 上傳到 ComfyUI 的 temp 區,印出 LoadImage 用的名稱
-//   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 240] [--queue-timeout 180]
+//   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 240] [--queue-timeout 180] [--download-timeout 60]
 //                                                           → 填參數、送出、輪詢、下載 PNG / 音訊、刪除 history,印出結果 JSON;拒絕 Save* 與雲端 API 節點
 //   node comfy.mjs pngsize <圖檔>                           → {"width":…,"height":…}
 //   node comfy.mjs scrub-check <目錄>                       → 產出不含 ComfyUI 位址 / 私有 IP;找到就結束碼 1
@@ -125,6 +125,9 @@ function family(name) {
   if (/flux.*redux/.test(n)) return 'flux-redux';
   if (/flux/.test(n)) return 'flux';
   if (/z.?image/.test(n)) return 'z-image';
+  if (/wan2\.?2.*ti2v/.test(n)) return 'wan2.2-ti2v';
+  if (/wan2\.?2.?vae/.test(n)) return 'wan2.2';
+  if (/ltx.?2/.test(n)) return 'ltx-2';
   if (/t5xxl|umt5/.test(n)) return 't5';
   if (/sdxl|(^|[_-])xl([_.-])|pony|illustrious/.test(n)) return 'sdxl';
   if (/sd.?1\.?5|v1-5/.test(n)) return 'sd15';
@@ -160,7 +163,17 @@ async function check() {
     sfx_ckpt: pick(models.checkpoints, /stable.?audio.?3.*sfx/) ?? pick(models.checkpoints, /stable.?audio.?3/) ?? pick(models.checkpoints, /stable.?audio.?open/),
     sfx_clip: null,
     bgm_ckpt: pick(models.checkpoints, /ace.?step.?(v)?1[._]5/),
+    // 影片:Wan 2.2 TI2V 5B(文生 / 圖生影片同一個模型),text encoder umt5,VAE 用 2.2 專用的
+    wan_ti2v_unet: pick(dm, /wan2\.?2.*ti2v/), wan_clip: pick(te, /umt5/), wan_vae: pick(vae, /wan2\.?2.?vae/),
+    // LTX-2.3:checkpoint 內含 VAE 與音訊 VAE;文字編碼用 Gemma 3 12B;8 步蒸餾 LoRA
+    // dev 版配蒸餾 LoRA;主機只有已蒸餾的 checkpoint 時用它、LoRA 填 none(骨架會拿掉 LoRA 節點)
+    ltx_ckpt: null, ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: null,
   };
+  {
+    const dev = pick(models.checkpoints, /ltx.?2\.?3.*dev(?!.*distill)/), distilled = pick(models.checkpoints, /ltx.?2\.?3.*distill/), lo = pick(lora, /ltx.?2\.?3.*distill/);
+    if (dev && lo) { d.ltx_ckpt = dev; d.ltx_distill_lora = lo; }          // dev + 蒸餾 LoRA(實測組合)
+    else if (distilled) { d.ltx_ckpt = distilled; d.ltx_distill_lora = 'none'; } // 已蒸餾 checkpoint:不加 LoRA
+  }
   // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
   // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
   d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
@@ -192,6 +205,11 @@ async function check() {
   workflows['qwen-t2i-sprite'] = workflows['qwen-t2i'] && bgOk;
   workflows['qwen-edit-1ref-sprite'] = workflows['qwen-edit-1ref'] && bgOk;
   workflows['stable-audio-sfx'] = !!(d.sfx_ckpt && d.sfx_clip && ['CheckpointLoaderSimple', 'CLIPLoader', 'ConditioningStableAudio', 'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
+  const wanOk = !!(d.wan_ti2v_unet && d.wan_clip && d.wan_vae && ['UNETLoader', 'CLIPLoader', 'VAELoader', 'CLIPTextEncode', 'ModelSamplingSD3', 'Wan22ImageToVideoLatent', 'KSampler', 'VAEDecode', 'PreviewImage'].every(has));
+  workflows['wan22-i2v'] = wanOk && has('LoadImage') && has('ImageScale');
+  workflows['ltx23-i2v'] = !!(d.ltx_ckpt && d.ltx_te && d.ltx_distill_lora && ['CheckpointLoaderSimple', 'LTXAVTextEncoderLoader', ...(d.ltx_distill_lora === 'none' ? [] : ['LoraLoaderModelOnly']), 'CLIPTextEncode', 'LTXVConditioning',
+    'LoadImage', 'ImageScale', 'LTXVPreprocess', 'EmptyLTXVLatentVideo', 'LTXVImgToVideoInplace', 'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent',
+    'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled', 'PreviewImage'].every(has));
   workflows['ace-step-bgm'] = !!(d.bgm_ckpt && ['CheckpointLoaderSimple', 'ModelSamplingAuraFlow', 'TextEncodeAceStepAudio1.5', 'ConditioningZeroOut', 'EmptyAceStep1.5LatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
   // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
   // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。
@@ -216,6 +234,8 @@ async function check() {
       sfx: workflows['stable-audio-sfx'] ? [d.sfx_ckpt] : [],
       bgm: workflows['ace-step-bgm'] ? [d.bgm_ckpt] : [],
     },
+    // 影片骨架(只有圖生影片):ltx23-i2v 優先(5 秒約 110 秒),wan22-i2v 備援(5 秒約 340 秒)
+    video_models: [workflows['ltx23-i2v'] && d.ltx_ckpt, workflows['wan22-i2v'] && d.wan_ti2v_unet].filter(Boolean),
     workflows_available: workflows,
     defaults: d,
   };
@@ -300,6 +320,9 @@ async function run() {
   if (!Number.isFinite(timeout) || timeout <= 0) die(`--timeout 要是正數(秒):${flags.timeout}`, 2);
   const queueTimeout = Number(flags['queue-timeout'] ?? 180);
   if (!Number.isFinite(queueTimeout) || queueTimeout <= 0) die(`--queue-timeout 要是正數(秒):${flags['queue-timeout']}`, 2);
+  // 下載所有輸出的總時限;影片骨架逐格輸出(121 張約 140 MB)時加大,並從 --queue-timeout 扣回,合計仍要比 Bash 逾時少 180 秒
+  const dlTimeout = Number(flags['download-timeout'] ?? 60);
+  if (!Number.isFinite(dlTimeout) || dlTimeout <= 0) die(`--download-timeout 要是正數(秒):${flags['download-timeout']}`, 2);
   let skel;
   try { skel = JSON.parse(readFileSync(skelPath, 'utf8')); } catch (e) { die(`讀不到 workflow:${e.message}`, 2); }
   const { meta, graph, vals } = fill(skel, flags.set);
@@ -474,13 +497,13 @@ async function run() {
     // 先全部下載到暫存,都成功才搬進 --out(避免留下半套檔案)
     stage = mkdtempSync(join(tmpdir(), 'gak-run-'));
     const files = [];
-    const dlEnd = Date.now() + 60000; // 下載總時間上限 60 秒
+    const dlEnd = Date.now() + dlTimeout * 1000; // 下載總時間上限(--download-timeout,預設 60 秒)
     try {
       for (let i = 0; i < imgs.length; i++) {
         if (STOPPING) await halt();
         const im = imgs[i];
         const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder ?? '', type: im.type ?? 'temp' });
-        if (Date.now() > dlEnd) die('下載輸出超過 60 秒', 5);
+        if (Date.now() > dlEnd) die(`下載輸出超過 ${dlTimeout} 秒(影片骨架可加大 --download-timeout)`, 5);
         const r = await api(`/view?${q}`, { timeoutMs: Math.max(1000, dlEnd - Date.now()) });
         if (!r.ok) die(`下載輸出失敗 HTTP ${r.status}`, 3);
         let buf;

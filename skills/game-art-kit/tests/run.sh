@@ -135,12 +135,30 @@ echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));co
 const ok=bg.length===1&&bg[0].node==="RMBG"&&bg[0].models.join()==="RMBG-2.0"&&d.audio_models.sfx.length===1&&d.audio_models.bgm.length===1&&w["qwen-t2i-sprite"]&&w["qwen-edit-1ref-sprite"]&&w["stable-audio-sfx"]&&w["ace-step-bgm"]&&d.defaults.sfx_clip==="t5gemma_b_b_ul2.safetensors"&&d.defaults.bgm_ckpt==="ace_step_1.5_turbo_aio.safetensors";process.exit(ok?0:1)' \
   && ok "check:本機去背只列檔案齊全的選項(BEN / BEN2 缺檔不列)、音訊模型(ACE-Step 只配 1.5)與 sprite / 音訊骨架可用" || bad "check 去背 / 音訊" "$c"
 P3=$((PORT - 9000))
-FAKE_NO_RMBG=1 FAKE_NO_AUDIO=1 node "$K/tests/fake-comfy.mjs" "$P3" "$W/req3.log" > "$W/fake3.out" 2>&1 & PID2=$!
+FAKE_NO_RMBG=1 FAKE_NO_AUDIO=1 FAKE_NO_VIDEO=1 node "$K/tests/fake-comfy.mjs" "$P3" "$W/req3.log" > "$W/fake3.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake3.out" 2>/dev/null && break; sleep 0.1; done
 grep -q listening "$W/fake3.out" || bad "第 3 個假 ComfyUI 沒有啟動" "$(cat "$W/fake3.out")"
 c3="$(C check --url "http://127.0.0.1:$P3" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
-echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(d.background_removal.length===0&&d.audio_models.sfx.length===0&&d.audio_models.bgm.length===0&&w["qwen-t2i-sprite"]===false&&w["stable-audio-sfx"]===false&&w["ace-step-bgm"]===false&&w["qwen-t2i"]===true?0:1)' \
-  && ok "check:沒有去背模型檔 / 音訊模型 → background_removal 與 audio_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
+echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(d.background_removal.length===0&&d.audio_models.sfx.length===0&&d.audio_models.bgm.length===0&&w["qwen-t2i-sprite"]===false&&w["stable-audio-sfx"]===false&&w["ace-step-bgm"]===false&&w["ltx23-i2v"]===false&&w["wan22-i2v"]===false&&d.video_models.length===0&&w["qwen-t2i"]===true?0:1)' \
+  && ok "check:沒有去背模型檔 / 音訊 / 影片模型 → background_removal、audio_models、video_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available,f=d.defaults;
+const ok=w["ltx23-i2v"]===true&&w["wan22-i2v"]===true&&d.video_models[0]===f.ltx_ckpt&&f.ltx_ckpt==="ltx-2.3-22b-dev-fp8.safetensors"&&f.ltx_te==="gemma_3_12B_it_fp4_mixed.safetensors"&&/distill/.test(f.ltx_distill_lora)&&f.wan_ti2v_unet==="wan2.2_ti2v_5B_fp16.safetensors"&&f.wan_clip==="umt5_xxl_fp8_e4m3fn_scaled.safetensors"&&f.wan_vae==="wan2.2_vae.safetensors";process.exit(ok?0:1)' \
+  && ok "check:影片模型 LTX-2.3(有蒸餾 LoRA 時用 dev 版)/ Wan 2.2 偵測、video_models 以 LTX 優先" || bad "check 影片模型" "$c"
+P5=$((PORT - 7000))
+FAKE_LTX_NOLORA=1 node "$K/tests/fake-comfy.mjs" "$P5" "$W/req5.log" > "$W/fake5.out" 2>&1 & PID2=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake5.out" 2>/dev/null && break; sleep 0.1; done
+grep -q listening "$W/fake5.out" || bad "第 5 個假 ComfyUI 沒有啟動" "$(cat "$W/fake5.out")"
+c5="$(C check --url "http://127.0.0.1:$P5" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
+echo "$c5" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const f=d.defaults;process.exit(f.ltx_ckpt==="ltx-2.3-22b-distilled-fp8.safetensors"&&f.ltx_distill_lora==="none"&&d.workflows_available["ltx23-i2v"]===true?0:1)' \
+  && ok "check:沒有蒸餾 LoRA → 改用已蒸餾 checkpoint、lora=none,ltx23-i2v 仍可用" || bad "check 已蒸餾 LTX" "$c5"
+r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v5" --name n --set ckpt=a --set te=b --set lora=none --set lora_strength=1 --set prompt=p --set width=704 --set height=1280 --set length=49 --set seed=1 --set 'ref=x.png [temp]')" \
+  && node -e 'const g=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.exit(Object.values(g).some(v=>v&&v.class_type==="LoraLoaderModelOnly")?1:0)' "$W/v5/workflows/n.json" \
+  && ok "ltx23-i2v:lora=none 時拿掉 LoRA 節點仍可送出" || bad "ltx23-i2v lora=none" "$r"
+r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v" --name clip-1 --set ckpt=a --set te=b --set lora=c --set lora_strength=1 --set prompt=steam --set width=704 --set height=1280 --set length=121 --set seed=1 --set 'ref=x.png [temp]')" \
+  && [ -s "$W/v/clip-1-1.png" ] && [ -s "$W/v/clip-1-3.png" ] && ok "ltx23-i2v:送出並逐格下載成 <name>-1..N.png" || bad "ltx23-i2v 逐格" "$r"
+r="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]')" \
+  && [ -s "$W/v/w-3.png" ] && ok "wan22-i2v:送出並逐格下載" || bad "wan22-i2v" "$r"
+e="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w2 --download-timeout 0 --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]' 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'download-timeout 要是正數' && ok "run:--download-timeout 不是正數 → 結束碼 2" || bad "--download-timeout 驗證"
 P4=$((PORT - 8000))
 FAKE_WIN_PATHS=1 node "$K/tests/fake-comfy.mjs" "$P4" "$W/req4.log" > "$W/fake4.out" 2>&1 & PID2=$!
 for i in $(seq 1 50); do grep -q listening "$W/fake4.out" 2>/dev/null && break; sleep 0.1; done

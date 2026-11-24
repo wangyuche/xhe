@@ -16,8 +16,8 @@
 | `stack-pixi` | PixiJS 8 + Vite 8 + TypeScript 遊戲 / 大廳玩家端規則(PX-XXX-NN,MUST / SHOULD)與骨架:場景 chunk 與首屏白名單、a11y 層、i18n、1x / 0.5x AVIF 素材與 KB 預算、效能預算量測、三尺寸 E2E、資源釋放、WebSocket / iframe(game-frontend-owner 使用;MahjongParty 文件的 `/pixi-style` 就是它) |
 | `github-bot` | 以機器人身分(GitHub App 或機器人帳號)commit、push 功能分支、開 PR,自己 code review 沒問題就以 review 過的 SHA 合併(只限沒有 CI 的 repo;不直接推 main) |
 | `gitlab-bot` | 在自建 GitLab(或 gitlab.com)commit、push 功能分支、開 MR,review 沒問題以 review 過的 SHA 合併(只限沒有 CI 的專案;不直接推 main);多專案共用一筆鑰匙圈 token(需 `api` + `write_repository`) |
-| `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成、規格驗證(short-video-maker 使用) |
-| `game-art-kit` | 區網 ComfyUI 出圖腳本:check、上傳參考圖、送 workflow 輪詢下載(不在伺服器留檔)、workflow 骨架、拼分鏡表(game-concept-artist 使用);位址放 `~/.config/game-art-kit/config` |
+| `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成(含 AI 圖運鏡、音效)、ComfyUI 影格組影片、規格驗證(short-video-maker 使用) |
+| `game-art-kit` | 區網 ComfyUI 出圖腳本:check、上傳參考圖、送 workflow 輪詢下載(不在伺服器留檔)、workflow 骨架(出圖、LTX-2.3 / Wan 2.2 圖生影片、配樂、音效)、拼分鏡表(game-concept-artist、short-video-maker 使用);位址放 `~/.config/game-art-kit/config` |
 | `spec-site-kit` | 產品規格網頁腳本:schema、依狀態檢查來源(檔案與行號存在、已完成每端有程式與測試、未開始的關鍵字在程式裡 git grep 不到)、合併各模組、產生單一自足 HTML(無 JavaScript、無品牌樣式)、可重現抽查(product-spec-writer 使用) |
 | `db-review-kit` | PostgreSQL / goose migration 審查腳本(只連自己建立的暫存容器):暫存容器(tmpfs、唯讀 bootstrap、隨機秘密、DSN 守門、拒絕非本機 docker)、goose roundtrip、鎖觀察、GRANT 矩陣、併發 / deadlock、種子與 EXPLAIN、分區檢查、隔離跑整合測試(db-reviewer 使用) |
 
@@ -33,7 +33,7 @@
 | `frontend-owner` | 網站前端(React / Next.js):依驗收情境實作與測試、截圖驗證;有「僅設計規範」模式,為每個專案寫專屬 DESIGN.md |
 | `backend-owner` | 網站後端(Go):實作、維護 OpenAPI 契約、httptest 與 curl 驗證;有「僅契約」模式 |
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
-| `short-video-maker` | 短影音:GitHub repo 或影片 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓),旁白與字幕,實際驗證規格與響度 |
+| `short-video-maker` | 短影音:GitHub repo、影片或主題 / 文案 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓 / ComfyUI 生成插圖、動態鏡頭、配樂、音效),旁白與字幕,實際驗證規格與響度 |
 | `game-frontend-owner` | PixiJS 遊戲 / 大廳玩家端(正式版):新專案用 stack-pixi 骨架、既有專案照專案規則;Vitest + Playwright 三尺寸、效能預算、資源釋放、MUST 對照;缺素材寫 assets.needs.json 交給 game-concept-artist |
 | `game-concept-artist` | 遊戲示意圖與分鏡:ComfyUI 出圖,照各遊戲 `art/STYLE.md`,角色多張一致(參考圖編輯模型),逐張看圖;風格試作 / 定稿 / 角色定裝 / 一般 |
 | `product-spec-writer` | 產品規格整理(企劃角色,只整理現況):讀規格、進度與程式,產出 `docs/spec-site/`(spec.json + index.html),每個功能標狀態並附檔案行號;待決事項、文件與程式不一致;不改規格與程式、不寫新企劃 |
@@ -91,7 +91,7 @@ for k in web-dev-kit stack-react stack-nextjs stack-go; do ln -s "$(pwd)/skills/
 
 `mac-widget-builder` 預設把 widget 寫到 `~/Widgets/<名稱>/`(倉庫外),需要在 host 核准寫入;各 widget 的資料來源網域也要核准。骨架自我測試:`bash skills/mac-widget-kit/tests/run.sh`。
 
-短影音(`short-video-maker` 用 `short-video-kit`,錄網頁時另用 `web-dev-kit`):
+短影音(`short-video-maker` 用 `short-video-kit`,錄網頁時另用 `web-dev-kit`,AI 素材與主題模式另用 `game-art-kit` 與區網 ComfyUI,設定同下方「遊戲美術」;ComfyUI 不可用時 repo / 影片模式照常運作):
 
 ```bash
 ln -s "$(pwd)/agents/short-video-maker.md" ~/.claude/agents/short-video-maker.md

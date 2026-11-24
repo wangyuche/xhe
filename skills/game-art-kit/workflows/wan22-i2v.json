@@ -1,0 +1,166 @@
+{
+ "_meta": {
+  "title": "Wan 2.2 TI2V 5B 圖生影片(第一格 = 參考圖;逐格 PreviewImage)",
+  "family": "wan2.2-ti2v",
+  "params": {
+   "unet": "Wan 2.2 TI2V 5B diffusion model(check 的 defaults.wan_ti2v_unet)",
+   "clip": "text encoder umt5(defaults.wan_clip)",
+   "vae": "Wan 2.2 VAE(defaults.wan_vae)",
+   "prompt": "正向提示詞(英文;描述主體動作與運鏡)",
+   "negative": "負向提示詞",
+   "width": "寬(32 的倍數;直式用 704)",
+   "height": "高(32 的倍數;直式用 1280)",
+   "length": "格數 = 4k+1(24 fps;49 ≈ 2 秒、121 ≈ 5 秒)",
+   "seed": "seed",
+   "steps": "steps(20)",
+   "cfg": "cfg(5)",
+   "shift": "ModelSamplingSD3 shift(8)",
+   "ref": "起始格(comfy.mjs upload 的 loadImage);會等比蓋滿再置中裁成 width×height"
+  },
+  "numeric": [
+   "width",
+   "height",
+   "length",
+   "seed",
+   "steps",
+   "cfg",
+   "shift"
+  ]
+ },
+ "1": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "{{unet}}",
+   "weight_dtype": "default"
+  }
+ },
+ "2": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "{{clip}}",
+   "type": "wan",
+   "device": "default"
+  }
+ },
+ "3": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "{{vae}}"
+  }
+ },
+ "4": {
+  "class_type": "ModelSamplingSD3",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "shift": "{{shift}}"
+  }
+ },
+ "5": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "{{prompt}}"
+  }
+ },
+ "6": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "{{negative}}"
+  }
+ },
+ "7": {
+  "class_type": "Wan22ImageToVideoLatent",
+  "inputs": {
+   "vae": [
+    "3",
+    0
+   ],
+   "width": "{{width}}",
+   "height": "{{height}}",
+   "length": "{{length}}",
+   "batch_size": 1,
+   "start_image": [
+    "12",
+    0
+   ]
+  }
+ },
+ "8": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "4",
+    0
+   ],
+   "seed": "{{seed}}",
+   "steps": "{{steps}}",
+   "cfg": "{{cfg}}",
+   "sampler_name": "uni_pc",
+   "scheduler": "simple",
+   "positive": [
+    "5",
+    0
+   ],
+   "negative": [
+    "6",
+    0
+   ],
+   "latent_image": [
+    "7",
+    0
+   ],
+   "denoise": 1.0
+  }
+ },
+ "9": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "8",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  }
+ },
+ "10": {
+  "class_type": "PreviewImage",
+  "inputs": {
+   "images": [
+    "9",
+    0
+   ]
+  }
+ },
+ "11": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "{{ref}}"
+  }
+ },
+ "12": {
+  "class_type": "ImageScale",
+  "inputs": {
+   "image": [
+    "11",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "width": "{{width}}",
+   "height": "{{height}}",
+   "crop": "center"
+  }
+ }
+}

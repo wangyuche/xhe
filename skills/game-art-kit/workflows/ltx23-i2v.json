@@ -1,0 +1,268 @@
+{
+ "_meta": {
+  "title": "LTX-2.3 圖生影片(蒸餾 LoRA 8 步、單階段;第一格 = 參考圖;逐格 PreviewImage,音訊丟棄)",
+  "family": "ltx-2",
+  "params": {
+   "ckpt": "LTX-2.3 checkpoint(check 的 defaults.ltx_ckpt;同一檔也提供 VAE 與音訊 VAE)",
+   "te": "Gemma 3 12B text encoder(defaults.ltx_te)",
+   "lora": "蒸餾 LoRA(defaults.ltx_distill_lora)",
+   "lora_strength": "LoRA 權重(1)",
+   "prompt": "正向提示詞(英文,詳細描述動作、運鏡、光線;cfg 1 時負向提示詞幾乎無效)",
+   "width": "寬(32 的倍數;直式用 704)",
+   "height": "高(32 的倍數;直式用 1280)",
+   "length": "格數 = 8k+1(24 fps;49 ≈ 2 秒、121 ≈ 5 秒)",
+   "seed": "seed",
+   "ref": "起始格(comfy.mjs upload 的 loadImage);會等比蓋滿再置中裁成 width×height"
+  },
+  "numeric": [
+   "lora_strength",
+   "width",
+   "height",
+   "length",
+   "seed"
+  ]
+ },
+ "1": {
+  "class_type": "CheckpointLoaderSimple",
+  "inputs": {
+   "ckpt_name": "{{ckpt}}"
+  }
+ },
+ "2": {
+  "class_type": "LTXAVTextEncoderLoader",
+  "inputs": {
+   "text_encoder": "{{te}}",
+   "ckpt_name": "{{ckpt}}",
+   "device": "default"
+  }
+ },
+ "3": {
+  "class_type": "LoraLoaderModelOnly",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "lora_name": "{{lora}}",
+   "strength_model": "{{lora_strength}}"
+  }
+ },
+ "4": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "{{prompt}}"
+  }
+ },
+ "5": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "blurry, low quality, text, letters, watermark, distorted"
+  }
+ },
+ "6": {
+  "class_type": "LTXVConditioning",
+  "inputs": {
+   "positive": [
+    "4",
+    0
+   ],
+   "negative": [
+    "5",
+    0
+   ],
+   "frame_rate": 24.0
+  }
+ },
+ "7": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "{{ref}}"
+  }
+ },
+ "8": {
+  "class_type": "ImageScale",
+  "inputs": {
+   "image": [
+    "7",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "width": "{{width}}",
+   "height": "{{height}}",
+   "crop": "center"
+  }
+ },
+ "9": {
+  "class_type": "LTXVPreprocess",
+  "inputs": {
+   "image": [
+    "8",
+    0
+   ],
+   "img_compression": 33
+  }
+ },
+ "10": {
+  "class_type": "EmptyLTXVLatentVideo",
+  "inputs": {
+   "width": "{{width}}",
+   "height": "{{height}}",
+   "length": "{{length}}",
+   "batch_size": 1
+  }
+ },
+ "11": {
+  "class_type": "LTXVImgToVideoInplace",
+  "inputs": {
+   "vae": [
+    "1",
+    2
+   ],
+   "image": [
+    "9",
+    0
+   ],
+   "latent": [
+    "10",
+    0
+   ],
+   "strength": 1.0,
+   "bypass": false
+  }
+ },
+ "12": {
+  "class_type": "LTXVAudioVAELoader",
+  "inputs": {
+   "ckpt_name": "{{ckpt}}"
+  }
+ },
+ "13": {
+  "class_type": "LTXVEmptyLatentAudio",
+  "inputs": {
+   "frames_number": "{{length}}",
+   "frame_rate": 24,
+   "batch_size": 1,
+   "audio_vae": [
+    "12",
+    0
+   ]
+  }
+ },
+ "14": {
+  "class_type": "LTXVConcatAVLatent",
+  "inputs": {
+   "video_latent": [
+    "11",
+    0
+   ],
+   "audio_latent": [
+    "13",
+    0
+   ]
+  }
+ },
+ "15": {
+  "class_type": "CFGGuider",
+  "inputs": {
+   "model": [
+    "3",
+    0
+   ],
+   "positive": [
+    "6",
+    0
+   ],
+   "negative": [
+    "6",
+    1
+   ],
+   "cfg": 1.0
+  }
+ },
+ "16": {
+  "class_type": "KSamplerSelect",
+  "inputs": {
+   "sampler_name": "euler"
+  }
+ },
+ "17": {
+  "class_type": "ManualSigmas",
+  "inputs": {
+   "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+  }
+ },
+ "18": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": "{{seed}}"
+  }
+ },
+ "19": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "18",
+    0
+   ],
+   "guider": [
+    "15",
+    0
+   ],
+   "sampler": [
+    "16",
+    0
+   ],
+   "sigmas": [
+    "17",
+    0
+   ],
+   "latent_image": [
+    "14",
+    0
+   ]
+  }
+ },
+ "20": {
+  "class_type": "LTXVSeparateAVLatent",
+  "inputs": {
+   "av_latent": [
+    "19",
+    0
+   ]
+  }
+ },
+ "21": {
+  "class_type": "VAEDecodeTiled",
+  "inputs": {
+   "samples": [
+    "20",
+    0
+   ],
+   "vae": [
+    "1",
+    2
+   ],
+   "tile_size": 512,
+   "overlap": 64,
+   "temporal_size": 64,
+   "temporal_overlap": 8
+  }
+ },
+ "22": {
+  "class_type": "PreviewImage",
+  "inputs": {
+   "images": [
+    "21",
+    0
+   ]
+  }
+ }
+}

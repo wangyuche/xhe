@@ -175,6 +175,50 @@ px() { ffmpeg -hide_banner -loglevel error -i "$1" -vf "crop=1:1:$2:$3,format=rg
 [ $rc -eq 0 ] && [ "$(jget "$c3" scenes.0.uiBottom)" -le 1280 ] && [ "$(jget "$c3" scenes.1.uiBottom)" -le 1280 ] && node -e 'const p=process.argv[1].trim().split(" ").map(Number);process.exit([32,48,64].every((v,i)=>Math.abs(p[i]-v)<=4)?0:1)' "$(px job/work/1/first-frame.png 540 1500)" \
   && ok "設 region 後置頂:UI 下緣 ≤ 1280、字幕區是 theme.bg" || bad "置頂鏡頭" "$c3 px=$(px job/work/1/first-frame.png 540 1500)"
 
+# 7c. AI 素材:frames.sh 組影格、圖片 fill / motion、影片鏡頭 fit 覆寫與 hold、sfx
+mkdir -p ai
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=704x1280:r=24:d=2 -start_number 1 ai/clip-%d.png
+f="$(bash "$S/frames.sh" ai clip ai/clip.mp4 --frames 48)"; rc=$?
+[ $rc -eq 0 ] && [ "$(jget "$f" frames)" = 48 ] && [ "$(jget "$f" width)x$(jget "$f" height)" = 704x1280 ] && [ "$(bash "$S/probe.sh" ai/clip.mp4 | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).fps)')" = 24 ] \
+  && ok "frames.sh 48 格 → 24 fps MP4" || bad "frames.sh" "$f"
+mkdir -p ai2 && cp ai/clip-1.png ai/clip-2.png ai/clip-4.png ai2/
+e="$(bash "$S/frames.sh" ai2 clip x.mp4 --frames 4 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'clip-3.png' && ok "frames.sh 缺第 3 格 → 結束碼 2 並指出缺哪格" || bad "frames.sh 缺號沒被擋" "$e"
+mkdir -p ai3 && cp ai/clip-1.png ai3/clip-1-1.png && cp ai/clip-2.png ai3/clip-1-2.png && cp ai/clip-1.png ai3/clip-1-r2-1.png && cp ai/clip-2.png ai3/clip-1-r2-2.png
+f3="$(bash "$S/frames.sh" ai3 clip-1 ai3/a.mp4 --frames 2 2>&1)" && [ "$(jget "$f3" frames)" = 2 ] && ok "frames.sh 不把重出的 <名稱>-r2-*.png 算進來" || bad "frames.sh 重出影格混入" "$f3"
+mkdir -p ai4 && for i in 1 2 3 4 5; do cp ai/clip-$i.png ai4/c-$i.png; done
+e="$(bash "$S/frames.sh" ai4 c x.mp4 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q -- '缺 --frames' && ok "frames.sh 沒給 --frames → 結束碼 2(必填)" || bad "frames.sh --frames 必填" "$e"
+f4="$(bash "$S/frames.sh" ai4 c ai4/a.mp4 --frames 3 2>&1)"
+[ "$(jget "$f4" frames)" = 3 ] && ok "frames.sh --frames 3:同名重跑留下的 4、5 格被忽略" || bad "frames.sh --frames" "$f4"
+e2="$(bash "$S/frames.sh" ai4 c x.mp4 --frames 6 2>&1)"; [ $? -eq 2 ] && echo "$e2" | grep -q '少於 --frames' && ok "frames.sh --frames 多於現有格數 → 結束碼 2" || bad "frames.sh --frames 6" "$e2"
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=928x1664 -frames:v 1 ai/img-1.png
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=f=880:d=0.4" -ar 48000 ai/sfx-1.wav
+node -e '
+const fs=require("fs");const n=JSON.parse(process.argv[1]).map((x,i)=>({...x,file:"../work/1/"+require("path").basename(x.file)}));
+const mk=(sc,extra={})=>JSON.stringify({mode:"narration",work:"../work/ai",out:"ai",narration:n,...extra,scenes:sc});
+fs.writeFileSync("job/1/ai.json",mk([{image:"../../ai/img-1.png",motion:"in",sfx:{path:"../../ai/sfx-1.wav",volume:0.8},sentences:[0]},{video:"../../ai/clip.mp4",fit:"crop",sentences:[1]}]));
+fs.writeFileSync("job/1/ai-badm.json",mk([{image:"../../ai/img-1.png",motion:"zoom",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-vmotion.json",mk([{video:"../../ai/clip.mp4",motion:"in",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-ifit.json",mk([{image:"../../ai/img-1.png",fit:"crop",sentences:[0,1]}]));
+fs.writeFileSync("job/1/ai-fill.json",mk([{image:"../../ai/img-1.png",fill:true,sentences:[0,1]}],{out:"aif",work:"../work/aif"}));' "$tts"
+node "$S/compose.mjs" job/1/ai-badm.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs motion 不合法 → 結束碼 2" || bad "compose.mjs motion 不合法沒被擋"
+node "$S/compose.mjs" job/1/ai-vmotion.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 影片鏡頭帶 motion → 結束碼 2" || bad "影片鏡頭 motion 沒被擋"
+node "$S/compose.mjs" job/1/ai-ifit.json --dry-run >/dev/null 2>&1; [ $? -eq 2 ] && ok "compose.mjs 圖片鏡頭帶 fit → 結束碼 2" || bad "圖片鏡頭 fit 沒被擋"
+mkdir -p 'p%d' && cp ai/clip-1.png ai/clip-2.png 'p%d/' && { bash "$S/frames.sh" 'p%d' clip x.mp4 --frames 2 >/dev/null 2>&1; [ $? -eq 2 ]; } && ok "frames.sh 目錄含 % → 結束碼 2" || bad "frames.sh % 目錄沒被擋"
+ca="$(node "$S/compose.mjs" job/1/ai.json)"; rc=$?
+node -e '
+const c=JSON.parse(process.argv[1]);const s=c.scenes;
+const want=Math.max(0,(s[1].end-s[1].start)-2);
+process.exit(s[0].motion==="in"&&s[1].layout==="crop"&&Math.abs(s[1].hold-want)<0.05&&c.sfx?.length===1&&c.sfx[0].at===0?0:1)' "$ca" 2>/dev/null \
+  && ok "compose.mjs motion / 鏡頭 fit / hold / sfx 摘要正確" || bad "compose.mjs AI 鏡頭摘要" "$ca"
+# motion:第 0 格與鏡頭結尾畫面不同(有在推近);fill:左上角不是黑邊
+ffmpeg -hide_banner -loglevel error -y -ss "$(jget "$ca" scenes.0.end | node -e 'console.log(Math.max(0,Number(require("fs").readFileSync(0,"utf8"))-0.1))')" -i job/1/ai/final.mp4 -frames:v 1 ai/end0.png
+ffmpeg -hide_banner -loglevel error -y -i job/1/ai/final.mp4 -frames:v 1 ai/start0.png
+[ $rc -eq 0 ] && [ "$(px ai/start0.png 200 200)" != "$(px ai/end0.png 200 200)" ] && ok "motion in:鏡頭開頭與結尾畫面不同" || bad "motion 沒有動" "$(px ai/start0.png 200 200) / $(px ai/end0.png 200 200)"
+cf="$(node "$S/compose.mjs" job/1/ai-fill.json)" && node -e 'const p=process.argv[1].trim().split(" ").map(Number);process.exit(p.some(v=>v>30)?0:1)' "$(px job/work/aif/first-frame.png 4 4)" \
+  && ok "fill:等比蓋滿,左上角不是黑邊" || bad "fill" "$cf px=$(px job/work/aif/first-frame.png 4 4)"
+vol() { ffmpeg -hide_banner -nostats -i "$1" -ss "$2" -t "$3" -af volumedetect -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB.*/\1/p'; }
+node -e 'process.exit(Number(process.argv[1])>-30?0:1)' -- "$(vol job/1/ai/final.mp4 0 0.3)" && ok "sfx 在鏡頭開始(旁白前 0.3 秒有聲音)" || bad "sfx 沒混進去" "$(vol job/1/ai/final.mp4 0 0.3)"
+
 # 8. compose.mjs 原聲精簡(cut 用 silence.sh 輸出)+ 拆句比例
 mkdir -p job/2
 cat > job/2/timeline.json <<EOF
