@@ -178,7 +178,7 @@ check "合併前再確認一次 CI(head statuses 共查 5 次)" [ "$(grep -c "^G
 check "目標分支的 commit 也查 pipeline 與 commit status" bash -c "grep -q 'pipelines?sha=2222222222222222222222222222222222222222' '$TMP/req.log' && grep -q 'commits/2222222222222222222222222222222222222222/statuses' '$TMP/req.log'"
 reset_mock
 check "剛 push 完(第一次 GET 是舊 sha / 衝突)仍等重新計算後合併" bash -c "bash '$BOT' merge 17 --sha $A40 2>&1 | grep -q '^merged: .*/merge_requests/17$'"
-check "GitLab 狀態 ci_still_running 時以結束碼 2 拒絕" bash -c "bash '$BOT' merge 18 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -q 'ci_still_running' '$TMP/err'"
+check "GitLab 狀態 ci_still_running 時以結束碼 4 拒絕" bash -c "bash '$BOT' merge 18 --sha $A40 2>'$TMP/err'; [ \$? -eq 4 ] && grep -q 'ci_still_running' '$TMP/err'"
 check "merge SHA 不符拒絕" bash -c "bash '$BOT' merge 1 --sha $C40 2>&1 | grep -q '不是 review 過的'"
 check "merge 短 SHA 拒絕" bash -c "! bash '$BOT' merge 1 --sha abc1234 2>/dev/null"
 check "merge 缺 --sha 拒絕" bash -c "! bash '$BOT' merge 1 2>/dev/null"
@@ -189,15 +189,15 @@ for t in "5 $C40 head 有 .gitlab-ci.yml" "6 $D40 head 有 1 個 pipeline" "7 $A
          "11 0000000000000000000000000000000000000000 head 有 1 個 pipeline" "13 $A40 tgtci 有 1 個 commit status" "14 $A40 MR 有 1 個 pipeline"; do
   set -- $t; iid=$1 sha=$2; shift 2; msg="$*"
   : > "$TMP/req.log"
-  check "merge !$iid($msg)以結束碼 2 拒絕" bash -c "bash '$BOT' merge $iid --sha $sha 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF -- '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+  check "merge !$iid($msg,還沒有通過的 pipeline)以結束碼 4 拒絕" bash -c "bash '$BOT' merge $iid --sha $sha 2>'$TMP/err'; [ \$? -eq 4 ] && grep -qF -- '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 done
 
 : > "$TMP/req.log"; echo '{"ci_config_path": "ci/pipeline.yml"}' > "$TMP/scenario.json"
-check "merge !1(專案設自訂 ci_config_path)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF 'ci/pipeline.yml' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+check "merge !1(專案設自訂 ci_config_path)以結束碼 4 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 4 ] && grep -qF 'ci/pipeline.yml' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 for kv in "auto_devops_enabled Auto DevOps" "only_allow_merge_if_pipeline_succeeds pipeline 成功"; do
   set -- $kv; key=$1; shift; msg="$*"
   echo "{\"$key\": true}" > "$TMP/scenario.json"; : > "$TMP/req.log"
-  check "merge !1($key)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+  check "merge !1($key)以結束碼 4 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 4 ] && grep -qF '$msg' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 done
 echo '{}' > "$TMP/scenario.json"
 : > "$TMP/req.log"
@@ -207,11 +207,30 @@ check "merge !15(查詢 pipelines 回 500)拒絕且不送合併" bash -c "bash '
 check "merge !16(目標分支查不到)拒絕且不送合併" bash -c "! bash '$BOT' merge 16 --sha $A40 2>'$TMP/err' && grep -q '查不到目標分支 gone' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 for k in ci_config_path auto_devops_enabled only_allow_merge_if_pipeline_succeeds; do
   echo "{\"hide_fields\": [\"$k\"]}" > "$TMP/scenario.json"; : > "$TMP/req.log"
-  check "merge !1(專案回應沒有 $k,Developer 權限)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF '沒有 $k 欄位' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+  check "merge !1(專案回應沒有 $k,Developer 權限)以結束碼 4 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 4 ] && grep -qF '沒有 $k 欄位' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 done
 echo '{"auto_devops_enabled": "yes"}' > "$TMP/scenario.json"; : > "$TMP/req.log"
-check "merge !1(布林欄位值異常)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 2 ] && grep -qF '無法確認' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+check "merge !1(布林欄位值異常)以結束碼 4 拒絕" bash -c "bash '$BOT' merge 1 --sha $A40 2>'$TMP/err'; [ \$? -eq 4 ] && grep -qF '無法確認' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
 echo '{}' > "$TMP/scenario.json"
+
+# --- 有 CI:pipeline 通過才合併 ---
+S=$(printf '4%.0s' $(seq 40)); reset_mock; : > "$TMP/req.log"
+check "merge !19(pipeline 通過;舊的失敗已重跑成功;allow_failure / manual 不擋)合併" bash -c "bash '$BOT' merge 19 --sha $S 2>'$TMP/err' | grep -q '^merged: .*/merge_requests/19$'"
+check "merge !19 送出的合併鎖 head SHA" bash -c "grep '^PUT .*/merge_requests/19/merge ' '$TMP/req.log' | sed 's/^PUT [^ ]* //' | jq -e '.sha==\"$S\"' >/dev/null"
+S=$(printf '5%.0s' $(seq 40)); : > "$TMP/req.log"
+check "merge !20(head pipeline failed)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 20 --sha $S 2>'$TMP/err'; [ \$? -eq 2 ] && grep -q 'CI 沒有通過' '$TMP/err' && grep -q 'failed' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+S=$(printf '6%.0s' $(seq 40)); reset_mock; : > "$TMP/req.log"
+check "merge !21(CI 還在跑、不等)以結束碼 4 拒絕" bash -c "bash '$BOT' merge 21 --sha $S 2>'$TMP/err'; [ \$? -eq 4 ] && grep -q 'CI 還在跑' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+reset_mock; : > "$TMP/req.log"
+check "merge !21 --wait-ci 5:等 CI 跑完後合併" bash -c "bash '$BOT' merge 21 --sha $S --wait-ci 5 2>'$TMP/err' | grep -q '^merged: .*/merge_requests/21$'"
+check "merge !21 等待時每 30 秒查一次" [ "$(grep -cx 30 "$TMP/sleep.log")" -ge 1 ]
+check "merge --wait-ci 不是整數時拒絕" bash -c "! bash '$BOT' merge 21 --sha $S --wait-ci abc 2>/dev/null"
+S=$(printf '7%.0s' $(seq 40)); : > "$TMP/req.log"
+check "merge !22(外部 commit status failed)以結束碼 2 拒絕" bash -c "bash '$BOT' merge 22 --sha $S 2>'$TMP/err'; [ \$? -eq 2 ] && grep -q 'jenkins failed' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+S=$(printf '8%.0s' $(seq 40)); : > "$TMP/req.log"
+check "merge !23(head pipeline 是舊 head 的)以結束碼 4 拒絕" bash -c "bash '$BOT' merge 23 --sha $S 2>'$TMP/err'; [ \$? -eq 4 ] && grep -q '還不是' '$TMP/err' && ! grep -q '^PUT' '$TMP/req.log'"
+: > "$TMP/req.log"
+check "merge !24(merged results pipeline 通過)合併" bash -c "bash '$BOT' merge 24 --sha $A40 2>'$TMP/err' | grep -q '^merged: .*/merge_requests/24$'"
 
 # --- 反向驗證:在暫存複本上拿掉修正,對應測試必須失敗 ---
 mkdir -p "$TMP/mut"
@@ -235,6 +254,12 @@ mutate nofields 'for k in ci_config_path auto_devops_enabled only_allow_merge_if
 echo '{"hide_fields": ["auto_devops_enabled"]}' > "$TMP/scenario.json"
 check "反向驗證:拿掉缺欄位檢查 → Developer 權限時會被合併" bash -c "! cmp -s '$BOT' '$TMP/mut/nofields.sh' && bash '$TMP/mut/nofields.sh' merge 1 --sha $A40 2>/dev/null | grep -q '^merged:'"
 echo '{}' > "$TMP/scenario.json"
+mutate okall 'else "bad" end;' 'else "ok" end;'
+check "反向驗證:失敗的 CI 當成通過 → !20 會被合併" bash -c "! cmp -s '$BOT' '$TMP/mut/okall.sh' && bash '$TMP/mut/okall.sh' merge 20 --sha $(printf '5%.0s' $(seq 40)) 2>/dev/null | grep -q '^merged:'"
+mutate oldest 'map(max_by(.id)' 'map(min_by(.id)'
+check "反向驗證:每個 ref 取最舊的 pipeline → !19 不會被合併" bash -c "! cmp -s '$BOT' '$TMP/mut/oldest.sh' && ! bash '$TMP/mut/oldest.sh' merge 19 --sha $(printf '4%.0s' $(seq 40)) 2>/dev/null | grep -q '^merged:'"
+mutate nohead '.sha == $s or' 'true or'
+check "反向驗證:不檢查 head pipeline 是哪個 head 的 → !23 會被合併" bash -c "! cmp -s '$BOT' '$TMP/mut/nohead.sh' && bash '$TMP/mut/nohead.sh' merge 23 --sha $(printf '8%.0s' $(seq 40)) 2>/dev/null | grep -q '^merged:'"
 export PATH=$REAL_PATH
 
 echo "---- $pass passed, $fail failed"

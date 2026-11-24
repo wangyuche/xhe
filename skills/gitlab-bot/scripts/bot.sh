@@ -6,8 +6,11 @@
 #   bot.sh push <分支>                      把 HEAD 推到遠端 <分支>(拒絕預設分支、main、master,不 force)
 #   bot.sh mr --head <分支> [--base <分支>] --title <標題> [--body-file <檔>]
 #                                           開 MR,印出網址;該分支已有 open MR 就印既有網址
-#   bot.sh merge <MR iid> --sha <review 過的 head SHA>
-#                                           只合併沒有 CI 的專案 / commit;有 CI 就拒絕
+#   bot.sh merge <MR iid> --sha <review 過的 head SHA> [--wait-ci <分鐘>]
+#                                           沒有 CI:確認 15 秒內沒有晚登記的 CI 才合併。
+#                                           有 CI:這個 head 的 pipeline / commit status 全部通過才合併;
+#                                           還在跑時等到 --wait-ci 分鐘(預設 0 = 不等)。
+#                                           結束碼:2 = CI 失敗 / 無法判定、4 = CI 還在跑(等不到)
 # 多專案:主機與專案路徑一律從 origin 解析(https://host/group/sub/proj.git 或 git@host:group/proj.git),
 #   token 在鑰匙圈:service=gitlab-bot、account=<主機>。同一主機所有專案共用一筆。
 #   測試用環境變數(只接受本機,避免 token 被送到別處):
@@ -170,7 +173,8 @@ $bad"
   [[ -n ${GITLAB_BOT_PUSH_URL:-} ]] || git update-ref "refs/remotes/origin/$branch" HEAD 2>/dev/null || true
 }
 
-# ci_signals <head SHA> <目標分支>:有任何 CI 跡象或無法確認就結束(exit 2 交給使用者;查詢失敗 exit 1)。
+# ci_signals <head SHA> <目標分支>:把 CI 跡象(或無法確認沒有 CI 的原因)放進 CI_FOUND;查詢失敗 exit 1。
+# 有任何一條就表示「預期有 CI」,要走 ci_gate(pipeline 通過才合併),不能當成沒有 CI。
 # 不在子 shell 呼叫,die 才會結束整個腳本。
 nonneg() { [[ ${1-} =~ ^[0-9]+$ ]] || die "$2 查詢回應不是預期的 JSON,不合併"; }
 ci_signals() {
@@ -210,9 +214,68 @@ ci_signals() {
   r=$(api GET "/projects/$PID_ENC/merge_requests/$iid/pipelines") || die "查不到 MR 的 pipeline,不合併"
   n=$(jq -r 'if type=="array" then length else "x" end' <<<"$r"); nonneg "$n" "MR pipeline"
   [[ $n == 0 ]] || found+=("MR 有 $n 個 pipeline")
-  if [[ ${#found[@]} -gt 0 ]]; then
-    printf 'bot.sh: 偵測到 CI 或無法確認,不自動合併,請使用者確認 CI 後自行合併:\n' >&2; printf '  - %s\n' "${found[@]}" >&2; exit 2
+  CI_FOUND=(); [[ ${#found[@]} -eq 0 ]] || CI_FOUND=("${found[@]}")
+}
+
+# ci_class:stdin 是 [{status, allow_failure?}],印 ok / wait / bad(全部 ok 才是 ok;有 bad 就是 bad)
+ci_class() {
+  jq -r 'def one: if .status == "success" then "ok"
+                  elif .status == "skipped" and .kind == "status" then "ok"
+                  elif (.allow_failure == true) and .kind == "status" and (.status|IN("failed","canceled","manual")) then "ok"
+                  elif .status|IN("created","waiting_for_resource","preparing","pending","running","scheduled") then "wait"
+                  else "bad" end;
+         if type != "array" then "bad"
+         else (map(one)) as $c | if ($c|index("bad")) then "bad" elif ($c|index("wait")) then "wait" else "ok" end end'
+}
+
+# ci_gate <head SHA>:預期有 CI 時,這個 head 的 CI 是否全部通過。$m 是最新的 MR JSON。
+# 設 CI_STATE = ok / wait / bad,CI_WHY = 原因。查詢失敗 die。
+ci_gate() {
+  local sha=$1 hp r c
+  CI_STATE=ok CI_WHY=()
+  bump() { case $1 in bad) CI_STATE=bad ;; wait) [[ $CI_STATE == bad ]] || CI_STATE=wait ;; esac; [[ $1 == ok ]] || CI_WHY+=("$2"); }
+  # MR 的 head pipeline:要是這個 head 的(branch pipeline 的 sha,或 MR 的 merge ref 上的 merged results / train)
+  hp=$(jq -c '.head_pipeline // null' <<<"$m")
+  if [[ $hp == null ]]; then
+    bump wait "MR 還沒有 head pipeline"
+  elif ! jq -e --arg s "$sha" --arg i "$iid" '.sha == $s or ((.ref // "") | test("^refs/merge-requests/" + $i + "/(merge|train|head)$"))' >/dev/null <<<"$hp"; then
+    bump wait "MR 的 head pipeline 還不是 $sha 的"
+  else
+    c=$(jq -c '[{status, kind: "pipeline"}]' <<<"$hp" | ci_class); bump "$c" "MR head pipeline #$(jq -r .id <<<"$hp") 狀態 $(jq -r .status <<<"$hp")"
   fi
+  # MR 最新的 pipeline(可能比 head_pipeline 新)
+  r=$(api GET "/projects/$PID_ENC/merge_requests/$iid/pipelines") || die "查不到 MR 的 pipeline,不合併"
+  r=$(jq -c 'if type=="array" then (sort_by(.id) | last | if . == null then [] else [{status, kind: "pipeline", id}] end) else "x" end' <<<"$r")
+  [[ $r != '"x"' ]] || die "MR pipeline 的回應不是預期的 JSON,不合併"
+  c=$(ci_class <<<"$r"); bump "$c" "MR 最新的 pipeline 狀態 $(jq -r '.[0] | "#\(.id) \(.status)"' <<<"$r")"
+  # 這個 head 上每個 ref 最新的 pipeline(重跑成功的舊失敗不算)
+  r=$(api GET "/projects/$PID_ENC/pipelines?sha=$sha&per_page=100") || die "查不到 head 的 pipeline,不合併"
+  r=$(jq -c 'if type=="array" then (group_by(.ref) | map(max_by(.id) | {status, kind: "pipeline", ref, id})) else "x" end' <<<"$r")
+  [[ $r != '"x"' ]] || die "head pipeline 的回應不是預期的 JSON,不合併"
+  c=$(ci_class <<<"$r"); bump "$c" "head 的 pipeline:$(jq -r 'map("#\(.id)(\(.ref)) \(.status)") | join("、")' <<<"$r")"
+  # commit status(含外部 CI;預設只回每個名稱最新的一筆):allow_failure 的失敗、skipped 不擋
+  r=$(api GET "/projects/$PID_ENC/repository/commits/$sha/statuses?per_page=100") || die "查不到 head 的 commit status,不合併"
+  r=$(jq -c 'if type=="array" then map({status, allow_failure, name, kind: "status"}) else "x" end' <<<"$r")
+  [[ $r != '"x"' ]] || die "commit status 的回應不是預期的 JSON,不合併"
+  c=$(ci_class <<<"$r"); bump "$c" "head 的 commit status:$(jq -r 'map(select(.status != "success")) | map("\(.name) \(.status)") | join("、")' <<<"$r")"
+}
+
+# wait_ci <head SHA>:預期有 CI 時,等到全部通過(最多 WAIT_CI 分鐘,每 30 秒查一次);失敗 exit 2,等不到 exit 4。
+wait_ci() {
+  local sha=$1 deadline=$(( $(date +%s) + WAIT_CI * 60 ))
+  while :; do
+    m=$(api GET "/projects/$PID_ENC/merge_requests/$iid?with_merge_status_recheck=true") || die "查不到 MR !$iid"
+    check_mr
+    ci_gate "$sha"
+    case $CI_STATE in
+      ok) return 0 ;;
+      bad) printf 'bot.sh: CI 沒有通過,不合併:\n' >&2; printf '  - %s\n' "${CI_WHY[@]}" >&2; exit 2 ;;
+    esac
+    if (( $(date +%s) >= deadline )); then
+      printf 'bot.sh: CI 還在跑,不合併(可加 --wait-ci <分鐘> 等它跑完):\n' >&2; printf '  - %s\n' "${CI_WHY[@]}" >&2; exit 4
+    fi
+    sleep 30
+  done
 }
 
 # check_mr:$m 是 open、head 等於 review 過的 $sha、沒有衝突
@@ -270,9 +333,16 @@ case $cmd in
   merge)
     iid=${1-}; shift || true
     [[ $iid =~ ^[0-9]+$ ]] || die "用法:bot.sh merge <MR iid> --sha <SHA>"
-    sha=""
-    while [[ $# -gt 0 ]]; do case $1 in --sha) need "$@"; sha=$2; shift 2 ;; *) die "不認得的參數:$1" ;; esac; done
+    sha="" WAIT_CI=0
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --sha) need "$@"; sha=$2; shift 2 ;;
+        --wait-ci) need "$@"; WAIT_CI=$2; shift 2 ;;
+        *) die "不認得的參數:$1" ;;
+      esac
+    done
     [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要完整 40 碼 SHA"
+    [[ $WAIT_CI =~ ^[0-9]{1,4}$ ]] || die "--wait-ci 要 0 ~ 9999 的整數(分鐘)"
     # GitLab 延遲計算可合併狀態(剛 push 完 sha / has_conflicts 也可能還是舊的):
     # 觸發重新檢查,unchecked / checking 時最多等 60 秒,之後才檢查 sha 與衝突
     wait_mergeable() {
@@ -288,20 +358,31 @@ case $cmd in
       st=$(jq -r '.detailed_merge_status // .merge_status' <<<"$m")
       case $st in
         mergeable|can_be_merged) ;;
-        ci_must_pass|ci_still_running) echo "bot.sh: 偵測到 CI(GitLab 狀態 $st),不自動合併,請使用者確認 CI 後自行合併" >&2; exit 2 ;;
+        ci_must_pass|ci_still_running) echo "bot.sh: GitLab 狀態 $st(CI 還沒通過),不合併" >&2; exit 4 ;;
         *) die "GitLab 回報無法合併:$st" ;;
       esac
     }
     wait_mergeable
     tgt=$(jq -r .target_branch <<<"$m")
-    # 外部 CI 可能晚幾秒才登記:等 15 秒(4 次查詢,間隔 5 秒)都沒有才算沒有 CI
+    # 外部 CI 可能晚幾秒才登記:等 15 秒(4 次查詢,間隔 5 秒)都沒有才算沒有 CI;一有跡象就改走「pipeline 通過才合併」
     for i in 1 2 3 4; do
       ci_signals "$sha" "$tgt"
-      [[ $i -eq 4 ]] || sleep 5
+      [[ ${#CI_FOUND[@]} -eq 0 && $i -lt 4 ]] || break
+      sleep 5
     done
-    wait_mergeable strict   # 等待期間 MR 可能被更新
-    [[ $(jq -r .target_branch <<<"$m") == "$tgt" ]] || die "MR !$iid 的目標分支改了,請重新 review"
-    ci_signals "$sha" "$tgt"   # 合併前再確認一次(等待期間才登記的也要擋)
+    if [[ ${#CI_FOUND[@]} -gt 0 ]]; then
+      printf 'bot.sh: 有 CI,等這個 head 的 CI 全部通過才合併:\n' >&2; printf '  - %s\n' "${CI_FOUND[@]}" >&2
+      wait_ci "$sha"
+      wait_mergeable strict
+      [[ $(jq -r .target_branch <<<"$m") == "$tgt" ]] || die "MR !$iid 的目標分支改了,請重新 review"
+      ci_gate "$sha"   # 合併前再確認一次(等待期間被重跑 / 新登記的也要擋)
+      [[ $CI_STATE == ok ]] || { printf 'bot.sh: 合併前 CI 狀態變了(%s),不合併:\n' "$CI_STATE" >&2; printf '  - %s\n' "${CI_WHY[@]}" >&2; exit 2; }
+    else
+      wait_mergeable strict   # 等待期間 MR 可能被更新
+      [[ $(jq -r .target_branch <<<"$m") == "$tgt" ]] || die "MR !$iid 的目標分支改了,請重新 review"
+      ci_signals "$sha" "$tgt"   # 合併前再確認一次(等待期間才登記的 CI:不合併,下次執行會走 pipeline 檢查)
+      [[ ${#CI_FOUND[@]} -eq 0 ]] || { printf 'bot.sh: 合併前才出現 CI,不合併(重新執行會等 CI):\n' >&2; printf '  - %s\n' "${CI_FOUND[@]}" >&2; exit 4; }
+    fi
     r=$(api PUT "/projects/$PID_ENC/merge_requests/$iid/merge" "$(jq -n --arg s "$sha" '{sha:$s, should_remove_source_branch:false}')")
     jq -r '"merged: \(.web_url)\nmerge_commit_sha: \(.merge_commit_sha // .squash_commit_sha // "(fast-forward)")"' <<<"$r" ;;
   *)
