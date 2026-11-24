@@ -11,6 +11,9 @@
 #                                           有 CI:這個 head 的 pipeline / commit status 全部通過才合併;
 #                                           還在跑時等到 --wait-ci 分鐘(預設 0 = 不等)。
 #                                           結束碼:2 = CI 失敗 / 無法判定、4 = CI 還在跑(等不到)
+#   bot.sh jobs <pipeline id>               列出 pipeline 的 job(id、stage、名稱、狀態)
+#   bot.sh log <job id> [行數]              印 job log 的最後幾行(預設 200,最多 5000)
+#   bot.sh retry <pipeline id>              重跑 pipeline 裡失敗 / 取消的 job
 # 多專案:主機與專案路徑一律從 origin 解析(https://host/group/sub/proj.git 或 git@host:group/proj.git),
 #   token 在鑰匙圈:service=gitlab-bot、account=<主機>。同一主機所有專案共用一筆。
 #   測試用環境變數(只接受本機,避免 token 被送到別處):
@@ -93,6 +96,15 @@ ident() {
 }
 
 project_json() { api GET "/projects/$PID_ENC"; }
+
+# api_text:回應是純文字(job log),不做 JSON 解析;非 2xx 回 1
+api_text() {
+  local path=$1 out=$SCRATCH/resp code
+  : >"$out"
+  code=$(printf 'PRIVATE-TOKEN: %s\n' "$TOKEN" | curl -q -sS -o "$out" -w '%{http_code}' -H @- "$API$path") || die "連不到 $API"
+  [[ $code == 2* ]] || { echo "bot.sh: GitLab API GET $path → HTTP $code" >&2; return 1; }
+  cat "$out"
+}
 
 # token_scopes:印 token 名稱、scopes、到期日;缺 api / write_repository 時警告並設 SCOPE_RC=3。
 # 端點失敗(有些 token 類型不支援)只印「無法確認 scope」,不算失敗。
@@ -385,6 +397,18 @@ case $cmd in
     fi
     r=$(api PUT "/projects/$PID_ENC/merge_requests/$iid/merge" "$(jq -n --arg s "$sha" '{sha:$s, should_remove_source_branch:false}')")
     jq -r '"merged: \(.web_url)\nmerge_commit_sha: \(.merge_commit_sha // .squash_commit_sha // "(fast-forward)")"' <<<"$r" ;;
+  jobs)
+    [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh jobs <pipeline id>"
+    api GET "/projects/$PID_ENC/pipelines/$1/jobs?per_page=100&include_retried=false" \
+      | jq -r '.[] | "\(.id)\t\(.stage)\t\(.name)\t\(.status)\(if .allow_failure then " (allow_failure)" else "" end)"' ;;
+  log)
+    [[ $# -ge 1 && $# -le 2 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh log <job id> [行數]"
+    n=${2-200}; [[ $n =~ ^[0-9]{1,4}$ && $n -ge 1 && $n -le 5000 ]] || die "行數要 1 ~ 5000"
+    # 去掉 ANSI 控制碼與 GitLab 的 section 標記
+    api_text "/projects/$PID_ENC/jobs/$1/trace" | tail -n "$n" | sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g; s/section_(start|end):[0-9]+:[A-Za-z0-9_-]+\r?//g; s/\r$//' ;;
+  retry)
+    [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh retry <pipeline id>"
+    api POST "/projects/$PID_ENC/pipelines/$1/retry" | jq -r '"pipeline #\(.id) \(.status)"' ;;
   *)
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
 esac

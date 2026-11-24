@@ -257,6 +257,13 @@ class H(BaseHTTPRequestHandler):
             if sha == S6:
                 return self.send(200, [{"id": 32, "ref": "feat/21", "status": "success" if RECHECK.get(21, 0) > 2 else "running"}])
             return self.send(200, PIPELINES.get(sha, []))
+        if rest == "pipelines/50/jobs":
+            return self.send(200, [{"id": 501, "stage": "test", "name": "go-test", "status": "failed", "allow_failure": False},
+                                   {"id": 502, "stage": "test", "name": "lint", "status": "failed", "allow_failure": True}])
+        if rest == "jobs/501/trace":  # 純文字、含 ANSI 色碼與 section 標記
+            b = "".join(f"line {i}\n" for i in range(1, 301)) + "\x1b[31;1m--- FAIL: TestX\x1b[0m\nsection_end:1700000000:step_script\r\x1b[0KERROR: Job failed\n"
+            self.send_response(200); self.send_header("Content-Type", "text/plain"); self.send_header("Content-Length", str(len(b.encode())))
+            self.end_headers(); return self.wfile.write(b.encode())
         if rest.startswith("repository/commits/") and rest.endswith("/statuses"):
             sha = rest.split("/")[2]
             return self.send(200, STATUSES.get(sha, []))
@@ -272,6 +279,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {})
         if self.token() is None:
             return self.send(401, {"message": "401 Unauthorized"})
+        if p == PROJ + "/pipelines/50/retry":
+            return self.send(201, {"id": 50, "status": "pending"})
         if p == PROJ + "/merge_requests":
             if (scenario().get("scopes") or TOKENS[self.token()] or []).count("api") == 0:
                 return self.send(403, {"error": "insufficient_scope"})

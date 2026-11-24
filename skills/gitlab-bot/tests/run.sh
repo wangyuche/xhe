@@ -232,6 +232,14 @@ check "merge !23(head pipeline 是舊 head 的)以結束碼 4 拒絕" bash -c "b
 : > "$TMP/req.log"
 check "merge !24(merged results pipeline 通過)合併" bash -c "bash '$BOT' merge 24 --sha $A40 2>'$TMP/err' | grep -q '^merged: .*/merge_requests/24$'"
 
+# --- jobs / log / retry ---
+check "jobs 列出 job 與 allow_failure" bash -c "out=\$(bash '$BOT' jobs 50); grep -qx $'501\ttest\tgo-test\tfailed' <<<\"\$out\" && grep -q 'lint.*(allow_failure)' <<<\"\$out\""
+check "log 只印最後幾行、去掉色碼與 section 標記" bash -c "out=\$(bash '$BOT' log 501 3); [ \$(wc -l <<<\"\$out\") -eq 3 ] && grep -qx -- '--- FAIL: TestX' <<<\"\$out\" && grep -qx 'ERROR: Job failed' <<<\"\$out\" && ! grep -q \$'\\x1b' <<<\"\$out\""
+check "log 預設 200 行" bash -c "[ \$(bash '$BOT' log 501 | wc -l) -eq 200 ]"
+check "log 行數超過上限拒絕" bash -c "! bash '$BOT' log 501 99999 2>/dev/null"
+: > "$TMP/req.log"
+check "retry 送 POST 並印狀態" bash -c "[ \"\$(bash '$BOT' retry 50)\" = 'pipeline #50 pending' ] && grep -q '^POST .*/pipelines/50/retry' '$TMP/req.log'"
+
 # --- 反向驗證:在暫存複本上拿掉修正,對應測試必須失敗 ---
 mkdir -p "$TMP/mut"
 mutate() {  # mutate <名稱> <python 取代式:舊字串> <新字串>

@@ -54,6 +54,8 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
    - 結束碼:**2** = CI 失敗(或 manual 沒放行等)→ 不合併,回報使用者;**4** = CI 還在跑 / 還沒有這個 head 的 pipeline →
      `--wait-ci <分鐘>` 每 30 秒查一次等它跑完(長時間等用背景執行),等不到就回報;1 = 查詢失敗(任何查詢失敗都不合併)。
    - 已知限制:最後一次確認到送出合併之間(約 1 秒)若 CI 狀態改變不會發現;合併後目標分支的 pipeline 不在檢查範圍。
+   - CI 失敗時看原因:`bash $BOT jobs <pipeline id>`(job 與狀態)、`bash $BOT log <job id> [行數]`(log 最後幾行,去色碼)。
+     確定是和這次變更無關的不穩定測試才 `bash $BOT retry <pipeline id>` 重跑,並回報是哪個測試、要另外修。
 5. 回報:MR 網址、review 結論、merge commit SHA。使用者沒授權自動合併時,停在第 3 步回報即可。
 
 ## 自我測試
