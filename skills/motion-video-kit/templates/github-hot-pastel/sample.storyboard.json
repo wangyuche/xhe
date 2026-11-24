@@ -1,0 +1,32 @@
+{
+ "template": "github-hot-pastel",
+ "tag": "GitHub 熱門專案",
+ "scenes": [
+  {"headline": [["貼一個網址", ""], ["", "整站重做出來"]], "mascot": "happy",
+   "lines": ["今天介紹 一個 *超紅的* 開源工具"]},
+  {"headline": [["它叫", ""], ["", "PixelForge"]], "mascot": "point",
+   "card": {"type": "image", "src": "repo.png", "focus": [20, 80, 860, 600], "zoom": "in"},
+   "lines": ["這個 *開源專案* 叫 PixelForge"]},
+  {"headline": [["上線一週", ""], ["", "星星破萬"]], "mascot": "surprised",
+   "card": {"type": "stat", "value": "1.2 萬", "label": "GitHub 星星", "icon": "star"},
+   "lines": ["上線 一週 就拿到 *1.2 萬* 顆星"]},
+  {"headline": [["一個指令", ""], ["", "就開工"]], "mascot": "think",
+   "card": {"type": "terminal", "lines": ["$ npx pixelforge clone", "✔ 讀取網址與版面", "✔ 產生 12 個元件"], "typing": true},
+   "lines": ["只要 在終端機 打 *一行指令*"]},
+  {"headline": [["原站成品", ""], ["", "並排比對"]], "mascot": "search",
+   "card": {"type": "compare", "left": "site.png", "right": "clone.png", "labels": ["Original", "Clone"], "focus": [40, 170, 560, 640]},
+   "lines": ["做完 把 *原站* 跟 *複製版* 並排比對"]},
+  {"headline": [["四個", ""], ["AI 工具", "都能用"]], "mascot": "point",
+   "card": {"type": "chips", "items": [{"text": "Claude Code"}, {"text": "Codex"}, {"text": "Cursor"}, {"text": "OpenCode"}], "arrow": false},
+   "lines": ["常用的 *四種* AI 寫程式工具 都能接"]},
+  {"headline": [["做事分", ""], ["", "三個步驟"]], "mascot": "think",
+   "card": {"type": "checklist", "items": [{"text": "讀懂網址"}, {"text": "拆成元件", "at": "拆成元件"}, {"text": "逐頁比對", "at": "逐頁比對"}]},
+   "lines": ["第一步 先把 *網址讀懂*", "第二步 *拆成元件* 方便修改", "第三步 *逐頁比對* 跟原站一模一樣"]},
+  {"headline": [["產出", ""], ["", "整套元件"]], "mascot": "happy",
+   "card": {"type": "grid", "cols": 3, "items": [{"text": "Navbar", "sub": "導覽列"}, {"text": "Hero", "sub": "主視覺"}, {"text": "Card", "sub": "卡片"}, {"text": "Form", "sub": "表單"}, {"text": "Modal", "sub": "對話框"}, {"text": "Footer", "sub": "頁尾"}]},
+   "lines": ["*六種* 常用元件 一次幫你產好"]},
+  {"headline": [["想試試看", ""], ["", "PixelForge？"]], "mascot": "thumbs",
+   "card": {"type": "cta", "text": "搜尋 PixelForge", "sub": "github.com/example/pixelforge"},
+   "lines": ["去 GitHub 搜尋 *PixelForge*"]}
+ ]
+}

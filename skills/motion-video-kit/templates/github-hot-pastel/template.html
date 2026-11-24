@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<title>github-hot-pastel</title>
+<!--
+  motion-video-kit 模板 github-hot-pastel(1080×1440、30 fps)。
+  JS 介面(render.mjs 呼叫,專案模板不能改):
+    MVK.build(data) → Promise<{ boxes:[{file,kind,x,y,w,h,fontSize}], errors:[字串] }>
+       建好整支片的 DOM 與所有動畫(Web Animations API,全部暫停);errors 非空 = 版面放不下(render 結束碼 4)。
+    MVK.seek(t)     → 所有動畫 currentTime = t 秒(逐格定位,可重現)。
+  內容一律 textContent 放入;圖片只用 render.mjs 解析過的 file:// 網址。
+  可以改的:下面 :root 的 CSS 變數與版面樣式(專案模板);palette / fonts 由 template.json 注入成 CSS 變數。
+-->
+<style>
+:root{
+  --W:1080px;--H:1440px;
+  --bg:#F5EADC;--ink:#211A2C;--frame:#3A2350;--accent:#EC5B2A;--accent2:#FFB547;--card:#FFFDF8;--muted:#76687E;--terminal:#241B33;
+  --f-headline:"PingFang TC";--f-body:"PingFang TC";--f-mono:"Menlo";
+  /* 版面 */
+  --card-x:40px;--card-y:452px;--card-w:1000px;--card-h:728px;--card-border:8px;--card-radius:46px;
+  --mascot-x:772px;--mascot-y:180px;--mascot-size:290px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:var(--W);height:var(--H);overflow:hidden;background:var(--bg)}
+body{font-family:var(--f-body),"PingFang TC","Heiti TC",sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;font-kerning:normal}
+#stage{position:absolute;inset:0;overflow:hidden;background:var(--bg)}
+/* 背景幾何 */
+.shape{position:absolute;opacity:.42;will-change:transform}
+.shape.circle{border-radius:50%}
+.shape.ring{border-radius:50%;background:transparent!important;border-style:solid}
+.shape.sq{border-radius:28%}
+.shape.tri{clip-path:polygon(50% 4%,96% 92%,4% 92%)}
+.shape.pill{border-radius:999px}
+/* 進度條 */
+#progress{position:absolute;left:0;top:0;height:12px;width:100%;background:var(--accent);transform-origin:0 50%;border-radius:0 8px 8px 0;z-index:30}
+/* 標籤 */
+#tag{position:absolute;left:40px;top:38px;background:var(--frame);color:#fff;font-weight:600;font-size:36px;line-height:1;padding:14px 28px 15px;border-radius:999px;letter-spacing:1px;z-index:20;transform-origin:0 50%;box-shadow:0 5px 0 rgba(58,35,80,.18)}
+#tag .em{color:var(--accent2)}
+/* 大標 */
+.headline{position:absolute;z-index:20;transform-origin:0 50%}
+.hl-line{white-space:nowrap;font-family:var(--f-headline),"PingFang TC",sans-serif;font-weight:600;line-height:1.14;letter-spacing:.5px;color:var(--ink);-webkit-text-stroke:.03em currentColor;paint-order:stroke fill}
+.hl-line .em{color:var(--accent)}
+.hl-line .ch{display:inline-block;transform-origin:50% 85%}
+.hl-line .sp{display:inline-block;width:.28em}
+/* 卡片 */
+#card{position:absolute;left:var(--card-x);top:var(--card-y);width:var(--card-w);height:var(--card-h);background:var(--card);border:var(--card-border) solid var(--frame);border-radius:var(--card-radius);box-shadow:0 16px 0 rgba(58,35,80,.16),0 26px 40px rgba(58,35,80,.10);z-index:10;transform-origin:50% 0}
+#card-clip{position:absolute;inset:0;border-radius:calc(var(--card-radius) - var(--card-border));overflow:hidden}
+.content{position:absolute;inset:0;padding:26px;display:flex;align-items:center;justify-content:center;font-size:48px}
+/* 吉祥物 */
+#mascot{position:absolute;left:var(--mascot-x);top:var(--mascot-y);width:var(--mascot-size);height:var(--mascot-size);z-index:15}
+#mascot .vis,#mascot .float,#mascot .bounce{position:absolute;inset:0;transform-origin:50% 94%}
+#mascot img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}
+/* 字幕 */
+.subline{position:absolute;display:flex;align-items:center;justify-content:center;z-index:20}
+.sub{text-align:center;font-weight:600;line-height:1.42;color:var(--ink);max-width:100%}
+.sub .w{display:inline-block;transform-origin:50% 80%;white-space:pre}
+.sub .w.hl{background:var(--accent);color:#fff;border-radius:999px;padding:0 .4em .04em;margin:0 .12em;box-shadow:0 4px 0 rgba(58,35,80,.2)}
+/* 元件:image / compare */
+.shot{position:relative;width:100%;height:100%;border-radius:24px;overflow:hidden;background:#F1ECE6;border:3px solid #E7DDD2}
+.shot .zoom{position:absolute;inset:0}
+.shot img{position:absolute;max-width:none}
+.compare{display:flex;gap:18px;width:100%;height:100%}
+.compare .pane{position:relative;flex:1;display:flex;flex-direction:column;gap:16px;min-width:0}
+.compare .shot{flex:1;height:auto}
+.label{align-self:center;font-weight:600;font-size:40px;line-height:1;padding:14px 30px 16px;border-radius:999px;border:5px solid var(--frame);background:#fff;color:var(--ink);white-space:nowrap}
+.label.on{background:var(--accent);color:#fff}
+/* terminal */
+.term{width:100%;background:var(--terminal);border-radius:28px;padding:26px 34px 34px;box-shadow:0 12px 0 rgba(58,35,80,.22)}
+.term .bar{display:flex;gap:14px;margin-bottom:26px}
+.term .bar i{width:22px;height:22px;border-radius:50%;display:block}
+.term .ln{font-family:var(--f-mono),Menlo,monospace;font-size:1.02em;line-height:1.55;color:#F5ECE1;white-space:pre}
+.term .ln .p{color:var(--accent2)}
+.term .ln .c{display:inline-block}
+.term .cur{display:inline-block;width:.6em;height:1.05em;vertical-align:-.15em;background:var(--accent2);margin-left:.1em}
+/* chips */
+.chips{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:26px 22px;max-width:100%}
+.chip{font-weight:600;font-size:1.18em;line-height:1;padding:.36em .72em .42em;border:6px solid var(--frame);border-radius:999px;background:#fff;color:var(--ink);white-space:nowrap;box-shadow:0 7px 0 rgba(58,35,80,.16)}
+.chip.on{background:var(--accent);color:#fff}
+.arrow{width:1.1em;height:.8em;display:inline-block}
+/* checklist */
+.checks{display:flex;flex-direction:column;gap:.55em;align-items:flex-start;font-size:1.4em}
+.row{display:flex;align-items:center;gap:.5em;font-weight:600;font-size:1.02em;line-height:1.2}
+.tick{width:1.25em;height:1.25em;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 5px 0 rgba(58,35,80,.2)}
+.tick svg{width:62%;height:62%}
+.row .num{color:var(--accent);margin-right:.1em}
+/* grid */
+.grid{display:grid;gap:24px;width:100%}
+.cell{border:6px solid var(--frame);border-radius:30px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:.5em .4em;min-height:3.4em;box-shadow:0 8px 0 rgba(58,35,80,.16);text-align:center}
+.cell b{font-weight:600;font-size:1.12em;line-height:1.15}
+.cell small{font-size:.64em;color:var(--muted);margin-top:.25em;font-weight:500}
+.cell.on{background:var(--accent);color:#fff}.cell.on small{color:#FFE7D8}
+/* stat */
+.stat{display:flex;flex-direction:column;align-items:center;gap:.4em}
+.stat .big{display:flex;align-items:center;gap:.22em;font-weight:600;font-size:3.1em;line-height:1;color:var(--ink);white-space:nowrap;-webkit-text-stroke:.02em currentColor}
+.stat .star{width:.95em;height:.95em;flex:none}
+.stat .lab{font-weight:600;font-size:.95em;padding:.3em .9em .36em;border-radius:999px;background:var(--frame);color:#fff;white-space:nowrap}
+/* cta */
+.cta{display:flex;flex-direction:column;align-items:center;gap:.7em}
+.cta .btn{font-weight:600;font-size:1.36em;line-height:1;color:#fff;background:var(--accent);border:7px solid var(--frame);border-radius:999px;padding:.5em 1.1em .56em;box-shadow:0 12px 0 var(--frame);white-space:nowrap}
+.cta .sub2{font-family:var(--f-mono),Menlo,monospace;font-size:.78em;color:var(--frame);background:#fff;border:4px dashed #CDBFD6;border-radius:18px;padding:.35em .7em;white-space:nowrap}
+.cta .down{width:1.3em;height:1.3em}
+/* title */
+.hero{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+.hero .rays{position:absolute;width:640px;height:640px;border-radius:50%;background:repeating-conic-gradient(rgba(255,181,71,.38) 0 10deg,rgba(255,181,71,0) 10deg 20deg);-webkit-mask:radial-gradient(circle,#000 30%,transparent 70%);mask:radial-gradient(circle,#000 30%,transparent 70%)}
+.hero .blob{position:absolute;width:420px;height:420px;border-radius:50%;background:#FBE3CF}
+.hero .big{position:relative;width:520px;height:520px;transform-origin:50% 94%}
+.hero .big img{width:100%;height:100%;object-fit:contain}
+.hero .spark{position:absolute;width:56px;height:56px}
+</style></head>
+<body><div id="stage"></div>
+<script>
+'use strict';
+(() => {
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ms = (s) => Math.max(0, Math.round(s * 1000));
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const svg = (markup) => { const t = document.createElement('template'); t.innerHTML = markup; return t.content.firstElementChild; }; // 只用在固定圖示(不含內容)
+const POP = 'cubic-bezier(.2,.9,.3,1)';
+// 有彈性的出現:縮小 → 放大過頭 → 回彈 → 定位
+const popKF = (from = .35, over = 1.14) => [
+  { opacity: 0, transform: `scale(${from})` },
+  { opacity: 1, transform: `scale(${over})`, offset: .5 },
+  { opacity: 1, transform: 'scale(.96)', offset: .75 },
+  { opacity: 1, transform: 'scale(1)' }];
+const riseKF = (dy = 40) => [
+  { opacity: 0, transform: `translateY(${dy}px) scale(.8)` },
+  { opacity: 1, transform: 'translateY(-6px) scale(1.06)', offset: .6 },
+  { opacity: 1, transform: 'translateY(0) scale(1)' }];
+const outKF = [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.86)' }];
+// 第一個動畫 fill both(開始前維持第一格);之後同屬性的動畫 fill forwards(開始前不覆蓋)
+const anim = (e, kf, at, dur, { easing = POP, fill = 'both', iterations = 1, direction = 'normal' } = {}) =>
+  e.animate(kf, { delay: ms(at), duration: ms(dur), easing, fill, iterations, direction });
+// 整支片長的關鍵格(用在多次切換的屬性,避免多個動畫互相覆蓋)
+function timelineAnim(e, frames, total, prop) {
+  const kf = frames.map(([t, v]) => ({ [prop]: v, offset: Math.min(1, Math.max(0, t / total)) }));
+  kf.sort((a, b) => a.offset - b.offset);
+  if (kf[0].offset > 0) kf.unshift({ ...kf[0], offset: 0 });
+  if (kf[kf.length - 1].offset < 1) kf.push({ ...kf[kf.length - 1], offset: 1 });
+  return e.animate(kf, { duration: ms(total), fill: 'both', easing: 'linear' });
+}
+
+const ICON = {
+  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  arrow: '<svg class="arrow" viewBox="0 0 44 32"><path d="M3 16h33M26 5l11 11-11 11" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  star: '<svg class="star" viewBox="0 0 48 48"><path d="M24 3.5l6.2 12.9 14.1 1.9-10.3 9.8 2.6 14-12.6-6.8-12.6 6.8 2.6-14L3.7 18.3l14.1-1.9z" fill="var(--accent2)" stroke="var(--frame)" stroke-width="3" stroke-linejoin="round"/></svg>',
+  down: '<svg class="down" viewBox="0 0 48 48"><path d="M24 6v32M11 26l13 13 13-13" fill="none" stroke="var(--frame)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  spark: '<svg class="spark" viewBox="0 0 40 40"><path d="M20 2c1.6 9.6 8.4 16.4 18 18-9.6 1.6-16.4 8.4-18 18-1.6-9.6-8.4-16.4-18-18 9.6-1.6 16.4-8.4 18-18z" fill="var(--accent2)" stroke="var(--frame)" stroke-width="2.5" stroke-linejoin="round"/></svg>',
+};
+
+// 背景幾何(位置固定,緩慢漂移;卡片後面也有,露出邊緣)
+const SHAPES = [
+  ['circle', -90, 300, 250, 0, 9.5], ['tri', 900, 600, 230, 1, 12], ['sq', 860, 1180, 250, 2, 11], ['ring', -60, 1150, 230, 1, 13],
+  ['tri', 120, 1300, 200, 3, 10.5], ['circle', 640, 1250, 300, 2, 14], ['pill', 520, 40, 240, 4, 12.5], ['sq', -70, 760, 200, 4, 10],
+  ['circle', 930, 370, 150, 3, 8.5], ['ring', 560, 330, 120, 0, 11.5], ['tri', 320, 960, 260, 0, 13.5], ['sq', 980, 1350, 160, 1, 9],
+];
+
+const MVK = window.MVK = {};
+let D = null;
+
+MVK.build = async (data) => {
+  D = data;
+  const errors = []; const boxes = [];
+  const root = document.documentElement.style;
+  for (const [k, v] of Object.entries(data.palette || {})) if (typeof v === 'string') root.setProperty(`--${k}`, v);
+  for (const [k, v] of Object.entries(data.fonts || {})) root.setProperty(`--f-${k}`, `"${v}"`);
+  const [W, H] = data.size; root.setProperty('--W', W + 'px'); root.setProperty('--H', H + 'px');
+  const T = data.duration;
+  const stage = document.getElementById('stage'); stage.textContent = '';
+  const shapeColors = Array.isArray(data.palette?.shapes) ? data.palette.shapes : ['#F6B08A', '#CDB6EA', '#FFD48A', '#F49F9C', '#B7DCC8'];
+
+  // 背景
+  SHAPES.forEach(([k, x, y, s, c, period], i) => {
+    const e = el('div', `shape ${k}`);
+    const col = shapeColors[c % shapeColors.length];
+    Object.assign(e.style, { left: x + 'px', top: y + 'px', width: s + 'px', height: (k === 'pill' ? s * .42 : s) + 'px', background: col });
+    if (k === 'ring') { e.style.borderColor = col; e.style.borderWidth = Math.round(s * .16) + 'px'; }
+    stage.appendChild(e);
+    const dx = (i % 2 ? 1 : -1) * (24 + (i * 7) % 26), dy = (i % 3 ? -1 : 1) * (30 + (i * 11) % 30), r = (i % 2 ? 1 : -1) * (10 + (i * 5) % 18);
+    e.animate([{ transform: 'translate(0,0) rotate(0deg)' }, { transform: `translate(${dx}px,${dy}px) rotate(${r}deg)` }],
+      { duration: ms(period), iterations: Infinity, direction: 'alternate', easing: 'ease-in-out', delay: -ms((i * 1.7) % period), fill: 'both' });
+  });
+
+  // 進度條
+  const prog = el('div'); prog.id = 'progress'; stage.appendChild(prog);
+  prog.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: ms(T), easing: 'linear', fill: 'both' });
+
+  // 標籤:第一個空白前白字,後面亮黃字
+  const tag = el('div'); tag.id = 'tag';
+  const ti = data.tag.indexOf(' ');
+  if (ti > 0) { tag.appendChild(document.createTextNode(data.tag.slice(0, ti + 1))); tag.appendChild(el('span', 'em', data.tag.slice(ti + 1))); }
+  else tag.textContent = data.tag;
+  stage.appendChild(tag);
+  anim(tag, [{ opacity: 0, transform: 'translateX(-60px) scale(.7)' }, { opacity: 1, transform: 'translateX(8px) scale(1.05)', offset: .6 }, { opacity: 1, transform: 'none' }], .05, .5);
+
+  // 卡片
+  const card = el('div'); card.id = 'card'; const clip = el('div'); clip.id = 'card-clip'; card.appendChild(clip); stage.appendChild(card);
+  anim(card, [{ opacity: 0, transform: 'translateY(80px) scale(.9)' }, { opacity: 1, transform: 'translateY(-8px) scale(1.015)', offset: .6 }, { opacity: 1, transform: 'none' }], 0, .55);
+  data.scenes.forEach((sc, j) => { if (j > 0) anim(card, [{ transform: 'scale(1)' }, { transform: 'scale(.985,.975)', offset: .35 }, { transform: 'scale(1.006,1.01)', offset: .7 }, { transform: 'scale(1)' }], sc.start, .4, { fill: 'none' }); });
+
+  // 吉祥物(右上,站在卡片上緣;title 場景跳進卡片)
+  const mascot = el('div'); mascot.id = 'mascot';
+  const vis = el('div', 'vis'), flt = el('div', 'float'), bnc = el('div', 'bounce');
+  mascot.appendChild(vis); vis.appendChild(flt); flt.appendChild(bnc); stage.appendChild(mascot);
+  const poses = Object.keys(data.mascot);
+  const imgs = {};
+  for (const p of poses) { const im = el('img'); im.src = data.mascot[p]; im.alt = ''; bnc.appendChild(im); imgs[p] = im; }
+  flt.animate([{ transform: 'translateY(0)' }, { transform: 'translateY(-14px)' }], { duration: 1300, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out', fill: 'both' });
+  // 可見度:title 場景藏起來
+  const visFrames = []; const X = .12;
+  data.scenes.forEach((sc, j) => {
+    const show = sc.type !== 'title' ? 1 : 0;
+    const prev = j === 0 ? 0 : (data.scenes[j - 1].type !== 'title' ? 1 : 0);
+    if (j === 0) { visFrames.push([0, 0], [.25, 0], [.25 + X * 3, show]); return; }
+    if (show !== prev) visFrames.push([sc.start - X, prev], [sc.start + X, show]);
+  });
+  timelineAnim(vis, visFrames.map(([t, v]) => [t, v]), T, 'opacity');
+  timelineAnim(vis, visFrames.map(([t, v]) => [t, v ? 'scale(1)' : 'scale(.3)']), T, 'transform');
+  // 姿勢切換:每個姿勢一條整支片的不透明度關鍵格;換姿勢時小彈跳
+  const poseAt = data.scenes.map(sc => (imgs[sc.mascot] ? sc.mascot : 'base'));
+  for (const p of poses) {
+    const fr = [];
+    data.scenes.forEach((sc, j) => {
+      const on = poseAt[j] === p ? 1 : 0, was = j === 0 ? on : (poseAt[j - 1] === p ? 1 : 0);
+      if (j === 0) fr.push([0, on]); else if (on !== was) fr.push([sc.start - .04, was], [sc.start + .04, on]);
+    });
+    timelineAnim(imgs[p], fr, T, 'opacity');
+  }
+  data.scenes.forEach((sc, j) => {
+    if (j > 0 && poseAt[j] !== poseAt[j - 1]) anim(bnc, [{ transform: 'translateY(0) scale(1)' }, { transform: 'translateY(-38px) scale(1.08,.94)', offset: .35 }, { transform: 'translateY(0) scale(.94,1.06)', offset: .7 }, { transform: 'translateY(0) scale(1)' }], sc.start, .5, { fill: 'none' });
+  });
+  anim(bnc, popKF(.2, 1.12), .25, .6, { fill: 'none' });
+
+  // 大標:相鄰場景大標相同時合併(不重播)
+  const hs = data.safe.headline;
+  const groups = [];
+  data.scenes.forEach((sc, j) => {
+    const key = JSON.stringify(sc.headline);
+    const g = groups[groups.length - 1];
+    if (g && g.key === key) { g.end = sc.end; g.scenes.push(j); } else groups.push({ key, headline: sc.headline, start: sc.start, end: sc.end, scenes: [j] });
+  });
+  groups.forEach((g, gi) => {
+    const h = el('div', 'headline');
+    Object.assign(h.style, { left: hs[0] + 'px', top: hs[1] + 'px' });
+    const chars = [];
+    for (const [a, b] of g.headline) {
+      const line = el('div', 'hl-line');
+      for (const [txt, em] of [[a, false], [b, true]]) {
+        if (!txt) continue;
+        const wrap = em ? el('span', 'em') : line;
+        for (const c of [...txt]) { const s = c === ' ' ? el('span', 'sp') : el('span', 'ch', c); wrap.appendChild(s); if (c !== ' ') chars.push(s); }
+        if (em) line.appendChild(wrap);
+      }
+      h.appendChild(line);
+    }
+    stage.appendChild(h);
+    // 縮字:每行單行放進 safe.headline
+    const maxW = hs[2] - hs[0], maxH = hs[3] - hs[1];
+    let fs = 116, fit = false;
+    for (; fs >= data.minFont.headline; fs -= 2) {
+      h.style.fontSize = fs + 'px';
+      const r = h.getBoundingClientRect();
+      const wide = Math.max(...[...h.children].map(l => l.scrollWidth));
+      if (wide <= maxW && r.height <= maxH) { fit = true; break; }
+    }
+    if (!fit) { fs = data.minFont.headline; h.style.fontSize = fs + 'px'; errors.push(`場景 ${g.scenes[0] + 1} 的大標放不下(縮到 ${fs}px 仍超出 ${maxW}×${maxH}):${g.headline.map(x => x.join('')).join(' / ')}`); }
+    const r = h.getBoundingClientRect();
+    const wide = Math.max(...[...h.children].map(l => l.scrollWidth));
+    boxes.push({ file: `headline-${String(g.scenes[0] + 1).padStart(2, '0')}`, kind: 'headline', x: Math.floor(r.left), y: Math.floor(r.top), w: Math.ceil(wide), h: Math.ceil(r.height), fontSize: fs });
+    const t0 = g.start + (gi === 0 ? .15 : .04);
+    chars.forEach((c, k) => anim(c, [{ opacity: 0, transform: 'translateY(.35em) scale(.4)' }, { opacity: 1, transform: 'translateY(-.08em) scale(1.18)', offset: .55 }, { opacity: 1, transform: 'translateY(0) scale(.97)', offset: .8 }, { opacity: 1, transform: 'none' }], t0 + k * .03, .42));
+    if (gi < groups.length - 1) anim(h, [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-30px)' }], g.end - .16, .16, { fill: 'forwards', easing: 'ease-in' });
+  });
+
+  // 字幕:逐詞出現,關鍵詞是橘色膠囊
+  const ss = data.safe.subtitle;
+  data.sentences.forEach((s, i) => {
+    const wrap = el('div', 'subline');
+    Object.assign(wrap.style, { left: ss[0] + 'px', top: ss[1] + 'px', width: (ss[2] - ss[0]) + 'px', height: (ss[3] - ss[1]) + 'px' });
+    const box = el('div', 'sub'); wrap.appendChild(box);
+    const spans = s.words.map((w, k) => {
+      if (k > 0 && w.space) box.appendChild(document.createTextNode(' '));
+      const e = el('span', w.hl ? 'w hl' : 'w', w.w); box.appendChild(e); return e;
+    });
+    stage.appendChild(wrap);
+    // 先試單行(62 → minFont),放不下再試兩行(62 → minFont)
+    let fs = 62, fit = null;
+    outer: for (const maxLines of [1, 2]) for (fs = 62; fs >= data.minFont.subtitle; fs -= 2) {
+      box.style.fontSize = fs + 'px';
+      const tops = new Set(spans.map(e => Math.round(e.offsetTop / 4)));
+      const b = box.getBoundingClientRect();
+      if (tops.size <= maxLines && box.scrollWidth <= ss[2] - ss[0] + .5 && b.height <= ss[3] - ss[1] && b.left >= ss[0] - .5 && b.right <= ss[2] + .5) { fit = b; break outer; }
+    }
+    if (!fit) { errors.push(`第 ${s.i} 句字幕放不下(最多 2 行、縮到 ${data.minFont.subtitle}px 仍超出):${s.text}`); fs = data.minFont.subtitle; fit = box.getBoundingClientRect(); }
+    boxes.push({ file: `sentence-${String(s.i).padStart(3, '0')}`, kind: 'subtitle', x: Math.floor(fit.left), y: Math.floor(fit.top), w: Math.ceil(fit.width), h: Math.ceil(fit.height), fontSize: fs });
+    spans.forEach((e, k) => {
+      const w = s.words[k];
+      anim(e, w.hl ? popKF(.3, 1.2) : [{ opacity: 0, transform: 'translateY(.4em) scale(.6)' }, { opacity: 1, transform: 'translateY(-.06em) scale(1.1)', offset: .6 }, { opacity: 1, transform: 'none' }], Math.max(0, w.start - .04), w.hl ? .45 : .3);
+    });
+    const next = data.sentences[i + 1];
+    const hideAt = next ? next.start - .1 : T + 1;
+    anim(wrap, [{ opacity: 1 }, { opacity: 0 }], hideAt, .1, { fill: 'forwards', easing: 'linear' });
+  });
+
+  // 卡片內容
+  const pending = [];
+  data.scenes.forEach((sc, j) => {
+    const c = el('div', 'content'); clip.appendChild(c);
+    const built = COMP[sc.type](c, sc, pending);
+    // 放不下就整體縮字(em 單位),縮到 0.62 仍超出 → 錯誤
+    if (sc.type !== 'title' && sc.type !== 'image' && sc.type !== 'compare') {
+      let k = 1;
+      const over = () => c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1 || [...c.querySelectorAll('.chip,.cell b,.row,.ln,.big,.btn,.sub2,.lab')].some(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).display !== 'inline');
+      while (over() && k > .62) { k -= .04; c.style.fontSize = (48 * k) + 'px'; }
+      if (over()) errors.push(`場景 ${j + 1}(${sc.type})卡片內容放不下(縮到 ${Math.round(48 * k)}px 仍超出)`);
+    }
+    built?.();
+    if (j < data.scenes.length - 1) anim(c, outKF, sc.end - .16, .16, { fill: 'forwards', easing: 'ease-in' });
+  });
+
+  // 等圖片解碼與字型
+  await document.fonts.ready;
+  await Promise.all([...document.images].map(im => im.decode().catch(() => { errors.push(`圖片載入失敗:${decodeURIComponent(im.src).slice(-80)}`); })));
+  for (const f of pending) f();
+  for (const a of document.getAnimations()) a.pause();
+  MVK.seek(0);
+  return { boxes, errors };
+};
+
+MVK.seek = (t) => { const x = t * 1000; for (const a of document.getAnimations()) a.currentTime = x; };
+
+// ---------- 場景元件:COMP[type](容器, 場景, pending) → 量完尺寸後要做的事(動畫) ----------
+function placeImg(img, im, box, focus, mode) {
+  const [nw, nh] = [im.w, im.h];
+  const [W, H] = [box.width, box.height];
+  let fx = 0, fy = 0, fw = nw, fh = nh;
+  if (focus) [fx, fy, fw, fh] = focus;
+  const s = focus ? Math.min(W / fw, H / fh) : mode === 'cover' ? Math.max(W / nw, H / nh) : Math.min(W / nw, H / nh);
+  const iw = nw * s, ih = nh * s;
+  let left = W / 2 - (fx + fw / 2) * s, top = focus ? H / 2 - (fy + fh / 2) * s : (mode === 'cover' ? 0 : H / 2 - ih / 2);
+  if (iw >= W) left = Math.min(0, Math.max(W - iw, left)); else left = (W - iw) / 2;
+  if (ih >= H) top = Math.min(0, Math.max(H - ih, top)); else top = (H - ih) / 2;
+  Object.assign(img.style, { width: iw + 'px', height: ih + 'px', left: left + 'px', top: top + 'px' });
+  return { cx: left + (fx + fw / 2) * s, cy: top + (fy + fh / 2) * s };
+}
+function shot(im) { const s = el('div', 'shot'), z = el('div', 'zoom'), img = el('img'); img.src = im.url; img.alt = ''; z.appendChild(img); s.appendChild(z); return { s, z, img }; }
+
+const COMP = {
+  title(c, sc) {
+    const hero = el('div', 'hero');
+    const rays = el('div', 'rays'), blob = el('div', 'blob'), big = el('div', 'big'), img = el('img');
+    img.src = D.mascot[D.mascot[sc.mascot] ? sc.mascot : 'base']; img.alt = ''; big.appendChild(img);
+    const sp = [[150, 120, 1], [770, 170, .8], [700, 520, 1.1], [190, 500, .7]].map(([x, y, k]) => { const s = svg(ICON.spark); s.style.left = x + 'px'; s.style.top = y + 'px'; s.style.transform = `scale(${k})`; return s; });
+    hero.append(rays, blob, big, ...sp); c.appendChild(hero);
+    return () => {
+      const t = sc.t;
+      rays.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], { duration: 24000, iterations: Infinity, easing: 'linear', fill: 'both' });
+      anim(rays, [{ opacity: 0 }, { opacity: 1 }], t, .6, { easing: 'ease-out' });
+      anim(blob, popKF(.2, 1.1), t, .55);
+      anim(big, [{ opacity: 0, transform: 'translateY(160px) scale(.5)' }, { opacity: 1, transform: 'translateY(-30px) scale(1.08,.95)', offset: .55 }, { opacity: 1, transform: 'translateY(0) scale(.97,1.03)', offset: .8 }, { opacity: 1, transform: 'none' }], t + .1, .7);
+      img.animate([{ transform: 'translateY(0)' }, { transform: 'translateY(-18px)' }], { duration: 1200, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out', fill: 'both' });
+      sp.forEach((s, k) => { anim(s, popKF(0, 1.4), t + .35 + k * .12, .5); s.animate([{ rotate: '0deg' }, { rotate: '90deg' }], { duration: 3000, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out', fill: 'both' }); });
+    };
+  },
+  image(c, sc, pending) {
+    const cd = sc.card; const { s, z, img } = shot(cd.img); c.appendChild(s);
+    pending.push(() => {
+      const p = placeImg(img, cd.img, z.getBoundingClientRect(), cd.focus, 'contain');
+      z.style.transformOrigin = `${p.cx}px ${p.cy}px`;
+      anim(s, riseKF(70), cd.t, .55);
+      if (cd.zoom === 'in') anim(z, [{ transform: 'scale(1)' }, { transform: 'scale(1.06)' }], cd.t, Math.max(.5, sc.end - cd.t), { easing: 'ease-in-out' });
+    });
+  },
+  compare(c, sc, pending) {
+    const cd = sc.card; const box = el('div', 'compare'); c.appendChild(box);
+    const panes = [[cd.leftImg, cd.labels[0], false], [cd.rightImg, cd.labels[1], true]].map(([im, lab, on]) => {
+      const p = el('div', 'pane'); const sh = shot(im); const l = el('div', on ? 'label on' : 'label', lab);
+      p.append(sh.s, l); box.appendChild(p); return { p, sh, l, im };
+    });
+    pending.push(() => panes.forEach(({ p, sh, l, im }, k) => {
+      placeImg(sh.img, im, sh.z.getBoundingClientRect(), cd.focus, 'cover');
+      const t = cd.t + k * .45;
+      anim(sh.s, riseKF(60), t, .55);
+      anim(l, popKF(.3, 1.18), t + .2, .45);
+    }));
+  },
+  terminal(c, sc) {
+    const cd = sc.card; const term = el('div', 'term'); const bar = el('div', 'bar');
+    for (const col of ['#FF6B5B', '#FFC23D', '#3CCF6E']) { const i = el('i'); i.style.background = col; bar.appendChild(i); }
+    term.appendChild(bar); c.appendChild(term);
+    const lines = cd.lines.map((txt) => {
+      const ln = el('div', 'ln'); const chars = [];
+      const m = txt.match(/^([$>#]\s?)(.*)$/);
+      if (m) ln.appendChild(el('span', 'p', m[1]));
+      for (const ch of [...(m ? m[2] : txt)]) { const s = el('span', 'c', ch === ' ' ? ' ' : ch); ln.appendChild(s); chars.push(s); }
+      term.appendChild(ln); return { ln, chars };
+    });
+    const cur = el('span', 'cur'); lines[lines.length - 1].ln.appendChild(cur);
+    return () => {
+      anim(term, riseKF(70), cd.t, .5);
+      let t = cd.t + .45;
+      // 打字要在場景結束前 0.4 秒打完:每行之間停 0.2 秒,其餘時間平均給每個字(最慢 0.06 秒 / 字)
+      const total = lines.reduce((n, l) => n + l.chars.length, 0);
+      const budget = Math.max(.3, sc.end - .4 - t - .2 * (lines.length - 1));
+      const step = Math.min(.06, budget / Math.max(1, total));
+      lines.forEach(({ ln, chars }) => {
+        anim(ln, [{ opacity: 0 }, { opacity: 1 }], t, .05, { easing: 'linear' });
+        if (cd.typing) {
+          chars.forEach((ch, k) => anim(ch, [{ opacity: 0 }, { opacity: 1 }], t + k * step, .01, { easing: 'linear' }));
+          t += chars.length * step + .2;
+        } else t += Math.min(.3, budget / lines.length);
+      });
+      cur.animate([{ opacity: 1 }, { opacity: 1, offset: .5 }, { opacity: 0, offset: .51 }, { opacity: 0 }], { duration: 900, iterations: Infinity, fill: 'both' });
+    };
+  },
+  chips(c, sc) {
+    const cd = sc.card; const box = el('div', 'chips'); c.appendChild(box);
+    const items = cd.items.map((it, k) => {
+      const parts = [];
+      if (k > 0 && cd.arrow) { const a = svg(ICON.arrow); a.style.color = 'var(--frame)'; box.appendChild(a); parts.push(a); }
+      const chip = el('div', k === cd.items.length - 1 && cd.items.length > 1 ? 'chip on' : 'chip', it.text); box.appendChild(chip); parts.push(chip);
+      return { parts, t: it.t };
+    });
+    return () => items.forEach(({ parts, t }) => parts.forEach((p, q) => anim(p, popKF(.3, 1.16), t + q * .08, .5)));
+  },
+  checklist(c, sc) {
+    const cd = sc.card; const box = el('div', 'checks'); c.appendChild(box);
+    const rows = cd.items.map((it) => {
+      const r = el('div', 'row'); const tk = el('div', 'tick'); tk.appendChild(svg(ICON.check)); const tx = el('span', '', it.text);
+      r.append(tk, tx); box.appendChild(r); return { tk, tx, t: it.t };
+    });
+    return () => rows.forEach(({ tk, tx, t }) => {
+      anim(tk, popKF(0, 1.3), t, .5);
+      anim(tx, [{ opacity: 0, transform: 'translateX(-40px)' }, { opacity: 1, transform: 'translateX(6px)', offset: .7 }, { opacity: 1, transform: 'none' }], t + .1, .45);
+    });
+  },
+  grid(c, sc) {
+    const cd = sc.card; const g = el('div', 'grid'); g.style.gridTemplateColumns = `repeat(${cd.cols}, 1fr)`; c.appendChild(g);
+    const cells = cd.items.map((it, k) => { const cell = el('div', 'cell'); cell.appendChild(el('b', '', it.text)); if (it.sub) cell.appendChild(el('small', '', it.sub)); g.appendChild(cell); return { cell, t: it.t }; });
+    return () => cells.forEach(({ cell, t }) => anim(cell, popKF(.3, 1.12), t, .5));
+  },
+  stat(c, sc) {
+    const cd = sc.card; const box = el('div', 'stat'); const big = el('div', 'big');
+    let star = null; if (cd.icon !== 'none') { star = svg(ICON.star); big.appendChild(star); }
+    const v = el('span', '', cd.value); big.appendChild(v); const lab = el('div', 'lab', cd.label);
+    box.append(big, lab); c.appendChild(box);
+    return () => {
+      if (star) { anim(star, [{ opacity: 0, transform: 'scale(0) rotate(-180deg)' }, { opacity: 1, transform: 'scale(1.3) rotate(20deg)', offset: .6 }, { opacity: 1, transform: 'scale(1) rotate(0deg)' }], cd.t, .6); }
+      anim(v, popKF(.2, 1.15), cd.t + .15, .55);
+      anim(lab, riseKF(30), cd.t + .45, .45);
+    };
+  },
+  cta(c, sc) {
+    const cd = sc.card; const box = el('div', 'cta'); const btn = el('div', 'btn', cd.text); const down = svg(ICON.down);
+    box.append(btn, down); let sub = null; if (cd.sub) { sub = el('div', 'sub2', cd.sub); box.appendChild(sub); }
+    c.appendChild(box);
+    return () => {
+      anim(btn, popKF(.3, 1.15), cd.t, .55);
+      btn.animate([{ scale: '1' }, { scale: '1.045' }], { duration: 700, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out', fill: 'both', delay: ms(cd.t + .6) });
+      anim(down, popKF(0, 1.2), cd.t + .3, .45);
+      down.animate([{ translate: '0 -6px' }, { translate: '0 10px' }], { duration: 600, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out', fill: 'both' });
+      if (sub) anim(sub, riseKF(30), cd.t + .45, .45);
+    };
+  },
+};
+})();
+</script></body></html>
