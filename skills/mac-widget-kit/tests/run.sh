@@ -64,6 +64,25 @@ for placement in desktop menubar both; do
   [ $good -eq 1 ] && ok "[$placement] --self-check" || ng "[$placement] --self-check" "$(tr '\n' '|' <<<"$sc")"
 done
 
+# level(選填):floating → NSWindow.Level.floating(3)、fullScreenAuxiliary;拿掉 level 回到預設的桌面圖示層 + 1;打錯字算格式錯誤
+setlevel() { if [ -n "$1" ]; then plutil -replace level -string "$1" "$D/widget.json"; else plutil -remove level "$D/widget.json" 2>/dev/null || true; fi; }
+lvbuild() { out="$(bash "$S/build.sh" "$D" 2>&1)"; rc=$?; [ $rc -eq 0 ] && grep -q '^警告:0$' <<<"$out" || { ng "[level $1] build" "$(tail -5 <<<"$out")"; return 1; }; sc="$("$BIN" --self-check 2>&1)"; }
+setlevel floating
+if lvbuild floating; then
+  lv=$(sed -nE 's/^window: level=(-?[0-9]+) expected=(-?[0-9]+).*/\1 \2/p' <<<"$sc")
+  [ "$lv" = "3 3" ] && grep -q 'fullScreenAuxiliary=true' <<<"$sc" && ok "level floating → 視窗層級 3、fullScreenAuxiliary=true" || ng "level floating" "$(tr '\n' '|' <<<"$sc")"
+fi
+setlevel Floating
+if lvbuild Floating; then
+  msg="$("$BIN" --once 2>&1)"; rc=$?
+  [ $rc -ne 0 ] && grep -q 'level 只能是' <<<"$msg" && ok "level 打錯字(Floating)→ --once 失敗並說明" || ng "level 打錯字沒被擋" "rc=$rc $msg"
+fi
+setlevel ""
+if lvbuild default; then
+  lv=$(sed -nE 's/^window: level=(-?[0-9]+) expected=(-?[0-9]+).*/\1 \2/p' <<<"$sc")
+  [ -n "$lv" ] && [ "${lv% *}" = "${lv#* }" ] && [ "${lv% *}" != 3 ] && grep -q 'fullScreenAuxiliary=false' <<<"$sc" && ok "沒有 level → 預設桌面圖示層 + 1(${lv% *})" || ng "level 預設" "$(tr '\n' '|' <<<"$sc")"
+fi
+
 # self-check 不寫 state.json
 [ ! -e "$D/state.json" ] && ok "--self-check 未寫 state.json" || ng "--self-check 寫了 state.json"
 
