@@ -18,7 +18,7 @@ bash <kit>/scripts/tts.sh <句子檔> <輸出目錄> [--voice Meijia] [--rate 19
 node <kit>/scripts/render.mjs <cards.json> <輸出目錄> [--asset-root <目錄>]  # 卡片 / 字幕 PNG;字幕放不下結束碼 4
 node <kit>/scripts/record-web.mjs <本機網址> <actions.json> <out.mp4>        # 1080×1920 30fps 無聲
 node <kit>/scripts/compose.mjs <timeline.json> [--dry-run]                  # final.mp4 + subtitles.srt;超過 60 秒結束碼 5
-bash <kit>/scripts/frames.sh <影格目錄> <名稱> <out.mp4> [--fps 24]          # comfy.mjs 下載的 <名稱>-1..N.png → MP4;缺號 / 尺寸不一結束碼 2
+bash <kit>/scripts/frames.sh <影格目錄> <名稱> <out.mp4> --frames <length> [--fps 24]   # comfy.mjs 下載的 <名稱>-1..N.png → MP4;一律給 --frames(這次的 length),同名重跑的舊格數才不會混入;缺格 / 尺寸不一結束碼 2
 bash <kit>/scripts/verify.sh <final.mp4> <checks 目錄> --boxes <boxes.json> --cover <cover.png>
 bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算通過)
 ```

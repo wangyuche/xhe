@@ -143,13 +143,18 @@ echo "$c3" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));c
   && ok "check:沒有去背模型檔 / 音訊 / 影片模型 → background_removal、audio_models、video_models 為空、對應骨架不可用" || bad "check 缺去背 / 音訊" "$c3"
 echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available,f=d.defaults;
 const ok=w["ltx23-i2v"]===true&&w["wan22-i2v"]===true&&d.video_models[0]===f.ltx_ckpt&&f.ltx_ckpt==="ltx-2.3-22b-dev-fp8.safetensors"&&f.ltx_te==="gemma_3_12B_it_fp4_mixed.safetensors"&&/distill/.test(f.ltx_distill_lora)&&f.wan_ti2v_unet==="wan2.2_ti2v_5B_fp16.safetensors"&&f.wan_clip==="umt5_xxl_fp8_e4m3fn_scaled.safetensors"&&f.wan_vae==="wan2.2_vae.safetensors";process.exit(ok?0:1)' \
-  && ok "check:影片模型 LTX-2.3(不選已蒸餾的 checkpoint)/ Wan 2.2 偵測、video_models 以 LTX 優先" || bad "check 影片模型" "$c"
+  && ok "check:影片模型 LTX-2.3(有蒸餾 LoRA 時用 dev 版)/ Wan 2.2 偵測、video_models 以 LTX 優先" || bad "check 影片模型" "$c"
+P5=$((PORT - 7000))
+FAKE_LTX_NOLORA=1 node "$K/tests/fake-comfy.mjs" "$P5" "$W/req5.log" > "$W/fake5.out" 2>&1 & PID2=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake5.out" 2>/dev/null && break; sleep 0.1; done
+c5="$(C check --url "http://127.0.0.1:$P5" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""
+echo "$c5" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const f=d.defaults;process.exit(f.ltx_ckpt==="ltx-2.3-22b-distilled-fp8.safetensors"&&f.ltx_distill_lora==="none"&&d.workflows_available["ltx23-i2v"]===true?0:1)' \
+  && ok "check:沒有蒸餾 LoRA → 改用已蒸餾 checkpoint、lora=none,ltx23-i2v 仍可用" || bad "check 已蒸餾 LTX" "$c5"
+r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v5" --name n --set ckpt=a --set te=b --set lora=none --set lora_strength=1 --set prompt=p --set width=704 --set height=1280 --set length=49 --set seed=1 --set 'ref=x.png [temp]')" \
+  && node -e 'const g=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.exit(Object.values(g).some(v=>v&&v.class_type==="LoraLoaderModelOnly")?1:0)' "$W/v5/workflows/n.json" \
+  && ok "ltx23-i2v:lora=none 時拿掉 LoRA 節點仍可送出" || bad "ltx23-i2v lora=none" "$r"
 r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v" --name clip-1 --set ckpt=a --set te=b --set lora=c --set lora_strength=1 --set prompt=steam --set width=704 --set height=1280 --set length=121 --set seed=1 --set 'ref=x.png [temp]')" \
   && [ -s "$W/v/clip-1-1.png" ] && [ -s "$W/v/clip-1-3.png" ] && ok "ltx23-i2v:送出並逐格下載成 <name>-1..N.png" || bad "ltx23-i2v 逐格" "$r"
-# 同名重跑:上一輪多出來的 <name>-<數字> 要被刪掉(模擬上一輪留下 clip-1-4..5 與無關的 clip-1-r2-1)
-cp "$W/v/clip-1-1.png" "$W/v/clip-1-4.png"; cp "$W/v/clip-1-1.png" "$W/v/clip-1-5.png"; cp "$W/v/clip-1-1.png" "$W/v/clip-1-r2-1.png"
-r="$(C run "$K/workflows/ltx23-i2v.json" --out "$W/v" --name clip-1 --set ckpt=a --set te=b --set lora=c --set lora_strength=1 --set prompt=steam --set width=704 --set height=1280 --set length=121 --set seed=2 --set 'ref=x.png [temp]')" \
-  && [ -s "$W/v/clip-1-3.png" ] && [ ! -e "$W/v/clip-1-4.png" ] && [ ! -e "$W/v/clip-1-5.png" ] && [ -e "$W/v/clip-1-r2-1.png" ] && ok "run:同名重跑先刪掉舊的 <name>-<數字>(不動 <name>-r2-*)" || bad "同名重跑殘留舊影格" "$r $(ls "$W/v")"
 r="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]')" \
   && [ -s "$W/v/w-3.png" ] && ok "wan22-i2v:送出並逐格下載" || bad "wan22-i2v" "$r"
 e="$(C run "$K/workflows/wan22-i2v.json" --out "$W/v" --name w2 --download-timeout 0 --set unet=a --set clip=b --set vae=c --set prompt=p --set negative=n --set width=704 --set height=1280 --set length=49 --set seed=1 --set steps=20 --set cfg=5 --set shift=8 --set 'ref=x.png [temp]' 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'download-timeout 要是正數' && ok "run:--download-timeout 不是正數 → 結束碼 2" || bad "--download-timeout 驗證"

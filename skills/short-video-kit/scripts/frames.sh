@@ -1,17 +1,19 @@
 #!/bin/bash
-# 用法:frames.sh <影格目錄> <名稱> <輸出.mp4> [--fps 24]
+# 用法:frames.sh <影格目錄> <名稱> <輸出.mp4> [--fps 24] [--frames N]
 # 把 game-art-kit comfy.mjs run 下載的 <名稱>-1.png … <名稱>-N.png(ComfyUI 影片骨架逐格輸出)組成 H.264 MP4。
 # 檢查:至少 2 格、編號從 1 連續、所有格尺寸一致(寬高偶數)。不刪影格(跟著 work/ 一起刪)。
+# --frames N:只取 1..N(同名重跑時 comfy.mjs 只覆寫 1..N,上一輪多出來的格數會留著;給 N 就忽略它們)。缺任何一格結束碼 2。
 # 印一行 JSON:{"frames":121,"fps":24,"duration":5.042,"width":704,"height":1280,"file":"…"}
 # 結束碼:0 成功、1 ffmpeg 失敗、2 用法或影格不合格。
 source "$(dirname "$0")/_common.sh"
-usage="用法:frames.sh <影格目錄> <名稱> <輸出.mp4> [--fps 24]"
+usage="用法:frames.sh <影格目錄> <名稱> <輸出.mp4> [--fps 24] [--frames N]"
 [ $# -ge 3 ] || die "$usage" 2
 dir="$1"; name="$2"; out="$3"; shift 3
-fps=24
+fps=24; want=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fps) fps="${2:-}"; shift 2 || die "$usage" 2 ;;
+    --frames) want="${2:-}"; shift 2 || die "$usage" 2 ;;
     *) die "$usage" 2 ;;
   esac
 done
@@ -24,9 +26,15 @@ case "$name" in *[!A-Za-z0-9_.-]*|'') die "名稱只能用英數、底線、點�
 n=0
 while [ -f "$dir/$name-$((n + 1)).png" ]; do n=$((n + 1)); done
 [ "$n" -ge 2 ] || die "找不到 $dir/$name-1.png、$name-2.png…(至少要 2 格)" 2
+if [ -n "$want" ]; then
+  [[ "$want" =~ ^[0-9]+$ ]] && [ "$want" -ge 2 ] || die "--frames 要是 ≥ 2 的整數" 2
+  [ "$n" -ge "$want" ] || die "只有 $name-1..$n 連續,少於 --frames $want" 2
+  n="$want"
+else
 # 只算 <名稱>-<數字>.png(重出用的 <名稱>-r2-1.png 不算)
 extra=$(find "$dir" -maxdepth 1 -name "$name-*.png" -print | sed 's|.*/||' | grep -cE "^$(printf '%s' "$name" | sed 's/[.]/\\./g')-[0-9]+\.png$" || true)
-[ "$extra" -eq "$n" ] || die "影格編號不連續:找到 $extra 個 $name-<數字>.png,但只有 1–$n 連續" 2
+[ "$extra" -eq "$n" ] || die "影格編號不連續:找到 $extra 個 $name-<數字>.png,但只有 1–$n 連續(同名重跑留下的舊格數:加 --frames <這次的格數>)" 2
+fi
 
 # 尺寸一致(用 ffprobe 一次讀全部會很慢,逐格讀 PNG 檔頭)
 size=$(node -e '

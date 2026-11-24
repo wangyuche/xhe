@@ -185,6 +185,10 @@ mkdir -p ai2 && cp ai/clip-1.png ai/clip-2.png ai/clip-4.png ai2/
 e="$(bash "$S/frames.sh" ai2 clip x.mp4 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q '不連續' && ok "frames.sh 編號不連續 → 結束碼 2" || bad "frames.sh 缺號沒被擋" "$e"
 mkdir -p ai3 && cp ai/clip-1.png ai3/clip-1-1.png && cp ai/clip-2.png ai3/clip-1-2.png && cp ai/clip-1.png ai3/clip-1-r2-1.png && cp ai/clip-2.png ai3/clip-1-r2-2.png
 f3="$(bash "$S/frames.sh" ai3 clip-1 ai3/a.mp4 2>&1)" && [ "$(jget "$f3" frames)" = 2 ] && ok "frames.sh 不把重出的 <名稱>-r2-*.png 算進來" || bad "frames.sh 重出影格混入" "$f3"
+mkdir -p ai4 && for i in 1 2 3 4 5; do cp ai/clip-$i.png ai4/c-$i.png; done
+e="$(bash "$S/frames.sh" ai4 c x.mp4 2>&1)"; f4="$(bash "$S/frames.sh" ai4 c ai4/a.mp4 --frames 3 2>&1)"
+[ "$(jget "$f4" frames)" = 3 ] && ok "frames.sh --frames 3:同名重跑留下的 4、5 格被忽略" || bad "frames.sh --frames" "$f4"
+e2="$(bash "$S/frames.sh" ai4 c x.mp4 --frames 6 2>&1)"; [ $? -eq 2 ] && echo "$e2" | grep -q '少於 --frames' && ok "frames.sh --frames 多於現有格數 → 結束碼 2" || bad "frames.sh --frames 6" "$e2"
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=928x1664 -frames:v 1 ai/img-1.png
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=f=880:d=0.4" -ar 48000 ai/sfx-1.wav
 node -e '

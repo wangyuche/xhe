@@ -167,9 +167,13 @@ async function check() {
     wan_ti2v_unet: pick(dm, /wan2\.?2.*ti2v/), wan_clip: pick(te, /umt5/), wan_vae: pick(vae, /wan2\.?2.?vae/),
     // LTX-2.3:checkpoint 內含 VAE 與音訊 VAE;文字編碼用 Gemma 3 12B;8 步蒸餾 LoRA
     // dev 版配蒸餾 LoRA;主機只有已蒸餾的 checkpoint 時用它、LoRA 填 none(骨架會拿掉 LoRA 節點)
-    ltx_ckpt: pick(models.checkpoints, /ltx.?2\.?3(?!.*distill)/) ?? pick(models.checkpoints, /ltx.?2\.?3.*distill/), ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: null,
+    ltx_ckpt: null, ltx_te: pick(te, /gemma.?3.?12b/), ltx_distill_lora: null,
   };
-  d.ltx_distill_lora = !d.ltx_ckpt ? null : /distill/i.test(d.ltx_ckpt) ? 'none' : pick(lora, /ltx.?2\.?3.*distill/);
+  {
+    const dev = pick(models.checkpoints, /ltx.?2\.?3(?!.*distill)/), distilled = pick(models.checkpoints, /ltx.?2\.?3.*distill/), lo = pick(lora, /ltx.?2\.?3.*distill/);
+    if (dev && lo) { d.ltx_ckpt = dev; d.ltx_distill_lora = lo; }          // dev + 蒸餾 LoRA(實測組合)
+    else if (distilled) { d.ltx_ckpt = distilled; d.ltx_distill_lora = 'none'; } // 已蒸餾 checkpoint:不加 LoRA
+  }
   // 本機去背:kit 的 sprite 骨架用 AILab 的 RMBG 節點(輸出 [1] 是 MASK);只列模型檔在主機上的選項。
   // RMBG 第一次用到沒下載的模型會自動下載 → 只列 models/rmbg 已經有檔案的選項,避免在主機上下載。
   d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
@@ -203,7 +207,7 @@ async function check() {
   workflows['stable-audio-sfx'] = !!(d.sfx_ckpt && d.sfx_clip && ['CheckpointLoaderSimple', 'CLIPLoader', 'ConditioningStableAudio', 'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
   const wanOk = !!(d.wan_ti2v_unet && d.wan_clip && d.wan_vae && ['UNETLoader', 'CLIPLoader', 'VAELoader', 'CLIPTextEncode', 'ModelSamplingSD3', 'Wan22ImageToVideoLatent', 'KSampler', 'VAEDecode', 'PreviewImage'].every(has));
   workflows['wan22-i2v'] = wanOk && has('LoadImage') && has('ImageScale');
-  workflows['ltx23-i2v'] = !!(d.ltx_ckpt && d.ltx_te && d.ltx_distill_lora && ['CheckpointLoaderSimple', 'LTXAVTextEncoderLoader', 'LoraLoaderModelOnly', 'CLIPTextEncode', 'LTXVConditioning',
+  workflows['ltx23-i2v'] = !!(d.ltx_ckpt && d.ltx_te && d.ltx_distill_lora && ['CheckpointLoaderSimple', 'LTXAVTextEncoderLoader', ...(d.ltx_distill_lora === 'none' ? [] : ['LoraLoaderModelOnly']), 'CLIPTextEncode', 'LTXVConditioning',
     'LoadImage', 'ImageScale', 'LTXVPreprocess', 'EmptyLTXVLatentVideo', 'LTXVImgToVideoInplace', 'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent',
     'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled', 'PreviewImage'].every(has));
   workflows['ace-step-bgm'] = !!(d.bgm_ckpt && ['CheckpointLoaderSimple', 'ModelSamplingAuraFlow', 'TextEncodeAceStepAudio1.5', 'ConditioningZeroOut', 'EmptyAceStep1.5LatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
@@ -511,12 +515,6 @@ async function run() {
       }
       if (STOPPING) await halt();
       mkdirSync(join(out, 'workflows'), { recursive: true });
-      // 同名重跑時先刪掉上一輪的 <name>-<數字>.<副檔名>(影片逐格輸出:格數變少時,舊的多餘影格會被 frames.sh 一起組進去)
-      if (existsSync(out)) {
-        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const old = new RegExp(`^${esc}-\\d+\\.[a-z0-9]+$`, 'i');
-        for (const e of readdirSync(out)) if (old.test(e)) rmSync(join(out, e), { force: true });
-      }
       for (const f of files) { renameOrCopy(join(stage, f.fname), join(out, f.fname)); f.file = join(out, f.fname); delete f.fname; }
     } finally {
       if (!STOPPING) { rmSync(stage, { recursive: true, force: true }); stage = null; }
