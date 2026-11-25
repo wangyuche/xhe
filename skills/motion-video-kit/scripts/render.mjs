@@ -20,11 +20,11 @@ import {
   buildTimeline, findAt, rhythmOf, resolveAsset, probeSize, r3, srtTime, CHROME, hasCmd,
 } from './_lib.mjs';
 
-const USAGE = '用法:node render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--dry-run]\n' +
+const USAGE = '用法:node render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--allow-bad-tts] [--dry-run]\n' +
   '      node render.mjs --sample [--template-dir <路徑> | --template <名稱>]';
 
 main(async () => {
-  const a = parseArgs(process.argv.slice(2), { '--deliver': 'v', '--asset-root': 'v', '--template-dir': 'v', '--template': 'v', '--out': 'v', '--dry-run': 'flag', '--sample': 'flag' }, USAGE);
+  const a = parseArgs(process.argv.slice(2), { '--deliver': 'v', '--asset-root': 'v', '--template-dir': 'v', '--template': 'v', '--out': 'v', '--allow-bad-tts': 'flag', '--dry-run': 'flag', '--sample': 'flag' }, USAGE);
   const sample = !!a.sample;
   if (!sample && a._.length !== 3) fail(USAGE, 2);
   if (sample && a._.length) fail(`--sample 不接受位置參數\n${USAGE}`, 2);
@@ -32,7 +32,7 @@ main(async () => {
 
   // ---------- 讀 storyboard 與模板 ----------
   let board, boardPath;
-  let tdir;
+  let tdir, tsource = 'path';
   if (sample) {
     tdir = resolveTemplate({ dir: a['template-dir'], name: a.template }).dir;
     boardPath = join(tdir, 'sample.storyboard.json');
@@ -42,8 +42,10 @@ main(async () => {
   const serr = validateSchema(schema, board);
   if (serr.length) fail(`storyboard 不符合 storyboard.schema.json:\n  ${serr.slice(0, 20).join('\n  ')}`, 2);
   if (!tdir) {
-    const t = a['template-dir'] ? resolveTemplate({ dir: a['template-dir'] }) : resolveTemplate({ name: board.template, out: a.out ?? (a.deliver ? resolve(a.deliver, '..', '..') : undefined) });
-    tdir = t.dir;
+    const out = a.out ?? (a.deliver ? resolve(a.deliver, '..', '..') : undefined);
+    const t = a['template-dir'] ? resolveTemplate({ dir: a['template-dir'] }) : resolveTemplate({ name: board.template, out });
+    tdir = t.dir; tsource = t.source;
+    process.stderr.write(`模板:${tdir}(${t.source === 'project' ? '專案模板' : t.source === 'kit' ? 'kit 預設模板' : '指定路徑'}${t.source === 'kit' && !out ? ';沒給 --out / --deliver,沒找專案模板' : ''})\n`);
   }
   const { tpl, problems } = loadTemplate(tdir);
   if (problems.length) fail(`模板 ${tdir} 不合格:\n  ${problems.join('\n  ')}`, 3);
@@ -59,7 +61,7 @@ main(async () => {
 
   // ---------- 旁白長度 ----------
   const allLines = board.scenes.flatMap(s => s.lines);
-  let durations, tts = null, ttsDir = null;
+  let durations, tts = null, ttsDir = null; const badTts = [];
   if (sample) durations = allLines.map(l => r3(Math.max(0.6, [...tokenize(lineText(l)).display].filter(c => c !== ' ').length * 0.2)));
   else {
     const ttsPath = resolve(a._[1]); ttsDir = dirname(ttsPath);
@@ -67,10 +69,13 @@ main(async () => {
     if (!Array.isArray(tts)) fail('tts.json 要是 tts.mjs 輸出的陣列', 2);
     if (tts.length !== allLines.length) fail(`tts.json 有 ${tts.length} 句,storyboard 有 ${allLines.length} 句(改了 storyboard 要重跑 tts.mjs)`, 2);
     durations = tts.map((x, i) => {
+      if (x?.ok === false) {
+        if (!a['allow-bad-tts']) fail(`tts.json 第 ${i + 1} 句 ok:false(無聲或太短):改寫念法(say)後 tts.mjs --only ${i + 1} 重生;仍失敗而要照做成品時加 --allow-bad-tts`, 2);
+        badTts.push(i + 1); process.stderr.write(`警告:第 ${i + 1} 句 ok:false,依 --allow-bad-tts 照做(該句可能無聲)\n`);
+      }
       const d = Number(x?.duration);
       if (!(d > 0)) fail(`tts.json[${i}].duration 不合法`, 2);
       const want = tokenize(lineText(allLines[i])).display;
-      if (x.ok === false) fail(`tts.json 第 ${i + 1} 句 ok:false(無聲或太短):改寫念法(say)後 tts.mjs --only ${i + 1} 重生`, 2);
       const wantSay = typeof allLines[i] === 'object' ? (allLines[i].say ?? null) : null;
       if ('say' in x && (x.say ?? null) !== wantSay) fail(`tts.json 第 ${i + 1} 句念法是「${x.say ?? '(無)'}」,storyboard 是「${wantSay ?? '(無)'}」(改了 say 要 tts.mjs --only ${i + 1})`, 2);
       if (typeof x.text === 'string' && x.text !== want) fail(`tts.json 第 ${i + 1} 句是「${x.text}」,storyboard 是「${want}」(改了 storyboard 要重跑 tts.mjs)`, 2);
@@ -148,7 +153,7 @@ main(async () => {
   if (rp.length) console.error(`節奏提醒:\n  ${rp.join('\n  ')}`);
 
   if (a['dry-run']) {
-    console.log(JSON.stringify({ duration: tl.duration, rhythm, timing }));
+    console.log(JSON.stringify({ template: tdir, templateSource: tsource, duration: tl.duration, rhythm, timing }));
     return;
   }
   if (!sample && tl.duration > 60) fail(`片長 ${tl.duration} 秒超過 60 秒(先 --dry-run 刪句)`, 2);
@@ -227,7 +232,7 @@ main(async () => {
       for (let f = 0; f < N; f++) {
         const buf = await shotAt(r3(f / FPS), 'jpeg', 92);
         if (ffExited || pipeErr) break;
-        if (!ff.stdin.write(buf)) await Promise.race([new Promise(r => ff.stdin.once('drain', r)), ffDone]);
+        if (!ff.stdin.write(buf)) { await Promise.race([new Promise(r => ff.stdin.once('drain', r)), ffDone]); if (ffExited || pipeErr) break; }
         if (f % (FPS * 2) === 0 || f === N - 1) process.stderr.write(`\r渲染 ${f + 1}/${N} 格(${Math.round((f + 1) / N * 100)}%,${((Date.now() - t0) / 1000).toFixed(0)} 秒)`);
       }
       process.stderr.write('\n');
@@ -243,7 +248,7 @@ main(async () => {
       writeFileSync(join(outDir, 'scenes.json'), JSON.stringify(tl.scenes.map(({ start, end, type }) => ({ start, end, type })), null, 1));
       writeFileSync(join(deliver, 'subtitles.srt'), tl.sentences.map((s, k) => `${k + 1}\n${srtTime(s.start)} --> ${srtTime(s.end)}\n${s.text}\n`).join('\n'));
       result = {
-        template: tdir, duration: tl.duration, frames: N, fps: FPS, size: `${W}x${H}`, renderSeconds, rhythm,
+        template: tdir, templateSource: tsource, badTts, duration: tl.duration, frames: N, fps: FPS, size: `${W}x${H}`, renderSeconds, rhythm,
         silent, cover: join(deliver, 'cover.png'), srt: join(deliver, 'subtitles.srt'),
         boxes: join(outDir, 'boxes.json'), safe: join(outDir, 'safe.json'), timing: join(outDir, 'timing.json'), scenesFile: join(outDir, 'scenes.json'),
         blockedRequests: stats.blocked,

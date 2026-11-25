@@ -160,10 +160,10 @@ skills:
 4. `check.mjs --template-dir <路徑>` 與 `render.mjs --sample --template-dir <路徑>`,Read `preview/contact.png` 與 `preview/scene-NN.png`;`README.md` 寫來源模板、改了什麼、日期。(完成條件:check 結束碼 0、預覽已 Read。)
 
 **製作一支片**:
-1. 第 0 步:`check.sh --no-say`(派工寫「允許 say」時不加);`node <mvk>/scripts/check.mjs --template <名稱或路徑>`;`comfy.mjs check` 的 `workflows_available.qwen3-tts-design` 須為 `true`;其餘同一般第 0 步。(完成條件:三個 check 結束碼 0。)
+1. 第 0 步:`check.sh --no-say`(派工寫「允許 say」時不加);`node <mvk>/scripts/check.mjs --template <名稱或路徑> --out <out>`;`comfy.mjs check` 的 `workflows_available.qwen3-tts-design` 須為 `true`;其餘同一般第 0 步。(完成條件:三個 check 結束碼 0。)
 2. 內容:repo 照 `repo-cards` 第 1 步(沒有執行旗標不執行);主題 / 文案照 `topic` 第 1 步。截圖只能來自 repo 內圖檔、`repo-record` 錄影或派工給的本機影片 / 圖片(影片用 `frame.mjs` 擷格到 `<job>/work/<n>/`),`render.mjs --asset-root` 指到這些目錄。不讓 AI 圖冒充產品畫面。
 3. 寫 `<job>/work/<n>/storyboard.json`:每 2–4 秒一個畫面變化(換場景,或場景內元素依 `at` 出現,同場景兩個 `at` 相隔 ≥ 2 秒);每句顯示字數 ≤ 模板 `maxLineChars`;吉祥物同一姿勢不連續超過 3 個場景;卡片類型(不含 `title`、`cta`)≥ 4 種;同一圖檔 ≤ 2 個場景;截圖寬度 > 卡片內寬 1.5 倍時一定給 `focus`(放大旁白講到的區域)。英文詞念法怪時用 `{"text","say"}`。
-4. `node <mvk>/scripts/tts.mjs <storyboard> <job>/work/<n>/tts`(預設台灣女聲聲音設計;派工指定男聲或描述時用 `--design`;kit 念法對照表自動套用)→ 不合格的句子 `--only` 重生;`node <mvk>/scripts/asr.mjs <job>/work/<n>/tts` 念錯字檢查:有出入的詞改寫 `say`(先拆開加空格「網 站」,再試同音字)後 `tts.mjs --only` + `asr.mjs --only`,辨識變正確才採用,每詞最多試 3 種;都不對就保留原句(辨識也會聽錯,有出入 ≠ 念錯);`render.mjs … --dry-run` 看片長與 `rhythm`:片長 > 59 秒 → repo / 主題刪句重跑,完整文案 → 刪 `<job>` 後 BLOCKED;`rhythm.ok` 為 `false` → 改 storyboard 重跑。
+4. `node <mvk>/scripts/tts.mjs <storyboard> <job>/work/<n>/tts`(預設台灣女聲聲音設計;派工指定男聲或描述時用 `--design`;kit 念法對照表自動套用)→ 不合格的句子 `--only` 重生;`node <mvk>/scripts/asr.mjs <job>/work/<n>/tts` 念錯字檢查:有出入的詞改寫 `say`(先拆開加空格「網 站」,再試同音字)後 `tts.mjs --only` + `asr.mjs --only`,辨識變正確才採用,每詞最多試 3 種;都不對就保留原句(辨識也會聽錯,有出入 ≠ 念錯);`render.mjs … --deliver <job>/<n> --dry-run` 看片長、`rhythm` 與 `templateSource`(派工給專案模板時要是 `project`):片長 > 59 秒 → repo / 主題刪句重跑,完整文案 → 刪 `<job>` 後 BLOCKED;`rhythm.ok` 為 `false` → 改 storyboard 重跑。
 5. `render.mjs <job>/work/<n>/storyboard.json <job>/work/<n>/tts/tts.json <job>/work/<n> --deliver <job>/<n> --asset-root …`(60 秒片約 90 秒;可能超過單次 Bash 600 秒時用背景執行)。
 6. AI 配樂(`ace-step-bgm`,同一般流程)、音效 ≤ 3 → `mix.mjs <job>/work/<n>/silent.mp4 <tts.json> <job>/work/<n>/timing.json <job>/<n>/final.mp4 --music … --sfx …`。
 7. `verify.sh <job>/<n>/final.mp4 <job>/<n>/checks --size <模板尺寸> --safe-json <job>/work/<n>/safe.json --boxes <job>/work/<n>/boxes.json --cover <job>/<n>/cover.png --scenes <job>/work/<n>/scenes.json`;`contact.mjs <job>/<n>/final.mp4 <job>/<n>/checks/contact.png --every 1`。Read contact 與每個 `scene-NN-mid/end.png`,逐張描述。
@@ -180,7 +180,7 @@ skills:
 **template 模式停止條件**:
 - 第 0 步 BLOCKED:模板找不到或 `check.mjs` 結束碼 3;`qwen3-tts-design` 不可用且派工沒寫「允許 say」(派工寫「不用 ComfyUI」視同不可用;有「允許 say」就用 `tts.mjs --engine say`、不加配樂);建立專案模板但目錄已存在。
 - 第 0 步之後(先刪 `<job>`):Qwen3-TTS 連不上或逾時(結束碼 4 / 5)重試 1 次仍失敗;完整文案片長 > 59 秒。
-- 不 BLOCKED:某句重生 2 次仍不合格 → 改念法(`say`)再試 1 次,仍失敗 → ISSUES、成品照做;`render.mjs` 結束碼 4 → 拆句或縮短標題重跑;結束碼 2 → 依訊息修 storyboard,同一錯誤 3 次仍在 → ISSUES。
+- 不 BLOCKED:某句重生 2 次仍不合格 → 改念法(`say`)再試 1 次,仍失敗 → ISSUES、成品照做(`render.mjs` 加 `--allow-bad-tts`,回報列 `badTts`);`render.mjs` 結束碼 4 → 拆句或縮短標題重跑;結束碼 2 → 依訊息修 storyboard,同一錯誤 3 次仍在 → ISSUES。
 
 ## 輸出格式
 

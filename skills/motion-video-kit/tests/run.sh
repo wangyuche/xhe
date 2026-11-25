@@ -83,11 +83,12 @@ c="$(node "$S/contact.mjs" s1/out/final.mp4 s1/out/contact.png --every 1)"; [ $?
 mkdir -p pt/out/_templates && cp -R tplcopy pt/out/_templates/mine
 node -e 'const f="pt/out/_templates/mine/template.json";const j=JSON.parse(require("fs").readFileSync(f));j.palette.accent="#1E90FF";require("fs").writeFileSync(f,JSON.stringify(j))'
 mkfix pt-sb.json 'b.template="mine"'
-o="$(R pt-sb.json s1/tts/tts.json pt/w --deliver pt/out/job/1 --asset-root "$TPL/sample" --dry-run 2>&1)"; rc=$?
+o="$(R pt-sb.json s1/tts/tts.json pt/w --deliver pt/out/job/1 --asset-root "$TPL/sample" --dry-run 2>/dev/null)"; rc=$?
 o2="$(R pt-sb.json s1/tts/tts.json pt/w --deliver pt/elsewhere/job/1 --asset-root "$TPL/sample" --dry-run 2>&1)"; rc2=$?
-[ $rc -eq 0 ] && [ $rc2 -eq 3 ] && echo "$o2" | grep -q '找不到模板 mine' && ok "render.mjs:storyboard template 名稱 → <out>/_templates/<名稱>(<out> 由 --deliver 推得);找不到 → 結束碼 3" || bad "render.mjs 專案模板" "rc=$rc rc2=$rc2 $o $o2"
+[ $rc -eq 0 ] && [ "$(jget "$o" templateSource)" = project ] && [ $rc2 -eq 3 ] && echo "$o2" | grep -q '找不到模板 mine' && ok "render.mjs:storyboard template 名稱 → <out>/_templates/<名稱>(<out> 由 --deliver 推得);找不到 → 結束碼 3" || bad "render.mjs 專案模板" "rc=$rc rc2=$rc2 $o $o2"
 node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("s1/tts/tts.json"));a[1].ok=false;fs.writeFileSync("bad-tts.json",JSON.stringify(a))'
 e="$(R "$TPL/sample.storyboard.json" bad-tts.json bt/w --deliver bt/d --asset-root "$TPL/sample" --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'ok:false' && ok "render.mjs:tts.json 有 ok:false 的句子 → 結束碼 2(不把無聲句混進成品)" || bad "render.mjs ok:false" "$e"
+o="$(R "$TPL/sample.storyboard.json" bad-tts.json bt/w --deliver bt/d --asset-root "$TPL/sample" --dry-run --allow-bad-tts 2>bt.err)"; [ $? -eq 0 ] && grep -q '第 2 句 ok:false' bt.err && ok "render.mjs --allow-bad-tts:ok:false 照做並警告(agent 重試與改寫都失敗時的 ISSUES 路徑)" || bad "render.mjs --allow-bad-tts" "$o $(cat bt.err)"
 
 # 4. 可重現:同輸入渲染兩次,第 0、中、末格 PNG 雜湊相同
 mkfix short.json 'b.scenes=b.scenes.slice(2,4)'

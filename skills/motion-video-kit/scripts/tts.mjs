@@ -12,7 +12,7 @@
 // 念法對照表:先套 kit 的 pronunciation.json,再套 --lexicon(專案的,同 key 覆蓋);--no-lexicon 都不套。
 //   念的文字裡出現 key 就換成 value(例如「網站」→「網 站」),字幕不變;實際念的文字記在 tts.json 的 spoken。
 // 每檔去頭尾靜音(各留 0.05 / 0.1 秒)、轉 48 kHz 單聲道 WAV <輸出目錄>/NNN.wav。
-// 檢查:長度 > 0.5 秒且 max_volume > −30 dB;不合就換 seed(seed + 101 × 次數)重生,最多 2 次。
+// 檢查:長度 > 0.5 秒且 max_volume > −30 dB;不合就換 seed(seed + 101 × 次數,超過 4294967295 回繞到 1 起)重生,最多 2 次。
 // 寫 <輸出目錄>/tts.json 並印同內容:[{i,text,say,spoken,file,duration,maxVolume,seed,retries,ok,engine,voice}]。
 // --only 3,5:只重生這幾句(要有先前的 tts.json),其他句沿用。
 // 結束碼:0 全部合格;1 有句子重生 2 次仍不合格(tts.json 照寫,ok:false);2 參數 / storyboard 不合法;3 缺工具;

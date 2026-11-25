@@ -23,7 +23,8 @@ node <kit>/scripts/asr.mjs <tts 目錄> [--model <ggml 檔>] [--only 3,5]
 #   旁白念錯字檢查:whisper 轉回文字和字幕 text 比對 → <tts 目錄>/asr.json [{i,text,spoken,heard,similarity,diffs:[{expected,heard}]}];有出入也結束碼 0
 node <kit>/scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--dry-run]
 #   模板:--template-dir → storyboard 的 template 名稱(先找 <out>/_templates/<名稱>;沒給 --out 時 <out> = --deliver 往上兩層)→ kit
-#   tts.json 有 ok:false 或 say 和 storyboard 不同 → 結束碼 2
+#   stderr 與輸出 JSON 印實際模板與來源(templateSource:project / kit / path);--dry-run 也要給 --deliver 才會找專案模板
+#   tts.json 有 ok:false → 結束碼 2(重試與改寫 say 都失敗、仍要照做成品時加 --allow-bad-tts,輸出 badTts);say 和 storyboard 不同 → 結束碼 2
 #   輸出目錄:silent.mp4、boxes.json、safe.json、timing.json、scenes.json;交付目錄:subtitles.srt、cover.png;進度印 stderr
 node <kit>/scripts/render.mjs --sample [--template-dir <路徑> | --template <名稱>]   # 模板 preview/scene-NN.png + contact.png
 node <kit>/scripts/mix.mjs <silent.mp4> <tts.json> <timing.json> <輸出.mp4> [--music <檔>] [--music-volume 0.2] [--sfx <sfx.json>]

@@ -124,7 +124,7 @@
 - 主規格第 0 步之後的其他情況。
 
 不需要 BLOCKED,照下列處理:
-- 某句 TTS 重生 2 次仍不合格 → 改寫該句念法(`say`)再試 1 次;仍失敗 → 狀態 ISSUES,成品照做,回報列出該句。
+- 某句 TTS 重生 2 次仍不合格 → 改寫該句念法(`say`)再試 1 次;仍失敗 → 狀態 ISSUES,成品照做(`render.mjs --allow-bad-tts`;沒加這個旗標時 tts.json 有 `ok:false` 會結束碼 2),回報列出該句。
 - `render.mjs` 結束碼 4(字幕或標題縮到 `minFont` 仍放不下)→ 拆句或縮短標題後重跑。
 - `render.mjs` 結束碼 2(storyboard 不合法、圖檔不存在、`at` 找不到、`focus` 缺、同圖超過 2 次)→ 依錯誤訊息修 storyboard 重跑;同一錯誤 3 次仍在 → ISSUES。
 
@@ -137,7 +137,7 @@
 結束碼通則:0 成功;2 輸入不合法(storyboard、路徑、參數;訊息指出欄位);3 缺工具或模板;4 版面放不下;5 ComfyUI 連不上(沿用 comfy.mjs);1 其他。
 - `scripts/check.mjs --template <名稱> | --template-dir <路徑>`:node / Chrome / ffmpeg;模板解析(印實際路徑)與 `template.json` 必填欄位;結束碼 3。
 - `scripts/tts.mjs <storyboard.json> <輸出目錄> [--voice Vivian] [--instruct …] [--seed 7] [--engine qwen3|say]`:逐句呼叫 `comfy.mjs run workflows/qwen3-tts.json`(`runtime_mode` 固定 Shared Runtime)或 `say`;轉 48 kHz;印 `[{i,text,say,file,duration,maxVolume,seed,retries}]`;可只重生指定句(`--only 3,5`)。
-- `scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--dry-run]`:schema 驗證 → 排時間軸 → 注入頁面 → 逐格擷圖 → ffmpeg;輸出目錄寫 `silent.mp4`、`boxes.json`、`safe.json`、`timing.json`、`scenes.json`,交付目錄寫 `subtitles.srt`、`cover.png`;stderr 印進度。`--sample` 用模板 `sample.storyboard.json` 與假旁白(每句依字數 0.2 秒 / 字)輸出到模板 `preview/`。
+- `scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--allow-bad-tts] [--dry-run]`(模板:`--template-dir` → storyboard `template` 名稱先找 `<out>/_templates/<名稱>`,`<out>` 預設 = `--deliver` 往上兩層 → kit;輸出 `templateSource`):schema 驗證 → 排時間軸 → 注入頁面 → 逐格擷圖 → ffmpeg;輸出目錄寫 `silent.mp4`、`boxes.json`、`safe.json`、`timing.json`、`scenes.json`,交付目錄寫 `subtitles.srt`、`cover.png`;stderr 印進度。`--sample` 用模板 `sample.storyboard.json` 與假旁白(每句依字數 0.2 秒 / 字)輸出到模板 `preview/`。
 - `scripts/mix.mjs <silent.mp4> <tts.json> <timing.json> <輸出.mp4> [--music <檔>] [--sfx <json>]`:旁白排程、配樂 sidechain、loudnorm 兩階段;實作抽出 short-video-kit `compose.mjs` 的混音段為共用模組(不複製)。
 - `scripts/frame.mjs <影片> <秒> <輸出.png>`:擷一格(輸出限 `<job>/work/<n>/`)。
 - `scripts/contact.mjs <影片> <輸出.png> [--every 1]`:縮圖總表。

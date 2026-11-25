@@ -179,7 +179,9 @@ async function check() {
   d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
   // Windows 主機回傳反斜線路徑,統一成 /
   const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : []);
-  const opts = (node) => { const m = oi[node]?.input?.required?.model; return Array.isArray(m?.[0]) ? m[0] : []; };
+  // 下拉選項:舊格式 [[選項…], {...}];新版 ComfyUI(V3)['COMBO', {options:[…]}]
+  const combo = (x) => Array.isArray(x?.[0]) ? x[0] : x?.[0] === 'COMBO' && Array.isArray(x?.[1]?.options) ? x[1].options : null;
+  const opts = (node) => combo(oi[node]?.input?.required?.model) ?? [];
   const bg = [];
   if (has('RMBG')) {
     const ok = rmbgComplete(rmbgFiles);
@@ -215,8 +217,8 @@ async function check() {
   // 而且要有 ⚠️ Shared Runtime(2026-11-24 實測 Main Environment 載入失敗,只回 1 秒靜音)。
   {
     const qin = oi.Qwen3TTSEngineNode?.input ?? {};
-    const variants = Array.isArray(qin.required?.model_variant?.[0]) ? qin.required.model_variant[0] : [];
-    const rt = qin.optional?.runtime_mode?.[0] ?? qin.required?.runtime_mode?.[0];
+    const variants = combo(qin.required?.model_variant) ?? [];
+    const rt = combo(qin.optional?.runtime_mode) ?? combo(qin.required?.runtime_mode);
     // 骨架與 tts.mjs 送出的是固定字串,要完全相同才算可用(寬鬆比對會讓 check 說可用、實際送出卻被 ComfyUI 驗證擋下)
     const shared = Array.isArray(rt) && rt.includes('⚠️ Shared Runtime');
     const exact = (name) => variants.includes(name) ? name : null;
