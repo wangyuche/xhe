@@ -25,8 +25,11 @@ const API_NODES = new Set(['BriaRemoveImageBackground', 'FancyApiNode']);
 // 環境變數 FAKE_NO_TTS=1:Qwen3-TTS 只有線上下載的選項(沒有 local: 模型);FAKE_TTS_MAIN_ONLY=1:沒有 Shared Runtime
 // 旁白:文字含 SILENT → 回 1 秒靜音(測重生);其他回 1 秒 440 Hz
 const NO_TTS = process.env.FAKE_NO_TTS === '1', TTS_MAIN_ONLY = process.env.FAKE_TTS_MAIN_ONLY === '1';
-const QWEN3_INPUT = { required: { model_variant: [['TTS - Base 1.7B (Voice Clone)', 'TTS - CustomVoice 1.7B (Presets + Instruction)', ...(NO_TTS ? [] : ['local:Qwen3-TTS-12Hz-1.7B-Base', 'local:Qwen3-TTS-12Hz-1.7B-CustomVoice', 'local:Qwen3-TTS-12Hz-1.7B-VoiceDesign'])]] },
-  optional: { runtime_mode: [['Main Environment', ...(TTS_MAIN_ONLY ? [] : ['⚠️ Shared Runtime'])]] } };
+// FAKE_COMBO=1:新版 ComfyUI(V3)的下拉格式 ['COMBO', {options:[…]}]
+const COMBO = process.env.FAKE_COMBO === '1';
+const cb = (opts) => COMBO ? ['COMBO', { options: opts }] : [opts];
+const QWEN3_INPUT = { required: { model_variant: cb(['TTS - Base 1.7B (Voice Clone)', 'TTS - CustomVoice 1.7B (Presets + Instruction)', ...(NO_TTS ? [] : ['local:Qwen3-TTS-12Hz-1.7B-Base', 'local:Qwen3-TTS-12Hz-1.7B-CustomVoice', 'local:Qwen3-TTS-12Hz-1.7B-VoiceDesign'])]) },
+  optional: { runtime_mode: cb(['Main Environment', ...(TTS_MAIN_ONLY ? [] : ['⚠️ Shared Runtime'])]) } };
 // 環境變數 FAKE_NO_RMBG=1:沒有去背模型檔;FAKE_NO_AUDIO=1:沒有音訊模型;FAKE_NO_VIDEO=1:沒有影片模型
 const NO_RMBG = process.env.FAKE_NO_RMBG === '1', NO_AUDIO = process.env.FAKE_NO_AUDIO === '1', NO_VIDEO = process.env.FAKE_NO_VIDEO === '1', LTX_NOLORA = process.env.FAKE_LTX_NOLORA === '1', SEP = process.env.FAKE_WIN_PATHS === '1' ? '\\' : '/';
 let MODELS = {

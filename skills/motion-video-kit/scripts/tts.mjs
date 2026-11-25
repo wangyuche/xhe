@@ -87,7 +87,12 @@ main(() => {
           '-ar', '48000', '-ac', '1', file], { encoding: 'utf8' });
         if (p.status !== 0) fail(`第 ${ln.i} 句轉檔失敗:${(p.stderr || '').slice(-300)}`);
         if (engine === 'qwen3') rmSync(raw, { force: true }); // 只留轉好的 WAV 與 raw/workflows/(實際參數,不含位址)
-        const duration = r3(probeDuration(file)); const mv = maxVolume(file);
+        let duration = r3(probeDuration(file)); const mv = maxVolume(file);
+        if (!(duration > 0.05)) {   // 整句無聲:去靜音後是空檔(ffprobe 長度 N/A)→ 換成 0.6 秒靜音,讓 --allow-bad-tts 照做時下游可處理
+          const z = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=mono', '-t', '0.6', file], { encoding: 'utf8' });
+          if (z.status !== 0) fail(`第 ${ln.i} 句補靜音檔失敗:${(z.stderr || '').slice(-300)}`);
+          duration = 0.6;
+        }
         const ok = duration > 0.5 && mv > -30;
         r = { i: ln.i, text: ln.text, say: ln.say, spoken, file: `${name}.wav`, duration, maxVolume: Number.isFinite(mv) ? mv : -91, seed: s, retries: k, ok, engine,
           voice: mode === 'say' ? sayVoice : mode === 'preset' ? preset : 'design', ...(mode === 'design' ? { designSeed: dseed } : {}) };

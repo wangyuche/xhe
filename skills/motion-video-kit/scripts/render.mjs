@@ -5,7 +5,7 @@
 //   node render.mjs --sample [--template-dir <路徑> | --template <名稱>]
 // 流程:schema 驗證 → 語意檢查 → 排時間軸 → Chrome 開模板頁、注入內容 → 逐格(Web Animations currentTime)擷圖 → ffmpeg。
 //   輸出目錄:silent.mp4、boxes.json、safe.json、timing.json、scenes.json;交付目錄:subtitles.srt、cover.png。
-//   --dry-run:只驗證與排時間軸,stdout 印 {duration, rhythm, timing},不開 Chrome、不寫檔。
+//   --dry-run:只驗證與排時間軸,stdout 印 {template, templateSource, duration, rhythm, timing},不開 Chrome、不寫檔。
 //   --sample:用模板的 sample.storyboard.json(圖片相對模板的 sample/)與假旁白(每句 0.2 秒 / 字),
 //             只擷每個場景最終狀態,寫模板 preview/scene-NN.png 與 preview/contact.png。
 // 時間軸:第 1 句 0.3 秒開始;第 i 句 start = 前句 end + 0.25;end = start + TTS 長度;片長 = 最後一句 end + 0.6。
@@ -43,7 +43,7 @@ main(async () => {
   if (serr.length) fail(`storyboard 不符合 storyboard.schema.json:\n  ${serr.slice(0, 20).join('\n  ')}`, 2);
   if (!tdir) {
     const out = a.out ?? (a.deliver ? resolve(a.deliver, '..', '..') : undefined);
-    const t = a['template-dir'] ? resolveTemplate({ dir: a['template-dir'] }) : resolveTemplate({ name: board.template, out });
+    const t = a['template-dir'] ? resolveTemplate({ dir: a['template-dir'] }) : resolveTemplate({ name: typeof board.template === 'string' && (board.template.includes('/') || board.template.startsWith('.')) ? resolve(dirname(boardPath), board.template) : board.template, out });
     tdir = t.dir; tsource = t.source;
     process.stderr.write(`模板:${tdir}(${t.source === 'project' ? '專案模板' : t.source === 'kit' ? 'kit 預設模板' : '指定路徑'}${t.source === 'kit' && !out ? ';沒給 --out / --deliver,沒找專案模板' : ''})\n`);
   }
@@ -61,10 +61,10 @@ main(async () => {
 
   // ---------- 旁白長度 ----------
   const allLines = board.scenes.flatMap(s => s.lines);
-  let durations, tts = null, ttsDir = null; const badTts = [];
+  let durations, tts = null; const badTts = [];
   if (sample) durations = allLines.map(l => r3(Math.max(0.6, [...tokenize(lineText(l)).display].filter(c => c !== ' ').length * 0.2)));
   else {
-    const ttsPath = resolve(a._[1]); ttsDir = dirname(ttsPath);
+    const ttsPath = resolve(a._[1]);
     try { tts = JSON.parse(readFileSync(ttsPath, 'utf8')); } catch (e) { fail(`讀不到 tts.json:${e.message}`, 2); }
     if (!Array.isArray(tts)) fail('tts.json 要是 tts.mjs 輸出的陣列', 2);
     if (tts.length !== allLines.length) fail(`tts.json 有 ${tts.length} 句,storyboard 有 ${allLines.length} 句(改了 storyboard 要重跑 tts.mjs)`, 2);

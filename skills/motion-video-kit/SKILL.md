@@ -21,8 +21,8 @@ node <kit>/scripts/tts.mjs <storyboard.json> <輸出目錄> --engine say [--voic
 #   → <輸出目錄>/NNN.wav(48 kHz)、tts.json [{i,text,say,spoken,file,duration,maxVolume,seed,retries,ok,…}]、tts-voice.json(聲音參數)、raw/workflows/(實際送出的參數,不含位址)
 node <kit>/scripts/asr.mjs <tts 目錄> [--model <ggml 檔>] [--only 3,5]
 #   旁白念錯字檢查:whisper 轉回文字和字幕 text 比對 → <tts 目錄>/asr.json [{i,text,spoken,heard,similarity,diffs:[{expected,heard}]}];有出入也結束碼 0
-node <kit>/scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--dry-run]
-#   模板:--template-dir → storyboard 的 template 名稱(先找 <out>/_templates/<名稱>;沒給 --out 時 <out> = --deliver 往上兩層)→ kit
+node <kit>/scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--allow-bad-tts] [--dry-run]
+#   模板:--template-dir → storyboard 的 template(路徑相對 storyboard 目錄;名稱(先找 <out>/_templates/<名稱>;沒給 --out 時 <out> = --deliver 往上兩層)→ kit
 #   stderr 與輸出 JSON 印實際模板與來源(templateSource:project / kit / path);--dry-run 也要給 --deliver 才會找專案模板
 #   tts.json 有 ok:false → 結束碼 2(重試與改寫 say 都失敗、仍要照做成品時加 --allow-bad-tts,輸出 badTts);say 和 storyboard 不同 → 結束碼 2
 #   輸出目錄:silent.mp4、boxes.json、safe.json、timing.json、scenes.json;交付目錄:subtitles.srt、cover.png;進度印 stderr
@@ -99,7 +99,7 @@ bash <kit>/tests/run.sh                                                 # 自我
   - `cardEmpty` = 非 `title` 場景中卡片區還沒有任何元素的區間。
   - `rhythm.ok` = `maxEmpty` ≤ 2 且相鄰 `changes` 間隔都在 2–4 秒(第 1 句之前與片尾 0.6 秒不計;單句 > 4 秒而句內沒有 `at` 判失敗)。不合格時 stderr 印「節奏提醒」逐條說明。
   - 經驗:`at` 會新增一次變化,同場景兩個 `at` 要相隔 ≥ 2 秒;第一個元素不要用 `at`(否則卡片空檔、間隔太短),後面的句子才用。
-- `--dry-run`:印 `{duration, rhythm, timing}`,不開 Chrome、不寫檔。片長 > 60 秒時正式渲染結束碼 2。
+- `--dry-run`:印 `{template, templateSource, duration, rhythm, timing}`,不開 Chrome、不寫檔。片長 > 60 秒時正式渲染結束碼 2。
 - `boxes.json`:`[{file,kind,x,y,w,h,fontSize}]`,`kind` = `subtitle`(每句一筆)| `headline`(每組大標一筆);`safe.json` = `{"subtitle":[…],"headline":[…]}`(模板 `safe`),給 `verify.sh --safe-json`。字幕先試單行再試兩行,62 px 縮到 `minFont.subtitle`;大標每行單行,116 px 縮到 `minFont.headline`;放不下結束碼 4 → 拆句或縮短大標。
 - `cover.png`:第一個場景結束前 0.2 秒那一格(大標已在畫面上,不另疊字)。
 

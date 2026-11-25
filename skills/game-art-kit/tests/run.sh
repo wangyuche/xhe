@@ -190,6 +190,12 @@ r="$(C run "$K/workflows/qwen3-tts.json" --out "$W/a" --name t1 --set variant=lo
 r="$(C run "$K/workflows/qwen3-tts-design.json" --out "$W/a" --name t2 --set 'design=台灣年輕女生' --set 'ref=大家好' --set 'text=你好' --set seed=7 --set dseed=11)" && [ -s "$W/a/t2.wav" ] \
   && [ "$(grep -c '"runtime_mode": "⚠️ Shared Runtime"' "$W/a/workflows/t2.json")" = 2 ] && grep -q '"seed": 11' "$W/a/workflows/t2.json" && ok "qwen3-tts-design:聲音設計 + Base 複製,兩個 engine 都 Shared Runtime、dseed 是數字" || bad "qwen3-tts-design" "$r"
 o="$(C run "$K/workflows/qwen3-tts.json" --out "$W/a" --name t3 --set variant=x --set voice=Vivian --set instruct= --set text=x --set seed=4294967296 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "qwen3-tts:seed 超過 4294967295 → 結束碼 2" || bad "qwen3-tts seed 上限" "$o"
+P7=$((PORT - 7100))
+FAKE_COMBO=1 node "$K/tests/fake-comfy.mjs" "$P7" "$W/req7.log" > "$W/fake7.out" 2>&1 & PID2=$!
+for i in $(seq 1 50); do grep -q listening "$W/fake7.out" 2>/dev/null && break; sleep 0.1; done
+c7="$(C check --url "http://127.0.0.1:$P7" 2>&1)"; kill "$PID2" 2>/dev/null; wait "$PID2" 2>/dev/null; PID2=""; rm -f "$W/fake7.out"
+echo "$c7" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(w["qwen3-tts"]===true&&w["qwen3-tts-design"]===true?0:1)' \
+  && ok "check:新版 ComfyUI COMBO 下拉格式 → Qwen3 仍判為可用" || bad "check FAKE_COMBO" "$c7"
 for envv in FAKE_NO_TTS FAKE_TTS_MAIN_ONLY; do
   P6=$((PORT - 7000))
   env "$envv=1" node "$K/tests/fake-comfy.mjs" "$P6" "$W/req6.log" > "$W/fake6.out" 2>&1 & PID2=$!

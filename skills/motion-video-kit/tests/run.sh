@@ -83,9 +83,11 @@ c="$(node "$S/contact.mjs" s1/out/final.mp4 s1/out/contact.png --every 1)"; [ $?
 mkdir -p pt/out/_templates && cp -R tplcopy pt/out/_templates/mine
 node -e 'const f="pt/out/_templates/mine/template.json";const j=JSON.parse(require("fs").readFileSync(f));j.palette.accent="#1E90FF";require("fs").writeFileSync(f,JSON.stringify(j))'
 mkfix pt-sb.json 'b.template="mine"'
+mkdir -p pt/out/job/work/1 && mkfix pt/out/job/work/1/sb.json 'b.template="../../../_templates/mine"'
+o3="$(cd / && node "$S/render.mjs" "$T/pt/out/job/work/1/sb.json" "$T/s1/tts/tts.json" "$T/pt/w" --asset-root "$TPL/sample" --dry-run 2>/dev/null)"; rc3=$?
 o="$(R pt-sb.json s1/tts/tts.json pt/w --deliver pt/out/job/1 --asset-root "$TPL/sample" --dry-run 2>/dev/null)"; rc=$?
 o2="$(R pt-sb.json s1/tts/tts.json pt/w --deliver pt/elsewhere/job/1 --asset-root "$TPL/sample" --dry-run 2>&1)"; rc2=$?
-[ $rc -eq 0 ] && [ "$(jget "$o" templateSource)" = project ] && [ $rc2 -eq 3 ] && echo "$o2" | grep -q '找不到模板 mine' && ok "render.mjs:storyboard template 名稱 → <out>/_templates/<名稱>(<out> 由 --deliver 推得);找不到 → 結束碼 3" || bad "render.mjs 專案模板" "rc=$rc rc2=$rc2 $o $o2"
+[ $rc -eq 0 ] && [ "$(jget "$o" templateSource)" = project ] && [ $rc3 -eq 0 ] && [ "$(jget "$o3" template)" = "$(cd pt/out/_templates/mine && pwd -P)" ] && [ $rc2 -eq 3 ] && echo "$o2" | grep -q '找不到模板 mine' && ok "render.mjs:storyboard template 名稱 → <out>/_templates/<名稱>(<out> 由 --deliver 推得);路徑相對 storyboard 目錄;找不到 → 結束碼 3" || bad "render.mjs 專案模板" "rc=$rc rc2=$rc2 $o $o2"
 node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("s1/tts/tts.json"));a[1].ok=false;fs.writeFileSync("bad-tts.json",JSON.stringify(a))'
 e="$(R "$TPL/sample.storyboard.json" bad-tts.json bt/w --deliver bt/d --asset-root "$TPL/sample" --dry-run 2>&1)"; [ $? -eq 2 ] && echo "$e" | grep -q 'ok:false' && ok "render.mjs:tts.json 有 ok:false 的句子 → 結束碼 2(不把無聲句混進成品)" || bad "render.mjs ok:false" "$e"
 o="$(R "$TPL/sample.storyboard.json" bad-tts.json bt/w --deliver bt/d --asset-root "$TPL/sample" --dry-run --allow-bad-tts 2>bt.err)"; [ $? -eq 0 ] && grep -q '第 2 句 ok:false' bt.err && ok "render.mjs --allow-bad-tts:ok:false 照做並警告(agent 重試與改寫都失敗時的 ISSUES 路徑)" || bad "render.mjs --allow-bad-tts" "$o $(cat bt.err)"
@@ -163,7 +165,7 @@ EOF
 o="$(COMFYUI_URL="http://127.0.0.1:$PORT" HOME="$T/fh" GAK_CACHE_DIR="$T/fh/cache" node "$S/tts.mjs" tts-sb.json tq 2>tq.err)"; rc=$?
 node -e '
 const a=JSON.parse(process.argv[1]);const ok=a.length===3&&a[0].ok&&a[0].retries===0&&a[0].duration>0.5&&a[0].maxVolume>-30&&a[0].text==="第一句旁白"
- &&a[1].ok===false&&a[1].retries===2&&a[1].seed===7+202&&a[1].say==="第二句 SILENT 念法"&&a[2].ok&&a[0].voice==="design";process.exit(ok?0:1)' "$o" 2>/dev/null && [ $rc -eq 1 ] \
+ &&a[1].ok===false&&a[1].duration>0&&a[1].retries===2&&a[1].seed===7+202&&a[1].say==="第二句 SILENT 念法"&&a[2].ok&&a[0].voice==="design";process.exit(ok?0:1)' "$o" 2>/dev/null && [ $rc -eq 1 ] \
   && ok "tts.mjs(qwen3-tts-design):每句長度 / max_volume、無聲句換 seed 重生 2 次仍不合格 → ok:false、結束碼 1" || bad "tts.mjs qwen3" "rc=$rc $o $(tail -3 tq.err)"
 grep -q '"design":' tq/raw/workflows/001-try0.json && grep -q 'qwen3-tts-design.json' tq/raw/workflows/001-try0.json && [ "$(ffprobe -v error -show_entries stream=sample_rate -of csv=p=0 tq/001.wav)" = 48000 ] && [ -f tq/tts-voice.json ] \
   && ok "tts.mjs:預設用聲音設計骨架、輸出 48 kHz WAV、記錄聲音參數 tts-voice.json" || bad "tts.mjs 輸出" "$(ls tq tq/raw/workflows)"
