@@ -1,6 +1,6 @@
 ---
 name: gitlab-bot
-description: 在自建 GitLab(或 gitlab.com)上 commit、push 功能分支、開 Merge Request,自己 code review 沒問題就合併(只自動合併沒有 CI 的專案,有 CI 交給使用者)。支援多專案:主機與專案路徑從 origin 自動解析,token 從 macOS 鑰匙圈(service=gitlab-bot、account=<主機>)取,同一主機所有專案共用一筆。主 agent 要把變更推上 GitLab 並開 MR,或使用者說「推到 GitLab」「開 MR」「合併 MR」時使用。不直接推 main / master / 預設分支,不 force-push,只合併 review 過的 SHA。
+description: 在自建 GitLab(或 gitlab.com)上 commit、push 功能分支、開 Merge Request,自己 code review 沒問題就合併(有 CI 的專案等這個 head 的 pipeline 全部通過才合併,失敗就交給使用者)。支援多專案:主機與專案路徑從 origin 自動解析,token 從 macOS 鑰匙圈(service=gitlab-bot、account=<主機>)取,同一主機所有專案共用一筆。主 agent 要把變更推上 GitLab 並開 MR,或使用者說「推到 GitLab」「開 MR」「合併 MR」時使用。不直接推 main / master / 預設分支,不 force-push,只合併 review 過的 SHA。
 ---
 
 # gitlab-bot
@@ -43,12 +43,20 @@ bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
 1. `bash $BOT mr ...` 開 MR,記下 `HEAD_SHA=$(git rev-parse HEAD)`。
 2. 用 `code-review` skill 審這個分支相對預設分支的變更。
 3. 有 `important` → 修好、commit、push、更新 HEAD_SHA,回第 2 步。只剩 `nit` / `pre_existing` / 無發現 → 可合併。測試失敗、有衝突、需要使用者決定的產品問題 → 不合併,回報。
-4. `bash $BOT merge <iid> --sha $HEAD_SHA`。偵測到 CI 或無法確認就拒絕(exit 2)→ 回報使用者,讓使用者看過 CI 後自己合併:
-   - head 與目標分支目前的 commit 任一有 `.gitlab-ci.yml`、pipeline、commit status,或 MR 本身有 pipeline;
-   - 專案設了自訂 `ci_config_path`、開了 Auto DevOps、規定 pipeline 成功才能合併;
-   - 專案回應沒有這三個欄位(Developer 權限的 token 看不到)→ 視為無法確認。要讓 bot 自己合併,token 擁有者需要 Maintainer。
-   - 外部 CI 可能晚登記:等 15 秒(4 次查詢)都沒有才算沒有 CI,合併前再確認一次。任何查詢失敗都不合併(exit 1)。
-   - 已知限制:最後一次確認到送出合併之間(約 1 秒)目標分支若被推入 CI 設定,不會發現;合併只鎖 head SHA。
+4. `bash $BOT merge <iid> --sha $HEAD_SHA [--wait-ci <分鐘>]`:
+   - **沒有 CI**:等 15 秒(4 次查詢)確認沒有晚登記的 CI 才合併,合併前再確認一次。
+   - **有 CI**(下面任一跡象,或無法確認沒有 CI)→ 這個 head 的 CI 全部通過才合併:
+     MR 的 head pipeline 是這個 head 的(或 MR merge ref 上的 merged results / train)且 success;MR 最新的 pipeline success;
+     這個 head 上每個 ref **最新**的 pipeline success(舊的失敗重跑成功不算);commit status(含外部 CI)success,
+     `allow_failure` 的失敗 / manual、skipped 不擋。合併前再查一次,鎖 head SHA。
+   - 跡象:head 或目標分支的 commit 有 `.gitlab-ci.yml`、pipeline、commit status;MR 有 pipeline;自訂 `ci_config_path`、
+     Auto DevOps、規定 pipeline 成功才能合併;專案回應缺這三個欄位(Developer 權限)。
+   - 結束碼:**2** = CI 失敗(或 manual 沒放行等)→ 不合併,回報使用者;**4** = CI 還在跑 / 還沒有這個 head 的 pipeline →
+     `--wait-ci <分鐘>` 每 30 秒查一次等它跑完(長時間等用背景執行),等不到就回報;1 = 查詢失敗(任何查詢失敗都不合併)。
+   - 已知限制:最後一次確認到送出合併之間(約 1 秒)若 CI 狀態改變不會發現;合併後目標分支的 pipeline 不在檢查範圍。
+   - CI 失敗時看原因:`bash $BOT jobs <pipeline id>`(job 與狀態)、`bash $BOT log <job id> [行數]`(log 最後幾行,去色碼)。
+     確定是和這次變更無關的不穩定測試才 `bash $BOT retry <pipeline id>` 重跑,並回報是哪個測試、要另外修。
+   - MR 落後目標分支(例如修正已經合進目標分支)時 `bash $BOT rebase <iid>`:由 GitLab 伺服器 rebase(同網頁按鈕,本機不 force-push),印出新的 head SHA;之後要重新 review / 等 CI,合併時用新的 SHA。
 5. 回報:MR 網址、review 結論、merge commit SHA。使用者沒授權自動合併時,停在第 3 步回報即可。
 
 ## 自我測試
@@ -58,7 +66,7 @@ bash skills/gitlab-bot/tests/run.sh
 ```
 
 離線執行(只需 bash、python3、jq、git、curl):`tests/mock_api.py` 是只聽 127.0.0.1 的假 GitLab API,push 推到暫存的本機 bare repo。
-涵蓋 identity / project 的 scope 檢查、push 拒絕規則(含 pushurl、worktree / include 設定)、helper 綁主機、不遞迴 submodule 與 token 不落地、mr 建立與沿用、merge 的各種拒絕情況(目標分支、MR pipeline、晚登記的 CI、缺欄位、查詢失敗),以及兩個真實踩過的 bug:
+涵蓋 identity / project 的 scope 檢查、push 拒絕規則(含 pushurl、worktree / include 設定)、helper 綁主機、不遞迴 submodule 與 token 不落地、mr 建立與沿用、merge 的各種情況(沒有 CI、晚登記的 CI、缺欄位、查詢失敗;有 CI 時 pipeline 通過 / 失敗 / 還在跑後等到通過、舊失敗重跑成功、外部 commit status 失敗、舊 head 的 pipeline、merged results),以及兩個真實踩過的 bug:
 回應 JSON 字串含未跳脫控制字元(jq 直接解析會失敗)、`detailed_merge_status` 先 `unchecked` / `checking` 才變 `mergeable`;
 並在暫存複本上拿掉對應修正做反向驗證。
 

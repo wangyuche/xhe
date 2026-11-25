@@ -29,6 +29,13 @@ MR 情境(iid → 說明),head SHA 預設 a*40:
   16 目標分支 gone 不存在(查分支 404)
   17 不帶 recheck 的 GET 還是舊 sha(0*40)與 has_conflicts(剛 push 完);重新計算後才是 a*40(第一次查詢不論帶不帶 recheck)
   18 detailed_merge_status=ci_still_running(專案規定 pipeline 成功才能合併)
+  有 CI 時「pipeline 通過才合併」(head 都有 .gitlab-ci.yml,除了 24):
+  19 head 4*40:head pipeline success;同一個 ref 舊的 pipeline 失敗、重跑成功;commit status 有 allow_failure 的失敗與 manual → 可合併
+  20 head 5*40:head pipeline failed → 結束碼 2
+  21 head 6*40:head pipeline 前 2 次 MR 查詢(帶 recheck)是 running,之後 success(等 CI 跑完)
+  22 head 7*40:head pipeline success,但外部 commit status(jenkins)failed → 結束碼 2
+  23 head 8*40:head pipeline 是舊 head 的(sha 不同、ref 是分支)→ 等;不等時結束碼 4
+  24 head a*40:沒有 CI 檔,MR 有 merged results pipeline(ref refs/merge-requests/24/merge,sha 是合併用的 commit)success → 可合併
 分支 → commit:develop / main → 2*40,withci → 3*40(有 .gitlab-ci.yml),tgtci → 1*40;其他 404。
 專案預設回傳 Maintainer 看得到的 CI 欄位(ci_config_path "",兩個布林 false);
 情境 {"hide_fields": [...]} 拿掉欄位(模擬 Developer 權限),{<欄位>: 值} 覆寫。
@@ -75,12 +82,36 @@ MRS = {
     16: mr(16, target="gone"),
     17: mr(17),
     18: mr(18),
+    19: mr(19, sha="4" * 40),
+    20: mr(20, sha="5" * 40),
+    21: mr(21, sha="6" * 40),
+    22: mr(22, sha="7" * 40),
+    23: mr(23, sha="8" * 40),
+    24: mr(24),
 }
-CI_FILE_REFS = {C, T3}
-PIPELINES = {D: [{"id": 1, "status": "running"}]}
-STATUSES = {E: [{"name": "jenkins", "status": "pending"}], T1: [{"name": "jenkins", "status": "success"}]}
+S4, S5, S6, S7, S8 = "4" * 40, "5" * 40, "6" * 40, "7" * 40, "8" * 40
+CI_FILE_REFS = {C, T3, S4, S5, S6, S7, S8}
+PIPELINES = {D: [{"id": 1, "status": "running"}],
+             S4: [{"id": 30, "ref": "feat/19", "status": "success"}, {"id": 29, "ref": "feat/19", "status": "failed"}],
+             S5: [{"id": 31, "ref": "feat/20", "status": "failed"}],
+             S7: [{"id": 33, "ref": "feat/22", "status": "success"}],
+             S8: []}
+STATUSES = {E: [{"name": "jenkins", "status": "pending"}], T1: [{"name": "jenkins", "status": "success"}],
+            S4: [{"name": "test", "status": "success", "allow_failure": False},
+                 {"name": "lint", "status": "failed", "allow_failure": True},
+                 {"name": "deploy", "status": "manual", "allow_failure": True}],
+            S5: [{"name": "test", "status": "failed", "allow_failure": False}],
+            S7: [{"name": "test", "status": "success", "allow_failure": False},
+                 {"name": "jenkins", "status": "failed", "allow_failure": False}]}
+HEAD_PIPELINES = {19: {"id": 30, "sha": S4, "ref": "feat/19", "status": "success"},
+                  20: {"id": 31, "sha": S5, "ref": "feat/20", "status": "failed"},
+                  22: {"id": 33, "sha": S7, "ref": "feat/22", "status": "success"},
+                  23: {"id": 34, "sha": "c" * 40, "ref": "feat/23", "status": "success"},
+                  24: {"id": 40, "sha": "b" * 40, "ref": "refs/merge-requests/24/merge", "status": "success"}}
+MR_PIPELINES = {14: [{"id": 7, "status": "running"}], 24: [{"id": 40, "status": "success"}]}
 LATE = {}  # sha → pipelines 查詢次數
 RECHECK = {}  # iid → 帶 recheck 的 GET 次數
+REBASED = {}  # iid → rebase 後 GET 次數
 
 
 def scenario():
@@ -188,17 +219,33 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"name": b, "commit": {"id": BRANCHES[b]}})
         if rest.startswith("merge_requests/") and rest.endswith("/pipelines"):
             iid = int(rest.split("/")[1])
-            return self.send(200, [{"id": 7, "status": "running"}] if iid == 14 else [])
+            if iid == 21:
+                return self.send(200, [{"id": 32, "status": "success" if RECHECK.get(21, 0) > 2 else "running"}])
+            return self.send(200, MR_PIPELINES.get(iid, []))
         if rest.startswith("merge_requests/"):
             iid = int(rest.split("/")[1])
             if iid not in MRS:
                 return self.send(404, {"message": "404 Not found"})
             m = dict(MRS[iid])
+            if iid in REBASED:
+                REBASED[iid] += 1
+                if REBASED[iid] >= 3:
+                    m["sha"] = "7" * 40
             if iid == 17 and RECHECK.get(17, 0) == 0:  # 剛 push 完:第一次查詢是舊 sha、舊衝突狀態,還在 checking
                 RECHECK[17] = 1
                 m.update(sha="0" * 40, has_conflicts=True, detailed_merge_status="checking")
             if iid == 18:
                 m["detailed_merge_status"] = "ci_still_running"
+            if iid in HEAD_PIPELINES:
+                m["head_pipeline"] = dict(HEAD_PIPELINES[iid])
+            if iid == 21:
+                n = RECHECK.get(21, 0)
+                if q.get("with_merge_status_recheck") == ["true"]:
+                    RECHECK[21] = n + 1
+                done = RECHECK[21] > 2 if 21 in RECHECK else False
+                m["head_pipeline"] = {"id": 32, "sha": S6, "ref": "feat/21", "status": "success" if done else "running"}
+                if not done:
+                    m["detailed_merge_status"] = "ci_still_running"
             if iid == 3:
                 n = RECHECK.get(iid, 0)
                 if q.get("with_merge_status_recheck") == ["true"]:
@@ -212,7 +259,16 @@ class H(BaseHTTPRequestHandler):
             if sha == G:
                 LATE[G] = LATE.get(G, 0) + 1
                 return self.send(200, [{"id": 9, "status": "pending"}] if LATE[G] >= 3 else [])
+            if sha == S6:
+                return self.send(200, [{"id": 32, "ref": "feat/21", "status": "success" if RECHECK.get(21, 0) > 2 else "running"}])
             return self.send(200, PIPELINES.get(sha, []))
+        if rest == "pipelines/50/jobs":
+            return self.send(200, [{"id": 501, "stage": "test", "name": "go-test", "status": "failed", "allow_failure": False},
+                                   {"id": 502, "stage": "test", "name": "lint", "status": "failed", "allow_failure": True}])
+        if rest == "jobs/501/trace":  # 純文字、含 ANSI 色碼與 section 標記
+            b = "".join(f"line {i}\n" for i in range(1, 301)) + "\x1b[31;1m--- FAIL: TestX\x1b[0m\nsection_end:1700000000:step_script\r\x1b[0KERROR: Job failed\n"
+            self.send_response(200); self.send_header("Content-Type", "text/plain"); self.send_header("Content-Length", str(len(b.encode())))
+            self.end_headers(); return self.wfile.write(b.encode())
         if rest.startswith("repository/commits/") and rest.endswith("/statuses"):
             sha = rest.split("/")[2]
             return self.send(200, STATUSES.get(sha, []))
@@ -228,6 +284,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {})
         if self.token() is None:
             return self.send(401, {"message": "401 Unauthorized"})
+        if p == PROJ + "/pipelines/50/retry":
+            return self.send(201, {"id": 50, "status": "pending"})
         if p == PROJ + "/merge_requests":
             if (scenario().get("scopes") or TOKENS[self.token()] or []).count("api") == 0:
                 return self.send(403, {"error": "insufficient_scope"})
@@ -243,6 +301,12 @@ class H(BaseHTTPRequestHandler):
         p, _ = self.route()
         if self.token() is None:
             return self.send(401, {"message": "401 Unauthorized"})
+        if p.startswith(PROJ + "/merge_requests/") and p.endswith("/rebase"):
+            iid = int(p.split("/")[-2])
+            if iid not in MRS or MRS[iid]["state"] != "opened":
+                return self.send(403, {"message": "403 Forbidden"})
+            REBASED[iid] = 0  # 伺服器端 rebase：之後的第 3 次 GET 起才看到新 head（模擬 sha 延遲更新）
+            return self.send(202, {"rebase_in_progress": True})
         if p.startswith(PROJ + "/merge_requests/") and p.endswith("/merge"):
             iid = int(p.split("/")[-2])
             m = MRS.get(iid)
