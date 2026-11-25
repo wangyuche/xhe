@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 用法:
-//   node render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--dry-run]
+//   node render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--dry-run]
+//   模板:--template-dir → storyboard 的 template 名稱(先找 <out>/_templates/<名稱>,<out> 預設 = --deliver 往上兩層 <out>/<job>/<n>)→ kit 預設。
 //   node render.mjs --sample [--template-dir <路徑> | --template <名稱>]
 // 流程:schema 驗證 → 語意檢查 → 排時間軸 → Chrome 開模板頁、注入內容 → 逐格(Web Animations currentTime)擷圖 → ffmpeg。
 //   輸出目錄:silent.mp4、boxes.json、safe.json、timing.json、scenes.json;交付目錄:subtitles.srt、cover.png。
@@ -19,11 +20,11 @@ import {
   buildTimeline, findAt, rhythmOf, resolveAsset, probeSize, r3, srtTime, CHROME, hasCmd,
 } from './_lib.mjs';
 
-const USAGE = '用法:node render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--dry-run]\n' +
+const USAGE = '用法:node render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--dry-run]\n' +
   '      node render.mjs --sample [--template-dir <路徑> | --template <名稱>]';
 
 main(async () => {
-  const a = parseArgs(process.argv.slice(2), { '--deliver': 'v', '--asset-root': 'v', '--template-dir': 'v', '--template': 'v', '--dry-run': 'flag', '--sample': 'flag' }, USAGE);
+  const a = parseArgs(process.argv.slice(2), { '--deliver': 'v', '--asset-root': 'v', '--template-dir': 'v', '--template': 'v', '--out': 'v', '--dry-run': 'flag', '--sample': 'flag' }, USAGE);
   const sample = !!a.sample;
   if (!sample && a._.length !== 3) fail(USAGE, 2);
   if (sample && a._.length) fail(`--sample 不接受位置參數\n${USAGE}`, 2);
@@ -41,7 +42,7 @@ main(async () => {
   const serr = validateSchema(schema, board);
   if (serr.length) fail(`storyboard 不符合 storyboard.schema.json:\n  ${serr.slice(0, 20).join('\n  ')}`, 2);
   if (!tdir) {
-    const t = a['template-dir'] ? resolveTemplate({ dir: a['template-dir'] }) : resolveTemplate({ name: board.template });
+    const t = a['template-dir'] ? resolveTemplate({ dir: a['template-dir'] }) : resolveTemplate({ name: board.template, out: a.out ?? (a.deliver ? resolve(a.deliver, '..', '..') : undefined) });
     tdir = t.dir;
   }
   const { tpl, problems } = loadTemplate(tdir);
@@ -69,6 +70,9 @@ main(async () => {
       const d = Number(x?.duration);
       if (!(d > 0)) fail(`tts.json[${i}].duration 不合法`, 2);
       const want = tokenize(lineText(allLines[i])).display;
+      if (x.ok === false) fail(`tts.json 第 ${i + 1} 句 ok:false(無聲或太短):改寫念法(say)後 tts.mjs --only ${i + 1} 重生`, 2);
+      const wantSay = typeof allLines[i] === 'object' ? (allLines[i].say ?? null) : null;
+      if ('say' in x && (x.say ?? null) !== wantSay) fail(`tts.json 第 ${i + 1} 句念法是「${x.say ?? '(無)'}」,storyboard 是「${wantSay ?? '(無)'}」(改了 say 要 tts.mjs --only ${i + 1})`, 2);
       if (typeof x.text === 'string' && x.text !== want) fail(`tts.json 第 ${i + 1} 句是「${x.text}」,storyboard 是「${want}」(改了 storyboard 要重跑 tts.mjs)`, 2);
       return d;
     });
@@ -216,17 +220,20 @@ main(async () => {
         '-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
         '-color_range', 'tv', '-r', String(FPS), '-frames:v', String(N), '-movflags', '+faststart', silent], { stdio: ['pipe', 'ignore', 'pipe'] });
       let ffErr = ''; ff.stderr.on('data', d => { ffErr += d; });
-      const ffDone = new Promise(r => ff.on('close', r));
+      let ffExited = false, pipeErr = null;
+      const ffDone = new Promise(r => ff.on('close', c => { ffExited = true; r(c); }));
+      ff.stdin.on('error', e => { pipeErr = e; });   // ffmpeg 先結束時寫入會 EPIPE:記下來,不讓它變成未處理例外
       const t0 = Date.now();
       for (let f = 0; f < N; f++) {
         const buf = await shotAt(r3(f / FPS), 'jpeg', 92);
-        if (!ff.stdin.write(buf)) await new Promise(r => ff.stdin.once('drain', r));
+        if (ffExited || pipeErr) break;
+        if (!ff.stdin.write(buf)) await Promise.race([new Promise(r => ff.stdin.once('drain', r)), ffDone]);
         if (f % (FPS * 2) === 0 || f === N - 1) process.stderr.write(`\r渲染 ${f + 1}/${N} 格(${Math.round((f + 1) / N * 100)}%,${((Date.now() - t0) / 1000).toFixed(0)} 秒)`);
       }
       process.stderr.write('\n');
       ff.stdin.end();
       const code = await ffDone; ff = null;
-      if (code !== 0) throw new Error(`ffmpeg 編碼失敗:${ffErr.slice(-800)}`);
+      if (code !== 0 || pipeErr) throw new Error(`ffmpeg 編碼失敗(結束碼 ${code}${pipeErr ? `,${pipeErr.code ?? pipeErr.message}` : ''}):${ffErr.slice(-800)}`);
       writeFileSync(join(deliver, 'cover.png'), await shotAt(coverT));
       const renderSeconds = r3((Date.now() - t0) / 1000);
       // 輸出

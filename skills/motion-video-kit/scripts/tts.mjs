@@ -29,7 +29,7 @@ const USAGE = '用法:node tts.mjs <storyboard.json> <輸出目錄> [--engine qw
 const MAX_RETRIES = 2;
 
 main(() => {
-  const a = parseArgs(process.argv.slice(2), { '--engine': 'v', '--design': 'v', '--design-seed': 'v', '--ref': 'v', '--preset': 'v', '--instruct': 'v', '--voice': 'v', '--seed': 'v', '--only': 'v', '--variant': 'v', '--lexicon': 'v', '--no-lexicon': 'flag' }, USAGE);
+  const a = parseArgs(process.argv.slice(2), { '--engine': 'v', '--design': 'v', '--design-seed': 'v', '--ref': 'v', '--preset': 'v', '--instruct': 'v', '--voice': 'v', '--seed': 'v', '--only': 'v', '--lexicon': 'v', '--no-lexicon': 'flag' }, USAGE);
   if (a._.length !== 2) fail(USAGE, 2);
   const engine = a.engine ?? 'qwen3';
   if (!['qwen3', 'say'].includes(engine)) fail('--engine 只能是 qwen3 或 say', 2);
@@ -79,7 +79,7 @@ main(() => {
       const name = String(ln.i).padStart(3, '0');
       let r = null;
       for (let k = 0; k <= MAX_RETRIES; k++) {
-        const s = seed + 101 * k;
+        const s = ((seed - 1 + 101 * k) % 4294967295) + 1;   // 重試 seed 不超過骨架上限
         const raw = synth(spoken, s, `${name}-try${k}`);
         const file = join(outDir, `${name}.wav`);
         const p = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-af',
@@ -117,7 +117,7 @@ main(() => {
     }
     const wf = join(GAK, 'workflows', mode === 'preset' ? 'qwen3-tts.json' : 'qwen3-tts-design.json');
     const sets = mode === 'preset'
-      ? ['variant=' + (a.variant ?? 'local:Qwen3-TTS-12Hz-1.7B-CustomVoice'), `voice=${preset}`, `instruct=${a.instruct ?? ''}`, `text=${text}`, `seed=${s}`]
+      ? ['variant=local:Qwen3-TTS-12Hz-1.7B-CustomVoice', `voice=${preset}`, `instruct=${a.instruct ?? ''}`, `text=${text}`, `seed=${s}`]
       : [`design=${design}`, `ref=${ref}`, `text=${text}`, `seed=${s}`, `dseed=${dseed}`];
     const p = spawnSync('node', [comfy, 'run', wf, '--out', join(outDir, 'raw'), '--name', name, ...sets.flatMap(x => ['--set', x]), '--timeout', '200', '--queue-timeout', '60'],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });

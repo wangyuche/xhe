@@ -217,15 +217,16 @@ async function check() {
     const qin = oi.Qwen3TTSEngineNode?.input ?? {};
     const variants = Array.isArray(qin.required?.model_variant?.[0]) ? qin.required.model_variant[0] : [];
     const rt = qin.optional?.runtime_mode?.[0] ?? qin.required?.runtime_mode?.[0];
-    const shared = Array.isArray(rt) && rt.some(x => /shared runtime/i.test(String(x)));
-    const local = (re) => variants.find(v => /^local:/i.test(v) && re.test(v)) ?? null;
-    d.tts_variant = local(/1\.7B-CustomVoice$/i);
-    d.tts_design_variant = local(/1\.7B-VoiceDesign$/i);
-    d.tts_base_variant = local(/1\.7B-Base$/i);
+    // 骨架與 tts.mjs 送出的是固定字串,要完全相同才算可用(寬鬆比對會讓 check 說可用、實際送出卻被 ComfyUI 驗證擋下)
+    const shared = Array.isArray(rt) && rt.includes('⚠️ Shared Runtime');
+    const exact = (name) => variants.includes(name) ? name : null;
+    d.tts_variant = exact('local:Qwen3-TTS-12Hz-1.7B-CustomVoice');
+    d.tts_design_variant = exact('local:Qwen3-TTS-12Hz-1.7B-VoiceDesign');
+    d.tts_base_variant = exact('local:Qwen3-TTS-12Hz-1.7B-Base');
     const qOk = shared && ['Qwen3TTSEngineNode', 'UnifiedTTSTextNode', 'PreviewAudio'].every(has);
     workflows['qwen3-tts'] = !!(qOk && d.tts_variant);
     // 骨架寫死 local:…-1.7B-VoiceDesign 與 local:…-1.7B-Base 兩個名稱
-    workflows['qwen3-tts-design'] = !!(qOk && has('UnifiedVoiceDesignerNode') && d.tts_design_variant === 'local:Qwen3-TTS-12Hz-1.7B-VoiceDesign' && d.tts_base_variant === 'local:Qwen3-TTS-12Hz-1.7B-Base');
+    workflows['qwen3-tts-design'] = !!(qOk && has('UnifiedVoiceDesignerNode') && d.tts_design_variant && d.tts_base_variant);
   }
   // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
   // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。

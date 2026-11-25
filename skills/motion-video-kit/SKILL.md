@@ -21,7 +21,9 @@ node <kit>/scripts/tts.mjs <storyboard.json> <輸出目錄> --engine say [--voic
 #   → <輸出目錄>/NNN.wav(48 kHz)、tts.json [{i,text,say,spoken,file,duration,maxVolume,seed,retries,ok,…}]、tts-voice.json(聲音參數)、raw/workflows/(實際送出的參數,不含位址)
 node <kit>/scripts/asr.mjs <tts 目錄> [--model <ggml 檔>] [--only 3,5]
 #   旁白念錯字檢查:whisper 轉回文字和字幕 text 比對 → <tts 目錄>/asr.json [{i,text,spoken,heard,similarity,diffs:[{expected,heard}]}];有出入也結束碼 0
-node <kit>/scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--dry-run]
+node <kit>/scripts/render.mjs <storyboard.json> <tts.json> <輸出目錄> --deliver <交付目錄> --asset-root <目錄>[,<目錄>…] [--template-dir <路徑>] [--out <輸出根目錄>] [--dry-run]
+#   模板:--template-dir → storyboard 的 template 名稱(先找 <out>/_templates/<名稱>;沒給 --out 時 <out> = --deliver 往上兩層)→ kit
+#   tts.json 有 ok:false 或 say 和 storyboard 不同 → 結束碼 2
 #   輸出目錄:silent.mp4、boxes.json、safe.json、timing.json、scenes.json;交付目錄:subtitles.srt、cover.png;進度印 stderr
 node <kit>/scripts/render.mjs --sample [--template-dir <路徑> | --template <名稱>]   # 模板 preview/scene-NN.png + contact.png
 node <kit>/scripts/mix.mjs <silent.mp4> <tts.json> <timing.json> <輸出.mp4> [--music <檔>] [--music-volume 0.2] [--sfx <sfx.json>]
@@ -36,7 +38,7 @@ bash <kit>/tests/run.sh                                                 # 自我
 
 - **預設模板**:`<kit>/templates/<名稱>/`(唯讀;新增或修改走 xhe PR)。目前:`github-hot-pastel`。
 - **專案模板**:`<out>/_templates/<名稱>/`(從預設模板 `cp -R` 再改)。
-- 解析順序:給的路徑(`--template-dir`,或名稱含 `/`)→ `<out>/_templates/<名稱>`(`check.mjs --out`)→ kit 預設。`render.mjs` 用專案模板時一律給 `--template-dir`。沒指定 → `github-hot-pastel`。
+- 解析順序:給的路徑(`--template-dir`,或名稱含 `/`)→ `<out>/_templates/<名稱>`(`check.mjs --out`)→ kit 預設。`render.mjs` 依 storyboard 的 `template` 名稱自動找專案模板(`--deliver` 往上兩層當 `<out>`),也可直接給 `--template-dir`。沒指定 → `github-hot-pastel`。
 - 每個模板:`template.html`(版型與場景元件,JS 介面 `MVK.build(data)` / `MVK.seek(t)` 不能改)、`template.json`(必填 `size`、`fps`、`palette`、`fonts`、`scenes`、`mascot`(姿勢 → 檔案,要有 `base`)、`tag`、`safe`(`headline`、`subtitle` 兩個 `[x0,y0,x1,y1]`)、`minFont`(`headline`、`subtitle` px)、`maxLineChars`;選填 `cardInner` `[寬,高]`)、`assets/`、`sample.storyboard.json`、`sample/`(範例圖)、`README.md`(來源、授權、改了什麼、日期)、`preview/contact.png`。
 - `palette` 的每個鍵注入成同名 CSS 變數(`--bg`、`--accent`…);`fonts` 只能用系統字型(注入 `--f-<用途>`)。
 - 改完專案模板:`check.mjs --template-dir <路徑>` 結束碼 0、`render.mjs --sample --template-dir <路徑>`,Read `preview/contact.png` 與 `scene-NN.png`。
