@@ -14,6 +14,7 @@
 #   bot.sh jobs <pipeline id>               列出 pipeline 的 job(id、stage、名稱、狀態)
 #   bot.sh log <job id> [行數]              印 job log 的最後幾行(預設 200,最多 5000)
 #   bot.sh retry <pipeline id>              重跑 pipeline 裡失敗 / 取消的 job
+#   bot.sh fetch [分支…]                    從 origin 抓分支到 refs/remotes/origin/<分支>(預設:預設分支;唯讀,token 處理同 push)
 #   bot.sh rebase <MR iid>                  請 GitLab 把 MR 的來源分支 rebase 到目標分支（同網頁上的 Rebase 按鈕；
 #                                           本機不 force-push），等到完成後印出新的 head SHA（要重新 review / 等 CI）
 # 多專案:主機與專案路徑一律從 origin 解析(https://host/group/sub/proj.git 或 git@host:group/proj.git),
@@ -138,8 +139,9 @@ ci_file_at() {
 
 # 推送用的乾淨 git:不讀全域/系統設定、HOME 為空目錄、停用 hooks、不遞迴推 submodule;
 # token 只在 0600 暫存檔給 credential helper,helper 只綁 origin 的主機($BASE),送不到別的主機
-clean_push() {
-  local branch=$1 bad rc sd
+# clean_git <git 參數…>:在隔離環境(同 push 的檢查與 token 處理)對 origin 執行網路操作(push / fetch)
+clean_git() {
+  local bad rc sd
   # 全域設定不讀,但保留使用者在全域信任的 safe.directory(外接磁碟、他人擁有的目錄);
   # 逐筆用 git 的 --type=path 把 ~/ 展開成絕對路徑(之後 HOME 會換成空目錄);展不開的(例如不存在的 ~user)
   # 跳過並警告(原值傳給 git 會讓 git 直接 fatal),不影響其他項目;空值 = 清除前面的項目(跟 git 一樣)
@@ -181,8 +183,13 @@ $bad"
     git ${safe[@]+"${safe[@]}"} -c credential.helper= -c "credential.$BASE.helper=$helper" -c credential.useHttpPath=false \
       -c push.recurseSubmodules=no -c submodule.recurse=false -c core.hooksPath=/dev/null \
       -c http.extraHeader= -c http.sslVerify=true -c http.proxy= -c http.cookieFile= \
-      push --no-recurse-submodules "$PUSH_URL" "HEAD:refs/heads/$branch"
+      -c fetch.recurseSubmodules=false "$@"
   rm -f "$SCRATCH/t"
+}
+
+clean_push() {
+  local branch=$1
+  clean_git push --no-recurse-submodules "$PUSH_URL" "HEAD:refs/heads/$branch"
   # 只有推到 origin 時才更新本機的 origin 追蹤分支(GITLAB_BOT_PUSH_URL 指到別處時不更新)
   [[ -n ${GITLAB_BOT_PUSH_URL:-} ]] || git update-ref "refs/remotes/origin/$branch" HEAD 2>/dev/null || true
 }
@@ -411,6 +418,15 @@ case $cmd in
   retry)
     [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh retry <pipeline id>"
     api POST "/projects/$PID_ENC/pipelines/$1/retry" | jq -r '"pipeline #\(.id) \(.status)"' ;;
+  fetch)
+    [[ $# -gt 0 ]] || set -- "$(project_json | jq -r .default_branch)"
+    specs=()
+    for br in "$@"; do
+      git check-ref-format --branch "$br" >/dev/null || die "分支名稱不合法:$br"
+      specs+=("+refs/heads/$br:refs/remotes/origin/$br")
+    done
+    clean_git fetch --no-tags --no-recurse-submodules "$PUSH_URL" "${specs[@]}"
+    for br in "$@"; do echo "origin/$br $(git rev-parse "refs/remotes/origin/$br")"; done ;;
   rebase)
     [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh rebase <MR iid>"
     iid=$1

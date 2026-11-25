@@ -240,6 +240,15 @@ check "log 行數超過上限拒絕" bash -c "! bash '$BOT' log 501 99999 2>/dev
 : > "$TMP/req.log"
 check "retry 送 POST 並印狀態" bash -c "[ \"\$(bash '$BOT' retry 50)\" = 'pipeline #50 pending' ] && grep -q '^POST .*/pipelines/50/retry' '$TMP/req.log'"
 
+# --- fetch ---
+export GITLAB_BOT_PUSH_URL="$TMP/remote.git"
+check "fetch 抓遠端分支到 origin/<分支>" bash -c "out=\$(TMPDIR='$TMP/tt' bash '$BOT' fetch feat/x 2>&1); [ \"\$(git rev-parse refs/remotes/origin/feat/x)\" = \"\$(git -C '$TMP/remote.git' rev-parse feat/x)\" ] && grep -q '^origin/feat/x ' <<<\"\$out\" && [ -z \"\$(ls -A '$TMP/tt')\" ]"
+check "fetch 不合法的分支名稱拒絕" bash -c "! bash '$BOT' fetch 'bad..name' 2>/dev/null"
+git config url."git@evil.example:".insteadOf https://gitlab.example.test/
+check "repo 有 url.*.insteadOf 時 fetch 也拒絕" bash -c "bash '$BOT' fetch feat/x 2>&1 | grep -q '拒絕'"
+git config --unset url."git@evil.example:".insteadOf
+unset GITLAB_BOT_PUSH_URL
+
 # --- rebase ---
 : > "$TMP/req.log"
 check "rebase 送 PUT、印新的 head SHA" bash -c "out=\$(bash '$BOT' rebase 13); grep -q '^rebased: a\{40\} -> 7\{40\}$' <<<\"\$out\" && grep -q '^PUT .*/merge_requests/13/rebase' '$TMP/req.log'"
