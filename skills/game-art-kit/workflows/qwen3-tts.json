@@ -1,0 +1,61 @@
+{
+ "1": {
+  "class_type": "Qwen3TTSEngineNode",
+  "inputs": {
+   "model_variant": "{{variant}}",
+   "device": "auto",
+   "voice_preset": "{{voice}}",
+   "language": "Chinese",
+   "instruct": "{{instruct}}",
+   "top_k": 50,
+   "top_p": 1,
+   "temperature": 0.9,
+   "repetition_penalty": 1.05,
+   "max_new_tokens": 2048,
+   "runtime_mode": "⚠️ Shared Runtime",
+   "dtype": "auto",
+   "attn_implementation": "auto"
+  }
+ },
+ "2": {
+  "class_type": "UnifiedTTSTextNode",
+  "inputs": {
+   "TTS_engine": [
+    "1",
+    0
+   ],
+   "text": "{{text}}",
+   "narrator_voice": "none",
+   "seed": "{{seed}}",
+   "enable_chunking": false
+  }
+ },
+ "3": {
+  "class_type": "PreviewAudio",
+  "inputs": {
+   "audio": [
+    "2",
+    0
+   ]
+  }
+ },
+ "_meta": {
+  "title": "Qwen3-TTS 預設聲音(CustomVoice 1.7B,本機)",
+  "family": "qwen3-tts",
+  "output": "音訊(PreviewAudio,下載後由 motion-video-kit 的 tts.mjs 轉 48 kHz)",
+  "params": {
+   "variant": "模型(check 的 defaults.tts_variant,例如 local:Qwen3-TTS-12Hz-1.7B-CustomVoice)",
+   "voice": "預設聲音(Vivian、Serena、Uncle_Fu、Dylan、Eric、Ryan、Aiden、Ono_Anna、Sohee;偏大陸口音)",
+   "instruct": "語氣指示(例如「語氣輕快、有活力,像科技短影音的解說員」)",
+   "text": "要念的一句話",
+   "seed": "seed(0 ~ 4294967295;0 = 隨機,不要用)"
+  },
+  "numeric": [
+   "seed"
+  ],
+  "max": {
+   "seed": 4294967295
+  },
+  "note": "runtime_mode 固定 ⚠️ Shared Runtime(2026-11-24 實測:Main Environment 載入失敗,只回 1 秒靜音)"
+ }
+}

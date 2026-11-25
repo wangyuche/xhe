@@ -10,7 +10,7 @@ description: 9:16 短影音的固定腳本:工具檢查、影片探測、whisper
 ## 腳本
 
 ```bash
-bash <kit>/scripts/check.sh [--video] [--url]       # 缺工具結束碼 3,印安裝指令
+bash <kit>/scripts/check.sh [--video] [--url] [--no-say]   # 缺工具結束碼 3,印安裝指令;--no-say 不檢查 say(motion-video-kit 用 Qwen3 旁白時)
 bash <kit>/scripts/probe.sh <影片>                  # {"duration","width","height","rotation","fps","hasAudio","orientation"}(已套用旋轉)
 bash <kit>/scripts/transcribe.sh <影片> <out.json> [--lang auto|zh|en]   # {"lang","segments":[{start,end,text}]}
 bash <kit>/scripts/silence.sh <影片> [--min 0.5] [--db -35]              # [{start,end}];沒有音軌結束碼 3
@@ -19,7 +19,7 @@ node <kit>/scripts/render.mjs <cards.json> <輸出目錄> [--asset-root <目錄>
 node <kit>/scripts/record-web.mjs <本機網址> <actions.json> <out.mp4>        # 1080×1920 30fps 無聲
 node <kit>/scripts/compose.mjs <timeline.json> [--dry-run]                  # final.mp4 + subtitles.srt;超過 60 秒結束碼 5
 bash <kit>/scripts/frames.sh <影格目錄> <名稱> <out.mp4> --frames <length> [--fps 24]   # comfy.mjs 下載的 <名稱>-1..N.png → MP4;一律給 --frames(這次的 length),同名重跑的舊格數才不會混入;缺格 / 尺寸不一結束碼 2
-bash <kit>/scripts/verify.sh <final.mp4> <checks 目錄> --boxes <boxes.json> --cover <cover.png>
+bash <kit>/scripts/verify.sh <final.mp4> <checks 目錄> --boxes <boxes.json> --cover <cover.png> --scenes <scenes.json> [--size WxH] [--safe-json <safe.json>]
 bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算通過)
 ```
 
@@ -109,6 +109,8 @@ bash <kit>/tests/run.sh                              # 自我測試(SKIP 不算�
 - `texts` 依字數比例切分 start–end。
 - 沒有音軌時混入靜音,這種成品響度檢查不會過,要提供背景音樂。
 
+混音(旁白排程、配樂 sidechain 壓低、音效、loudnorm 兩階段)在 `scripts/_mix.mjs`,motion-video-kit 的 `mix.mjs` 也 import 它(不複製)。
+
 **輸出**:`<out>/final.mp4`、`<out>/subtitles.srt`、`<work>/subtitles/*.png` + `boxes.json`、`<work>/first-frame.png`(封面用,沒有字幕)、`<work>/mix.wav`、`<work>/scenes.json`(每個鏡頭的成品起訖,給 `verify.sh --scenes`)。stdout 摘要含 `duration`、`scenes`(置頂鏡頭有 `uiBottom`)、`keep`、`cuts`、`totalCut`、`sourceDuration`、`actualDuration`。
 
 **字幕版面**:最多 2 行,字級 64 px 起往下縮到 44 px;字幕框必須在 x∈[60,930]、y∈[1300,1620]。放不下時 compose 結束碼 4,把該句改成 `texts` 拆句(原聲),或把旁白拆成兩句重跑 tts。
@@ -129,4 +131,4 @@ ComfyUI 的連線、骨架、上傳、下載都用 game-art-kit 的 `comfy.mjs`(
 
 ## verify.sh 檢查項目
 
-1080×1920、30 fps、h264 + yuv420p、aac 48000 Hz、faststart、長度 ≤ 60 秒;響度 −15 ~ −13 LUFS、true peak ≤ −1.0;5 張擷圖(0.1 秒、25%、50%、75%、末 1 秒)最暗的平均亮度 > 5;boxes.json 全在安全區(找不到算失敗);cover 1080×1920;`--scenes`(必填)的鏡頭從 0 首尾相接到片長,並在每個鏡頭中點與結尾前 0.2 秒各擷一張(`checks/scene-NN-mid.png`、`scene-NN-end.png`,列在 `sceneChecks`)。印一行 JSON,失敗時有 `failures`,結束碼 1。
+尺寸(`--size`,預設 1080×1920;motion-video-kit 的 3:4 片用 `--size 1080x1440`)、30 fps、h264 + yuv420p、aac 48000 Hz、faststart、長度 ≤ 60 秒;響度 −15 ~ −13 LUFS、true peak ≤ −1.0;5 張擷圖(0.1 秒、25%、50%、75%、末 1 秒)最暗的平均亮度 > 5;boxes.json 全在安全區(找不到算失敗;沒給 `--safe-json` 用 x∈[60,930]、y∈[1300,1620];有給時 `safe.json` = `{"subtitle":[x0,y0,x1,y1],"headline":[x0,y0,x1,y1]}`,依每筆的 `kind` 比對,沒有 `kind` 當 `subtitle`);cover 與 `--size` 相同;`--scenes`(必填)的鏡頭從 0 首尾相接到片長,並在每個鏡頭中點與結尾前 0.2 秒各擷一張(`checks/scene-NN-mid.png`、`scene-NN-end.png`,列在 `sceneChecks`)。印一行 JSON,失敗時有 `failures`,結束碼 1。

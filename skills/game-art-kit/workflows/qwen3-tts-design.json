@@ -1,0 +1,97 @@
+{
+ "1": {
+  "class_type": "Qwen3TTSEngineNode",
+  "inputs": {
+   "model_variant": "local:Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+   "device": "auto",
+   "voice_preset": "None (Zero-shot / Custom)",
+   "language": "Chinese",
+   "instruct": "",
+   "top_k": 50,
+   "top_p": 1,
+   "temperature": 0.9,
+   "repetition_penalty": 1.05,
+   "max_new_tokens": 2048,
+   "runtime_mode": "⚠️ Shared Runtime",
+   "dtype": "auto",
+   "attn_implementation": "auto"
+  }
+ },
+ "2": {
+  "class_type": "UnifiedVoiceDesignerNode",
+  "inputs": {
+   "TTS_engine": [
+    "1",
+    0
+   ],
+   "reference_text": "{{ref}}",
+   "seed": "{{dseed}}",
+   "voice_instruction": "{{design}}"
+  }
+ },
+ "3": {
+  "class_type": "Qwen3TTSEngineNode",
+  "inputs": {
+   "model_variant": "local:Qwen3-TTS-12Hz-1.7B-Base",
+   "device": "auto",
+   "voice_preset": "None (Zero-shot / Custom)",
+   "language": "Chinese",
+   "instruct": "",
+   "top_k": 50,
+   "top_p": 1,
+   "temperature": 0.9,
+   "repetition_penalty": 1.05,
+   "max_new_tokens": 2048,
+   "runtime_mode": "⚠️ Shared Runtime",
+   "dtype": "auto",
+   "attn_implementation": "auto"
+  }
+ },
+ "4": {
+  "class_type": "UnifiedTTSTextNode",
+  "inputs": {
+   "TTS_engine": [
+    "3",
+    0
+   ],
+   "text": "{{text}}",
+   "narrator_voice": "none",
+   "seed": "{{seed}}",
+   "enable_chunking": false,
+   "opt_narrator": [
+    "2",
+    0
+   ]
+  }
+ },
+ "5": {
+  "class_type": "PreviewAudio",
+  "inputs": {
+   "audio": [
+    "4",
+    0
+   ]
+  }
+ },
+ "_meta": {
+  "title": "Qwen3-TTS 聲音設計 + Base 複製(台灣口音,本機)",
+  "family": "qwen3-tts",
+  "output": "音訊(PreviewAudio,下載後由 motion-video-kit 的 tts.mjs 轉 48 kHz)",
+  "params": {
+   "design": "聲音描述(VoiceDesign 1.7B 依描述設計聲音;中文 + 英文描述效果最好)",
+   "ref": "設計聲音時念的參考句(同一支片每句都用同一句,聲音才一致)",
+   "text": "要念的一句話(Base 1.7B 複製設計出來的聲音念)",
+   "seed": "念句子的 seed",
+   "dseed": "設計聲音的 seed(同一支片每句都用同一個,聲音才一致)"
+  },
+  "numeric": [
+   "seed",
+   "dseed"
+  ],
+  "max": {
+   "seed": 4294967295,
+   "dseed": 4294967295
+  },
+  "note": "VoiceDesign → Base 兩個 engine 都用 ⚠️ Shared Runtime;design / ref / dseed 相同時設計出的聲音相同(2026-11-24 實測)"
+ }
+}

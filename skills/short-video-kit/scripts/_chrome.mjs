@@ -44,7 +44,8 @@ function hookSignals() {
   });
 }
 
-export async function launchChrome() {
+// args:額外的 Chrome 參數(例如 motion-video-kit 要逐格可重現時的軟體繪製參數)
+export async function launchChrome({ args = [] } = {}) {
   if (!existsSync(CHROME)) throw new Error(`找不到 Google Chrome:${CHROME}`);
   mkdirSync(KIT_TMP, { recursive: true });
   const profile = realpathSync(mkdtempSync(join(KIT_TMP, 'chrome-'))); // 正規化(// 與 /var → /private/var),和 Chrome 子程序看到的一致
@@ -53,7 +54,7 @@ export async function launchChrome() {
     '--no-first-run', '--no-default-browser-check', '--disable-extensions',
     '--hide-scrollbars', '--mute-audio', '--disable-background-networking',
     '--disable-component-update', '--disable-sync', '--metrics-recording-only',
-    '--font-render-hinting=none', 'about:blank',
+    '--font-render-hinting=none', ...args, 'about:blank',
   ], { stdio: 'ignore' });
   live.set(profile, chrome.pid); hookSignals();
 

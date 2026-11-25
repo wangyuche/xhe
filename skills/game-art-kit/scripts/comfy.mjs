@@ -179,7 +179,9 @@ async function check() {
   d.sfx_clip = !d.sfx_ckpt ? null : /stable.?audio.?3/i.test(d.sfx_ckpt) ? pick(te, /t5.?gemma/) : pick(te, /t5.?base/);
   // Windows 主機回傳反斜線路徑,統一成 /
   const rmbgFiles = await json('/models/rmbg').then(x => Array.isArray(x) ? x.map(f => String(f).replace(/\\/g, '/')) : []);
-  const opts = (node) => { const m = oi[node]?.input?.required?.model; return Array.isArray(m?.[0]) ? m[0] : []; };
+  // 下拉選項:舊格式 [[選項…], {...}];新版 ComfyUI(V3)['COMBO', {options:[…]}]
+  const combo = (x) => Array.isArray(x?.[0]) ? x[0] : x?.[0] === 'COMBO' && Array.isArray(x?.[1]?.options) ? x[1].options : null;
+  const opts = (node) => combo(oi[node]?.input?.required?.model) ?? [];
   const bg = [];
   if (has('RMBG')) {
     const ok = rmbgComplete(rmbgFiles);
@@ -211,6 +213,23 @@ async function check() {
     'LoadImage', 'ImageScale', 'LTXVPreprocess', 'EmptyLTXVLatentVideo', 'LTXVImgToVideoInplace', 'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent',
     'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled', 'PreviewImage'].every(has));
   workflows['ace-step-bgm'] = !!(d.bgm_ckpt && ['CheckpointLoaderSimple', 'ModelSamplingAuraFlow', 'TextEncodeAceStepAudio1.5', 'ConditioningZeroOut', 'EmptyAceStep1.5LatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
+  // 旁白:Qwen3-TTS(TTS Audio Suite 的 Qwen3TTSEngineNode + UnifiedTTSTextNode)。只認主機上已下載的本機模型(local: 開頭,不在主機上自動下載),
+  // 而且要有 ⚠️ Shared Runtime(2026-11-24 實測 Main Environment 載入失敗,只回 1 秒靜音)。
+  {
+    const qin = oi.Qwen3TTSEngineNode?.input ?? {};
+    const variants = combo(qin.required?.model_variant) ?? [];
+    const rt = combo(qin.optional?.runtime_mode) ?? combo(qin.required?.runtime_mode);
+    // 骨架與 tts.mjs 送出的是固定字串,要完全相同才算可用(寬鬆比對會讓 check 說可用、實際送出卻被 ComfyUI 驗證擋下)
+    const shared = Array.isArray(rt) && rt.includes('⚠️ Shared Runtime');
+    const exact = (name) => variants.includes(name) ? name : null;
+    d.tts_variant = exact('local:Qwen3-TTS-12Hz-1.7B-CustomVoice');
+    d.tts_design_variant = exact('local:Qwen3-TTS-12Hz-1.7B-VoiceDesign');
+    d.tts_base_variant = exact('local:Qwen3-TTS-12Hz-1.7B-Base');
+    const qOk = shared && ['Qwen3TTSEngineNode', 'UnifiedTTSTextNode', 'PreviewAudio'].every(has);
+    workflows['qwen3-tts'] = !!(qOk && d.tts_variant);
+    // 骨架寫死 local:…-1.7B-VoiceDesign 與 local:…-1.7B-Base 兩個名稱
+    workflows['qwen3-tts-design'] = !!(qOk && has('UnifiedVoiceDesignerNode') && d.tts_design_variant && d.tts_base_variant);
+  }
   // consistency_methods 只列 kit 有骨架、而且骨架可用的方法(agent 只能用這些)。
   // 主機上有、但 kit 沒有骨架的方法(IP-Adapter)放 unsupported_consistency,只供 BLOCKED 時說明。
   const methods = [];
@@ -233,6 +252,7 @@ async function check() {
     audio_models: {
       sfx: workflows['stable-audio-sfx'] ? [d.sfx_ckpt] : [],
       bgm: workflows['ace-step-bgm'] ? [d.bgm_ckpt] : [],
+      tts: [workflows['qwen3-tts-design'] && 'qwen3-tts-design', workflows['qwen3-tts'] && 'qwen3-tts'].filter(Boolean),
     },
     // 影片骨架(只有圖生影片):ltx23-i2v 優先(5 秒約 110 秒),wan22-i2v 備援(5 秒約 340 秒)
     video_models: [workflows['ltx23-i2v'] && d.ltx_ckpt, workflows['wan22-i2v'] && d.wan_ti2v_unet].filter(Boolean),

@@ -1,0 +1,40 @@
+{
+ "name": "github-hot-pastel",
+ "description": "資訊圖動畫型短片(3:4):米色底 + 淡色幾何圖形漂移、左上深紫膠囊標籤、右上吉祥物、兩行大標(黑字 + 橘字)、中央白色深紫粗框卡片內容依旁白彈出、底部逐詞字幕與橘色膠囊關鍵詞、上緣橘色進度條。",
+ "size": [1080, 1440],
+ "fps": 30,
+ "palette": {
+  "bg": "#F5EADC",
+  "ink": "#211A2C",
+  "frame": "#3A2350",
+  "accent": "#EC5B2A",
+  "accent2": "#FFB547",
+  "card": "#FFFDF8",
+  "muted": "#76687E",
+  "terminal": "#241B33",
+  "shapes": ["#F6B08A", "#CDB6EA", "#FFD48A", "#F49F9C", "#B7DCC8"]
+ },
+ "fonts": {
+  "headline": "PingFang TC",
+  "body": "PingFang TC",
+  "mono": "Menlo"
+ },
+ "scenes": ["title", "image", "compare", "terminal", "chips", "checklist", "grid", "stat", "cta"],
+ "mascot": {
+  "base": "assets/mascot/base.png",
+  "happy": "assets/mascot/happy.png",
+  "surprised": "assets/mascot/surprised.png",
+  "point": "assets/mascot/point.png",
+  "think": "assets/mascot/think.png",
+  "thumbs": "assets/mascot/thumbs.png",
+  "search": "assets/mascot/search.png"
+ },
+ "tag": "GitHub 熱門專案",
+ "safe": {
+  "headline": [36, 108, 772, 432],
+  "subtitle": [48, 1196, 1032, 1424]
+ },
+ "minFont": { "headline": 72, "subtitle": 46 },
+ "maxLineChars": 20,
+ "cardInner": [944, 676]
+}
