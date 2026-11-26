@@ -112,10 +112,22 @@ def common_forbidden(argv, cfg):
             return f"一律禁止(命中 {tok!r})"
     if ("--member=allUsers" in argv or "--member=allAuthenticatedUsers" in argv) and "add-iam-policy-binding" in argv:
         return "一律禁止:新增公開成員 allUsers / allAuthenticatedUsers"
+    nets4, nets6 = [], []
     for a in argv:
-        for part in re.split(r"[=,]", a):
-            if part in ("0.0.0.0/0", "::/0"):
-                return "一律禁止:來源 / 授權網路含 0.0.0.0/0 或 ::/0"
+        for part in re.split(r"[=,;]", a):
+            part = part.strip()
+            if "/" not in part or not re.fullmatch(r"[0-9A-Fa-f.:]+/\d{1,3}", part):
+                continue
+            try:
+                n = ipaddress.ip_network(part, strict=False)
+            except ValueError:
+                return f"一律禁止:看不懂的網段 {part}"
+            if n.prefixlen == 0:
+                return "一律禁止:來源 / 授權網路含 0.0.0.0/0 或 ::/0(任何寫法)"
+            (nets4 if n.version == 4 else nets6).append(n)
+    for nets in (nets4, nets6):
+        if any(c.prefixlen == 0 for c in ipaddress.collapse_addresses(nets)):
+            return "一律禁止:多個網段合起來涵蓋整個網際網路"
     sa = cfg.get("GG_SA")
     if sa and sa in text:
         return f"一律禁止:動到 gcp-guardian 自己的 SA({sa})"
@@ -174,6 +186,13 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     for fl in flags:
         if fl not in allowed:
             return block(f"{kind} 不允許旗標 {fl}")
+    for fl, val in flags.items():
+        only = (k.get("flags", {}).get(fl) or {}).get("only_values")
+        if only is not None and str(val) not in only:
+            return block(f"{fl} 只允許 {only}")
+    pre = _resource_precheck(kind, pos)
+    if pre:
+        return block(pre)
     if argv[0] == "gcloud":
         res["target"]["project"] = flags.get("--project")
     res["target"]["resource"] = pos[0] if pos else None
@@ -200,6 +219,23 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     return res
 
 
+def _resource_precheck(kind, pos):
+    """快照之前就要檢查的資源種類(避免對 Secret 等資源做快照 / dry-run)。"""
+    rules = change_rules()
+    if kind == "kubectl-patch":
+        if pos[0] not in rules["k8s_patch_kinds"]:
+            return f"不允許 patch 這種資源:{pos[0]}(只接受小寫:{', '.join(rules['k8s_patch_kinds'])})"
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", pos[1]):
+            return f"資源名稱格式不對:{pos[1]}"
+    if kind == "kubectl-scale" and not re.fullmatch(r"(deployment|statefulset|replicaset)/[a-z0-9][a-z0-9.-]{0,252}", pos[0]):
+        return "scale 只接受 deployment|statefulset|replicaset/<名稱>"
+    if kind == "kubectl-rollout-restart" and not re.fullmatch(r"(deployment|statefulset|daemonset)/[a-z0-9][a-z0-9.-]{0,252}", pos[0]):
+        return "rollout restart 只接受 deployment|statefulset|daemonset/<名稱>"
+    if kind == "kubectl-label-namespace" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", pos[0]):
+        return f"namespace 名稱格式不對:{pos[0]}"
+    return None
+
+
 # ---------------------------------------------------------------- 各 kind
 
 def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
@@ -214,6 +250,17 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             continue
         rule = spec.get(fl, {})
         if "inverse" in rule:
+            if "state" not in rule:
+                return None, f"{fl} 缺變更前狀態欄位,無法確認還原"
+            cur = gglib.ptr_get(snap, rule["state"])
+            if cur is None and rule.get("state_required"):
+                return None, f"{fl}:快照沒有 {rule['state']},無法確認變更前狀態"
+            now_on = _as_bool(cur)
+            want = rule["target"]
+            want_on = bool(want) if want != "nonempty" else True
+            if now_on == want_on:
+                return None, f"{fl}:變更前已是目標狀態({rule['state']}={cur!r}),不需變更;還原會反向改掉原設定"
+            res["auto_pre"].append({"field": rule["state"], "expect": cur})
             out.append(rule["inverse"])
             changed = True
         elif "restore" in rule:
@@ -249,6 +296,12 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
         return None, "沒有任何變更旗標"
     out.append("--quiet")
     return out, None
+
+
+def _as_bool(v):
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "enforced", "1", "yes", "on") or (v != "" and v.lower() not in ("false", "inherited", "unspecified", "0", "no", "off"))
+    return bool(v)
 
 
 def _loosen_by_table(flags, k):
@@ -392,8 +445,9 @@ def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
 
 
 def _has_binding(policy, member, role):
+    """只看無條件的綁定(--condition=None 的增減對象)。"""
     for b in (policy or {}).get("bindings") or []:
-        if b.get("role") == role and member in (b.get("members") or []):
+        if b.get("role") == role and member in (b.get("members") or []) and not b.get("condition"):
             return True
     return False
 

@@ -5,8 +5,9 @@ secrets versions access
 print-access-token
 print-identity-token
 ^kubectl .* (exec|cp|port-forward|proxy|attach|debug|auth can-i --as)( |$)
-^kubectl .* get (secret|secrets)( [^ ]+)* -o(=| )(json|yaml|wide|name|jsonpath)
-^kubectl .* get (secret|secrets)( |$)(?!.*-o=go-template=\{\{range \.items\}\}\{\{\.metadata\.namespace\}\})
+(?i)^kubectl .* get (secret|secrets)(\.[a-z0-9.]+)?(/[^ ]*)?( |$)(?!-A -o=go-template=\{\{range \.items\}\}\{\{\.metadata\.namespace\}\})
+(?i)^kubectl .* get [^ ]*,(secret|secrets)(\.[a-z0-9.]+)?([, /]|$)
+(?i)^kubectl .* (patch|apply|diff) .*(secret|secrets)(\.[a-z0-9.]+)?( |/|$)
 (^| )--impersonate-service-account
 (^| )--access-token-file
 (^| )--configuration(=| )

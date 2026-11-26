@@ -111,24 +111,39 @@ LOCK_STALE_SECONDS = 2 * 3600
 
 
 def acquire_lock(cfg, project, mode, run):
+    """原子取鎖:先在旁邊建好含 owner.json 的暫存目錄,再 rename 成 .lock(目標存在時 rename 失敗)。
+    owner.json 讀不到時視為「被佔用」(只有目錄 mtime 超過期限才清掉)。"""
     base = os.path.join(cfg["GG_REPORT_DIR"], project)
     os.makedirs(base, mode=0o700, exist_ok=True)
     lock = os.path.join(base, ".lock")
     for _ in range(2):
+        tmp = os.path.join(base, f".lock-tmp-{os.getpid()}-{time.time_ns()}")
+        os.mkdir(tmp, 0o700)
+        write_json(os.path.join(tmp, "owner.json"),
+                   {"pid": os.getpid(), "mode": mode, "run": run, "created": time.time()})
         try:
-            os.mkdir(lock, 0o700)
-            write_json(os.path.join(lock, "owner.json"),
-                       {"pid": os.getpid(), "mode": mode, "run": run, "created": time.time()})
+            if os.path.exists(lock):
+                raise FileExistsError(lock)
+            os.rename(tmp, lock)
             return lock
-        except FileExistsError:
-            info = read_json(os.path.join(lock, "owner.json"), {})
-            age = time.time() - float(info.get("created", 0))
-            alive = _pid_alive(info.get("pid")) if info.get("mode") == "change" else True
-            if age > LOCK_STALE_SECONDS or not alive:
+        except OSError:
+            shutil.rmtree(tmp, ignore_errors=True)
+            info = read_json(os.path.join(lock, "owner.json"), None)
+            try:
+                mtime = os.stat(lock).st_mtime
+            except FileNotFoundError:
+                continue
+            if info is None:
+                stale = time.time() - mtime > LOCK_STALE_SECONDS
+            else:
+                age = time.time() - float(info.get("created", mtime))
+                alive = _pid_alive(info.get("pid")) if info.get("mode") == "change" else True
+                stale = age > LOCK_STALE_SECONDS or not alive
+            if stale:
                 shutil.rmtree(lock, ignore_errors=True)
                 append_log(run, "lock", {"cleared_stale": info})
                 continue
-            raise Blocked(f"專案 {project} 的鎖被佔用({info.get('mode')} run={info.get('run')});"
+            raise Blocked(f"專案 {project} 的鎖被佔用({(info or {}).get('mode', '?')} run={(info or {}).get('run', '?')});"
                           "同專案的計畫 / 變更不可並行")
     raise Blocked("無法取得專案鎖")
 

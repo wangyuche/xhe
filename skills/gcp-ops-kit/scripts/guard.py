@@ -31,16 +31,35 @@ def protected_paths(cfg):
     return [os.path.realpath(p) for p in ps]
 
 
-def is_protected(path, cfg, cwd):
-    p = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
-    for q in protected_paths(cfg):
+def _norm(path, cwd):
+    return os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
+
+
+def is_protected(path, cfg, cwd, ancestor=True):
+    """path 本身或其下層是受保護路徑;ancestor=True 時,path 是受保護路徑的上層目錄也算(遞迴工具可讀到)。"""
+    p = _norm(path, cwd)
+    prot = protected_paths(cfg)
+    for q in prot:
         if p == q or p.startswith(q + os.sep):
+            return True
+        if ancestor and (q.startswith(p.rstrip(os.sep) + os.sep) or p == os.sep):
             return True
     parts = p.split(os.sep)
     rd = os.path.realpath(cfg["GG_REPORT_DIR"])
     if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig"):
         return True
     return False
+
+
+def arg_paths(tok):
+    """從參數取出可能的路徑:一般參數、--opt=值、-f/路徑。"""
+    if not tok.startswith("-"):
+        return [tok]
+    if "=" in tok:
+        return [tok.split("=", 1)[1]]
+    if "/" in tok:
+        return [tok[tok.index("/"):]]
+    return []
 
 
 def check_bash(cmd, cfg, cwd):
@@ -68,8 +87,9 @@ def check_bash(cmd, cfg, cwd):
             if any(t.startswith("-") and t in ("-c", "-e", "-i", "--eval") for t in toks[:i]):
                 return "不允許直譯器旗標"
             for t in toks[i + 1:]:
-                if is_protected(t, cfg, cwd):
-                    return f"參數指向受保護路徑:{t}"
+                for pth in arg_paths(t):
+                    if pth and is_protected(pth, cfg, cwd):
+                        return f"參數指向受保護路徑(或其上層目錄):{t}"
             return None
         return f"只允許 gcp-ops-kit 的入口腳本({', '.join(sorted(ENTRIES))}),不允許 {first}"
     low = cmd.lower()
@@ -83,18 +103,25 @@ def check_bash(cmd, cfg, cwd):
     if first == "find" and any(t in FIND_DENY for t in toks):
         return "find 不允許 -exec / -delete 等動作"
     for t in toks[1:]:
-        if t.startswith("-"):
-            continue
-        if is_protected(t, cfg, cwd):
-            return f"不可讀受保護路徑:{t}"
+        for pth in arg_paths(t):
+            if pth and is_protected(pth, cfg, cwd, ancestor=first not in ("ls", "stat", "pwd", "date")):
+                return f"不可讀受保護路徑(或其上層目錄):{t}"
     return None
 
 
 def check_path_tool(tool, inp, cfg, cwd):
+    if tool in ("Grep", "Glob"):
+        base = inp.get("path") or cwd
+        pats = [inp.get("pattern") if tool == "Glob" else None, inp.get("glob")]
+        roots = [base] + [x.split("*")[0].split("{")[0] for x in pats if x and x.startswith(("/", "~"))]
+        for r in roots:
+            if r and is_protected(r, cfg, cwd, ancestor=True):
+                return f"搜尋範圍包含受保護路徑:{r}"
+        return None
     p = inp.get("file_path") or inp.get("path") or inp.get("notebook_path") or ""
     if not p:
         return None
-    if is_protected(p, cfg, cwd):
+    if is_protected(p, cfg, cwd, ancestor=False):
         return f"不可存取受保護路徑:{p}"
     if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
         real = os.path.realpath(os.path.join(cwd, p))

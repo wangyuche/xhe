@@ -141,6 +141,8 @@ def snapshot(s, kind, argv, project, ctx_done):
             md = o.get("metadata") or {}
             if not o.get("kind") or not md.get("name"):
                 return None, endpoint, "manifest 每份文件都要有 kind 與 metadata.name"
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", str(o["kind"])) or o["kind"].lower() in ggchange.change_rules()["k8s_forbidden_kinds"]:
+                return None, endpoint, f"manifest 不允許這種資源:{o['kind']}"
             snap1, err = kget(o["kind"].lower(), md["name"], md.get("namespace"))
             if err:
                 return None, endpoint, err
@@ -173,7 +175,7 @@ def k8s_dryrun(s, kind, argv, snap):
     if kind == "kubectl-apply":
         path = f["--filename"]
         r = s.kubectl(ctx, ["diff", "-f", path, "--request-timeout=60s"], mode="dryrun")
-        log.append(("kubectl diff", r.returncode, r.stdout[-4000:]))
+        log.append(("kubectl diff", r.returncode, diff_summary(r.stdout)))
         if r.returncode > 1:
             return None, [], log, "kubectl diff 失敗:" + gglib._short(r.stderr)
         created = bool(re.search(r"^@@ -0,0 ", r.stdout, re.M)) or \
@@ -199,6 +201,19 @@ def k8s_dryrun(s, kind, argv, snap):
     old = {key(x) for x in _obj_findings(before)}
     new = [x for x in _obj_findings(after) if key(x) not in old]
     return created, new, log, None
+
+
+def diff_summary(out):
+    """只保留「哪些資源有差異、是否新建」,不保留 diff 內容(可能含 env / ConfigMap 原值)。"""
+    res, cur = [], None
+    for line in out.splitlines():
+        m = re.match(r"^diff -u -N \S+/([^/\s]+) ", line)
+        if m:
+            cur = {"resource": m.group(1), "created": False}
+            res.append(cur)
+        elif cur and line.startswith("@@ -0,0 "):
+            cur["created"] = True
+    return "\n".join(f"{x['resource']}\t{'新建' if x['created'] else '修改'}" for x in res) or "（無差異)"
 
 
 def check_pre(pre_list, snap):

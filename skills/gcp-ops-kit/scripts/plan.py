@@ -105,15 +105,18 @@ def build_item(s, cfg, run, project, raw, ctx_done):
         return blocked("缺 expected(變更後要驗證的欄位與值)")
     try:
         snap, endpoint, err = ggplan.snapshot(s, kind, argv, project, ctx_done)
-    except gglib.Blocked as e:
+    except (gglib.Blocked, gglib.Denied) as e:
         return blocked(str(e))
     if err:
         return blocked("快照失敗:" + err)
     if kind in ("kubectl-apply", "kubectl-patch"):
         if kind == "kubectl-patch" and (snap or {}).get("_absent"):
             return blocked("要 patch 的資源不存在")
-        created, new_findings, log, err = ggplan.k8s_dryrun(s, kind, argv, snap)
-        item["dry_run_log"] = [{"step": a, "rc": b, "out": gglib.scrub_text(c, cfg)} for a, b, c in log]
+        try:
+            created, new_findings, log, err = ggplan.k8s_dryrun(s, kind, argv, snap)
+        except gglib.Denied as e:
+            return blocked(str(e))
+        item["dry_run_log"] = [{"step": a, "rc": b, "out": c} for a, b, c in log]
         if err:
             return blocked(err)
         res = ggchange.classify(argv, cfg, snap, new_findings, created)
@@ -126,7 +129,7 @@ def build_item(s, cfg, run, project, raw, ctx_done):
         item["target"]["endpoint"] = endpoint
     item["target"]["project"] = project
     if item["rollback"]:
-        item["rollback"] = [a.replace("<before/C?.json>", f"<變更 run>/before/{item['id']}.json") for a in item["rollback"]]
+        item["rollback"] = [a.replace("<before/C?.json>", f"<變更 run>/before/{item['id']}.rollback.json") for a in item["rollback"]]
     item["precondition_failed_at_plan"] = ggplan.check_pre(item["precondition"] + item["auto_pre"], snap)
     if item["precondition_failed_at_plan"] and not item["blocked_reason"]:
         item["blocked_reason"] = "precondition 在計畫當下就不成立"

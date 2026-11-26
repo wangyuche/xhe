@@ -1,5 +1,5 @@
 {
-  "_doc": "變更允許清單。不在 kinds 裡的指令一律 BLOCKED。flags:每個允許的旗標要有 inverse(反向旗標)或 restore(從變更前快照取還原值的 JSON pointer);兩者都沒有 → 不可還原 → BLOCKED。loosens:這個旗標屬於放寬安全(計畫頁醒目標示)。",
+  "_doc": "變更允許清單。不在 kinds 裡的指令一律 BLOCKED。flags:每個允許的旗標要有 inverse(反向旗標)或 restore(從變更前快照取還原值的 JSON pointer);兩者都沒有 → 不可還原 → BLOCKED。loosens:這個旗標屬於放寬安全(計畫頁醒目標示)。 inverse 旗標必須有 state(變更前狀態的 JSON pointer)與 target(這個旗標要達成的狀態:true / false / nonempty);變更前已是 target → 不可還原(其實不需變更);state 記入 auto_pre。",
   "forbidden_tokens": [
     "(^| )delete( |$)",
     "(^| )set-iam-policy( |$)",
@@ -67,11 +67,15 @@
       "dry_run": null,
       "flags": {
         "--enable-master-authorized-networks": {
-          "inverse": "--no-enable-master-authorized-networks"
+          "inverse": "--no-enable-master-authorized-networks",
+          "state": "/masterAuthorizedNetworksConfig/enabled",
+          "target": true
         },
         "--no-enable-master-authorized-networks": {
           "inverse": "--enable-master-authorized-networks",
-          "loosens": "關閉控制平面授權網路"
+          "loosens": "關閉控制平面授權網路",
+          "state": "/masterAuthorizedNetworksConfig/enabled",
+          "target": false
         },
         "--master-authorized-networks": {
           "restore": "/masterAuthorizedNetworksConfig/cidrBlocks",
@@ -79,21 +83,31 @@
           "item_key": "cidrBlock"
         },
         "--enable-shielded-nodes": {
-          "inverse": "--no-enable-shielded-nodes"
+          "inverse": "--no-enable-shielded-nodes",
+          "state": "/shieldedNodes/enabled",
+          "target": true
         },
         "--no-enable-shielded-nodes": {
           "inverse": "--enable-shielded-nodes",
-          "loosens": "關閉 Shielded GKE Nodes"
+          "loosens": "關閉 Shielded GKE Nodes",
+          "state": "/shieldedNodes/enabled",
+          "target": false
         },
         "--workload-pool": {
-          "inverse": "--disable-workload-identity"
+          "inverse": "--disable-workload-identity",
+          "state": "/workloadIdentityConfig/workloadPool",
+          "target": "nonempty"
         },
         "--enable-network-policy": {
-          "inverse": "--no-enable-network-policy"
+          "inverse": "--no-enable-network-policy",
+          "state": "/networkPolicy/enabled",
+          "target": true
         },
         "--no-enable-network-policy": {
           "inverse": "--enable-network-policy",
-          "loosens": "關閉 NetworkPolicy 執行"
+          "loosens": "關閉 NetworkPolicy 執行",
+          "state": "/networkPolicy/enabled",
+          "target": false
         },
         "--logging": {
           "restore": "/loggingConfig/componentConfig/enableComponents",
@@ -127,18 +141,26 @@
       "dry_run": null,
       "flags": {
         "--enable-autoupgrade": {
-          "inverse": "--no-enable-autoupgrade"
+          "inverse": "--no-enable-autoupgrade",
+          "state": "/management/autoUpgrade",
+          "target": true
         },
         "--no-enable-autoupgrade": {
           "inverse": "--enable-autoupgrade",
-          "loosens": "關閉節點自動升級"
+          "loosens": "關閉節點自動升級",
+          "state": "/management/autoUpgrade",
+          "target": false
         },
         "--enable-autorepair": {
-          "inverse": "--no-enable-autorepair"
+          "inverse": "--no-enable-autorepair",
+          "state": "/management/autoRepair",
+          "target": true
         },
         "--no-enable-autorepair": {
           "inverse": "--enable-autorepair",
-          "loosens": "關閉節點自動修復"
+          "loosens": "關閉節點自動修復",
+          "state": "/management/autoRepair",
+          "target": false
         },
         "--workload-metadata": {
           "restore": "/config/workloadMetadataConfig/mode",
@@ -147,10 +169,14 @@
           }
         },
         "--enable-autoscaling": {
-          "inverse": "--no-enable-autoscaling"
+          "inverse": "--no-enable-autoscaling",
+          "state": "/autoscaling/enabled",
+          "target": true
         },
         "--no-enable-autoscaling": {
-          "inverse": "--enable-autoscaling"
+          "inverse": "--enable-autoscaling",
+          "state": "/autoscaling/enabled",
+          "target": false
         },
         "--min-nodes": {
           "restore": "/autoscaling/minNodeCount"
@@ -207,18 +233,26 @@
           "empty_ok": true
         },
         "--disabled": {
-          "inverse": "--no-disabled"
+          "inverse": "--no-disabled",
+          "state": "/disabled",
+          "target": true
         },
         "--no-disabled": {
           "inverse": "--disabled",
-          "loosens": "啟用防火牆規則"
+          "loosens": "啟用防火牆規則",
+          "state": "/disabled",
+          "target": false
         },
         "--enable-logging": {
-          "inverse": "--no-enable-logging"
+          "inverse": "--no-enable-logging",
+          "state": "/logConfig/enable",
+          "target": true
         },
         "--no-enable-logging": {
           "inverse": "--enable-logging",
-          "loosens": "關閉防火牆記錄"
+          "loosens": "關閉防火牆記錄",
+          "state": "/logConfig/enable",
+          "target": false
         },
         "--priority": {
           "restore": "/priority"
@@ -244,25 +278,43 @@
       "dry_run": null,
       "flags": {
         "--public-access-prevention": {
-          "inverse": "--no-public-access-prevention"
+          "inverse": "--no-public-access-prevention",
+          "state": "/public_access_prevention",
+          "target": true,
+          "state_required": true
         },
         "--no-public-access-prevention": {
           "inverse": "--public-access-prevention",
-          "loosens": "關閉公開存取防護"
+          "loosens": "關閉公開存取防護",
+          "state": "/public_access_prevention",
+          "target": false,
+          "state_required": true
         },
         "--uniform-bucket-level-access": {
-          "inverse": "--no-uniform-bucket-level-access"
+          "inverse": "--no-uniform-bucket-level-access",
+          "state": "/uniform_bucket_level_access",
+          "target": true,
+          "state_required": true
         },
         "--no-uniform-bucket-level-access": {
           "inverse": "--uniform-bucket-level-access",
-          "loosens": "關閉統一 bucket 層級存取(改回 ACL)"
+          "loosens": "關閉統一 bucket 層級存取(改回 ACL)",
+          "state": "/uniform_bucket_level_access",
+          "target": false,
+          "state_required": true
         },
         "--versioning": {
-          "inverse": "--no-versioning"
+          "inverse": "--no-versioning",
+          "state": "/versioning_enabled",
+          "target": true,
+          "state_required": true
         },
         "--no-versioning": {
           "inverse": "--versioning",
-          "loosens": "關閉物件版本"
+          "loosens": "關閉物件版本",
+          "state": "/versioning_enabled",
+          "target": false,
+          "state_required": true
         }
       }
     },
@@ -298,7 +350,11 @@
       "snapshot": "project-iam",
       "dry_run": null,
       "flags": {
-        "--condition": {}
+        "--condition": {
+          "only_values": [
+            "None"
+          ]
+        }
       }
     },
     "project-iam-remove": {
@@ -316,7 +372,11 @@
       "snapshot": "project-iam",
       "dry_run": null,
       "flags": {
-        "--condition": {}
+        "--condition": {
+          "only_values": [
+            "None"
+          ]
+        }
       }
     },
     "sql-patch": {
@@ -362,11 +422,17 @@
           "restore": "/settings/backupConfiguration/startTime"
         },
         "--enable-point-in-time-recovery": {
-          "inverse": "--no-enable-point-in-time-recovery"
+          "inverse": "--no-enable-point-in-time-recovery",
+          "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
+          "target": true,
+          "state_required": true
         },
         "--no-enable-point-in-time-recovery": {
           "inverse": "--enable-point-in-time-recovery",
-          "loosens": "關閉時間點復原"
+          "loosens": "關閉時間點復原",
+          "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
+          "target": false,
+          "state_required": true
         }
       }
     },
@@ -441,5 +507,19 @@
         "--overwrite": {}
       }
     }
-  }
+  },
+  "k8s_forbidden_kinds": [
+    "secret",
+    "secrets",
+    "serviceaccounttoken",
+    "certificatesigningrequest",
+    "clusterrole",
+    "clusterrolebinding",
+    "role",
+    "rolebinding",
+    "mutatingwebhookconfiguration",
+    "validatingwebhookconfiguration",
+    "customresourcedefinition",
+    "namespace"
+  ]
 }
