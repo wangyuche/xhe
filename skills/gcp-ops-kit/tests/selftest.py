@@ -162,9 +162,15 @@ def t_guard(e):
         (f"grep -f{e.key} x", "deny"),
         (f"cat {e.reports}/p/r/report.html", "allow"),
         (f"ls {e.tmp}", "allow"),
+        (f"cat {e.cfg.replace('/conf/', '/CONF/')}", "deny"),
+        (f"cat {e.key.replace('sa.json', 'SA.JSON')}", "deny"),
+        (f"grep -r private_key {e.reports}", "deny-live"),
     ]
     env = e.env()
+    live = os.path.join(e.reports, "p", "20261127-000000-review", "gcloud")
+    os.makedirs(live)
     for cmd, want in cases:
+        want = "deny" if want == "deny-live" else want
         r = subprocess.run(["python3", g, "--test", cmd], env=env, capture_output=True, text=True)
         got = r.stdout.split("\t")[0].strip()
         ok(f"guard {want}:{cmd[:70]!r}", got == want, r.stdout + r.stderr)
@@ -176,11 +182,13 @@ def t_guard(e):
                             ("Write", {"file_path": os.path.join(e.reports, "p", "r", "plan.json")}, 2),
                             ("Grep", {"pattern": "private_key", "path": e.tmp}, 2),
                             ("Glob", {"pattern": e.tmp + "/**/*.json"}, 2),
-                            ("Grep", {"pattern": "x", "path": e.reports}, 0)):
+                            ("Grep", {"pattern": "x", "path": e.reports}, 2),
+                            ("Grep", {"pattern": "x", "path": os.path.join(e.reports, "p", "other-run")}, 0)):
         r = subprocess.run(["python3", g], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": "/"}),
                            env=env, capture_output=True, text=True)
         tgt = inp.get("file_path") or inp.get("path") or inp.get("pattern")
         ok(f"guard hook {tool} {os.path.relpath(tgt, e.tmp) if tgt.startswith('/') else tgt} → {want}", r.returncode == want, r.stderr)
+    shutil.rmtree(os.path.dirname(live))
 
 
 def t_redact():
@@ -195,6 +203,13 @@ def t_redact():
     ok("遮蔽:metadata 布林設定保留明文", '"value": "TRUE"' in s)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
+
+
+def t_yaml_bool():
+    r = subprocess.run(["ruby", os.path.join(S, "yaml2json.rb"), "-"], input="a: yes\nb: on\nc: \"yes\"\nd: off\ne: n\n",
+                       capture_output=True, text=True)
+    obj = json.loads(r.stdout)[0]["obj"]
+    ok("YAML 1.1 布林:yes / on → true、off / n → false、引號字串不變", obj == {"a": True, "b": True, "c": "yes", "d": False, "e": False}, obj)
 
 
 def t_rule_tables():
@@ -235,6 +250,10 @@ def t_classify():
         ("已是目標狀態的反向旗標(shielded nodes 已開)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--enable-shielded-nodes"], FX.CLUSTER),
         ("帶 condition 的 IAM 新增", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}", "--condition=expression=true,title=t"], pol),
         ("patch 大寫 Secret(快照前就擋)", ["kubectl", f"--context={CTX}", "patch", "Secret", "db", "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
+        ("patch namespace", ["kubectl", f"--context={CTX}", "patch", "namespace", "prod", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
+        ("--logging 沒有可靠還原", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--logging=SYSTEM,WORKLOAD"], FX.CLUSTER),
+        ("deny 防火牆規則", ["gcloud", "compute", "firewall-rules", "update", "deny-ssh", f"--project={P}", "--rules=tcp:23"],
+         {"name": "deny-ssh", "direction": "INGRESS", "denied": [{"IPProtocol": "tcp", "ports": ["22"]}], "sourceRanges": ["10.0.0.0/8"]}),
         ("bucket 狀態欄位不存在", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}),
     ]
     for name, argv, snap in blocked:
@@ -256,6 +275,8 @@ def t_classify():
         ("新增高權角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/editor", f"--project={P}"], pol, True),
         ("開 shielded nodes(原本關)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--enable-shielded-nodes"],
          dict(FX.CLUSTER, shieldedNodes={}), False),
+        ("開控制平面授權網路(原本關、清單空)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                        "--enable-master-authorized-networks", "--master-authorized-networks=203.0.113.0/24"], FX.CLUSTER, False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -263,6 +284,8 @@ def t_classify():
         good = not r["blocked_reason"] and r["reversible"] and r["rollback"]
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
+        if name.startswith("開控制平面授權網路"):
+            good = good and r["rollback"].count("--no-enable-master-authorized-networks") == 1
         if name == "收緊防火牆來源":
             good = good and not r["loosens_security"] and "--source-ranges=0.0.0.0/0" in r["rollback"]
         elif loosens:
@@ -583,7 +606,13 @@ def t_plan_change(e, review_run):
     ok("計畫 k8s:Secret 相關條目 BLOCKED、整份計畫照常產出、沒有任何讀 Secret 的 kubectl 呼叫",
        r.returncode in (0, 1) and kb["C2"]["blocked_reason"] and kb["C3"]["blocked_reason"] and not kb["C1"]["blocked_reason"] and not secret_calls,
        (r.stderr[-600:], {k: v["blocked_reason"] for k, v in kb.items()}, secret_calls))
-    ok("計畫 k8s:apply 的還原指令指向 before/C1.rollback.json", any(a.endswith("/before/C1.rollback.json") for a in kb["C1"]["rollback"]), kb["C1"]["rollback"])
+    ok("計畫 k8s:apply 的還原指令是 kubectl replace before/C1.rollback.json",
+       "replace" in kb["C1"]["rollback"] and any(a.endswith("/before/C1.rollback.json") for a in kb["C1"]["rollback"]), kb["C1"]["rollback"])
+    write_input(krun, [{"id": "C1", "summary": "manifest 指到外部檔", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=/tmp/x/manifests/C1.yaml"],
+                        "expected": [{"field": "/objects/0/spec/replicas", "expect": 2}]}])
+    r, _ = plan_build(e, krun)
+    it = json.load(open(os.path.join(krun, "plan.json")))["items"][0]
+    ok("計畫 k8s:--filename 不是占位(外部檔不受 sha256 涵蓋)→ BLOCKED", it["blocked_reason"] and "占位" in it["blocked_reason"], it["blocked_reason"])
 
 
 def t_wrapper(e):
@@ -612,6 +641,7 @@ def main():
         t_guard(e)
         t_redact()
         t_rule_tables()
+        t_yaml_bool()
         t_classify()
         t_wrapper(e)
         t_gcp_clean()

@@ -63,6 +63,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 ```
 
 - `command`:argv 陣列;旗標一律 `--長旗標=值`(不接受 `-n`、`-f` 這種短旗標)。gcloud 必帶 `--project=`;kubectl 第二個參數必須是 `--context=gke_<專案>_<位置>_<叢集>`,namespace 用 `--namespace=`。
+- `--filename` / `--patch-file` 只能寫占位(內容放 `manifest` / `patch` 欄位,才會被 plan sha256 涵蓋);寫實際路徑 → BLOCKED。
 - `kubectl apply`:`command` 寫 `["kubectl", "--context=…", "apply", "--filename=<manifest>"]`,YAML 全文放 `manifest`;`kubectl patch`:`--patch-file=<patch>`,內容放 `patch`。
 - `precondition` / `expected`:JSON pointer 指向該 kind 的快照(下表);apply 的快照是 `{"objects": [每份文件的線上物件]}`,所以寫 `/objects/0/...`;resize 的快照是 `{"nodepool": …, "node_count_per_zone": n}`。`expected` 必填(rollout restart 除外,kit 自動驗 restartedAt)。
 - plan.py 會自動加 `auto_pre`(還原指令依賴的原值),變更時一起比對。
@@ -71,16 +72,16 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 
 | kind | 指令 | 快照 | 還原 |
 |---|---|---|---|
-| gke-cluster-update | `gcloud container clusters update` 只限:master authorized networks、shielded nodes、workload pool、network policy、logging / monitoring | clusters describe | 反向旗標 / 原值 |
+| gke-cluster-update | `gcloud container clusters update` 只限:master authorized networks、shielded nodes、workload pool、network policy(logging / monitoring 沒有可靠還原,判不可還原) | clusters describe | 反向旗標 / 原值 |
 | gke-nodepool-update | `gcloud container node-pools update`:auto-upgrade / repair、workload-metadata、autoscaling | node-pools describe | 同上 |
 | gke-resize | `gcloud container clusters resize --node-pool --num-nodes`(>0) | node pool + 目前每區節點數 | 原節點數 |
-| firewall-update | `gcloud compute firewall-rules update`:source-ranges、rules、target-tags、disabled、logging、priority、description | describe | 原值 |
+| firewall-update | `gcloud compute firewall-rules update`(只限 INGRESS allow 規則):source-ranges、rules、target-tags、disabled、logging、priority、description | describe | 原值 |
 | bucket-update | `gcloud storage buckets update`:public access prevention、uniform access、versioning | describe | 反向旗標 |
 | bucket-iam-remove | `gcloud storage buckets remove-iam-policy-binding` | get-iam-policy | add 回去 |
 | project-iam-add / remove | `gcloud projects add/remove-iam-policy-binding` | get-iam-policy | 反向 |
 | sql-patch | `gcloud sql instances patch`:ssl、授權網路、備份時間、PITR | describe | 原值 |
-| kubectl-apply | 只能修改既有資源(diff 出現新建 → 不可還原) | 線上物件 | `before/C<n>.rollback.json` |
-| kubectl-patch | deployment、service、ingress、networkpolicy、configmap… | 線上物件 | 同上 |
+| kubectl-apply | 只能修改既有資源(diff 出現新建 → 不可還原) | 線上物件 | `kubectl replace -f before/C<n>.rollback.json` |
+| kubectl-patch | deployment、service、ingress、networkpolicy、configmap…(不含 namespace) | 線上物件 | 同上 |
 | kubectl-scale / rollout-restart / label-namespace | | 線上物件 | 原 replicas / 不需 / 原 label |
 
 - **共同禁止**:任何 delete / `set-iam-policy` / `services disable` / upgrade / `--cluster-version` / `--release-channel` / `--node-version` / `--image-type`;新增 allUsers / allAuthenticatedUsers;任何 `0.0.0.0/0`、`::/0`;防火牆 `all` 或 1–65535 全埠;動 gcp-guardian 自己的 SA;新增 / 移除 `roles/owner`;停用 GKE / IAP 防火牆規則;`--prune`、`--force`、kustomize apply;retention 設定;建立 SA 金鑰。
@@ -99,7 +100,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - plan.json 只保留 `kubectl diff` 的「資源 + 新建 / 修改」摘要,不留 diff 內容。
 - `before/C<n>.rollback.json` 是 kubectl 還原用的**原始物件**(還原指令就指向它)(ConfigMap 可能含原值),權限 600,`--check` 不掃它;報告與回報不印它的內容。
 - 專案鎖:`<GG_REPORT_DIR>/<專案>/.lock`(plan build、change 期間;先建好含 owner.json 的暫存目錄再 rename,讀不到 owner.json 視為佔用);被佔用 → BLOCKED。
-- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或唯讀指令(ls、cat、head、tail、wc、grep、shasum、stat、date、pwd、file、find(無 -exec)、jq、diff),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接出現 gcloud / kubectl / curl…;參數(含 `--opt=值`、`-f/路徑`)不可指向受保護路徑或其上層目錄(`ls`、`stat` 例外);Read 不可碰、Grep / Glob 的搜尋範圍不可包含 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證;Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
+- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或唯讀指令(ls、cat、head、tail、wc、grep、shasum、stat、date、pwd、file、find(無 -exec)、jq、diff),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接出現 gcloud / kubectl / curl…;參數(含 `--opt=值`、`-f/路徑`,大小寫不分)不可指向受保護路徑或其上層目錄(`ls`、`stat` 例外);報告目錄裡有執行中 run 的憑證快取時,遞迴讀取報告目錄也會被擋;Read 不可碰、Grep / Glob 的搜尋範圍不可包含 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證;Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
 
 ## 已知限制
 

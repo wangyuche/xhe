@@ -16,6 +16,9 @@ PATCH_TOKEN = "--patch-file=<patch>"
 def materialize(item, run):
     """把 plan 裡的 <manifest> / <patch> 占位換成 run 目錄的實際檔案。回傳實際 argv。"""
     argv = list(item["command"])
+    for a in argv:
+        if (a.startswith("--filename") and a != MANIFEST_TOKEN) or (a.startswith("--patch-file") and a != PATCH_TOKEN):
+            raise gglib.Blocked(f"{a.split('=')[0]} 只能寫占位 {MANIFEST_TOKEN} / {PATCH_TOKEN}(內容放 manifest / patch 欄位,才會被 sha256 涵蓋)")
     if MANIFEST_TOKEN in argv:
         p = os.path.join(run, "manifests", f"{item['id']}.yaml")
         _write_text(p, item.get("manifest") or "")

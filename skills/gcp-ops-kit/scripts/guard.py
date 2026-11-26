@@ -28,11 +28,12 @@ def protected_paths(cfg):
     ps = [os.path.dirname(gglib.config_path()), os.path.join(home, ".config", "gcloud"), os.path.join(home, ".kube")]
     if cfg.get("GG_SA_KEY_FILE"):
         ps.append(cfg["GG_SA_KEY_FILE"])
-    return [os.path.realpath(p) for p in ps]
+    return [os.path.realpath(p).lower() for p in ps]
 
 
 def _norm(path, cwd):
-    return os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
+    # macOS 預設檔案系統不分大小寫:一律轉小寫比較
+    return os.path.realpath(os.path.join(cwd, os.path.expanduser(path))).lower()
 
 
 def is_protected(path, cfg, cwd, ancestor=True):
@@ -45,8 +46,24 @@ def is_protected(path, cfg, cwd, ancestor=True):
         if ancestor and (q.startswith(p.rstrip(os.sep) + os.sep) or p == os.sep):
             return True
     parts = p.split(os.sep)
-    rd = os.path.realpath(cfg["GG_REPORT_DIR"])
+    rd = os.path.realpath(cfg["GG_REPORT_DIR"]).lower()
     if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig"):
+        return True
+    if ancestor and (p == rd or p.startswith(rd + os.sep) or rd.startswith(p.rstrip(os.sep) + os.sep)):
+        # 報告目錄(或其上層):執行中的 run 會有 gcloud/ 憑證快取與 kubeconfig,遞迴工具不可碰
+        if _live_creds_under(rd if rd.startswith(p.rstrip(os.sep) + os.sep) else p):
+            return True
+    return False
+
+
+def _live_creds_under(top):
+    try:
+        for root, dirs, files in os.walk(top):
+            low = [d.lower() for d in dirs] + [f.lower() for f in files]
+            if "gcloud" in low or "kubeconfig" in low:
+                return True
+            dirs[:] = [d for d in dirs if not d.startswith(".lock")]
+    except OSError:
         return True
     return False
 

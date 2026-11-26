@@ -12,8 +12,9 @@ def scalar_value(node)
   v = node.value
   case v
   when '', '~', 'null', 'Null', 'NULL' then nil
-  when 'true', 'True', 'TRUE' then true
-  when 'false', 'False', 'FALSE' then false
+  # Kubernetes 用的 YAML 1.1 布林(sigs.k8s.io/yaml → go-yaml v2)
+  when 'true', 'True', 'TRUE', 'yes', 'Yes', 'YES', 'on', 'On', 'ON', 'y', 'Y' then true
+  when 'false', 'False', 'FALSE', 'no', 'No', 'NO', 'off', 'Off', 'OFF', 'n', 'N' then false
   when /\A[-+]?(0|[1-9][0-9]*)\z/ then v.to_i
   when /\A[-+]?([0-9]+\.[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?\z/ then v.to_f
   else v

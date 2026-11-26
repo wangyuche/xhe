@@ -223,7 +223,7 @@ def _resource_precheck(kind, pos):
     """快照之前就要檢查的資源種類(避免對 Secret 等資源做快照 / dry-run)。"""
     rules = change_rules()
     if kind == "kubectl-patch":
-        if pos[0] not in rules["k8s_patch_kinds"]:
+        if pos[0] in rules["k8s_forbidden_kinds"] or pos[0] not in rules["k8s_patch_kinds"]:
             return f"不允許 patch 這種資源:{pos[0]}(只接受小寫:{', '.join(rules['k8s_patch_kinds'])})"
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", pos[1]):
             return f"資源名稱格式不對:{pos[1]}"
@@ -266,6 +266,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
         elif "restore" in rule:
             cur = gglib.ptr_get(snap, rule["restore"])
             fmt = rule.get("format", "scalar")
+            if cur is None and not rule.get("empty_ok") and not rule.get("state_required") and fmt != "join":
+                return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"
             if cur is None and not rule.get("empty_ok"):
                 return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"
             if fmt == "join":
@@ -294,8 +296,12 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             return None, f"{fl} 沒有還原範本"
     if not changed:
         return None, "沒有任何變更旗標"
-    out.append("--quiet")
-    return out, None
+    dedup = []
+    for a in out:
+        if a not in dedup:
+            dedup.append(a)
+    dedup.append("--quiet")
+    return dedup, None
 
 
 def _as_bool(v):
@@ -350,6 +356,9 @@ def _k_gke_resize(pos, flags, snap, res, k, cfg, *_):
 
 
 def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
+    if snap.get("denied") or not snap.get("allowed") or snap.get("direction", "INGRESS") != "INGRESS":
+        res["blocked_reason"] = "只允許修改 INGRESS 的 allow 規則;deny / egress 規則請使用者自己改"
+        return None, [], None
     reasons = _loosen_by_table(flags, k)
     for key in ("--rules", "--allow"):
         if key in flags:
@@ -490,7 +499,7 @@ def _k_kubectl_apply(pos, flags, snap, res, k, cfg, mf, dc):
         return None, [], None
     if why:
         return None, reasons or [], why
-    return ["kubectl", f"--context={res['target']['context']}", "apply", "-f", "<before/C?.json>"], reasons, None
+    return ["kubectl", f"--context={res['target']['context']}", "replace", "-f", "<before/C?.json>"], reasons, None
 
 
 def _k_kubectl_patch(pos, flags, snap, res, k, cfg, mf, dc):
@@ -500,7 +509,7 @@ def _k_kubectl_patch(pos, flags, snap, res, k, cfg, mf, dc):
     reasons, why = _k8s_manifest_checks(res, mf, False if dc is None else dc)
     if res["blocked_reason"]:
         return None, [], None
-    return ["kubectl", f"--context={res['target']['context']}", "apply", "-f", "<before/C?.json>"], reasons or [], why
+    return ["kubectl", f"--context={res['target']['context']}", "replace", "-f", "<before/C?.json>"], reasons or [], why
 
 
 def _k_kubectl_scale(pos, flags, snap, res, k, cfg, *_):

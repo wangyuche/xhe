@@ -390,7 +390,7 @@ def redact(obj, path=""):
             out[k] = {kk: (redact_value(vv) if vv not in (None, "", {}) else vv) for kk, vv in v.items()}
         elif k == "env" and isinstance(v, list):
             out[k] = [_redact_env(e) for e in v]
-        elif k == "metadata" and isinstance(v, dict) and isinstance(v.get("items"), list):
+        elif k in ("metadata", "commonInstanceMetadata") and isinstance(v, dict) and isinstance(v.get("items"), list):
             # GCE instance / commonInstanceMetadata:{items:[{key,value}]}
             nv = dict(v)
             nv["items"] = [_redact_meta_item(it) for it in v["items"]]

@@ -68,7 +68,8 @@ def review_fixtures():
         {"tool": "gcloud", "re": f"^iam service-accounts keys list --iam-account={APP_SA} ", "out": [{"name": "k/def", "validAfterTime": OLD}]},
         {"tool": "gcloud", "re": "^services list ", "out": []},
         {"tool": "gcloud", "re": "^compute project-info describe ", "out": {"commonInstanceMetadata": {"items": [
-            {"key": "enable-oslogin", "value": "FALSE"}, {"key": "team-token", "value": FAKE_AKIA}]}}},
+            {"key": "enable-oslogin", "value": "FALSE"}, {"key": "team-token", "value": FAKE_AKIA},
+            {"key": "startup-script", "value": "export DB_PASSWORD=hunter2-project-wide"}]}}},
         {"tool": "gcloud", "re": "^compute networks list ", "out": [{"name": "default"}]},
         {"tool": "gcloud", "re": "^compute networks subnets list ", "out": [{"name": "default", "region": "r/asia-east1"}]},
         {"tool": "gcloud", "re": "^compute firewall-rules list ", "out": FIREWALLS},

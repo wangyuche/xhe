@@ -92,6 +92,8 @@ def build_item(s, cfg, run, project, raw, ctx_done):
         return blocked("缺 summary 或 command")
     try:
         argv = ggplan.materialize(item, run)
+    except gglib.Blocked as e:
+        return blocked(str(e))
     except Exception as e:
         return blocked(f"寫 manifest / patch 失敗:{e}")
     shape = ggchange.classify(argv, cfg, shape_only=True)
