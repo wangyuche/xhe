@@ -1,0 +1,104 @@
+---
+name: gcp-ops-kit
+description: GCP 專案 / GKE 審查與受控變更的固定腳本(gcp-guardian 使用):check.sh(依模式檢查工具、設定檔與金鑰權限、SA 能否存取專案)、collect.sh(逐條 regex 白名單 + 拒絕樣式的唯讀盤點:IAM、SA 金鑰、網路 / 防火牆、GCS、Cloud SQL、Compute、GKE 與叢集內 workload / RBAC / NetworkPolicy,寫檔前遮蔽秘密,API 未啟用列「無法判定」)、gcp_rules.py / k8s_rules.py(固定嚴重度規則,對照 CIS GCP Foundations v3.0.0)、yaml-review.sh(k8s YAML / kustomize 審查,不需 GCP)、plan.py(變更計畫:快照、dry-run、依允許清單計算 kind / 可否還原 / 還原指令 / 是否放寬安全、sha256)、change.sh(只執行逐條核准且雜湊一致的條目,重算分類、比對 precondition 與叢集 endpoint、before / after、失敗即停、不自動還原)、render.mjs(單一自足 HTML 報告與 --check)、guard.py(PreToolUse hook:只准 kit 入口腳本與唯讀指令)。每次執行獨立的 CLOUDSDK_CONFIG / KUBECONFIG,不碰使用者的 gcloud / kubectl 設定。selftest 只用假 gcloud / kubectl。
+---
+
+# gcp-ops-kit
+
+`<kit>` = 這個 skill 的目錄(全域連結:`~/.claude/skills/gcp-ops-kit`)。所有指令都用**絕對路徑**呼叫入口腳本,一次一個,不串接(guard.py 會擋)。
+
+## 本機設定(不進 git)
+
+`~/.config/gcp-guardian/config`(權限 600,使用者建立):
+
+```
+GG_SA_KEY_FILE=/絕對路徑/sa-key.json      # 權限 600
+GG_DEFAULT_PROJECT=my-project              # 選填
+GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports   # 選填,預設 ~/gcp-guardian-reports
+```
+
+使用者自己要裝:`brew install --cask google-cloud-sdk`、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
+
+## 入口腳本
+
+結束碼(全部):0 成功 / PASS、1 有問題(ISSUES)、2 用法錯誤、3 BLOCKED、4 指令被白名單拒絕(kit 錯誤,回報)。
+
+```bash
+<kit>/scripts/check.sh yaml                         # ruby / python3 / node
+<kit>/scripts/check.sh review|plan|change <專案>    # + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
+
+<kit>/scripts/collect.sh <專案> [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
+#   → run=<GG_REPORT_DIR>/<專案>/<時間>-<模式>/ :inventory/(遮蔽後)、findings.json、plan.json(空)、report.html
+<kit>/scripts/yaml-review.sh <檔案或目錄>... [--label <名稱>]
+#   → run=<GG_REPORT_DIR>/yaml-<名稱>/<時間>-yaml/
+
+<kit>/scripts/plan.py build <run>                   # 讀 <run>/plan.input.json → plan.json + sha256 + 重產報告
+<kit>/scripts/plan.py show <plan.json>
+<kit>/scripts/change.sh <plan.json> --sha <sha256> --approved "使用者已核准變更 C1, C3"
+#   → status=PASS|ISSUES|BLOCKED、run=<變更 run>、每條:C<n> 結果 原因 還原指令
+
+node <kit>/scripts/render.mjs <run>                 # 寫了 manual.json 後重產報告
+node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密樣式 / 未遮蔽值、HTML 無外部資源、統計一致、plan sha 一致、manual.json 格式
+<kit>/scripts/selftest.sh [-v]                      # 只用 tests/stub 的假 gcloud / kubectl
+```
+
+## agent 可寫的兩個檔(其餘由 kit 產生)
+
+**`<run>/manual.json`**:規則沒涵蓋、但從盤點看出的問題。陣列,同 findings 格式:
+
+```json
+[{"rule_id": "MANUAL-1", "severity": "中", "title": "…", "detail": "…", "resource": "…",
+  "evidence": {"file": "inventory/…json", "path": "/JSON pointer"}, "fix": "…", "reason": "依嚴重度表的判定理由"}]
+```
+
+**`<run>/plan.input.json`**:變更計畫草稿。`kind` / `reversible` / `rollback` / `loosens_security` / `dry_run` 由 plan.py 計算,寫了也會被忽略。
+
+```json
+{"items": [{"id": "C1", "summary": "移除 bucket 公開讀取", "finding": "GCS-PUB-001",
+  "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://b", "--member=allUsers",
+              "--role=roles/storage.objectViewer", "--project=p"],
+  "precondition": [{"field": "/bindings/0/role", "expect": "roles/storage.objectViewer"}],
+  "expected": [{"field": "/bindings", "expect": []}],
+  "impact": "無"}]}
+```
+
+- `command`:argv 陣列;旗標一律 `--長旗標=值`(不接受 `-n`、`-f` 這種短旗標)。gcloud 必帶 `--project=`;kubectl 第二個參數必須是 `--context=gke_<專案>_<位置>_<叢集>`,namespace 用 `--namespace=`。
+- `kubectl apply`:`command` 寫 `["kubectl", "--context=…", "apply", "--filename=<manifest>"]`,YAML 全文放 `manifest`;`kubectl patch`:`--patch-file=<patch>`,內容放 `patch`。
+- `precondition` / `expected`:JSON pointer 指向該 kind 的快照(下表);apply 的快照是 `{"objects": [每份文件的線上物件]}`,所以寫 `/objects/0/...`;resize 的快照是 `{"nodepool": …, "node_count_per_zone": n}`。`expected` 必填(rollout restart 除外,kit 自動驗 restartedAt)。
+- plan.py 會自動加 `auto_pre`(還原指令依賴的原值),變更時一起比對。
+
+## 變更允許清單(`rules/allow_change.json`)
+
+| kind | 指令 | 快照 | 還原 |
+|---|---|---|---|
+| gke-cluster-update | `gcloud container clusters update` 只限:master authorized networks、shielded nodes、workload pool、network policy、logging / monitoring | clusters describe | 反向旗標 / 原值 |
+| gke-nodepool-update | `gcloud container node-pools update`:auto-upgrade / repair、workload-metadata、autoscaling | node-pools describe | 同上 |
+| gke-resize | `gcloud container clusters resize --node-pool --num-nodes`(>0) | node pool + 目前每區節點數 | 原節點數 |
+| firewall-update | `gcloud compute firewall-rules update`:source-ranges、rules、target-tags、disabled、logging、priority、description | describe | 原值 |
+| bucket-update | `gcloud storage buckets update`:public access prevention、uniform access、versioning | describe | 反向旗標 |
+| bucket-iam-remove | `gcloud storage buckets remove-iam-policy-binding` | get-iam-policy | add 回去 |
+| project-iam-add / remove | `gcloud projects add/remove-iam-policy-binding` | get-iam-policy | 反向 |
+| sql-patch | `gcloud sql instances patch`:ssl、授權網路、備份時間、PITR | describe | 原值 |
+| kubectl-apply | 只能修改既有資源(diff 出現新建 → 不可還原) | 線上物件 | `before/C<n>.rollback.json` |
+| kubectl-patch | deployment、service、ingress、networkpolicy、configmap… | 線上物件 | 同上 |
+| kubectl-scale / rollout-restart / label-namespace | | 線上物件 | 原 replicas / 不需 / 原 label |
+
+- **共同禁止**:任何 delete / `set-iam-policy` / `services disable` / upgrade / `--cluster-version` / `--release-channel` / `--node-version` / `--image-type`;新增 allUsers / allAuthenticatedUsers;任何 `0.0.0.0/0`、`::/0`;防火牆 `all` 或 1–65535 全埠;動 gcp-guardian 自己的 SA;新增 / 移除 `roles/owner`;停用 GKE / IAP 防火牆規則;`--prune`、`--force`、kustomize apply;retention 設定;建立 SA 金鑰。
+- **沒有還原範本的旗標**(例 `--security-posture`、`--maintenance-window-*`)一律判「不可還原」→ BLOCKED,請使用者自己做。
+- **放寬安全**(`loosens_security`)由固定規則判斷:新增高權角色、關閉公開存取防護 / 統一存取 / 版本、放寬授權網路或防火牆、Pod Security 降級、apply 後出現新的「中」問題。apply / patch 後出現新的「嚴重 / 高」問題 → BLOCKED。
+
+## 隔離與安全
+
+- 每個 run 自己的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/kubeconfig`,結束刪除;`commands.log` 記錄每個指令(金鑰路徑以 `<key>` 代替)。
+- 唯讀:`rules/allow_read.txt`(審查)、`rules/allow_dryrun.txt`(計畫 / 變更前快照與 dry-run),先過 `rules/deny_read.txt`(Secret 值、序列埠、`--raw`、exec、token…)。
+- 遮蔽(寫檔前):Secret `data`、ConfigMap 值、env `value`(另標 `looks_secret`)、VM metadata 值(布林設定保留)、`masterAuth.*`、last-applied annotation、秘密樣式(`rules/secret_patterns.json`)。
+- `before/C<n>.rollback.json` 是 kubectl 還原用的**原始物件**(ConfigMap 可能含原值),權限 600,`--check` 不掃它;報告與回報不印它的內容。
+- 專案鎖:`<GG_REPORT_DIR>/<專案>/.lock`(plan build、change 期間);被佔用 → BLOCKED。
+- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或唯讀指令(ls、cat、head、tail、wc、grep、shasum、stat、date、pwd、file、find(無 -exec)、jq、diff),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接出現 gcloud / kubectl / curl…;Read / Grep / Glob 不可碰 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證;Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
+
+## 已知限制
+
+- 只在 kit 自己的程式裡強制;其他工具(例如沒有掛 hook 的 agent 或 Codex)若直接用金鑰呼叫 gcloud,kit 擋不到。
+- CIS 編號只標有把握的 GCP Foundations v3.0.0 項目;GKE 規則未標 CIS 編號。
+- 真實 GCP 專案的端到端測試要使用者提供測試專案;selftest 只驗證到假 gcloud / kubectl。
+- 多叢集專案:stub 只模擬單一叢集;真實 kubeconfig 會累積多個 context(由 get-credentials 處理)。

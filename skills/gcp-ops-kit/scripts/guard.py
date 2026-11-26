@@ -1,0 +1,142 @@
+"""gcp-guardian 的 PreToolUse hook(Bash / Read / Write / Edit)。
+
+stdin:Claude Code hook JSON({"tool_name", "tool_input", "cwd", ...})
+允許 → 結束碼 0;拒絕 → 結束碼 2,原因寫 stderr(會回給 agent)。
+也可:python3 guard.py --test '<bash 指令>'  → 印 allow / deny 與原因(selftest 用)
+"""
+import json
+import os
+import shlex
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import gglib  # noqa: E402
+
+SCRIPTS = os.path.join(gglib.KIT, "scripts")
+ENTRIES = {"check.sh", "collect.sh", "plan.py", "change.sh", "render.mjs", "yaml-review.sh", "selftest.sh"}
+INTERP = {".sh": {"bash"}, ".py": {"python3"}, ".mjs": {"node"}}
+FORBIDDEN_CHARS = set(";&|`$<>()\n\r\\*?[]{}~!#")
+READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "date", "pwd", "file", "find", "jq", "diff"}
+FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
+               "curl", "wget", "googleapis")
+WRITABLE_NAMES = {"manual.json", "plan.input.json"}
+
+
+def protected_paths(cfg):
+    home = os.path.expanduser("~")
+    ps = [os.path.dirname(gglib.config_path()), os.path.join(home, ".config", "gcloud"), os.path.join(home, ".kube")]
+    if cfg.get("GG_SA_KEY_FILE"):
+        ps.append(cfg["GG_SA_KEY_FILE"])
+    return [os.path.realpath(p) for p in ps]
+
+
+def is_protected(path, cfg, cwd):
+    p = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
+    for q in protected_paths(cfg):
+        if p == q or p.startswith(q + os.sep):
+            return True
+    parts = p.split(os.sep)
+    rd = os.path.realpath(cfg["GG_REPORT_DIR"])
+    if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig"):
+        return True
+    return False
+
+
+def check_bash(cmd, cfg, cwd):
+    if not cmd.strip():
+        return "空指令"
+    bad = sorted(c for c in set(cmd) if c in FORBIDDEN_CHARS)
+    if bad:
+        return f"指令不可含 {''.join(bad)!r}(不可串接、轉向、展開、萬用字元);一次只跑一個 kit 入口腳本"
+    try:
+        toks = shlex.split(cmd)
+    except ValueError as e:
+        return f"無法解析指令:{e}"
+    if not toks:
+        return "空指令"
+    i = 0
+    if toks[0] in ("bash", "python3", "node") and len(toks) > 1:
+        i = 1
+    first = toks[i]
+    if "/" in first:
+        real = os.path.realpath(os.path.join(cwd, os.path.expanduser(first)))
+        base = os.path.basename(real)
+        if os.path.dirname(real) == os.path.realpath(SCRIPTS) and base in ENTRIES:
+            if i == 1 and toks[0] not in INTERP[os.path.splitext(base)[1]]:
+                return f"{base} 不能用 {toks[0]} 執行"
+            if any(t.startswith("-") and t in ("-c", "-e", "-i", "--eval") for t in toks[:i]):
+                return "不允許直譯器旗標"
+            for t in toks[i + 1:]:
+                if is_protected(t, cfg, cwd):
+                    return f"參數指向受保護路徑:{t}"
+            return None
+        return f"只允許 gcp-ops-kit 的入口腳本({', '.join(sorted(ENTRIES))}),不允許 {first}"
+    low = cmd.lower()
+    for w in CLOUD_WORDS:
+        if w in low:
+            return f"不可直接呼叫 {w.strip()};所有雲端操作都要透過 kit 入口腳本"
+    if i == 1:
+        return "直譯器只能執行 kit 入口腳本"
+    if first not in READONLY_CMDS:
+        return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))})"
+    if first == "find" and any(t in FIND_DENY for t in toks):
+        return "find 不允許 -exec / -delete 等動作"
+    for t in toks[1:]:
+        if t.startswith("-"):
+            continue
+        if is_protected(t, cfg, cwd):
+            return f"不可讀受保護路徑:{t}"
+    return None
+
+
+def check_path_tool(tool, inp, cfg, cwd):
+    p = inp.get("file_path") or inp.get("path") or inp.get("notebook_path") or ""
+    if not p:
+        return None
+    if is_protected(p, cfg, cwd):
+        return f"不可存取受保護路徑:{p}"
+    if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        real = os.path.realpath(os.path.join(cwd, p))
+        rd = os.path.realpath(cfg["GG_REPORT_DIR"])
+        run = os.path.dirname(real)
+        if not (real.startswith(rd + os.sep) and os.path.basename(real) in WRITABLE_NAMES
+                and os.path.exists(os.path.join(run, "meta.json"))):
+            return "只能寫 run 目錄裡的 manual.json 或 plan.input.json"
+    return None
+
+
+def decide(payload):
+    cfg = gglib.load_config(require=False)
+    tool = payload.get("tool_name", "")
+    inp = payload.get("tool_input") or {}
+    cwd = payload.get("cwd") or os.getcwd()
+    if tool == "Bash":
+        return check_bash(inp.get("command", ""), cfg, cwd)
+    if tool in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"):
+        return check_path_tool(tool, inp, cfg, cwd)
+    return None
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--test":
+        why = decide({"tool_name": "Bash", "tool_input": {"command": sys.argv[2]}, "cwd": os.getcwd()})
+        print("deny\t" + why if why else "allow")
+        return 0
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        print("gcp-guardian guard:讀不到 hook 輸入,拒絕", file=sys.stderr)
+        return 2
+    try:
+        why = decide(payload)
+    except Exception as e:  # 守門失敗一律拒絕
+        why = f"守門檢查出錯:{e}"
+    if why:
+        print(f"gcp-guardian guard 拒絕:{why}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

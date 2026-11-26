@@ -1,0 +1,12 @@
+# 先於白名單判定的拒絕樣式(Python regex,search)。
+get-serial-port-output
+(^| )--raw( |=|$)
+secrets versions access
+print-access-token
+print-identity-token
+^kubectl .* (exec|cp|port-forward|proxy|attach|debug|auth can-i --as)( |$)
+^kubectl .* get (secret|secrets)( [^ ]+)* -o(=| )(json|yaml|wide|name|jsonpath)
+^kubectl .* get (secret|secrets)( |$)(?!.*-o=go-template=\{\{range \.items\}\}\{\{\.metadata\.namespace\}\})
+(^| )--impersonate-service-account
+(^| )--access-token-file
+(^| )--configuration(=| )

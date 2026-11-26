@@ -1,0 +1,487 @@
+"""變更分類(plan.py 與 change.sh 共用,不可單獨執行)。
+
+classify(argv, cfg, snapshot) → dict:
+  kind, target, reversible, rollback, loosens_security, loosens_reasons, blocked_reason, auto_pre, dry_run
+規則由 rules/allow_change.json 驅動;agent 給的 kind / reversible / rollback / loosens 一律忽略。
+"""
+import ipaddress
+import json
+import os
+import re
+
+import gglib
+
+CFG = None
+
+
+def change_rules():
+    global CFG
+    if CFG is None:
+        with open(os.path.join(gglib.RULES_DIR, "allow_change.json"), encoding="utf-8") as f:
+            CFG = json.load(f)
+    return CFG
+
+
+def _split_flags(args):
+    """回傳 (positional, flags dict 保序)。flag 只接受 --x=v 或 --x(布林)。"""
+    pos, flags = [], {}
+    for a in args:
+        if a.startswith("--"):
+            if "=" in a:
+                k, v = a.split("=", 1)
+            else:
+                k, v = a, True
+            if k in flags:
+                raise ValueError(f"旗標重複:{k}")
+            flags[k] = v
+        elif a.startswith("-") and len(a) > 1:
+            raise ValueError(f"只接受 --長旗標=值 的寫法:{a}")
+        else:
+            pos.append(a)
+    return pos, flags
+
+
+def _ranges(v):
+    return [x.strip() for x in str(v).split(",") if x.strip()]
+
+
+def _subset_cidrs(new, old):
+    try:
+        oldn = [ipaddress.ip_network(o, strict=False) for o in old]
+        for n in new:
+            nn = ipaddress.ip_network(n, strict=False)
+            if not any(nn.version == o.version and nn.subnet_of(o) for o in oldn):
+                return False
+        return True
+    except ValueError:
+        return False
+
+
+def _fw_rules_from_snapshot(snap):
+    out = []
+    for a in snap.get("allowed") or []:
+        proto = a.get("IPProtocol")
+        ports = a.get("ports") or []
+        if ports:
+            out += [f"{proto}:{p}" for p in ports]
+        else:
+            out.append(proto)
+    return out
+
+
+def _port_all(rule):
+    if rule in ("all",):
+        return True
+    m = re.fullmatch(r"(tcp|udp|sctp|all|\d+)(?::(\d+)(?:-(\d+))?)?", rule)
+    if not m:
+        return True  # 看不懂的一律當成全開
+    proto, a, b = m.groups()
+    if proto == "all":
+        return True
+    if a is None:
+        return True  # tcp 沒寫埠 = 全部埠
+    lo, hi = int(a), int(b or a)
+    return lo <= 1 and hi >= 65535
+
+
+def _rules_subset(new, old):
+    def expand(r):
+        m = re.fullmatch(r"(\w+)(?::(\d+)(?:-(\d+))?)?", r)
+        if not m:
+            return None
+        p, a, b = m.groups()
+        return (p, int(a) if a else 0, int(b or a) if a else 65535)
+    olds = [expand(o) for o in old]
+    for n in new:
+        e = expand(n)
+        if e is None:
+            return False
+        if not any(o and o[0] == e[0] and o[1] <= e[1] and o[2] >= e[2] for o in olds):
+            return False
+    return True
+
+
+POD_SECURITY_ORDER = {"privileged": 0, "baseline": 1, "restricted": 2}
+
+
+def common_forbidden(argv, cfg):
+    text = " ".join(argv)
+    rules = change_rules()
+    for tok in rules["forbidden_tokens"]:
+        if re.search(tok, text):
+            return f"一律禁止(命中 {tok!r})"
+    if ("--member=allUsers" in argv or "--member=allAuthenticatedUsers" in argv) and "add-iam-policy-binding" in argv:
+        return "一律禁止:新增公開成員 allUsers / allAuthenticatedUsers"
+    for a in argv:
+        for part in re.split(r"[=,]", a):
+            if part in ("0.0.0.0/0", "::/0"):
+                return "一律禁止:來源 / 授權網路含 0.0.0.0/0 或 ::/0"
+    sa = cfg.get("GG_SA")
+    if sa and sa in text:
+        return f"一律禁止:動到 gcp-guardian 自己的 SA({sa})"
+    return None
+
+
+def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None, shape_only=False):
+    """snapshot:變更前快照(dict,依 kind 不同)。manifest_findings:apply / patch dry-run 結果跑 k8s_rules 的 findings。
+    diff_created:kubectl diff 是否出現新建資源。"""
+    res = {"kind": None, "target": {}, "reversible": False, "rollback": None,
+           "loosens_security": False, "loosens_reasons": [], "blocked_reason": None,
+           "auto_pre": [], "dry_run": None}
+
+    def block(msg):
+        res["blocked_reason"] = res["blocked_reason"] or msg
+        return res
+
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+        return block("command 要是字串陣列")
+    if any(re.search(r"[\n\r\x00]", a) for a in argv):
+        return block("參數含換行或控制字元")
+    f = common_forbidden(argv, cfg)
+    if f:
+        return block(f)
+    rules = change_rules()
+    kind = None
+    for name, k in rules["kinds"].items():
+        pre = k["prefix"]
+        if argv[:len(pre)] == pre:
+            kind = name
+            break
+        if pre[0] == "kubectl" and argv and argv[0] == "kubectl" and len(argv) > 1 \
+                and argv[1].startswith("--context=") and argv[2:2 + len(pre) - 1] == pre[1:]:
+            kind = name
+            break
+    if not kind:
+        return block("不在變更允許清單(請使用者自己執行)")
+    res["kind"] = kind
+    k = rules["kinds"][kind]
+    snap = snapshot or {}
+    try:
+        if argv[0] == "kubectl":
+            ctx = argv[1][len("--context="):]
+            pos, flags = _split_flags(argv[2 + len(k["prefix"]) - 1:])
+            res["target"]["context"] = ctx
+        else:
+            pos, flags = _split_flags(argv[len(k["prefix"]):])
+    except ValueError as e:
+        return block(str(e))
+    if len(pos) != k.get("positional", 1):
+        return block(f"{kind} 要 {k.get('positional', 1)} 個位置參數,收到 {pos}")
+    for req in k.get("required_flags", []):
+        if req not in flags:
+            return block(f"{kind} 缺必要旗標 {req}")
+    allowed = set(k.get("required_flags", [])) | set(k.get("flags", {}).keys()) | {"--quiet"}
+    for fl in flags:
+        if fl not in allowed:
+            return block(f"{kind} 不允許旗標 {fl}")
+    if argv[0] == "gcloud":
+        res["target"]["project"] = flags.get("--project")
+    res["target"]["resource"] = pos[0] if pos else None
+    for key in ("--location", "--cluster", "-n", "--namespace"):
+        if key in flags:
+            res["target"][key.lstrip("-")] = flags[key]
+
+    if shape_only:
+        return res
+    handler = globals().get("_k_" + kind.replace("-", "_"))
+    rollback_args, reasons, why_irrev = handler(pos, flags, snap, res, k, cfg, manifest_findings, diff_created)
+    if res["blocked_reason"]:
+        return res
+    res["loosens_reasons"] = reasons
+    res["loosens_security"] = bool(reasons)
+    if why_irrev:
+        res["reversible"] = False
+        res["rollback"] = None
+        res["blocked_reason"] = f"不可還原:{why_irrev}(請使用者自己執行)"
+    else:
+        res["reversible"] = True
+        res["rollback"] = rollback_args
+    res["dry_run"] = k.get("dry_run")
+    return res
+
+
+# ---------------------------------------------------------------- 各 kind
+
+def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
+    """依 inverse / restore 表產生還原旗標。回傳 (argv 或 None, 不可還原原因)。"""
+    out = list(prefix_argv) + list(pos)
+    for req in k.get("required_flags", []):
+        out.append(f"{req}={flags[req]}" if flags[req] is not True else req)
+    spec = k.get("flags", {})
+    changed = False
+    for fl, val in flags.items():
+        if fl in k.get("required_flags", []) or fl == "--quiet":
+            continue
+        rule = spec.get(fl, {})
+        if "inverse" in rule:
+            out.append(rule["inverse"])
+            changed = True
+        elif "restore" in rule:
+            cur = gglib.ptr_get(snap, rule["restore"])
+            fmt = rule.get("format", "scalar")
+            if cur is None and not rule.get("empty_ok"):
+                return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"
+            if fmt == "join":
+                key = rule.get("item_key")
+                items = cur or []
+                vals = [str(i.get(key) if key else i) for i in items]
+                if not vals:
+                    if rule.get("clear_flag"):
+                        out.append(rule["clear_flag"])
+                        res["auto_pre"].append({"field": rule["restore"], "expect": cur})
+                        changed = True
+                        continue
+                    return None, f"{fl} 原本為空,無法還原"
+                out.append(f"{fl}={','.join(vals)}")
+            elif fmt == "fw_rules":
+                out.append(f"{fl}={','.join(_fw_rules_from_snapshot(snap))}")
+            elif fmt == "bool_flag":
+                out.append(rule["true_flag"] if cur else rule["false_flag"])
+            elif fmt == "per_zone":
+                out.append(f"{fl}={cur}")
+            else:
+                out.append(f"{fl}={'' if cur is None else cur}")
+            res["auto_pre"].append({"field": rule["restore"], "expect": cur})
+            changed = True
+        else:
+            return None, f"{fl} 沒有還原範本"
+    if not changed:
+        return None, "沒有任何變更旗標"
+    out.append("--quiet")
+    return out, None
+
+
+def _loosen_by_table(flags, k):
+    reasons = []
+    for fl, val in flags.items():
+        rule = k.get("flags", {}).get(fl, {})
+        if rule.get("loosens"):
+            reasons.append(rule["loosens"])
+        if "loosens_values" in rule and str(val) in rule["loosens_values"]:
+            reasons.append(rule["loosens_values"][str(val)])
+    return reasons
+
+
+def _k_gke_cluster_update(pos, flags, snap, res, k, cfg, *_):
+    reasons = _loosen_by_table(flags, k)
+    if "--master-authorized-networks" in flags:
+        old = [c.get("cidrBlock") for c in (gglib.ptr_get(snap, "/masterAuthorizedNetworksConfig/cidrBlocks") or [])]
+        if not _subset_cidrs(_ranges(flags["--master-authorized-networks"]), old):
+            reasons.append("放寬控制平面授權網路(新網段不在原網段內)")
+    rb, why = _flag_rollback(k["prefix"], pos, flags, snap, res, k)
+    return rb, reasons, why
+
+
+def _k_gke_nodepool_update(pos, flags, snap, res, k, cfg, *_):
+    reasons = _loosen_by_table(flags, k)
+    rb, why = _flag_rollback(k["prefix"], pos, flags, snap, res, k)
+    return rb, reasons, why
+
+
+def _k_gke_resize(pos, flags, snap, res, k, cfg, *_):
+    try:
+        n = int(flags["--num-nodes"])
+    except (ValueError, TypeError):
+        res["blocked_reason"] = "--num-nodes 要是整數"
+        return None, [], None
+    if n <= 0:
+        res["blocked_reason"] = "一律禁止:node pool 縮到 0"
+        return None, [], None
+    cur = snap.get("node_count_per_zone")
+    if not isinstance(cur, int) or cur <= 0:
+        return None, [], "快照取不到目前每區節點數"
+    res["auto_pre"].append({"field": "/node_count_per_zone", "expect": cur})
+    rb = ["gcloud", "container", "clusters", "resize", pos[0], f"--node-pool={flags['--node-pool']}",
+          f"--num-nodes={cur}", f"--location={flags['--location']}", f"--project={flags['--project']}", "--quiet"]
+    return rb, [], None
+
+
+def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
+    reasons = _loosen_by_table(flags, k)
+    for key in ("--rules", "--allow"):
+        if key in flags:
+            for r in _ranges(flags[key]):
+                if _port_all(r):
+                    res["blocked_reason"] = f"一律禁止:防火牆 {key} 含全部協定 / 全部埠({r})"
+                    return None, [], None
+            if not _rules_subset(_ranges(flags[key]), _fw_rules_from_snapshot(snap)):
+                reasons.append("放寬防火牆協定 / 埠")
+    if "--source-ranges" in flags and not _subset_cidrs(_ranges(flags["--source-ranges"]), snap.get("sourceRanges") or []):
+        reasons.append("放寬防火牆來源網段")
+    name = pos[0]
+    iap = "35.235.240.0/20" in (snap.get("sourceRanges") or [])
+    if "--disabled" in flags and (name.startswith("gke-") or iap):
+        res["blocked_reason"] = "一律禁止:停用 GKE 控制平面 / IAP 的防火牆規則"
+        return None, [], None
+    if "--source-ranges" in flags and iap and "35.235.240.0/20" not in _ranges(flags["--source-ranges"]):
+        res["blocked_reason"] = "一律禁止:移除 IAP 來源 35.235.240.0/20"
+        return None, [], None
+    rb, why = _flag_rollback(k["prefix"], pos, flags, snap, res, k)
+    return rb, reasons, why
+
+
+def _k_bucket_update(pos, flags, snap, res, k, cfg, *_):
+    reasons = _loosen_by_table(flags, k)
+    rb, why = _flag_rollback(k["prefix"], pos, flags, snap, res, k)
+    return rb, reasons, why
+
+
+def _iam_common(pos, flags, res, cfg, adding):
+    member, role = flags.get("--member"), flags.get("--role")
+    if role == "roles/owner":
+        res["blocked_reason"] = "一律禁止:新增 / 移除 roles/owner"
+        return None
+    if member in ("allUsers", "allAuthenticatedUsers"):
+        if adding:
+            res["blocked_reason"] = "一律禁止:新增公開成員 allUsers / allAuthenticatedUsers"
+            return None
+    elif not re.fullmatch(r"(user|serviceAccount|group|domain|principal|principalSet):[^ ,]+", member or ""):
+        res["blocked_reason"] = f"--member 格式不對:{member}"
+        return None
+    if not re.fullmatch(r"(roles|projects/[a-z0-9-]+/roles|organizations/\d+/roles)/[A-Za-z0-9_.]+", role or ""):
+        res["blocked_reason"] = f"--role 格式不對:{role}"
+        return None
+    reasons = []
+    if adding:
+        hi = change_rules()["high_privilege_roles"]
+        if role in hi or re.search(r"(?i)admin$", role):
+            reasons.append(f"新增高權角色 {role} 給 {member}")
+    return reasons
+
+
+def _k_project_iam_add(pos, flags, snap, res, k, cfg, *_):
+    reasons = _iam_common(pos, flags, res, cfg, True)
+    if reasons is None:
+        return None, [], None
+    if pos[0] != flags.get("--project"):
+        res["blocked_reason"] = "位置參數的專案要和 --project 相同"
+        return None, [], None
+    rb = ["gcloud", "projects", "remove-iam-policy-binding", pos[0], f"--member={flags['--member']}",
+          f"--role={flags['--role']}", f"--project={flags['--project']}", "--quiet"]
+    if _has_binding(snap, flags["--member"], flags["--role"]):
+        return None, reasons, "綁定原本就存在(還原會移除原有綁定)"
+    res["auto_pre"].append({"binding_absent": [flags["--member"], flags["--role"]]})
+    return rb, reasons, None
+
+
+def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
+    reasons = _iam_common(pos, flags, res, cfg, False)
+    if reasons is None:
+        return None, [], None
+    if pos[0] != flags.get("--project"):
+        res["blocked_reason"] = "位置參數的專案要和 --project 相同"
+        return None, [], None
+    if _binding_has_condition(snap, flags["--member"], flags["--role"]):
+        return None, [], "綁定帶 IAM condition,還原範本不支援"
+    rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
+          f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
+    res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
+    return rb, [], None
+
+
+def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
+    reasons = _iam_common(pos, flags, res, cfg, False)
+    if reasons is None:
+        return None, [], None
+    if _binding_has_condition(snap, flags["--member"], flags["--role"]):
+        return None, [], "綁定帶 IAM condition,還原範本不支援"
+    rb = ["gcloud", "storage", "buckets", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
+          f"--role={flags['--role']}", f"--project={flags['--project']}", "--quiet"]
+    res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
+    return rb, [], None
+
+
+def _has_binding(policy, member, role):
+    for b in (policy or {}).get("bindings") or []:
+        if b.get("role") == role and member in (b.get("members") or []):
+            return True
+    return False
+
+
+def _binding_has_condition(policy, member, role):
+    for b in (policy or {}).get("bindings") or []:
+        if b.get("role") == role and member in (b.get("members") or []) and b.get("condition"):
+            return True
+    return False
+
+
+def _k_sql_patch(pos, flags, snap, res, k, cfg, *_):
+    reasons = _loosen_by_table(flags, k)
+    if "--authorized-networks" in flags:
+        old = [n.get("value") for n in (gglib.ptr_get(snap, "/settings/ipConfiguration/authorizedNetworks") or [])]
+        if not _subset_cidrs(_ranges(flags["--authorized-networks"]), old):
+            reasons.append("放寬 Cloud SQL 授權網路")
+    rb, why = _flag_rollback(k["prefix"], pos, flags, snap, res, k)
+    return rb, reasons, why
+
+
+def _k8s_manifest_checks(res, manifest_findings, diff_created):
+    reasons = []
+    if diff_created is None:
+        return None, "尚未取得 kubectl diff 結果(計畫階段要先 dry-run)"
+    if diff_created:
+        return None, "kubectl diff 顯示會新建資源,還原只能刪除(刪除一律禁止)"
+    for fd in manifest_findings or []:
+        if fd.get("severity") in ("嚴重", "高"):
+            res["blocked_reason"] = f"套用後會產生{fd['severity']}問題 {fd['rule_id']}:{fd['title']}"
+            return None, None
+        if fd.get("severity") == "中":
+            reasons.append(f"套用後有中度問題 {fd['rule_id']}:{fd['title']}")
+    return reasons, None
+
+
+def _k_kubectl_apply(pos, flags, snap, res, k, cfg, mf, dc):
+    reasons, why = _k8s_manifest_checks(res, mf, dc)
+    if res["blocked_reason"]:
+        return None, [], None
+    if why:
+        return None, reasons or [], why
+    return ["kubectl", f"--context={res['target']['context']}", "apply", "-f", "<before/C?.json>"], reasons, None
+
+
+def _k_kubectl_patch(pos, flags, snap, res, k, cfg, mf, dc):
+    if pos[0] not in change_rules()["k8s_patch_kinds"]:
+        res["blocked_reason"] = f"不允許 patch 這種資源:{pos[0]}"
+        return None, [], None
+    reasons, why = _k8s_manifest_checks(res, mf, False if dc is None else dc)
+    if res["blocked_reason"]:
+        return None, [], None
+    return ["kubectl", f"--context={res['target']['context']}", "apply", "-f", "<before/C?.json>"], reasons or [], why
+
+
+def _k_kubectl_scale(pos, flags, snap, res, k, cfg, *_):
+    if not re.fullmatch(r"(deployment|statefulset|replicaset)/[a-z0-9.-]+", pos[0]):
+        res["blocked_reason"] = "scale 只接受 deployment|statefulset|replicaset/<名稱>"
+        return None, [], None
+    cur = gglib.ptr_get(snap, "/spec/replicas")
+    if cur is None:
+        return None, [], "快照沒有 /spec/replicas"
+    res["auto_pre"].append({"field": "/spec/replicas", "expect": cur})
+    return ["kubectl", f"--context={res['target']['context']}", "scale", pos[0],
+            f"--namespace={flags['--namespace']}", f"--replicas={cur}"], [], None
+
+
+def _k_kubectl_rollout_restart(pos, flags, snap, res, k, cfg, *_):
+    if not re.fullmatch(r"(deployment|statefulset|daemonset)/[a-z0-9.-]+", pos[0]):
+        res["blocked_reason"] = "rollout restart 只接受 deployment|statefulset|daemonset/<名稱>"
+        return None, [], None
+    return ["（不需還原:只重啟 Pod)"], [], None
+
+
+def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
+    pos_ns, lab = pos[0], pos[1]
+    m = re.fullmatch(r"([a-zA-Z0-9._/-]+)=([a-zA-Z0-9._-]{0,63})", lab)
+    if not m:
+        res["blocked_reason"] = "label 要是 key=value(移除 label 不允許)"
+        return None, [], None
+    key, val = m.groups()
+    old = (gglib.ptr_get(snap, "/metadata/labels") or {}).get(key)
+    reasons = []
+    if key == "pod-security.kubernetes.io/enforce":
+        rank_old = POD_SECURITY_ORDER.get(old, -1)
+        if old is not None and POD_SECURITY_ORDER.get(val, -1) < rank_old:
+            reasons.append(f"Pod Security enforce 由 {old} 降為 {val}")
+    res["auto_pre"].append({"field": "/metadata/labels/" + key.replace("~", "~0").replace("/", "~1"), "expect": old})
+    rb_label = f"{key}={old}" if old is not None else f"{key}-"
+    return ["kubectl", f"--context={res['target']['context']}", "label", "namespace", pos_ns, rb_label,
+            "--overwrite"], reasons, None

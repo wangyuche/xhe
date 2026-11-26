@@ -1,0 +1,24 @@
+# 審查模式(collect.sh)唯一允許的指令形狀。每行一條,整行完全比對(argv 以空白串接)。
+# 占位:{P} 專案、{L} 位置、{N} 名稱、{CTX} gke context、{SA} SA email、{B} gs:// bucket、{KIND} k8s 資源種類、{KEY} 金鑰占位、{SECRET_TMPL} 固定的 Secret metadata 模板
+gcloud auth activate-service-account {KEY} --project={P} --quiet
+gcloud projects describe {P} --project={P} --format=json --quiet
+gcloud projects get-iam-policy {P} --project={P} --format=json --quiet
+gcloud iam service-accounts list --project={P} --format=json --quiet
+gcloud iam service-accounts keys list --iam-account={SA} --managed-by=user --project={P} --format=json --quiet
+gcloud services list --enabled --project={P} --format=json --quiet
+gcloud compute project-info describe --project={P} --format=json --quiet
+gcloud compute networks list --project={P} --format=json --quiet
+gcloud compute networks subnets list --project={P} --format=json --quiet
+gcloud compute firewall-rules list --project={P} --format=json --quiet
+gcloud compute addresses list --project={P} --format=json --quiet
+gcloud compute routers list --project={P} --format=json --quiet
+gcloud compute instances list --project={P} --format=json --quiet
+gcloud storage buckets list --project={P} --format=json --quiet
+gcloud storage buckets get-iam-policy {B} --project={P} --format=json --quiet
+gcloud sql instances list --project={P} --format=json --quiet
+gcloud container clusters list --project={P} --format=json --quiet
+gcloud container node-pools list --cluster={N} --location={L} --project={P} --format=json --quiet
+gcloud container clusters get-credentials {N} --location={L} --project={P} --quiet
+kubectl --context={CTX} get {KIND} -A -o json --request-timeout=60s
+kubectl --context={CTX} get secrets -A -o=go-template={SECRET_TMPL} --request-timeout=60s
+kubectl --context={CTX} version -o json --request-timeout=30s

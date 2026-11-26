@@ -1,0 +1,445 @@
+{
+  "_doc": "變更允許清單。不在 kinds 裡的指令一律 BLOCKED。flags:每個允許的旗標要有 inverse(反向旗標)或 restore(從變更前快照取還原值的 JSON pointer);兩者都沒有 → 不可還原 → BLOCKED。loosens:這個旗標屬於放寬安全(計畫頁醒目標示)。",
+  "forbidden_tokens": [
+    "(^| )delete( |$)",
+    "(^| )set-iam-policy( |$)",
+    "(^| )services disable( |$)",
+    "(^| )upgrade( |$)",
+    "--cluster-version",
+    "--release-channel",
+    "--node-version",
+    "--image-type",
+    "--prune",
+    "--force( |=|$)",
+    "--force-conflicts",
+    "--grace-period",
+    "--impersonate-service-account",
+    "keys create",
+    "secrets versions access",
+    "--retention-period",
+    "--lock-retention-period",
+    "(^| )-k( |$)",
+    "--kustomize"
+  ],
+  "high_privilege_roles": [
+    "roles/editor",
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.serviceAccountUser",
+    "roles/iam.serviceAccountKeyAdmin",
+    "roles/iam.securityAdmin",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/container.admin",
+    "roles/container.clusterAdmin",
+    "roles/compute.admin",
+    "roles/storage.admin",
+    "roles/cloudsql.admin",
+    "roles/secretmanager.secretAccessor",
+    "roles/iam.workloadIdentityUser"
+  ],
+  "k8s_patch_kinds": [
+    "deployment",
+    "statefulset",
+    "daemonset",
+    "service",
+    "ingress",
+    "networkpolicy",
+    "configmap",
+    "serviceaccount",
+    "namespace",
+    "cronjob",
+    "horizontalpodautoscaler",
+    "poddisruptionbudget"
+  ],
+  "kinds": {
+    "gke-cluster-update": {
+      "prefix": [
+        "gcloud",
+        "container",
+        "clusters",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--location",
+        "--project"
+      ],
+      "snapshot": "cluster",
+      "dry_run": null,
+      "flags": {
+        "--enable-master-authorized-networks": {
+          "inverse": "--no-enable-master-authorized-networks"
+        },
+        "--no-enable-master-authorized-networks": {
+          "inverse": "--enable-master-authorized-networks",
+          "loosens": "關閉控制平面授權網路"
+        },
+        "--master-authorized-networks": {
+          "restore": "/masterAuthorizedNetworksConfig/cidrBlocks",
+          "format": "join",
+          "item_key": "cidrBlock"
+        },
+        "--enable-shielded-nodes": {
+          "inverse": "--no-enable-shielded-nodes"
+        },
+        "--no-enable-shielded-nodes": {
+          "inverse": "--enable-shielded-nodes",
+          "loosens": "關閉 Shielded GKE Nodes"
+        },
+        "--workload-pool": {
+          "inverse": "--disable-workload-identity"
+        },
+        "--enable-network-policy": {
+          "inverse": "--no-enable-network-policy"
+        },
+        "--no-enable-network-policy": {
+          "inverse": "--enable-network-policy",
+          "loosens": "關閉 NetworkPolicy 執行"
+        },
+        "--logging": {
+          "restore": "/loggingConfig/componentConfig/enableComponents",
+          "format": "join"
+        },
+        "--monitoring": {
+          "restore": "/monitoringConfig/componentConfig/enableComponents",
+          "format": "join"
+        },
+        "--security-posture": {},
+        "--workload-vulnerability-scanning": {},
+        "--maintenance-window-start": {},
+        "--maintenance-window-end": {},
+        "--maintenance-window-recurrence": {}
+      }
+    },
+    "gke-nodepool-update": {
+      "prefix": [
+        "gcloud",
+        "container",
+        "node-pools",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--cluster",
+        "--location",
+        "--project"
+      ],
+      "snapshot": "nodepool",
+      "dry_run": null,
+      "flags": {
+        "--enable-autoupgrade": {
+          "inverse": "--no-enable-autoupgrade"
+        },
+        "--no-enable-autoupgrade": {
+          "inverse": "--enable-autoupgrade",
+          "loosens": "關閉節點自動升級"
+        },
+        "--enable-autorepair": {
+          "inverse": "--no-enable-autorepair"
+        },
+        "--no-enable-autorepair": {
+          "inverse": "--enable-autorepair",
+          "loosens": "關閉節點自動修復"
+        },
+        "--workload-metadata": {
+          "restore": "/config/workloadMetadataConfig/mode",
+          "loosens_values": {
+            "GCE_METADATA": "節點 metadata 改回 GCE_METADATA(Pod 可取得節點 SA 憑證)"
+          }
+        },
+        "--enable-autoscaling": {
+          "inverse": "--no-enable-autoscaling"
+        },
+        "--no-enable-autoscaling": {
+          "inverse": "--enable-autoscaling"
+        },
+        "--min-nodes": {
+          "restore": "/autoscaling/minNodeCount"
+        },
+        "--max-nodes": {
+          "restore": "/autoscaling/maxNodeCount"
+        }
+      }
+    },
+    "gke-resize": {
+      "prefix": [
+        "gcloud",
+        "container",
+        "clusters",
+        "resize"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--node-pool",
+        "--num-nodes",
+        "--location",
+        "--project"
+      ],
+      "snapshot": "resize",
+      "dry_run": null,
+      "flags": {}
+    },
+    "firewall-update": {
+      "prefix": [
+        "gcloud",
+        "compute",
+        "firewall-rules",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--project"
+      ],
+      "snapshot": "firewall",
+      "dry_run": null,
+      "flags": {
+        "--source-ranges": {
+          "restore": "/sourceRanges",
+          "format": "join"
+        },
+        "--rules": {
+          "restore": "/allowed",
+          "format": "fw_rules"
+        },
+        "--target-tags": {
+          "restore": "/targetTags",
+          "format": "join",
+          "clear_flag": "--target-tags=",
+          "empty_ok": true
+        },
+        "--disabled": {
+          "inverse": "--no-disabled"
+        },
+        "--no-disabled": {
+          "inverse": "--disabled",
+          "loosens": "啟用防火牆規則"
+        },
+        "--enable-logging": {
+          "inverse": "--no-enable-logging"
+        },
+        "--no-enable-logging": {
+          "inverse": "--enable-logging",
+          "loosens": "關閉防火牆記錄"
+        },
+        "--priority": {
+          "restore": "/priority"
+        },
+        "--description": {
+          "restore": "/description",
+          "empty_ok": true
+        }
+      }
+    },
+    "bucket-update": {
+      "prefix": [
+        "gcloud",
+        "storage",
+        "buckets",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--project"
+      ],
+      "snapshot": "bucket",
+      "dry_run": null,
+      "flags": {
+        "--public-access-prevention": {
+          "inverse": "--no-public-access-prevention"
+        },
+        "--no-public-access-prevention": {
+          "inverse": "--public-access-prevention",
+          "loosens": "關閉公開存取防護"
+        },
+        "--uniform-bucket-level-access": {
+          "inverse": "--no-uniform-bucket-level-access"
+        },
+        "--no-uniform-bucket-level-access": {
+          "inverse": "--uniform-bucket-level-access",
+          "loosens": "關閉統一 bucket 層級存取(改回 ACL)"
+        },
+        "--versioning": {
+          "inverse": "--no-versioning"
+        },
+        "--no-versioning": {
+          "inverse": "--versioning",
+          "loosens": "關閉物件版本"
+        }
+      }
+    },
+    "bucket-iam-remove": {
+      "prefix": [
+        "gcloud",
+        "storage",
+        "buckets",
+        "remove-iam-policy-binding"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--member",
+        "--role",
+        "--project"
+      ],
+      "snapshot": "bucket-iam",
+      "dry_run": null,
+      "flags": {}
+    },
+    "project-iam-add": {
+      "prefix": [
+        "gcloud",
+        "projects",
+        "add-iam-policy-binding"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--member",
+        "--role",
+        "--project"
+      ],
+      "snapshot": "project-iam",
+      "dry_run": null,
+      "flags": {
+        "--condition": {}
+      }
+    },
+    "project-iam-remove": {
+      "prefix": [
+        "gcloud",
+        "projects",
+        "remove-iam-policy-binding"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--member",
+        "--role",
+        "--project"
+      ],
+      "snapshot": "project-iam",
+      "dry_run": null,
+      "flags": {
+        "--condition": {}
+      }
+    },
+    "sql-patch": {
+      "prefix": [
+        "gcloud",
+        "sql",
+        "instances",
+        "patch"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--project"
+      ],
+      "snapshot": "sql",
+      "dry_run": null,
+      "flags": {
+        "--ssl-mode": {
+          "restore": "/settings/ipConfiguration/sslMode",
+          "loosens_values": {
+            "ALLOW_UNENCRYPTED_AND_ENCRYPTED": "允許未加密連線"
+          }
+        },
+        "--require-ssl": {
+          "restore": "/settings/ipConfiguration/requireSsl",
+          "format": "bool_flag",
+          "true_flag": "--require-ssl",
+          "false_flag": "--no-require-ssl"
+        },
+        "--no-require-ssl": {
+          "restore": "/settings/ipConfiguration/requireSsl",
+          "format": "bool_flag",
+          "true_flag": "--require-ssl",
+          "false_flag": "--no-require-ssl",
+          "loosens": "允許未加密連線"
+        },
+        "--authorized-networks": {
+          "restore": "/settings/ipConfiguration/authorizedNetworks",
+          "format": "join",
+          "item_key": "value",
+          "clear_flag": "--clear-authorized-networks"
+        },
+        "--backup-start-time": {
+          "restore": "/settings/backupConfiguration/startTime"
+        },
+        "--enable-point-in-time-recovery": {
+          "inverse": "--no-enable-point-in-time-recovery"
+        },
+        "--no-enable-point-in-time-recovery": {
+          "inverse": "--enable-point-in-time-recovery",
+          "loosens": "關閉時間點復原"
+        }
+      }
+    },
+    "kubectl-apply": {
+      "prefix": [
+        "kubectl",
+        "apply"
+      ],
+      "positional": 0,
+      "required_flags": [
+        "--filename"
+      ],
+      "snapshot": "k8s-manifest",
+      "dry_run": "kubectl diff + apply --dry-run=server",
+      "flags": {}
+    },
+    "kubectl-patch": {
+      "prefix": [
+        "kubectl",
+        "patch"
+      ],
+      "positional": 2,
+      "required_flags": [
+        "--type",
+        "--patch-file"
+      ],
+      "snapshot": "k8s-object",
+      "dry_run": "kubectl patch --dry-run=server",
+      "flags": {
+        "--namespace": {}
+      }
+    },
+    "kubectl-scale": {
+      "prefix": [
+        "kubectl",
+        "scale"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--namespace",
+        "--replicas"
+      ],
+      "snapshot": "k8s-object",
+      "dry_run": null,
+      "flags": {}
+    },
+    "kubectl-rollout-restart": {
+      "prefix": [
+        "kubectl",
+        "rollout",
+        "restart"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--namespace"
+      ],
+      "snapshot": "k8s-object",
+      "dry_run": null,
+      "flags": {}
+    },
+    "kubectl-label-namespace": {
+      "prefix": [
+        "kubectl",
+        "label",
+        "namespace"
+      ],
+      "positional": 2,
+      "required_flags": [],
+      "snapshot": "k8s-namespace",
+      "dry_run": null,
+      "flags": {
+        "--overwrite": {}
+      }
+    }
+  }
+}
