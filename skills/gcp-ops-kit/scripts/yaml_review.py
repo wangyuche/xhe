@@ -33,12 +33,24 @@ def _remote_refs(kdir):
         for fn in ("kustomization.yaml", "kustomization.yml", "Kustomization"):
             p = os.path.join(d, fn)
             if os.path.isfile(p):
-                text = open(p, encoding="utf-8", errors="ignore").read()
-                refs += REMOTE_RE.findall(text)
-                for m in re.findall(r"(?m)^\s*-\s*['\"]?([./\w-]+)['\"]?\s*$", text):
-                    sub = os.path.join(d, m)
-                    if os.path.isdir(sub):
-                        todo.append(sub)
+                r = subprocess.run(["ruby", os.path.join(gglib.KIT, "scripts", "yaml2json.rb"), p], capture_output=True, text=True, timeout=60)
+                if r.returncode != 0:
+                    refs.append(f"{p}(無法解析)")
+                    continue
+                for doc in json.loads(r.stdout or "[]"):
+                    k = doc.get("obj") or {}
+                    if not isinstance(k, dict):
+                        continue
+                    if k.get("helmCharts") or k.get("helmChartInflationGenerator"):
+                        refs.append("helmCharts(會下載 chart)")
+                    for fld in ("resources", "bases", "components", "crds", "configurations", "transformers", "generators", "validators"):
+                        for v in k.get(fld) or []:
+                            if not isinstance(v, str):
+                                continue
+                            if "://" in v or v.startswith(("git@", "github.com/", "gitlab.com/", "bitbucket.org/")) or "?ref=" in v:
+                                refs.append(v)
+                            elif os.path.isdir(os.path.join(d, v)):
+                                todo.append(os.path.join(d, v))
     return refs
 
 

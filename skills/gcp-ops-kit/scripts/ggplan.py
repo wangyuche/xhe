@@ -264,14 +264,21 @@ def diff_summary(out):
     return "\n".join(f"{x['resource']}\t{'新建' if x['created'] else '修改'}" for x in res) or "（無差異)"
 
 
+def _safe_actual(v):
+    """回報用:不寫出快照原值(可能是 ConfigMap / env 秘密),只留型別與雜湊。"""
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    return gglib.redact_value(v)
+
+
 def check_pre(pre_list, snap):
-    """回傳不成立的條件清單。"""
+    """回傳不成立的條件清單(actual 已遮蔽)。"""
     bad = []
     for p in pre_list or []:
         if "field" in p:
             cur = gglib.ptr_get(snap, p["field"])
             if cur != p.get("expect"):
-                bad.append({"cond": p, "actual": cur})
+                bad.append({"cond": p, "actual": _safe_actual(cur)})
         elif "binding_absent" in p:
             if ggchange._has_binding(snap, *p["binding_absent"]):
                 bad.append({"cond": p, "actual": "綁定已存在"})

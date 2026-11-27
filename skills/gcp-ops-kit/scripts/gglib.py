@@ -174,9 +174,15 @@ def acquire_lock(cfg, project, mode, run):
     os.makedirs(base, mode=0o700, exist_ok=True)
     path = os.path.join(base, ".lock")
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    got = False
+    for _ in range(10):  # 短暫重試:其他程序的殘留清理可能正在探測這把鎖
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            got = True
+            break
+        except OSError:
+            time.sleep(0.2)
+    if not got:
         try:
             info = json.loads(os.pread(fd, 4096, 0).decode("utf-8") or "{}")
         except Exception:

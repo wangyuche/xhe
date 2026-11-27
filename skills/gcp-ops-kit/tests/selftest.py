@@ -253,6 +253,12 @@ def t_redact():
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
 
 
+def t_check_pre_redact():
+    import ggplan
+    bad = ggplan.check_pre([{"field": "/data/DB_PASSWORD", "expect": None}], {"data": {"DB_PASSWORD": "hunter2checkpre"}})
+    ok("precondition 不符時不寫出快照原值", bad and "hunter2checkpre" not in json.dumps(bad), bad)
+
+
 def t_sa_change():
     import ggplan
 
@@ -330,7 +336,7 @@ def t_misc(e):
     rk = os.path.join(e.tmp, "remote-kust")
     os.makedirs(rk, exist_ok=True)
     with open(os.path.join(rk, "kustomization.yaml"), "w") as f:
-        f.write("resources:\n- https://github.com/example/repo//base?ref=v1\n")
+        f.write('resources: ["https://github.com/example/repo//base?ref=v1"]\n')
     r = e.run([os.path.join(S, "yaml-review.sh"), rk, "--label", "remote"], env=env2)
     rr = run_dir(r.stdout)
     und = json.load(open(os.path.join(rr, "inventory", "undetermined.json"))) if rr else []
@@ -417,6 +423,8 @@ def t_classify():
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
         ("kubectl 帶 --quiet", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=3", "--quiet"], FX.DEPLOY),
+        ("label 已有值但沒帶 --overwrite", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=restricted"],
+         {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "baseline"}}}),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
         ("防火牆 tcp:2-65535(幾乎全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:2-65535"], FX.FIREWALLS[1]),
         ("patch networkpolicy(網路類資源請使用者自己改)", ["kubectl", f"--context={CTX}", "patch", "networkpolicy", "default-deny", "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
@@ -521,6 +529,8 @@ def t_classify():
             good = good and r.get("rollback_warning")
         if name.startswith("開控制平面授權網路"):
             good = good and r["rollback"].count("--no-enable-master-authorized-networks") == 1
+        if name == "收緊防火牆來源":
+            good = good and r.get("rollback_warning") and "網際網路" in r["rollback_warning"]
         if name == "收緊防火牆來源":
             good = good and not r["loosens_security"] and "--source-ranges=0.0.0.0/0" in r["rollback"]
         else:
@@ -764,6 +774,8 @@ def t_plan_change(e, review_run):
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
                      "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
          "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
+        {"id": "C7", "summary": "binding 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
+         "precondition": [{"binding_present": "allUsers"}], "expected": [{"field": "/versioning_enabled", "expect": True}]},
         {"id": "C6", "summary": "precondition 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
          "precondition": {"field": "/x"}, "expected": [{"field": "/versioning_enabled", "expect": True}]},
         {"id": "C2", "summary": "SSH 只允許 IAP", "command": ["gcloud", "compute", "firewall-rules", "update", "allow-ssh",
@@ -787,7 +799,8 @@ def t_plan_change(e, review_run):
     ok("計畫:C1–C3 可執行、C4 被判不可還原(忽略 agent 給的 reversible=true)",
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
-    ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"], by.get("C6"))
+    ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"]
+       and by.get("C7", {}).get("blocked_reason"), (by.get("C6"), by.get("C7")))
     ok("計畫:移除 allUsers 的還原附「會重新公開」警示", by["C1"].get("rollback_warning") and "重新公開" in by["C1"]["rollback_warning"], by["C1"].get("rollback_warning"))
     ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
@@ -1015,6 +1028,7 @@ def main():
         t_yaml_bool()
         t_misc(e)
         t_sa_change()
+        t_check_pre_redact()
         t_approve_parse()
         t_classify()
         t_wrapper(e)

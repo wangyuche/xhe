@@ -93,8 +93,10 @@ def build_item(s, cfg, run, project, raw, ctx_done):
         return blocked("缺 summary 或 command")
     for fld in ("precondition", "expected"):
         v = item[fld]
-        if not isinstance(v, list) or not all(isinstance(x, dict) and (("field" in x and isinstance(x["field"], str))
-                                                                     or "binding_absent" in x or "binding_present" in x) for x in v):
+        def _okb(x):
+            return any(isinstance(x.get(k), list) and len(x[k]) == 2 and all(isinstance(y, str) for y in x[k])
+                       for k in ("binding_absent", "binding_present"))
+        if not isinstance(v, list) or not all(isinstance(x, dict) and (("field" in x and isinstance(x["field"], str)) or _okb(x)) for x in v):
             return blocked(f"{fld} 要是 [{{\"field\": \"/JSON pointer\", \"expect\": 值}}] 陣列")
     for fld in ("manifest", "patch"):
         if item[fld] is not None and not isinstance(item[fld], str):

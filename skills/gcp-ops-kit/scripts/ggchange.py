@@ -221,6 +221,25 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
         return res
     res["loosens_reasons"] = reasons
     res["loosens_security"] = bool(reasons)
+    if rollback_args and not res.get("rollback_warning"):
+        rb_nets = []
+        for a in rollback_args:
+            if isinstance(a, str) and a.startswith("--") and "=" in a:
+                for part in re.split(r"[,;]", a.split("=", 1)[1]):
+                    try:
+                        rb_nets.append(ipaddress.ip_network(part.strip(), strict=False))
+                    except ValueError:
+                        pass
+        if rb_nets and any(c.prefixlen == 0 for v in (4, 6)
+                           for c in ipaddress.collapse_addresses([n for n in rb_nets if n.version == v])):
+            res["rollback_warning"] = "這條還原會重新對整個網際網路開放(0.0.0.0/0);除非確定要回復,否則不要執行"
+        elif rb_nets:
+            new_nets = []
+            for a in argv:
+                if a.startswith("--") and "=" in a:
+                    new_nets += [x for x in _ranges(a.split("=", 1)[1]) if "/" in x]
+            if new_nets and not _subset_cidrs([str(n) for n in rb_nets], new_nets):
+                res["rollback_warning"] = "這條還原會把網段放寬回變更前的範圍,執行前請確認"
     loosen_flags = {f for f, r in k.get("flags", {}).items() if r.get("loosens")}
     if rollback_args and not res.get("rollback_warning") and any(a.split("=")[0] in loosen_flags for a in rollback_args if isinstance(a, str)):
         res["rollback_warning"] = "這條還原會放寬安全設定(回到變更前較寬鬆的狀態),執行前請確認"
@@ -632,6 +651,9 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
         res["blocked_reason"] = "namespace label 只允許改 pod-security.kubernetes.io/*(其他標籤可能被 NetworkPolicy 選擇器使用)"
         return None, [], None
     old = (gglib.ptr_get(snap, "/metadata/labels") or {}).get(key)
+    if old is not None and "--overwrite" not in flags:
+        res["blocked_reason"] = f"label {key} 已有值 {old},要加 --overwrite"
+        return None, [], None
     reasons = []
     if key.startswith("pod-security.kubernetes.io/"):
         if not key.endswith("-version") and val not in POD_SECURITY_ORDER:
