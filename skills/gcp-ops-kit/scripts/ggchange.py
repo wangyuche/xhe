@@ -101,7 +101,7 @@ def _rules_subset(new, old):
         e = expand(n)
         if e is None:
             return False
-        if not any(o and o[0] == e[0] and o[1] <= e[1] and o[2] >= e[2] for o in olds):
+        if not any(o and (o[0] == "all" or (o[0] == e[0] and o[1] <= e[1] and o[2] >= e[2])) for o in olds):
             return False
     return True
 

@@ -224,9 +224,9 @@ def scan(inv, gg_sa=None, now=None):
     for i, s in enumerate(sqls or []):
         name = s.get("name")
         ipc = g(s, "settings.ipConfiguration", default={}) or {}
-        for j, n in enumerate(ipc.get("authorizedNetworks") or []):
-            if n.get("value") in ("0.0.0.0/0", "::/0"):
-                o.add("SQL-PUB-001", f"sql:{name}", qf, f"/{i}/settings/ipConfiguration/authorizedNetworks/{j}")
+        nets = [n.get("value") for n in ipc.get("authorizedNetworks") or [] if n.get("value")]
+        if _covers_all(nets):
+            o.add("SQL-PUB-001", f"sql:{name}", qf, f"/{i}/settings/ipConfiguration/authorizedNetworks", ", ".join(nets))
         if ipc.get("ipv4Enabled"):
             o.add("SQL-IP-001", f"sql:{name}", qf, f"/{i}/settings/ipConfiguration/ipv4Enabled")
         mode = ipc.get("sslMode")
@@ -279,9 +279,9 @@ def scan(inv, gg_sa=None, now=None):
         private_ep = pcc.get("enablePrivateEndpoint") or cpe.get("enablePublicEndpoint") is False
         if not man.get("enabled") and not private_ep:
             o.add("GKE-CP-001", f"gke:{name}", cf, f"{base}/masterAuthorizedNetworksConfig")
-        for j, blk in enumerate(man.get("cidrBlocks") or []):
-            if blk.get("cidrBlock") in ("0.0.0.0/0", "::/0"):
-                o.add("GKE-CP-002", f"gke:{name}", cf, f"{base}/masterAuthorizedNetworksConfig/cidrBlocks/{j}")
+        blocks = [b.get("cidrBlock") for b in man.get("cidrBlocks") or [] if b.get("cidrBlock")]
+        if man.get("enabled") and _covers_all(blocks):
+            o.add("GKE-CP-002", f"gke:{name}", cf, f"{base}/masterAuthorizedNetworksConfig/cidrBlocks", ", ".join(blocks))
         ma = c.get("masterAuth") or {}
         if ma.get("username") or ma.get("password") or ma.get("clientCertificate") or ma.get("clientKey"):
             o.add("GKE-BASIC-001", f"gke:{name}", cf, f"{base}/masterAuth", "（值已遮蔽)")

@@ -228,10 +228,12 @@ def t_redact():
        all(x not in s for x in (FX.FAKE_AIZA, "c2VjcmV0", "plain", "hunter2", "x=1", '"abc"')), s)
     ok("遮蔽:metadata 布林設定保留明文", '"value": "TRUE"' in s)
     a = gglib.redact({"spec": {"containers": [{"args": ["--db-password=hunter2xyz", "--token", "abc123token", "--port=80"]}]},
-                      "config": {"metadata": {"disable-legacy-endpoints": "true", "startup": "secret=1"}}})
+                      "config": {"metadata": {"disable-legacy-endpoints": "true", "startup": "secret=1"}},
+                      "nodeConfig": {"metadata": {"my-api-token": "nodeconfigsecret"}}})
     sa = json.dumps(a)
     ok("遮蔽:容器 args 的密碼 / token 值、node pool config.metadata 值",
-       "hunter2xyz" not in sa and "abc123token" not in sa and "--port=80" in sa and '"disable-legacy-endpoints": "true"' in sa and "secret=1" not in sa, sa)
+       "hunter2xyz" not in sa and "abc123token" not in sa and "--port=80" in sa and '"disable-legacy-endpoints": "true"' in sa and "secret=1" not in sa
+       and "nodeconfigsecret" not in sa, sa)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
 
@@ -240,6 +242,27 @@ def t_misc(e):
     ok("ptr_get 拒絕負數索引", gglib.ptr_get({"a": [1, 2]}, "/a/-1", "NONE") == "NONE" and gglib.ptr_get({"a": [1, 2]}, "/a/1") == 2)
     r = subprocess.run(["ruby", os.path.join(S, "yaml2json.rb"), "-"], input="spec:\n  <<: {hostNetwork: true}\n", capture_output=True, text=True)
     ok("YAML 合併鍵 << 一律拒絕(不靜默略過)", r.returncode == 1 and "merge key" in r.stderr, r.stderr)
+    # 多叢集:A 的 app 有 NetworkPolicy,B 的 app 沒有 → B 要報 K8S-NP-001
+    wl = lambda ctx: {"obj": {"kind": "Deployment", "metadata": {"name": "w", "namespace": "app"}, "spec": {"template": {"spec": {"containers": [{"name": "c", "image": "x:1"}]}}}}, "file": "f", "context": ctx}
+    npol = {"obj": {"kind": "NetworkPolicy", "metadata": {"name": "n", "namespace": "app"}}, "file": "f", "context": "A"}
+    import collect
+    tmpi = tempfile.mkdtemp(prefix="gg-mc-")
+    for ctx, items in (("A", [wl("A")["obj"], npol["obj"]]), ("B", [wl("B")["obj"]])):
+        gglib.write_json(os.path.join(tmpi, "inventory", "k8s", ctx, "all.json"), {"context": ctx, "items": items})
+    gglib.write_json(os.path.join(tmpi, "meta.json"), {})
+    fs = collect.analyze(tmpi, {"GG_SA": FX.GG_SA})
+    np_ctx = [f.get("context") for f in fs if f["rule_id"] == "K8S-NP-001"]
+    ok("多叢集:NetworkPolicy 依叢集分開判斷(只報 B)", np_ctx == ["B"], np_ctx)
+    shutil.rmtree(tmpi, ignore_errors=True)
+    lf = os.path.join(e.tmp, "list", "l.yaml")
+    os.makedirs(os.path.dirname(lf), exist_ok=True)
+    with open(lf, "w") as f:
+        f.write("kind: List\nitems:\n- kind: Pod\n  metadata: {name: p}\n  spec:\n    containers:\n    - name: c\n      image: x:1\n      securityContext: {privileged: true}\n")
+    r = e.run([os.path.join(S, "yaml-review.sh"), lf, "--label", "list"], stub=False)
+    lr = run_dir(r.stdout)
+    pf = [f for f in json.load(open(os.path.join(lr, "findings.json")))] if lr else []
+    priv = [f for f in pf if f["rule_id"] == "K8S-PRIV-001"]
+    ok("YAML 審查:kind: List 的 item 也有行號(privileged 在第 9 行)", priv and priv[0]["evidence"].get("line") == 9, priv)
     ok("GCP 規則:0.0.0.0/1 + 128.0.0.0/1 也算對全網開放", gcp_rules._covers_all(["0.0.0.0/1", "128.0.0.0/1"]) and not gcp_rules._covers_all(["10.0.0.0/8"]))
     other = os.path.join(e.tmp, "not-a-run")
     os.makedirs(other, exist_ok=True)
@@ -357,6 +380,7 @@ def t_classify():
         ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, False),
         ("清空防火牆 target-tags(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags="],
          dict(fw, targetTags=["bastion"]), True),
+        ("防火牆從 all 收緊到 tcp:443", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=tcp:443"], FX.FIREWALLS[2], False),
         ("提高防火牆優先序(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--priority=100"], fw, True),
         ("SQL 取消用戶端憑證(放寬)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
          {"settings": {"ipConfiguration": {"sslMode": "TRUSTED_CLIENT_CERTIFICATE_REQUIRED"}}}, True),

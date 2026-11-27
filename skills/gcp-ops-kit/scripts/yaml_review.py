@@ -98,7 +98,9 @@ def main(argv):
             if isinstance(d.get("obj"), dict) and d["obj"].get("kind"):
                 if d["obj"].get("kind") == "List":
                     for i, o in enumerate(d["obj"].get("items") or []):
-                        docs.append({"obj": o, "file": f, "line": d["line"], "lines": {}})
+                        pre = f"/items/{i}"
+                        sub = {(k[len(pre):] or "/"): v for k, v in d["lines"].items() if k == pre or k.startswith(pre + "/")}
+                        docs.append({"obj": o, "file": f, "line": sub.get("/", d["line"]), "lines": sub})
                     continue
                 docs.append(d)
     docs.extend(d for d in rendered_docs if isinstance(d.get("obj"), dict) and d["obj"].get("kind"))

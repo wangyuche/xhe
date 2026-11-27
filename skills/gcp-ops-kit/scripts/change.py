@@ -128,7 +128,8 @@ class Runner:
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
         if r.returncode != 0:
-            rec.update({"result": "失敗", "reason": "指令失敗"})
+            rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
+            rec.update({"result": "失敗(可能部分套用)", "reason": f"指令失敗(rc={r.returncode});請先確認現況再決定是否還原"})
             self.results.append(rec)
             self.status = "ISSUES"
             return False

@@ -389,7 +389,7 @@ def redact(obj, path=""):
             out[k] = {kk: (redact_value(vv) if vv not in (None, "", {}) else vv) for kk, vv in v.items()}
         elif k in ("command", "args") and isinstance(v, list) and all(isinstance(x, str) for x in v):
             out[k] = _redact_argv(v)
-        elif k == "metadata" and isinstance(v, dict) and p.endswith("/config/metadata"):
+        elif k == "metadata" and isinstance(v, dict) and p.endswith(("/config/metadata", "/nodeConfig/metadata")):
             # GKE node pool config.metadata(dict):保留布林設定,其他值遮蔽
             out[k] = {kk: (vv if kk in KEEP_METADATA_KEYS else redact_value(vv)) for kk, vv in v.items()}
         elif k == "env" and isinstance(v, list):

@@ -163,7 +163,11 @@ def analyze(run, cfg):
     meta["sa_roles"] = sorted(b.get("role") for b in pol.get("bindings") or [] if me in (b.get("members") or []))
     gglib.write_json(os.path.join(run, "meta.json"), meta)
     findings = gcp_rules.scan(inv, cfg.get("GG_SA"))
-    findings += k8s_rules.scan(k8s_docs(inv), live=True)
+    by_ctx = {}
+    for d in k8s_docs(inv):
+        by_ctx.setdefault(d.get("context"), []).append(d)
+    for ctx in sorted(by_ctx, key=str):  # 每個叢集分開掃,namespace 不會跨叢集混在一起
+        findings += k8s_rules.scan(by_ctx[ctx], live=True)
     gglib.write_json(os.path.join(run, "findings.json"), findings)
     return findings
 
