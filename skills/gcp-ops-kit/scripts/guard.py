@@ -20,6 +20,8 @@ READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "d
 FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
                "curl", "wget", "googleapis")
+GREP_VALUE_OPTS = {"-d", "-D", "-m", "-A", "-B", "-C", "--directories", "--devices", "--max-count", "--after-context",
+                   "--before-context", "--context", "--label", "--include", "--exclude", "--exclude-dir", "--binary-files", "--color", "--colour"}
 WRITABLE_NAMES = {"manual.json", "plan.input.json"}
 
 
@@ -156,8 +158,6 @@ def check_bash(cmd, cfg, cwd):
                                                    or t.startswith("--directories") for t in gtoks))) \
         or (first == "find" and (len(toks) == 1 or toks[1].startswith("-"))) \
         or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]) and not any(not x.startswith("-") for x in toks[1:]))
-    if recursive and is_protected(cwd, cfg, cwd, ancestor=True):
-        return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
     nonflags = [t for t in toks[1:] if not t.startswith("-")]
     if first == "grep":
         # -e / -f / --regexp / --file 給了樣式時,其餘非旗標參數全都是路徑
@@ -169,12 +169,16 @@ def check_bash(cmd, cfg, cwd):
                 continue
             if t in ("-e", "-f", "--regexp", "--file"):
                 has_pat_flag, skip = True, True
+            elif t in GREP_VALUE_OPTS:  # 這些選項的下一個參數是值,不是樣式也不是路徑
+                skip = True
             elif t.startswith(("--regexp=", "--file=")) or (t.startswith(("-e", "-f")) and len(t) > 2):
                 has_pat_flag = True
         gpaths = [t for i, t in enumerate(toks[1:], 1) if not t.startswith("-") and i not in pat_vals]
         if not has_pat_flag:
             gpaths = gpaths[1:]
-    no_path = (first == "grep" and not gpaths) or (first == "find" and not nonflags[:1]) or (first in ("diff", "ls") and not nonflags)
+    no_path = (first == "grep" and not gpaths) or (first == "find" and (len(toks) == 1 or toks[1].startswith("-"))) or (first in ("diff", "ls") and not nonflags)
+    if recursive and no_path and is_protected(cwd, cfg, cwd, ancestor=True):
+        return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
     if recursive and no_path and os.path.isdir(cwd):
         bad = _protected_symlink_under(cwd, cfg, cwd)
         if bad:

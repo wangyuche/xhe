@@ -730,6 +730,12 @@ def _k_kubectl_scale(pos, flags, snap, res, k, cfg, *_):
     if n <= 0:
         res["blocked_reason"] = "一律禁止:縮到 0(會停止服務,請使用者自己執行)"
         return None, [], None
+    if (gglib.ptr_get(snap, "/metadata/ownerReferences")):
+        res["blocked_reason"] = "這個物件由其他 controller 管理(ownerReferences),scale 會被蓋回;請改上層物件"
+        return None, [], None
+    if pos[0].lower() in (snap.get("_hpa_targets") or []):
+        res["blocked_reason"] = "這個 workload 由 HPA 管理,scale 會被蓋回;請改 HPA 的 minReplicas / maxReplicas"
+        return None, [], None
     cur = gglib.ptr_get(snap, "/spec/replicas")
     if cur is None:
         return None, [], "快照沒有 /spec/replicas"

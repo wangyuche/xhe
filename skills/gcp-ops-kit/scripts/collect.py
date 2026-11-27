@@ -207,7 +207,12 @@ def main(argv):
         need_tools(opts["--mode"], areas)
         run = gglib.new_run(cfg, project, opts["--mode"])
         meta = gglib.read_json(os.path.join(run, "meta.json"))
-        meta.update({"areas": areas, "clusters": opts["--clusters"], "prev": opts["--prev"] or None})
+        prev = None
+        if opts["--prev"]:
+            prev = os.path.realpath(opts["--prev"])
+            if not prev.startswith(os.path.realpath(cfg["GG_REPORT_DIR"]) + os.sep) or not os.path.exists(os.path.join(prev, "meta.json")):
+                raise gglib.Blocked(f"--prev 要是 GG_REPORT_DIR 底下的 run 目錄:{opts['--prev']}")
+        meta.update({"areas": areas, "clusters": opts["--clusters"], "prev": prev})
         gglib.write_json(os.path.join(run, "meta.json"), meta)
         with gglib.Session(cfg, run, project, "read") as s:
             Collector(s, run, project, areas, [c for c in opts["--clusters"].split(",") if c]).run_all()

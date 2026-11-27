@@ -133,7 +133,7 @@ def snapshot(s, kind, argv, project, ctx_done):
         args = ["get", kind_, name_] + (["-n", ns_] if ns_ else []) + ["-o", "json", "--request-timeout=60s"]
         r = s.kubectl(ctx, args, mode="dryrun")
         if r.returncode != 0:
-            if "NotFound" in r.stderr or "not found" in r.stderr:
+            if "(NotFound)" in r.stderr:
                 return {"_absent": True}, None
             return None, gglib._short(r.stderr)
         return _json(r), None
@@ -144,6 +144,15 @@ def snapshot(s, kind, argv, project, ctx_done):
         else:
             kind_, name_ = rest[0].split("/", 1)
         snap, err = kget(kind_, name_, ns)
+        if kind == "kubectl-scale" and snap is not None and ns:
+            r = s.kubectl(ctx, ["get", "horizontalpodautoscalers", "-n", ns, "-o", "json", "--request-timeout=60s"], mode="dryrun")
+            if r.returncode != 0:
+                return None, endpoint, "讀不到 HPA:" + gglib._short(r.stderr)
+            refs = [(k8s_rules._d(k8s_rules._d(h.get("spec")).get("scaleTargetRef")).get("kind", ""),
+                     k8s_rules._d(k8s_rules._d(h.get("spec")).get("scaleTargetRef")).get("name", ""))
+                    for h in (_json(r) or {}).get("items") or [] if isinstance(h, dict)]
+            snap = dict(snap)
+            snap["_hpa_targets"] = [f"{a.lower()}/{b}" for a, b in refs]
         return snap, endpoint, err
     if typ == "k8s-namespace":
         snap, err = kget("namespace", rest[0], None)

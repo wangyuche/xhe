@@ -219,7 +219,9 @@ def t_guard(e):
                       (f"diff -r {proj} {e.reports}", "deny"), (f"find -L {e.reports}", "deny")):
         r = subprocess.run(["python3", g, "--test", cmd], env=env, capture_output=True, text=True)
         ok(f"guard symlink:{cmd[-60:]!r} → {want}", r.stdout.split("\t")[0].strip() == want, r.stdout)
-    for cwd, cmd, want in ((proj, "grep -r server", 2), (proj, "grep -rS server", 2), (proj, "grep -r -e private_key -e client_email", 2),
+    safe = os.path.join(e.tmp, "safe-dir")
+    os.makedirs(safe, exist_ok=True)
+    for cwd, cmd, want in ((os.path.dirname(e.tmp), f"grep -r foo {safe}", 0), (proj, "grep -r server", 2), (proj, "grep -rS server", 2), (proj, "grep -r -e private_key -e client_email", 2),
                            (os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
                            (os.path.dirname(e.tmp), "grep -r private_key", 2),
                            (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
@@ -478,6 +480,10 @@ def t_classify():
                                   "--rules=" + ",".join(f"tcp:{i * 1000 + 1}-{min(i * 1000 + 1000, 65535)}" for i in range(66))], FX.FIREWALLS[1]),
         ("公開規則再加開 SSH", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:8080,tcp:22"], FX.FIREWALLS[1]),
         ("公開規則清空 target-tags", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--target-tags="], dict(FX.FIREWALLS[1], targetTags=["web"])),
+        ("scale 由 HPA 管理的 deployment", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=5"],
+         dict(FX.DEPLOY, _hpa_targets=["deployment/web"])),
+        ("scale 被擁有的 replicaset", ["kubectl", f"--context={CTX}", "scale", "replicaset/web-abc", "--namespace=shop", "--replicas=5"],
+         {"metadata": {"ownerReferences": [{"kind": "Deployment"}]}, "spec": {"replicas": 2}}),
         ("autoscaling pool 做 resize", ["gcloud", "container", "clusters", "resize", "prod", "--node-pool=default-pool", "--num-nodes=3", "--location=asia-east1", f"--project={P}"],
          {"nodepool": {"autoscaling": {"enabled": True}}, "node_count_per_zone": 2}),
         ("停用只涵蓋 IAP 子網段的規則", ["gcloud", "compute", "firewall-rules", "update", "allow-iap-ssh", f"--project={P}", "--disabled"],
@@ -824,6 +830,7 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
+        {"tool": "kubectl", "re": " get horizontalpodautoscalers -n shop -o json", "out": {"items": []}},
         {"tool": "kubectl", "re": " get configmap new-cm -n shop -o json", "rc": 1, "err": 'Error from server (NotFound): configmaps "new-cm" not found'},
         {"tool": "kubectl", "re": " diff -f ", "when": {"diff": "modify"}, "rc": 1,
          "out": "diff -u -N /tmp/LIVE-1/apps.v1.Deployment.shop.web /tmp/MERGED-1/apps.v1.Deployment.shop.web\n--- /tmp/LIVE-1/x\n+++ /tmp/MERGED-1/x\n@@ -10,7 +10,7 @@\n-  replicas: 2\n+  replicas: 3\n"},

@@ -276,6 +276,10 @@ def main(argv):
             runner.results.append({"id": "-", "result": "中斷", "reason": "change.sh 被中斷;進行中的雲端操作可能仍在跑,請先確認現況"})
             gglib.release_lock(cfg, project, run)
             write_log(run, plan_path, sha, approved, runner)
+            try:
+                subprocess.run(["node", os.path.join(gglib.KIT, "scripts", "render.mjs"), run], timeout=60)
+            except Exception:
+                pass
             raise
         except Exception as e:
             runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
