@@ -228,6 +228,22 @@ def k8s_dryrun(s, kind, argv, snap):
                 ((o.get("metadata") or {}).get("annotations") or {}).get(WI)
                 for o in objs if isinstance(o, dict) and o.get("kind") == "ServiceAccount"}
     b_wi = wi(before)
+
+    def sa_names(objs):
+        out = {}
+        for o in objs:
+            if not isinstance(o, dict):
+                continue
+            spec, _ = k8s_rules.pod_spec(o)
+            if spec is not None:
+                md = o.get("metadata") or {}
+                out[(o.get("kind"), md.get("namespace"), md.get("name"))] = spec.get("serviceAccountName") or spec.get("serviceAccount") or "default"
+        return out
+    b_sa = sa_names(before)
+    for k_, v in sa_names(after).items():
+        if k_ in b_sa and v != b_sa[k_]:
+            new.append({"rule_id": "K8S-WI-003", "severity": "高", "title": f"{k_[0]} {k_[1]}/{k_[2]} 改用 ServiceAccount {v}(可能取得另一個 GSA 的權限)",
+                        "resource": f"{k_[0]}/{k_[1]}/{k_[2]}", "evidence": {"path": "/spec/template/spec/serviceAccountName"}})
     for k_, v in wi(after).items():
         if v and v != b_wi.get(k_):
             new.append({"rule_id": "K8S-WI-002", "severity": "高", "title": f"變更 KSA {k_[0]}/{k_[1]} 綁定的 GSA({v}),等於讓 Pod 取得該 GSA 權限",

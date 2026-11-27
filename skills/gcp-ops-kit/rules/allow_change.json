@@ -1,5 +1,5 @@
 {
-  "_doc": "變更允許清單。不在 kinds 裡的指令一律 BLOCKED。flags:每個允許的旗標要有 inverse(反向旗標)或 restore(從變更前快照取還原值的 JSON pointer);兩者都沒有 → 不可還原 → BLOCKED。loosens:這個旗標屬於放寬安全(計畫頁醒目標示)。 inverse 旗標必須有 state(變更前狀態的 JSON pointer)與 target(這個旗標要達成的狀態:true / false / nonempty);變更前已是 target → 不可還原(其實不需變更);state 記入 auto_pre。",
+  "_doc": "變更允許清單。不在 kinds 裡的指令一律 BLOCKED。flags:每個允許的旗標要有 inverse(反向旗標)或 restore(從變更前快照取還原值的 JSON pointer);兩者都沒有 → 不可還原 → BLOCKED。loosens:這個旗標屬於放寬安全(計畫頁醒目標示)。 inverse 旗標必須有 state(變更前狀態的 JSON pointer)與 target(這個旗標要達成的狀態:true / false / nonempty);變更前已是 target → 不可還原(其實不需變更);state 記入 auto_pre。 kubectl apply / patch 只允許 workload 類;NetworkPolicy、Ingress、Service、ServiceAccount、RBAC 等網路與身分相關資源請使用者自己改(語意上的放寬無法可靠判斷)。",
   "forbidden_tokens": [
     "(^| )delete( |$)",
     "(^| )set-iam-policy( |$)",
@@ -40,14 +40,10 @@
     "deployment",
     "statefulset",
     "daemonset",
-    "service",
-    "ingress",
-    "networkpolicy",
-    "configmap",
-    "serviceaccount",
     "cronjob",
     "horizontalpodautoscaler",
-    "poddisruptionbudget"
+    "poddisruptionbudget",
+    "configmap"
   ],
   "kinds": {
     "gke-cluster-update": {

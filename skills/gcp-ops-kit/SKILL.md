@@ -89,8 +89,8 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 | project-iam-add / remove | `gcloud projects add/remove-iam-policy-binding` | get-iam-policy | 反向 |
 | sql-patch | `gcloud sql instances patch`:ssl、授權網路、備份時間、PITR | describe | 原值 |
 | kubectl-apply | 只能修改既有資源(diff 出現新建 → 不可還原) | 線上物件 | `kubectl replace -f before/C<n>.rollback.json` |
-| kubectl-patch | deployment、service、ingress、networkpolicy、configmap…(不含 namespace) | 線上物件 | 同上 |
-| kubectl-scale / rollout-restart / label-namespace | | 線上物件 | 原 replicas / 不需 / 原 label |
+| kubectl-patch | deployment、statefulset、daemonset、cronjob、HPA、PDB、configmap | 線上物件 | 同上 |
+| kubectl-scale / rollout-restart / label-namespace(只限 pod-security 標籤) | | 線上物件 | 原 replicas / 不需 / 原 label |
 
 - **共同禁止**:任何 delete / `set-iam-policy` / `services disable` / upgrade / `--cluster-version` / `--release-channel` / `--node-version` / `--image-type`;新增 allUsers / allAuthenticatedUsers;任何 `0.0.0.0/0`、`::/0`;防火牆 `all` 或 1–65535 全埠;動 gcp-guardian 自己的 SA;新增 / 移除 `roles/owner`;停用 GKE / IAP 防火牆規則;`--prune`、`--force`、kustomize apply;retention 設定;建立 SA 金鑰。
 - **反向旗標**(例 `--enable-shielded-nodes`)會先讀變更前狀態;已是目標狀態 → 判「不可還原」(其實不需變更,還原反而會改掉原設定),狀態記入 `auto_pre`。bucket / Cloud SQL 的狀態欄位讀不到也判不可還原。
@@ -109,7 +109,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。
 - YAML 審查:kustomization 引用遠端 base(https / git / github.com…)時不展開(不連網),列無法判定。
-- kubectl apply / patch 只允許 `k8s_patch_kinds` 列的資源種類(deployment、statefulset、daemonset、service、ingress、networkpolicy、configmap、serviceaccount、cronjob、HPA、PDB);Secret、RBAC、webhook、CRD、Namespace 等在快照之前就擋;patch 的資源種類一律小寫。
+- kubectl apply / patch 只允許 workload 類(deployment、statefulset、daemonset、cronjob、HPA、PDB、configmap);NetworkPolicy、Ingress、Service、ServiceAccount 等網路與身分資源的語意放寬無法可靠判斷,請使用者自己改;workload 改 `serviceAccountName` 視同高風險 → BLOCKED;namespace label 只允許 `pod-security.kubernetes.io/*`;防火牆單一範圍超過 1000 個埠視同全開;Secret、RBAC、webhook、CRD、Namespace 等在快照之前就擋;patch 的資源種類一律小寫。
 - `0.0.0.0/0` / `::/0` 以 ipaddress 解析判斷(`0::/0`、多段合起來涵蓋全部也擋)。
 - **沒有還原範本的旗標**(例 `--security-posture`、`--maintenance-window-*`)一律判「不可還原」→ BLOCKED,請使用者自己做。
 - **放寬安全**(`loosens_security`)由固定規則判斷:新增高權角色、關閉公開存取防護 / 統一存取 / 版本、放寬授權網路或防火牆、Pod Security 降級、apply 後出現新的「中」問題。apply / patch 後出現新的「嚴重 / 高」問題 → BLOCKED。

@@ -219,7 +219,8 @@ def t_guard(e):
                       (f"diff -r {proj} {e.reports}", "deny"), (f"find -L {e.reports}", "deny")):
         r = subprocess.run(["python3", g, "--test", cmd], env=env, capture_output=True, text=True)
         ok(f"guard symlink:{cmd[-60:]!r} → {want}", r.stdout.split("\t")[0].strip() == want, r.stdout)
-    for cwd, cmd, want in ((os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
+    for cwd, cmd, want in ((proj, "grep -r server", 2), (proj, "grep -rS server", 2),
+                           (os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
                            (os.path.dirname(e.tmp), "grep -r private_key", 2),
                            (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
                            (os.path.dirname(e.tmp), "grep -drecurse private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
@@ -250,6 +251,20 @@ def t_redact():
        and "nodeconfigsecret" not in sa and "hunter2inline" not in sa and "SuperSecretPw" not in sa and "./run" in sa, sa)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
+
+
+def t_sa_change():
+    import ggplan
+
+    class FakeS:
+        def kubectl(self, ctx, args, mode="read", **kw):
+            d = copy.deepcopy(FX.DEPLOY)
+            d["spec"]["template"]["spec"]["serviceAccountName"] = "ci-deployer"
+            return subprocess.CompletedProcess(args, 0, json.dumps(d), "")
+    created, new, log, err = ggplan.k8s_dryrun(FakeS(), "kubectl-patch",
+                                               ["kubectl", "--context=gke_demo-proj-123_asia-east1_prod", "patch", "deployment", "web",
+                                                "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], FX.DEPLOY)
+    ok("dry-run:workload 改 serviceAccountName → 高風險 K8S-WI-003", any(f["rule_id"] == "K8S-WI-003" for f in new), new)
 
 
 def t_misc(e):
@@ -398,6 +413,9 @@ def t_classify():
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
         ("kubectl 帶 --quiet", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=3", "--quiet"], FX.DEPLOY),
+        ("防火牆 tcp:2-65535(幾乎全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:2-65535"], FX.FIREWALLS[1]),
+        ("patch networkpolicy(網路類資源請使用者自己改)", ["kubectl", f"--context={CTX}", "patch", "networkpolicy", "default-deny", "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
+        ("namespace 一般 label(可能影響 NetworkPolicy)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "team=x", "--overwrite"], {"metadata": {"labels": {}}}),
         ("清空防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges="], fw),
         ("bucket 狀態欄位不存在(統一存取)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--uniform-bucket-level-access"], {}),
         ("系統 namespace scale", ["kubectl", f"--context={CTX}", "scale", "deployment/kube-dns", "--namespace=kube-system", "--replicas=3"], None),
@@ -929,7 +947,7 @@ def t_plan_change(e, review_run):
     e.state({"diff": "modify", "dry": "wi"})
     r, _ = plan_build(e, krun)
     it = json.load(open(os.path.join(krun, "plan.json")))["items"][0]
-    ok("計畫 k8s:改 KSA 的 iam.gke.io/gcp-service-account → BLOCKED", it["blocked_reason"] and "K8S-WI-002" in it["blocked_reason"], it["blocked_reason"])
+    ok("計畫 k8s:改 KSA(ServiceAccount 不在 apply 允許清單)→ BLOCKED", it["blocked_reason"] and ("K8S-WI-002" in it["blocked_reason"] or "ServiceAccount" in it["blocked_reason"]), it["blocked_reason"])
     e.state({"diff": "modify"})
     write_input(krun, [{"id": "C1", "summary": "manifest 指到外部檔", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=/tmp/x/manifests/C1.yaml"],
                         "expected": [{"field": "/objects/0/spec/replicas", "expect": 2}]}])
@@ -966,6 +984,7 @@ def main():
         t_rule_tables()
         t_yaml_bool()
         t_misc(e)
+        t_sa_change()
         t_approve_parse()
         t_classify()
         t_wrapper(e)

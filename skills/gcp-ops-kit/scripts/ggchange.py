@@ -86,7 +86,7 @@ def _port_all(rule):
     if a is None:
         return True  # tcp 沒寫埠 = 全部埠
     lo, hi = int(a), int(b or a)
-    return lo <= 1 and hi >= 65535
+    return hi - lo + 1 > 1000  # 一次開超過 1000 個埠視同全開(例 tcp:2-65535)
 
 
 def _rules_subset(new, old):
@@ -620,6 +620,9 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
         res["blocked_reason"] = "label 要是 key=value(移除 label 不允許)"
         return None, [], None
     key, val = m.groups()
+    if not key.startswith("pod-security.kubernetes.io/"):
+        res["blocked_reason"] = "namespace label 只允許改 pod-security.kubernetes.io/*(其他標籤可能被 NetworkPolicy 選擇器使用)"
+        return None, [], None
     old = (gglib.ptr_get(snap, "/metadata/labels") or {}).get(key)
     reasons = []
     if key.startswith("pod-security.kubernetes.io/"):

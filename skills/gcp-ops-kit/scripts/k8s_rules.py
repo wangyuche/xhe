@@ -47,9 +47,9 @@ def pod_spec(obj):
     if k == "Pod":
         return s, "/spec"
     if k == "CronJob":
-        return ((s.get("jobTemplate") or {}).get("spec") or {}).get("template", {}).get("spec") or {}, "/spec/jobTemplate/spec/template/spec"
+        return ((((s.get("jobTemplate") or {}).get("spec") or {}).get("template") or {}).get("spec") or {}), "/spec/jobTemplate/spec/template/spec"
     if k in WORKLOAD_KINDS:
-        return (s.get("template") or {}).get("spec") or {}, "/spec/template/spec"
+        return ((s.get("template") or {}).get("spec") or {}), "/spec/template/spec"
     return None, None
 
 

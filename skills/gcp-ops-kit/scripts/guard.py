@@ -142,10 +142,10 @@ def check_bash(cmd, cfg, cwd):
         return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))})"
     if first == "find" and any(t in FIND_DENY for t in toks):
         return "find 不允許 -exec / -delete 等動作"
-    if (first == "grep" and any(t == "--dereference-recursive" or (t.startswith("-") and not t.startswith("--") and "R" in t) for t in toks[1:])) \
+    if (first == "grep" and any(t == "--dereference-recursive" or (t.startswith("-") and not t.startswith("--") and ("R" in t or "S" in t or "O" in t or "p" in t)) for t in toks[1:])) \
             or (first == "find" and any(t in ("-L", "-H", "-follow") for t in toks[1:])) \
             or (first == "ls" and any(t.startswith("-") and not t.startswith("--") and "L" in t for t in toks[1:])):
-        return "不允許跟隨 symlink 的遞迴(grep -R、find -L、ls -L);改用 grep -r / find"
+        return "不允許跟隨 symlink 的遞迴(grep -R / -S / -O / -p、find -L、ls -L);改用 grep -r / find"
     # 沒寫路徑時遞迴工具會掃 cwd:把 cwd 當成隱含路徑一起檢查
     gtoks = toks[1:]
     d_recurse = any((t == "-d" and i + 1 < len(gtoks) and gtoks[i + 1] == "recurse") or t.startswith("-drecurse")
@@ -158,6 +158,12 @@ def check_bash(cmd, cfg, cwd):
         or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]) and not any(not x.startswith("-") for x in toks[1:]))
     if recursive and is_protected(cwd, cfg, cwd, ancestor=True):
         return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
+    nonflags = [t for t in toks[1:] if not t.startswith("-")]
+    no_path = (first == "grep" and len(nonflags) <= 1) or (first == "find" and not nonflags[:1]) or (first in ("diff", "ls") and not nonflags)
+    if recursive and no_path and os.path.isdir(cwd):
+        bad = _protected_symlink_under(cwd, cfg, cwd)
+        if bad:
+            return bad
     rec_tool = first in ("grep", "diff", "find") or (first == "ls" and any(x.startswith("-") and "R" in x for x in toks[1:]))
     for t in toks[1:]:
         for pth in arg_paths(t):

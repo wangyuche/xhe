@@ -39,8 +39,7 @@ def rollback_object(o):
     for k in VOLATILE:
         md.pop(k, None)
     o.pop("status", None)
-    (md.get("annotations") or {}).pop("kubectl.kubernetes.io/last-applied-configuration", None)
-    return o
+    return o  # 保留 last-applied 註解,replace 後與變更前一致
 
 
 class Runner:
@@ -114,7 +113,10 @@ class Runner:
             return self.stop("BLOCKED", cid, "precondition 不符(環境已變):" + json.dumps(bad, ensure_ascii=False)[:500])
         dry = {}
         if kind in ("kubectl-apply", "kubectl-patch"):
-            created, new_f, log, err = ggplan.k8s_dryrun(s, kind, argv, snap)
+            try:
+                created, new_f, log, err = ggplan.k8s_dryrun(s, kind, argv, snap)
+            except (gglib.Blocked, gglib.Denied) as e:
+                return self.stop("BLOCKED", cid, "dry-run 被拒絕:" + str(e))
             dry = {"log": [{"step": a, "rc": b} for a, b, _ in log]}
             if err:
                 return self.stop("BLOCKED", cid, "dry-run 失敗:" + err)
