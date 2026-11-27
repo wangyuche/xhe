@@ -19,6 +19,11 @@
 //        外框 2 px 內主體像素(alpha ≥ 8)< 1%、外緣白框:離透明區 1–3 px 內、alpha ≥ 128 的主體外圈,接近純白(RGB 皆 ≥ 238)像素 ≤ 30%(外緣 ≥ 20 px 才判斷;
 //        主體本來就是白色的素材(白票、雲)加 --allow-white-edge 略過)、各格腳底基線差 ≤ 2 px 與主體高度差 ≤ 10%(--character 且多格)、
 //        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
+//   node sprite.mjs clean <in.png> --out <out.png> [--key-white]
+//        角色動作圖清理(rmbg 去背之後):alpha 依 16..250 拉開(人物調實、背景霧清掉)→ 只留跟中間直帶連在一起的塊 → 離實心處 > 4 px 的淡線透明。
+//        --key-white:輸入是白底不透明圖(白底立繪)時先做白底去背。印 {ok,errors,coverage,border,touches}(touches = 主體碰到的邊,extend 用);不通過結束碼 1。
+//   node sprite.mjs headshot <in.png> --anchor x,y,h --out <out.png> [--size 256] [--zoom 1.15] [--dx 0] [--pad l,t,r,b]
+//        依頭中心 / 頭高(0–1,補邊前的原圖比例)裁方形頭像;--pad 是 extend 各邊補的像素(自動平移)。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +105,7 @@ export function encodePng({ width: w, height: h, data }) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }
 
-const blank = (w, h) => ({ width: w, height: h, data: Buffer.alloc(w * h * 4) });
+export const blank = (w, h) => ({ width: w, height: h, data: Buffer.alloc(w * h * 4) });
 
 // 主體 = alpha ≥ ALPHA_MIN(去背遮罩邊緣常留下 alpha 1–7 的雜訊,不算主體)
 export const ALPHA_MIN = 8;
@@ -114,7 +119,7 @@ export function bbox(img, x0 = 0, y0 = 0, w = img.width, h = img.height) {
 }
 
 // 區域平均縮放(premultiplied alpha,放大縮小都可),src 的 (sx,sy,sw,sh) → dw×dh
-function resample(src, sx, sy, sw, sh, dw, dh) {
+export function resample(src, sx, sy, sw, sh, dw, dh) {
   const out = blank(dw, dh), fx = sw / dw, fy = sh / dh;
   for (let y = 0; y < dh; y++) {
     const y0 = sy + y * fy, y1 = y0 + fy;
@@ -136,7 +141,7 @@ function resample(src, sx, sy, sw, sh, dw, dh) {
   return out;
 }
 
-function blit(dst, src, dx, dy) {
+export function blit(dst, src, dx, dy) {
   for (let y = 0; y < src.height; y++) for (let x = 0; x < src.width; x++) {
     const tx = dx + x, ty = dy + y; if (tx < 0 || ty < 0 || tx >= dst.width || ty >= dst.height) continue;
     src.data.copy(dst.data, (ty * dst.width + tx) * 4, (y * src.width + x) * 4, (y * src.width + x) * 4 + 4);
@@ -283,6 +288,124 @@ export function checkImage(img, { width: W, height: H, frames = 1, columns, opaq
   return { errs, info };
 }
 
+
+// ---------- 角色動作圖清理(clean)與頭像(headshot)----------
+// 原則(實測):去背後人物 alpha 約 253(不是 255)、背景霧只有個位數到十幾 → alpha 依 HAZE..SOLID 線性拉開;
+// 只留跟畫面中間那條直帶連在一起的塊(汗滴、眼淚在臉上,也連在主體裡);離實心處 > NEAR/2 px 的淡線一律透明。
+export const SOLID = 250, HAZE = 16, NEAR = 9;
+const WHITE = 238, GREY = 12, HOLE = 300, HOLE_WHITE = 249, HOLE_GREY = 3;
+
+// 二值遮罩(Uint8Array 0/1)的方形膨脹 / 侵蝕(半徑 r,分離成水平 + 垂直兩趟)
+function morph(m, w, h, r, dilate) {
+  const pass = (src, horiz) => {
+    const out = new Uint8Array(src.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let v = dilate ? 0 : 1;
+      for (let k = -r; k <= r; k++) {
+        const xx = horiz ? x + k : x, yy = horiz ? y : y + k;
+        const s = xx < 0 || yy < 0 || xx >= w || yy >= h ? (dilate ? 0 : 1) : src[yy * w + xx];
+        if (dilate ? s : !s) { v = dilate ? 1 : 0; break; }
+      }
+      out[y * w + x] = v;
+    }
+    return out;
+  };
+  return pass(pass(m, true), false);
+}
+export const dilate = (m, w, h, r) => morph(m, w, h, r, true);
+export const erode = (m, w, h, r) => morph(m, w, h, r, false);
+
+// 8 連通的塊標號:回傳 { label: Int32Array(0 = 背景), sizes: [_, n1, n2…] }
+function components(m, w, h) {
+  const label = new Int32Array(w * h), sizes = [0]; const stack = [];
+  for (let i = 0; i < m.length; i++) {
+    if (!m[i] || label[i]) continue;
+    const id = sizes.length; let n = 0; label[i] = id; stack.push(i);
+    while (stack.length) {
+      const p = stack.pop(); n++; const x = p % w, y = (p - x) / w;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const q = yy * w + xx; if (m[q] && !label[q]) { label[q] = id; stack.push(q); }
+      }
+    }
+    sizes.push(n);
+  }
+  return { label, sizes };
+}
+
+// 白底去背(只在底圖是白底、不是 RMBG 輸出時用):四邊灌進來的近白色 = 背景;被手臂圍起來、夠大夠白的塊也是背景;
+// 背景旁 2 px 依「比附近最深描線亮多少」算透明度並扣掉混進去的白
+export function keyWhite(img) {
+  const { width: w, height: h, data } = img, N = w * h;
+  const lo = new Uint8Array(N), hi = new Uint8Array(N);
+  for (let i = 0; i < N; i++) { const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2]; lo[i] = Math.min(r, g, b); hi[i] = Math.max(r, g, b); }
+  const cand = new Uint8Array(N); for (let i = 0; i < N; i++) cand[i] = lo[i] >= WHITE && hi[i] - lo[i] <= GREY ? 1 : 0;
+  const { label, sizes } = components(cand, w, h);
+  const bgIds = new Set();
+  for (let x = 0; x < w; x++) { if (label[x]) bgIds.add(label[x]); if (label[(h - 1) * w + x]) bgIds.add(label[(h - 1) * w + x]); }
+  for (let y = 0; y < h; y++) { if (label[y * w]) bgIds.add(label[y * w]); if (label[y * w + w - 1]) bgIds.add(label[y * w + w - 1]); }
+  // 圍起來的白:夠大、夠白、完全沒顏色才算背景(眼白、反光比較小或帶一點顏色)
+  const sumLo = new Float64Array(sizes.length), sumC = new Float64Array(sizes.length);
+  for (let i = 0; i < N; i++) if (label[i]) { sumLo[label[i]] += lo[i]; sumC[label[i]] += hi[i] - lo[i]; }
+  for (let id = 1; id < sizes.length; id++) if (!bgIds.has(id) && sizes[id] >= HOLE && sumLo[id] / sizes[id] >= HOLE_WHITE && sumC[id] / sizes[id] <= HOLE_GREY) bgIds.add(id);
+  const bg = new Uint8Array(N); let pr = 0, pg = 0, pb = 0, pn = 0;
+  for (let i = 0; i < N; i++) if (bgIds.has(label[i])) { bg[i] = 1; pr += data[i * 4]; pg += data[i * 4 + 1]; pb += data[i * 4 + 2]; pn++; }
+  const paper = pn ? [pr / pn, pg / pn, pb / pn] : [255, 255, 255], white = Math.min(...paper);
+  const edge = dilate(bg, w, h, 2);
+  const out = { width: w, height: h, hasAlpha: true, data: Buffer.from(data) };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, o = i * 4;
+    if (bg[i]) { out.data[o + 3] = 0; continue; }
+    if (!edge[i]) { out.data[o + 3] = 255; continue; }
+    let ink = 255; for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h) ink = Math.min(ink, lo[yy * w + xx]); }
+    const a = Math.min(1, Math.max(0, (white - lo[i]) / Math.max(white - ink, 40)));
+    out.data[o + 3] = Math.round(a * 255);
+    if (a > 1e-3) for (let c = 0; c < 3; c++) out.data[o + c] = Math.max(0, Math.min(255, Math.round((data[o + c] - (1 - a) * paper[c]) / a)));
+  }
+  return out;
+}
+
+// clean:alpha 拉開(HAZE..SOLID)→ 只留跟中間直帶(x 在 1/4–3/4)連在一起的塊 → 離實心(alpha > 64)超過 NEAR/2 px 的透明
+export function cleanAlpha(img) {
+  const { width: w, height: h } = img, N = w * h, out = { width: w, height: h, hasAlpha: true, data: Buffer.from(img.data) };
+  if (!img.hasAlpha) throw new Error('沒有 alpha(先用 rmbg 去背;白底立繪才加 --key-white)');
+  const d = out.data;
+  for (let i = 0; i < N; i++) d[i * 4 + 3] = Math.round(Math.min(1, Math.max(0, (d[i * 4 + 3] - HAZE) / (SOLID - HAZE))) * 255);
+  const m = new Uint8Array(N); for (let i = 0; i < N; i++) m[i] = d[i * 4 + 3] > 0 ? 1 : 0;
+  const { label } = components(m, w, h), keep = new Set();
+  for (let y = 0; y < h; y++) for (let x = Math.floor(w / 4); x < Math.ceil(w * 3 / 4); x++) if (label[y * w + x]) keep.add(label[y * w + x]);
+  for (let i = 0; i < N; i++) if (!keep.has(label[i])) d[i * 4 + 3] = 0;
+  const solid = new Uint8Array(N); for (let i = 0; i < N; i++) solid[i] = d[i * 4 + 3] > 64 ? 1 : 0;
+  const near = dilate(solid, w, h, (NEAR - 1) / 2);
+  for (let i = 0; i < N; i++) if (!near[i]) d[i * 4 + 3] = 0;
+  return out;
+}
+
+// clean 之後的自我檢查:有透明、覆蓋率 10–90%、外框 2 px 主體 < 1%;並列出碰到哪幾邊(extend 用)
+export function cleanReport(img) {
+  const { width: w, height: h, data } = img, errs = [];
+  let cover = 0, border = 0, borderN = 0, transparent = 0; const touch = { left: 0, top: 0, right: 0, bottom: 0 };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const a = data[(y * w + x) * 4 + 3];
+    if (a >= ALPHA_MIN) cover++; else transparent++;
+    const edge = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
+    if (edge) { borderN++; if (a >= ALPHA_MIN) { border++; if (x < 2) touch.left++; if (y < 2) touch.top++; if (x >= w - 2) touch.right++; if (y >= h - 2) touch.bottom++; } }
+  }
+  const coverage = +(cover / (w * h)).toFixed(3), b = +(border / borderN).toFixed(4);
+  const touches = Object.entries(touch).filter(([, n]) => n >= 4).map(([k]) => k);
+  if (!transparent) errs.push('沒有透明像素');
+  if (coverage < 0.1 || coverage > 0.9) errs.push(`主體覆蓋率 ${(coverage * 100).toFixed(1)}%(應 10–90%)`);
+  if (b >= 0.01) errs.push(`外框 2 px 內有 ${(b * 100).toFixed(2)}% 主體像素(應 < 1%;碰邊:${touches.join(', ') || '—'};主體被切到:換候選或重出)`);
+  return { ok: !errs.length, errors: errs, coverage, border: b, touches };
+}
+
+// 頭像:anchor = 頭中心 x、y 與頭高(0–1,對「補邊前」的原圖);pad = extend 各邊補的像素;side = 頭高 × zoom(預設 1.15)
+export function headshot(img, { x, y, h }, { size = 256, zoom = 1.15, dx = 0, pad = { left: 0, top: 0, right: 0, bottom: 0 } } = {}) {
+  const bw = img.width - pad.left - pad.right, bh = img.height - pad.top - pad.bottom;
+  const side = h * bh * zoom, cx = (x + dx) * bw + pad.left, cy = y * bh + pad.top;
+  return resample(img, cx - side / 2, cy - side / 2, side, side, size, size);
+}
+
 // ---------- CLI ----------
 // skill 目錄常是連結:argv[1] 保留連結路徑、import.meta.url 是實際路徑,要比 realpath
 const isMain = (() => { try { return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
@@ -292,7 +415,7 @@ if (isMain) {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
-      if (['--opaque', '--tileable', '--character', '--full-bleed', '--exact', '--allow-white-edge'].includes(a)) flags[a.slice(2)] = true;
+      if (['--opaque', '--tileable', '--character', '--full-bleed', '--exact', '--allow-white-edge', '--key-white'].includes(a)) flags[a.slice(2)] = true;
       else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`);
       else pos.push(a);
     }
@@ -328,7 +451,29 @@ if (isMain) {
       const { errs, info } = checkImage(img, { width: int('width'), height: int('height'), frames, columns: flags.columns != null ? int('columns') : undefined, opaque: !!flags.opaque, tileable: !!flags.tileable, character: !!flags.character, fullBleed: !!flags['full-bleed'], allowWhiteEdge: !!flags['allow-white-edge'] });
       console.log(JSON.stringify({ ok: errs.length === 0, errors: errs, frames: info }));
       process.exit(errs.length ? 1 : 0);
-    } else die('用法:sprite.mjs info | density | fit | cover | check(見檔頭)');
+    } else if (cmd === 'clean') {
+      const out = flags.out ?? die('缺 --out');
+      let img = load(pos[0] ?? die('用法:clean <in.png> --out <out.png> [--key-white]'));
+      if (flags['key-white']) img = keyWhite(img);
+      else { let t = false; if (img.hasAlpha) for (let i = 3; i < img.data.length; i += 4) if (img.data[i] < 255) { t = true; break; } if (!t) die('輸入沒有透明像素(還沒去背):圖還沒去背;白底不透明的圖加 --key-white'); }
+      const r = cleanAlpha(img);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, encodePng(r));
+      const rep = cleanReport(r);
+      console.log(JSON.stringify({ file: out, width: r.width, height: r.height, ...rep }));
+      process.exit(rep.ok ? 0 : 1);
+    } else if (cmd === 'headshot') {
+      const out = flags.out ?? die('缺 --out');
+      const img = load(pos[0] ?? die('用法:headshot <in.png> --anchor x,y,h --out <out.png> [--size 256] [--zoom 1.15] [--dx 0] [--pad l,t,r,b]'));
+      const nums = (k, n) => { const v = String(flags[k] ?? die(`缺 --${k}`)).split(',').map(Number); if (v.length !== n || v.some(x => !Number.isFinite(x))) die(`--${k} 要 ${n} 個數字(逗號分隔)`); return v; };
+      const [x, y, h] = nums('anchor', 3); if (![x, y, h].every(v => v > 0 && v <= 1)) die('--anchor 的 x、y、h 都要在 0–1');
+      const [l, t, r, b] = flags.pad != null ? nums('pad', 4) : [0, 0, 0, 0];
+      const res = headshot(img, { x, y, h }, { size: flags.size != null ? int('size') : 256, zoom: flags.zoom != null ? Number(flags.zoom) : 1.15, dx: flags.dx != null ? Number(flags.dx) : 0, pad: { left: l, top: t, right: r, bottom: b } });
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, encodePng(res));
+      let cover = 0; for (let i = 3; i < res.data.length; i += 4) if (res.data[i] >= ALPHA_MIN) cover++;
+      console.log(JSON.stringify({ file: out, width: res.width, height: res.height, coverage: +(cover / (res.width * res.height)).toFixed(3) }));
+    } else die('用法:sprite.mjs info | density | fit | cover | check | clean | headshot(見檔頭)');
   } catch (e) {
     console.error(`錯誤:${e instanceof Fail ? e.message : e?.stack || e}`);
     process.exit(e instanceof Fail ? e.code : 2);
