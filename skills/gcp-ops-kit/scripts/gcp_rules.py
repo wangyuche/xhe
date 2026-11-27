@@ -175,9 +175,11 @@ def scan(inv, gg_sa=None, now=None):
         for a in fw.get("allowed") or []:
             proto = {"6": "tcp", "17": "udp", "132": "sctp"}.get(str(a.get("IPProtocol")), a.get("IPProtocol"))
             ports = a.get("ports") or []
-            if proto in ("all",) or (proto in ("tcp",) and not ports):
+            if proto in ("all",) or (proto in ("tcp", "udp") and not ports):
                 admin.append(f"{proto}:全部")
                 continue
+            if proto in ("icmp", "esp", "ah", "ipip", "gre", "1", "50", "51") and not ports:
+                continue  # 無埠協定(ping 等):不列入
             for p in ports:
                 lo, _, hi = str(p).partition("-")
                 lo, hi = int(lo), int(hi or lo)

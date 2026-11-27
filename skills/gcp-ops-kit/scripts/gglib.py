@@ -136,8 +136,11 @@ def clean_stale_creds(cfg):
     for x in os.listdir(rd):
         if x.startswith(".check-"):
             p = os.path.join(rd, x)
-            if now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
-                shutil.rmtree(p, ignore_errors=True)
+            try:
+                if now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
+                    shutil.rmtree(p, ignore_errors=True)
+            except OSError:
+                pass
 
 
 def new_run(cfg, project, mode):

@@ -493,6 +493,7 @@ def t_classify():
          dict(FX.FIREWALLS[1], allowed=[{"IPProtocol": "6", "ports": ["0-1000"]}]), False),
         ("rollout restart(不需還原,rollback 為 None)", ["kubectl", f"--context={CTX}", "rollout", "restart", "deployment/web", "--namespace=shop"], FX.DEPLOY, False),
         ("防火牆從 all 收緊到 tcp:443", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=tcp:443"], FX.FIREWALLS[2], False),
+        ("從 all 收緊:還原 --rules=all 要警示", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=tcp:443"], FX.FIREWALLS[2], False),
         ("提高防火牆優先序(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--priority=100"], fw, True),
         ("SQL 取消用戶端憑證(放寬)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
          {"settings": {"ipConfiguration": {"sslMode": "TRUSTED_CLIENT_CERTIFICATE_REQUIRED"}}}, True),
@@ -516,6 +517,11 @@ def t_classify():
          dict(fw, description="Allow SSH from office"), False),
         ("授予自訂角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", f"--role=projects/{P}/roles/superuser",
                                  f"--project={P}", "--condition=None"], pol, True),
+        ("GKE_METADATA(pool 沒有 workloadMetadataConfig)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                                       f"--project={P}", "--workload-metadata=GKE_METADATA"], FX.NODEPOOLS[0], False),
+        ("autoscaling min=0 被省略時調 max", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                          f"--project={P}", "--enable-autoscaling", "--max-nodes=10"], {"autoscaling": {"enabled": True, "maxNodeCount": 5}}, False),
+        ("描述含 delete 字樣", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=temp rule, delete later"], fw, False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
@@ -530,6 +536,10 @@ def t_classify():
         if name.startswith("改防火牆描述"):
             import shlex
             good = good and shlex.split(shlex.join(r["rollback"])) == r["rollback"] and "--description=Allow SSH from office" in r["rollback"]
+        if name.startswith("從 all 收緊"):
+            good = good and r.get("rollback_warning")
+        if name.startswith("GKE_METADATA"):
+            good = good and "--workload-metadata=GCE_METADATA" in r["rollback"]
         if name.startswith("rollout restart"):
             good = good and r["rollback"] is None and r["rollback_note"]
         if name.startswith("開啟 autoscaling"):

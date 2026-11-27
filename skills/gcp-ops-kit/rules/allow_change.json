@@ -162,7 +162,8 @@
           "restore": "/config/workloadMetadataConfig/mode",
           "loosens_values": {
             "GCE_METADATA": "節點 metadata 改回 GCE_METADATA(Pod 可取得節點 SA 憑證)"
-          }
+          },
+          "default": "GCE_METADATA"
         },
         "--enable-autoscaling": {
           "inverse": "--no-enable-autoscaling",
@@ -180,7 +181,8 @@
           "restore_with": [
             {
               "flag": "--min-nodes",
-              "from": "/autoscaling/minNodeCount"
+              "from": "/autoscaling/minNodeCount",
+              "default": 0
             },
             {
               "flag": "--max-nodes",
@@ -190,7 +192,8 @@
         },
         "--min-nodes": {
           "restore": "/autoscaling/minNodeCount",
-          "skip_if_off": "/autoscaling/enabled"
+          "skip_if_off": "/autoscaling/enabled",
+          "default": 0
         },
         "--max-nodes": {
           "restore": "/autoscaling/maxNodeCount",

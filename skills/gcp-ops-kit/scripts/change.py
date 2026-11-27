@@ -200,10 +200,12 @@ def write_log(run, plan_path, sha, approved, runner):
     lines = [f"# 變更紀錄", "", f"- 計畫:`{plan_path}`", f"- plan sha256:`{sha}`", f"- 核准:{', '.join(approved)}",
              f"- 狀態:**{runner.status}**", f"- 時間:{gglib.now_iso()}", "",
              "| C | 結果 | 原因 / 驗證 | 結束碼 | 還原指令 |", "|---|---|---|---|---|"]
+    def cell(x):
+        return str(x).replace("|", "\\|").replace("\r", "").replace("\n", "<br>")
     for r in runner.results:
         rb = shlex.join(r.get("rollback") or []) or r.get("rollback_note") or "-"
         warn = f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""
-        lines.append(f"| {r['id']} | {r['result']} | {r.get('reason', '')} | {r.get('rc', '-')} | `{rb}`{warn} |")
+        lines.append(f"| {cell(r['id'])} | {cell(r['result'])} | {cell(r.get('reason', ''))} | {r.get('rc', '-')} | `{cell(rb)}`{cell(warn)} |")
     lines += ["", "實際執行的指令見 `inventory/commands.log`(由 kit 記錄,agent 不寫此檔)。", ""]
     with open(os.path.join(run, "change-log.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

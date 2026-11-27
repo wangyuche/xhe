@@ -140,7 +140,8 @@ POD_SECURITY_ORDER = {"privileged": 0, "baseline": 1, "restricted": 2}
 
 
 def common_forbidden(argv, cfg):
-    text = " ".join(argv)
+    # 只看指令詞與旗標名稱,不看旗標值(例 --description=do not delete 不算 delete)
+    text = " ".join(a.split("=", 1)[0] if a.startswith("--") else a for a in argv)
     rules = change_rules()
     for tok in rules["forbidden_tokens"]:
         if re.search(tok, text):
@@ -267,6 +268,18 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
                     new_nets += [x for x in _ranges(a.split("=", 1)[1]) if "/" in x]
             if new_nets and not _subset_cidrs([str(n) for n in rb_nets], new_nets):
                 res["rollback_warning"] = "這條還原會把網段放寬回變更前的範圍,執行前請確認"
+    if rollback_args and not res.get("rollback_warning") and kind == "firewall-update":
+        rbf = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in rollback_args if isinstance(a, str) and a.startswith("--") and "=" in a}
+        if "--rules" in rbf and "--rules" in flags:
+            old_rules = _ranges(rbf["--rules"])
+            if any(_port_all(r) for r in old_rules) or not _rules_subset(old_rules, _ranges(flags["--rules"])):
+                res["rollback_warning"] = "這條還原會把協定 / 埠放寬回變更前的範圍(可能是全部),執行前請確認"
+        if "--priority" in rbf and "--priority" in flags:
+            try:
+                if int(rbf["--priority"]) < int(flags["--priority"]):
+                    res["rollback_warning"] = "這條還原會把 allow 規則調回較高優先序,執行前請確認"
+            except ValueError:
+                pass
     loosen_flags = {f for f, r in k.get("flags", {}).items() if r.get("loosens")}
     if rollback_args and not res.get("rollback_warning") and any(a.split("=")[0] in loosen_flags for a in rollback_args if isinstance(a, str)):
         res["rollback_warning"] = "這條還原會放寬安全設定(回到變更前較寬鬆的狀態),執行前請確認"
@@ -336,6 +349,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             out.append(rule["inverse"])
             for rw in rule.get("restore_with", []):
                 v = gglib.ptr_get(snap, rw["from"])
+                if v is None and "default" in rw:
+                    v = rw["default"]
                 if rw.get("format") == "join":
                     vals = [str(i.get(rw["item_key"]) if rw.get("item_key") else i) for i in (v or [])]
                     if vals:
@@ -355,6 +370,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 changed = True
                 continue
             cur = gglib.ptr_get(snap, rule["restore"])
+            if cur is None and "default" in rule:
+                cur = rule["default"]  # GKE API 省略 0 / 預設值的欄位
             fmt = rule.get("format", "scalar")
             if cur is None and not rule.get("empty_ok") and not rule.get("state_required") and fmt != "join":
                 return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"

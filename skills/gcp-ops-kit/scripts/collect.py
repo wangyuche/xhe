@@ -22,9 +22,9 @@ K8S_KINDS = ["namespaces", "pods", "deployments", "daemonsets", "statefulsets", 
              "clusterroles", "clusterrolebindings", "configmaps"]
 
 
-def need_tools(mode):
-    missing = [t for t in ("gcloud", "kubectl", "gke-gcloud-auth-plugin", "ruby", "python3", "node")
-               if shutil.which(t) is None]
+def need_tools(mode, areas=AREAS):
+    tools = ["gcloud", "ruby", "python3", "node"] + (["kubectl", "gke-gcloud-auth-plugin"] if {"gke", "k8s"} & set(areas) else [])
+    missing = [t for t in tools if shutil.which(t) is None]
     if missing:
         hint = []
         if "gcloud" in missing:
@@ -204,7 +204,7 @@ def main(argv):
     try:
         cfg = gglib.load_config(require=True)
         gglib.check_project(project)
-        need_tools(opts["--mode"])
+        need_tools(opts["--mode"], areas)
         run = gglib.new_run(cfg, project, opts["--mode"])
         meta = gglib.read_json(os.path.join(run, "meta.json"))
         meta.update({"areas": areas, "clusters": opts["--clusters"], "prev": opts["--prev"] or None})
