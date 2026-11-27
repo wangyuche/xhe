@@ -150,8 +150,8 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   });
   if (r.spawnError) { rmSync(join(outDir, `${action}-${n}.png`), { force: true }); appendManifest(outDir, { run, action, status: `跑不了 codex:${r.spawnError.code ?? ''}`, budget_used: used, budget_limit: limit }); die(`跑不了 codex:${r.spawnError.message}`, 3); }
   const ev = parseEvents(r.out), file = `${action}-${n}.png`;
-  // 事件裡沒有合法 thread id 時,用執行前後 generated_images 新增的 UUID 目錄(只有一個時)當作這次的
-  if (!ev.thread && existsSync(genRoot)) { const added = readdirSync(genRoot).filter(x => !before.has(x) && UUID.test(x)); if (added.length === 1) ev.thread = added[0]; }
+  // 事件裡沒有合法 thread id:不猜(平行的另一個 gen 可能剛好新增目錄),當成沒出圖,回報新增的目錄讓人檢查
+  const orphans = !ev.thread && existsSync(genRoot) ? readdirSync(genRoot).filter(x => !before.has(x)) : [];
   const dir = threadDir(codexHome, ev.thread);
   let made = [];
   try { made = dir ? readdirSync(dir).filter(f => f.endsWith('.png')).map(f => join(dir, f)).sort((a, b2) => statSync(a).mtimeMs - statSync(b2).mtimeMs) : []; } catch { made = []; }
@@ -178,7 +178,8 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
     try { appendManifest(outDir, entry); } catch (e) { entry.manifest_warning = `manifest 沒寫進去:${e.message}`; }
   }
   const quota = code === 3 && ev.errors.some(e => /quota|usage limit|rate limit|limit reached|credits/i.test(e));
-  const res = { ok: code === 0, status: entry.status, manifest_warning: entry.manifest_warning, file: code === 0 ? join(outDir, file) : null, action, n, thread: ev.thread, thread_cleaned: cleaned, violations: entry.violations, errors: entry.errors, quota, budget: { used, limit } };
+  const made_for_action = code === 0 ? readdirSync(outDir).filter(f => new RegExp(`^${action}-\\d+\\.png$`).test(f) && statSync(join(outDir, f)).size > 0).length : undefined;
+  const res = { ok: code === 0, candidates_now: made_for_action, count: c.count ?? 2, status: entry.status, manifest_warning: entry.manifest_warning, ...(orphans.length ? { unclaimed_codex_dirs: orphans } : {}), file: code === 0 ? join(outDir, file) : null, action, n, thread: ev.thread, thread_cleaned: cleaned, violations: entry.violations, errors: entry.errors, quota, budget: { used, limit } };
   if (code) die(`${entry.status}${ev.errors.length ? ':' + ev.errors.map(e => scrubPaths(e, codexHome).slice(0, 300)).join(' / ') : ''}`, code, res);
   return res;
 }

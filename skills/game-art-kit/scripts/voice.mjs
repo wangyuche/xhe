@@ -66,7 +66,7 @@ async function post(A, path, body, { binary = false, before, rejected, deadline,
     // 計時器要等內容讀完才清掉(伺服器送了標頭、內容卻卡住時也會逾時)
     let bodyBuf, text;
     try { if (res.ok) bodyBuf = Buffer.from(await res.arrayBuffer()); else text = scrubKey(await res.text(), A.key).slice(0, 400); }
-    catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS) die(`ElevenLabs 讀取回應失敗:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
+    catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS || !idempotent) die(`ElevenLabs 讀取回應失敗${idempotent ? '' : '(建立 voice 的回應沒收完:帳號裡可能已經多了一個 voice,請到 ElevenLabs 確認)'}:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
     clearTimeout(t);
     if (res.ok) { if (binary) return bodyBuf; try { return JSON.parse(bodyBuf.toString('utf8')); } catch { die(`ElevenLabs 回傳的不是 JSON(HTTP ${res.status},可能是代理伺服器的頁面)`, 3); } }
     if (res.status === 429) rejected?.(attempt); // 限流:服務端沒處理,不計費 → 退回這次的用量(放在任何放棄判斷之前)
@@ -114,7 +114,9 @@ async function postLogged(A, path, body, opts, log) {
   try { return await post(A, path, body, opts); }
   catch (e) { if (e instanceof Fail && log) log(`HTTP 失敗(結束碼 ${e.code}):${e.message.slice(0, 200)}`); throw e; }
 }
-function appendManifest(dir, entry, used, run) { mkdirSync(dir, { recursive: true }); appendJsonItem(join(dir, 'manifest.json'), { run, ...entry, budget_used: used }); }
+// manifest 寫不進去(殘留的鎖、磁碟錯誤)只記警告,不能讓已付費的結果沒存回 voice.json
+const manifestWarnings = [];
+function appendManifest(dir, entry, used, run) { try { mkdirSync(dir, { recursive: true }); appendJsonItem(join(dir, 'manifest.json'), { run, ...entry, budget_used: used }); } catch (e) { manifestWarnings.push(`manifest 沒寫進去:${e.message}`); } }
 
 // ---------- 指令 ----------
 export async function design(voiceFile, { outDir, budget, limit, run, redesign = false }) {
@@ -149,13 +151,15 @@ export async function design(voiceFile, { outDir, budget, limit, run, redesign =
   }
   if (!made.length) die('ElevenLabs 沒有回傳任何可用的 preview', 3);
   const anyOk = made.some(c => c.check === 'ok');
-  return { ok: anyOk, chars: len, budget: { used, limit }, candidates: made.map(c => ({ n: c.n, check: c.check, listen: join(art, c.path) })), prev_voice_id: v.prev_voice_id ?? null, key_scan: scan(art, A.key) };
+  return { ok: anyOk, manifest_warnings: manifestWarnings.length ? manifestWarnings : undefined, chars: len, budget: { used, limit }, candidates: made.map(c => ({ n: c.n, check: c.check, listen: join(art, c.path) })), prev_voice_id: v.prev_voice_id ?? null, key_scan: scan(art, A.key) };
 }
 
 export async function pick(voiceFile, n, { repick = false, force = false } = {}) {
   const v = loadVoice(voiceFile);
   if (v.voice_id && !repick) die('voice.json 已選定音色(voice_id 已建立);換選會建立新的付費 voice、所有台詞重錄,要明確加 --repick');
   const c = (v.candidates ?? []).find(x => x.n === n) ?? die(`voice.json 的 candidates 沒有 n = ${n}(先跑 design;描述改過的話舊候選已作廢)`);
+  const dhNow = createHash('sha256').update(JSON.stringify([v.design, v.preview_text, v.models.design])).digest('hex').slice(0, 12);
+  if (v.candidates_for && v.candidates_for !== dhNow) die('voice.json 的 design / preview_text 改過了,候選是舊描述做的:先重新 design 再選');
   if (c.check && c.check !== 'ok' && !force) die(`候選 ${n} 的音訊檢查沒過(${String(c.check).slice(0, 100)});確定要用加 --force(會建立付費 voice)`);
   const A = api();
   const r = await post(A, '/v1/text-to-voice', { voice_name: v.voice_name ?? v.id ?? 'character', voice_description: v.design, generated_voice_id: c.generated_voice_id, labels: { character: v.id ?? '' } }, { idempotent: false });
@@ -202,14 +206,14 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
       if (res.ok || res.noRetry) break; // 超過 15 秒換 seed 也不會變短:不重錄,請拆句
       seed = (seed + 1000003) % SEED_MAX;
     }
-    if (hitDeadline) { stoppedAt = k; break; } // 到時間:這句留到下次(不算失敗,不動它的雜湊)
+    if (hitDeadline) { stoppedAt = k; writeJson(voiceFile, v); break; } // 到時間:這句留到下次(不算失敗,不動它的雜湊)
     if (res && res.ok) { if (lastSeed !== lineSeed(v, k)) v.line_seeds[k] = lastSeed; v.lines[k] = lineHash(v, k, text); done.push(k); }
     else { if (!prevGood) { v.line_seeds[k] = (lastSeed + 1000003) % SEED_MAX; delete v.lines[k]; } failed.push({ key: k, error: res.error, kept_previous: prevGood }); }
     writeJson(voiceFile, v); // 每句存一次:中途停下來,再跑會略過已完成的
   }
   const remaining = stoppedAt ? todo.slice(todo.indexOf(stoppedAt)) : [];
   // 只是到時間停下(remaining)不算失敗:結束碼 0,呼叫端看 remaining 再跑一次
-  return { ok: !failed.length, recorded: done.length, skipped: Object.keys(L).length - todo.length - deferred, deferred, failed, remaining, budget: { used, limit }, key_scan: scan(art, A.key) };
+  return { ok: !failed.length, manifest_warnings: manifestWarnings.length ? manifestWarnings : undefined, recorded: done.length, skipped: Object.keys(L).length - todo.length - deferred, deferred, failed, remaining, budget: { used, limit }, key_scan: scan(art, A.key) };
 }
 
 export function status(voiceFile, { linesFile, out }) {
