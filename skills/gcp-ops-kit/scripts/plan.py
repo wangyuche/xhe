@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """變更計畫產生器。
 
   plan.py build <run 目錄>              讀 <run>/plan.input.json,快照 + dry-run + 分類,寫 plan.json,重產報告
@@ -54,16 +54,17 @@ def build(run):
             ctx_done = set()
             for raw in inp["items"]:
                 items.append(build_item(s, cfg, run, project, raw, ctx_done))
+        # 寫檔、算雜湊、產報告都在鎖內:避免另一個 build 同時覆寫 plan.json
+        plan = {"project": project, "source_run": run, "created": gglib.now_iso(), "sa": cfg.get("GG_SA"),
+                "items": items}
+        path = os.path.join(run, "plan.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(ggplan.stable_dump(plan))
+        os.chmod(path, 0o600)
+        sha = gglib.sha256_file(path)
+        subprocess.run(["node", os.path.join(gglib.KIT, "scripts", "render.mjs"), run])
     finally:
         gglib.release_lock(cfg, project, run)
-    plan = {"project": project, "source_run": run, "created": gglib.now_iso(), "sa": cfg.get("GG_SA"),
-            "items": items}
-    path = os.path.join(run, "plan.json")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(ggplan.stable_dump(plan))
-    os.chmod(path, 0o600)
-    sha = gglib.sha256_file(path)
-    subprocess.run(["node", os.path.join(gglib.KIT, "scripts", "render.mjs"), run])
     print(f"plan={path}")
     print(f"sha256={sha}")
     for it in items:

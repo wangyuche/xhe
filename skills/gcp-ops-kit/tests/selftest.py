@@ -578,6 +578,9 @@ def t_classify():
             good = good and r.get("rollback_warning")
         if name.startswith("從 all 收緊"):
             good = good and r.get("rollback_warning")
+        if name.startswith(("GKE_METADATA", "autoscaling min=0", "SQL 加 --require-ssl")):
+            import ggplan
+            good = good and not ggplan.check_pre(r["auto_pre"], snap)  # 預設值補上的欄位,precondition 仍要對得上快照
         if name.startswith("GKE_METADATA"):
             good = good and "--workload-metadata=GCE_METADATA" in r["rollback"]
         if name.startswith("rollout restart"):

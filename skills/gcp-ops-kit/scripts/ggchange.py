@@ -372,7 +372,7 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             res["auto_pre"].append({"field": rule["state"], "expect": cur})
             out.append(rule["inverse"])
             for rw in rule.get("restore_with", []):
-                v = gglib.ptr_get(snap, rw["from"])
+                v = raw_v = gglib.ptr_get(snap, rw["from"])
                 if v is None and "default" in rw:
                     v = rw["default"]
                 if rw.get("format") == "join":
@@ -385,7 +385,7 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                     return None, f"{fl}:快照沒有 {rw['from']},還原無法帶回原值"
                 else:
                     out.append(f"{rw['flag']}={v}")
-                res["auto_pre"].append({"field": rw["from"], "expect": v})
+                res["auto_pre"].append({"field": rw["from"], "expect": raw_v})
             changed = True
         elif "restore" in rule:
             if rule.get("skip_if_off") and not _as_bool(gglib.ptr_get(snap, rule["skip_if_off"])):
@@ -393,9 +393,10 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 res["auto_pre"].append({"field": rule["skip_if_off"], "expect": gglib.ptr_get(snap, rule["skip_if_off"])})
                 changed = True
                 continue
-            cur = gglib.ptr_get(snap, rule["restore"])
+            raw = gglib.ptr_get(snap, rule["restore"])  # precondition 用快照原值(可能是 None)
+            cur = raw
             if cur is None and "default" in rule:
-                cur = rule["default"]  # GKE API 省略 0 / 預設值的欄位
+                cur = rule["default"]  # GKE API 省略 0 / 預設值的欄位:還原指令用預設值
             fmt = rule.get("format", "scalar")
             if cur is None and not rule.get("empty_ok") and not rule.get("state_required") and fmt != "join":
                 return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"
@@ -421,7 +422,7 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 out.append(f"{fl}={cur}")
             else:
                 out.append(f"{fl}={'' if cur is None else cur}")
-            res["auto_pre"].append({"field": rule["restore"], "expect": cur})
+            res["auto_pre"].append({"field": rule["restore"], "expect": raw})
             changed = True
         else:
             return None, f"{fl} 沒有還原範本"
