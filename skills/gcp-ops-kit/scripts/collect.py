@@ -96,6 +96,9 @@ class Collector:
         if "gke" in a or "k8s" in a:
             clusters = self.g("gke", "clusters.json", ["container", "clusters", "list"]) or []
             if self.clusters:
+                found = {c.get("name") for c in clusters}
+                for miss in sorted(set(self.clusters) - found):
+                    self.undetermined.append({"area": "gke", "item": miss, "error": "找不到這個叢集(名稱打錯或不在本專案)"})
                 clusters = [c for c in clusters if c.get("name") in self.clusters]
             for c in clusters:
                 self.g("gke", os.path.join("nodepools", f"{c['location']}_{c['name']}.json"),

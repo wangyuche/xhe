@@ -570,6 +570,9 @@ def t_classify():
         ("開授權網路(原本關但留有網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
                                        "--enable-master-authorized-networks", "--master-authorized-networks=203.0.113.0/24"],
          dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": False, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), False),
+        ("node pool 名稱叫 upgrade", ["gcloud", "container", "node-pools", "update", "upgrade", "--cluster=prod", "--location=asia-east1",
+                                     f"--project={P}", "--no-enable-autorepair"], dict(FX.NODEPOOLS[0], management={"autoRepair": True}), True),
+        ("協定寫大寫 TCP:443", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=TCP:443"], FX.FIREWALLS[2], False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
@@ -794,6 +797,13 @@ def t_check_scope(e):
     ok("check.sh:scope 不含 gke / k8s 時不要求 kubectl;預設範圍仍要求", r1.returncode == 0 and r2.returncode == 3 and "kubectl" in r2.stderr, (r1.stderr[-300:], r2.stderr[-300:]))
 
 
+def t_missing_cluster(e):
+    r = e.run([os.path.join(S, "collect.sh"), FX.P, "--scope", "gke,k8s", "--clusters", "prod-typo"])
+    run = run_dir(r.stdout)
+    und = json.load(open(os.path.join(run, "inventory", "undetermined.json"))) if run else []
+    ok("--clusters 打錯名稱 → 列入無法判定(不會靜默 PASS)", any(u["item"] == "prod-typo" for u in und), und)
+
+
 def t_undetermined(e):
     fx = [f for f in FX.review_fixtures() if not f["re"].startswith("^sql instances list")]
     fx.append({"tool": "gcloud", "re": "^sql instances list", "rc": 1, "err": "ERROR: API [sqladmin.googleapis.com] not enabled"})
@@ -880,6 +890,8 @@ def t_plan_change(e, review_run):
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
                      "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
          "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
+        {"id": "C10", "summary": "expected 少 expect 鍵", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
+         "expected": [{"field": "/versioning_enabled", "value": True}]},
         {"id": "C8", "summary": "expected 比對 ConfigMap data", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
          "expected": [{"field": "/data/DB_PASSWORD", "expect": "guess"}]},
         {"id": "C7", "summary": "binding 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
@@ -908,7 +920,7 @@ def t_plan_change(e, review_run):
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
     ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"]
-       and by.get("C7", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
+       and by.get("C7", {}).get("blocked_reason") and by.get("C10", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
     ok("計畫:移除 allUsers 的還原附「會重新公開」警示", by["C1"].get("rollback_warning") and "重新公開" in by["C1"]["rollback_warning"], by["C1"].get("rollback_warning"))
     ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
@@ -1174,6 +1186,7 @@ def main():
         t_activate_fail(e)
         t_default_project(e)
         t_check_scope(e)
+        t_missing_cluster(e)
         if run:
             t_plan_change(e, run)
     finally:

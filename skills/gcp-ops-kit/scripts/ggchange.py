@@ -80,6 +80,7 @@ PORTLESS = {"icmp", "esp", "ah", "ipip", "gre", "icmpv6", "58", "1", "50", "51",
 
 
 def _port_all(rule):
+    rule = rule.lower()
     if rule in ("all",):
         return True
     if rule.lower() in PORTLESS:
@@ -100,7 +101,7 @@ def _port_total(rules):
     """每個協定把埠範圍合併後的總埠數(取最大的協定)。"""
     per = {}
     for r in rules:
-        m = re.fullmatch(r"(\w+):(\d+)(?:-(\d+))?", r)
+        m = re.fullmatch(r"(\w+):(\d+)(?:-(\d+))?", r.lower())
         if not m:
             continue
         p, a, b = m.groups()
@@ -124,7 +125,7 @@ def _port_total(rules):
 
 def _rules_subset(new, old):
     def expand(r):
-        m = re.fullmatch(r"(\w+)(?::(\d+)(?:-(\d+))?)?", r)
+        m = re.fullmatch(r"(\w+)(?::(\d+)(?:-(\d+))?)?", r.lower())
         if not m:
             return None
         p, a, b = m.groups()
@@ -147,8 +148,16 @@ POD_SECURITY_ORDER = {"privileged": 0, "baseline": 1, "restricted": 2}
 
 
 def common_forbidden(argv, cfg):
-    # 只看指令詞與旗標名稱,不看旗標值(例 --description=do not delete 不算 delete)
-    text = " ".join(a.split("=", 1)[0] if a.startswith("--") else a for a in argv)
+    # 只看指令詞與旗標名稱,不看旗標值(例 --description=do not delete 不算 delete);
+    # 符合允許清單的 kind 時,prefix 之後的位置參數是資源名稱,也不看(例 node pool 叫 upgrade)
+    skip = set()
+    for k in change_rules()["kinds"].values():
+        pre = k["prefix"]
+        if argv[:len(pre)] == pre:
+            skip = {i for i in range(len(pre), len(argv)) if not argv[i].startswith("-")}
+        elif pre[0] == "kubectl" and len(argv) > 1 and argv[1].startswith("--context=") and argv[2:2 + len(pre) - 1] == pre[1:]:
+            skip = {i for i in range(1 + len(pre), len(argv)) if not argv[i].startswith("-")}
+    text = " ".join(a.split("=", 1)[0] if a.startswith("--") else a for i, a in enumerate(argv) if i not in skip)
     rules = change_rules()
     for tok in rules["forbidden_tokens"]:
         if re.search(tok, text):

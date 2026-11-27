@@ -165,6 +165,8 @@ def snapshot(s, kind, argv, project, ctx_done):
             if not isinstance(o, dict) or not isinstance(o.get("metadata"), dict):
                 return None, endpoint, "manifest 每份文件都要是 mapping,且 metadata 要是物件"
             md = o["metadata"]
+            if not isinstance(md.get("name"), str) or not isinstance(md.get("namespace", ""), str):
+                return None, endpoint, "manifest 的 metadata.name / namespace 要是字串"
             if not o.get("kind") or not md.get("name"):
                 return None, endpoint, "manifest 每份文件都要有 kind 與 metadata.name"
             rules_ = ggchange.change_rules()
