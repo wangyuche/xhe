@@ -62,6 +62,7 @@ def main(argv):
     meta.update({"inputs": [os.path.realpath(p) for p in paths], "files": files, "kustomize": kustom})
     gglib.write_json(os.path.join(run, "meta.json"), meta)
     undetermined = []
+    rendered_docs = []
     for k in kustom:
         if shutil.which("kubectl") is None:
             undetermined.append({"area": "yaml", "item": k, "error": "kustomize 目錄需要 kubectl"})
@@ -72,11 +73,20 @@ def main(argv):
         if r.returncode != 0:
             undetermined.append({"area": "yaml", "item": k, "error": gglib._short(r.stderr, 400)})
             continue
-        out = os.path.join(run, "inventory", "rendered", re.sub(r"[^A-Za-z0-9._-]+", "_", k.strip("/")) + ".yaml")
-        os.makedirs(os.path.dirname(out), 0o700, exist_ok=True)
-        with open(out, "w", encoding="utf-8") as f:
-            f.write(gglib.scrub_text(r.stdout))
-        files.append(out)
+        r2 = subprocess.run(["ruby", os.path.join(gglib.KIT, "scripts", "yaml2json.rb"), "-"], input=r.stdout,
+                            capture_output=True, text=True, timeout=120)
+        if r2.returncode != 0:
+            undetermined.append({"area": "yaml", "item": k, "error": gglib._short(r2.stderr, 400)})
+            continue
+        rel = re.sub(r"[^A-Za-z0-9._-]+", "_", k.strip("/")) + ".json"
+        out = os.path.join(run, "inventory", "rendered", rel)
+        kdocs = []
+        for d in json.loads(r2.stdout or "[]"):
+            d["obj"] = gglib.redact(d["obj"])  # 寫檔前遮蔽(secretGenerator 等)
+            d["file"] = f"{k}(kustomize 展開結果)"
+            kdocs.append(d)
+        gglib.write_json(out, [d["obj"] for d in kdocs])
+        rendered_docs.extend(kdocs)
     docs = []
     for f in files:
         r = subprocess.run(["ruby", os.path.join(gglib.KIT, "scripts", "yaml2json.rb"), f],
@@ -91,6 +101,7 @@ def main(argv):
                         docs.append({"obj": o, "file": f, "line": d["line"], "lines": {}})
                     continue
                 docs.append(d)
+    docs.extend(d for d in rendered_docs if isinstance(d.get("obj"), dict) and d["obj"].get("kind"))
     findings = k8s_rules.scan(docs, live=False)
     gglib.write_json(os.path.join(run, "findings.json"), findings)
     gglib.write_json(os.path.join(run, "inventory", "undetermined.json"), undetermined)

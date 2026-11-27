@@ -127,7 +127,8 @@ def scan(docs, live=False):
             sp = obj["spec"]
             ann = md.get("annotations") or {}
             internal = any("internal" in k and str(v).lower() in ("true", "internal") for k, v in ann.items()) or \
-                ann.get("networking.gke.io/load-balancer-type", "").lower() == "internal"
+                str(ann.get("networking.gke.io/load-balancer-type", "")).lower() == "internal" or \
+                str(ann.get("cloud.google.com/load-balancer-type", "")).lower() == "internal"
             if not internal and not sp.get("loadBalancerSourceRanges"):
                 c.add("K8S-LB-001", doc, "/spec/type")
         spec, base = pod_spec(obj)

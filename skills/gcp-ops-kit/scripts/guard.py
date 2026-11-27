@@ -16,7 +16,7 @@ SCRIPTS = os.path.join(gglib.KIT, "scripts")
 ENTRIES = {"check.sh", "collect.sh", "plan.py", "change.sh", "render.mjs", "yaml-review.sh", "selftest.sh"}
 INTERP = {".sh": {"bash"}, ".py": {"python3"}, ".mjs": {"node"}}
 FORBIDDEN_CHARS = set(";&|`$<>()\n\r\\*?[]{}~!#")
-READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "date", "pwd", "file", "find", "jq", "diff"}
+READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "date", "pwd", "find", "jq", "diff"}
 FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
                "curl", "wget", "googleapis")
@@ -74,9 +74,10 @@ def arg_paths(tok):
         return [tok]
     if "=" in tok:
         return [tok.split("=", 1)[1]]
-    if "/" in tok:
-        return [tok[tok.index("/"):]]
-    return []
+    if tok.startswith("--"):
+        return []
+    # 短旗標可能直接黏著路徑(-f../x、-f/abs):旗標字母之後的每一段都當成候選路徑
+    return [tok[j:] for j in range(2, len(tok))]
 
 
 def check_bash(cmd, cfg, cwd):

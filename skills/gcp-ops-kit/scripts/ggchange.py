@@ -387,6 +387,17 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
                 reasons.append("放寬防火牆協定 / 埠")
     if "--source-ranges" in flags and not _subset_cidrs(_ranges(flags["--source-ranges"]), snap.get("sourceRanges") or []):
         reasons.append("放寬防火牆來源網段")
+    if "--target-tags" in flags:
+        new_t, old_t = set(_ranges(flags["--target-tags"])), set(snap.get("targetTags") or [])
+        if not new_t or not new_t <= old_t:
+            reasons.append("放寬防火牆套用對象(target-tags 清空或新增)")
+    if "--priority" in flags:
+        try:
+            if int(flags["--priority"]) < int(snap.get("priority", 1000)):
+                reasons.append("提高 allow 規則優先序(可能蓋過 deny 規則)")
+        except ValueError:
+            res["blocked_reason"] = "--priority 要是整數"
+            return None, [], None
     name = pos[0]
     iap = "35.235.240.0/20" in (snap.get("sourceRanges") or [])
     if "--disabled" in flags and (name.startswith("gke-") or iap):
@@ -407,6 +418,9 @@ def _k_bucket_update(pos, flags, snap, res, k, cfg, *_):
 
 def _iam_common(pos, flags, res, cfg, adding):
     member, role = flags.get("--member"), flags.get("--role")
+    if member and member != member.lower() and member not in ("allUsers", "allAuthenticatedUsers"):
+        res["blocked_reason"] = "--member 請用小寫(GCP 會把 email 轉成小寫,大小寫不同會讓還原比對錯誤)"
+        return None
     if role == "roles/owner":
         res["blocked_reason"] = "一律禁止:新增 / 移除 roles/owner"
         return None
@@ -485,8 +499,19 @@ def _binding_has_condition(policy, member, role):
     return False
 
 
+SSL_ORDER = {"ALLOW_UNENCRYPTED_AND_ENCRYPTED": 0, "ENCRYPTED_ONLY": 1, "TRUSTED_CLIENT_CERTIFICATE_REQUIRED": 2}
+
+
 def _k_sql_patch(pos, flags, snap, res, k, cfg, *_):
     reasons = _loosen_by_table(flags, k)
+    if "--ssl-mode" in flags:
+        old = gglib.ptr_get(snap, "/settings/ipConfiguration/sslMode")
+        new = str(flags["--ssl-mode"])
+        if new not in SSL_ORDER:
+            res["blocked_reason"] = f"--ssl-mode 不認得:{new}"
+            return None, [], None
+        if old in SSL_ORDER and SSL_ORDER[new] < SSL_ORDER[old] and new != "ALLOW_UNENCRYPTED_AND_ENCRYPTED":
+            reasons.append(f"SSL 由 {old} 降為 {new}")
     if "--authorized-networks" in flags:
         old = [n.get("value") for n in (gglib.ptr_get(snap, "/settings/ipConfiguration/authorizedNetworks") or [])]
         if not _subset_cidrs(_ranges(flags["--authorized-networks"]), old):

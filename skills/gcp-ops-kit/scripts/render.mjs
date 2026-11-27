@@ -218,6 +218,7 @@ export function check(run) {
     if (st.size > 50 * 1024 * 1024) { errs.push(`${rel}: 檔案過大未掃描`); continue; }
     const text = fs.readFileSync(p, 'utf8');
     for (const re of PATTERNS) if (re.test(text)) errs.push(`${rel}: 命中秘密樣式 ${re.source}`);
+    if (rel.startsWith('inventory/') && !rel.endsWith('.json') && !rel.endsWith('.log')) errs.push(`${rel}: inventory 只能有遮蔽後的 JSON`);
     if (rel.endsWith('.json')) {
       const obj = readJSON(p);
       if (obj !== null) unredacted(obj, rel, errs, rel.startsWith('inventory/'));

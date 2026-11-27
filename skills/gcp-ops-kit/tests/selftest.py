@@ -163,6 +163,7 @@ def t_guard(e):
         (f"cat {e.reports}/p/r/report.html", "allow"),
         (f"ls {e.tmp}", "allow"),
         (f"ls -laR {e.reports}", "deny-live"),
+        (f"file {e.reports}", "deny"),
         (f"cat {e.cfg.replace('/conf/', '/CONF/')}", "deny"),
         (f"cat {e.key.replace('sa.json', 'SA.JSON')}", "deny"),
         (f"grep -r private_key {e.reports}", "deny-live"),
@@ -190,7 +191,9 @@ def t_guard(e):
                            env=env, capture_output=True, text=True)
         tgt = inp.get("file_path") or inp.get("path") or inp.get("pattern")
         ok(f"guard hook {tool} {os.path.relpath(tgt, e.tmp) if tgt.startswith('/') else tgt} → {want}", r.returncode == want, r.stderr)
-    for cwd, cmd, want in ((os.path.dirname(e.tmp), "grep -r private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
+    os.makedirs(os.path.join(e.tmp, "sub"), exist_ok=True)
+    for cwd, cmd, want in ((os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
+                           (os.path.dirname(e.tmp), "grep -r private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
                            (os.path.dirname(e.tmp), "find -name sa.json", 2), (os.path.join(e.reports, "p", "other"), "grep -n x", 0)):
         r = subprocess.run(["python3", g], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd}),
                            env=env, capture_output=True, text=True)
@@ -286,6 +289,7 @@ def t_classify():
         ("授權網路只給網段沒帶 enable", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
                                        "--master-authorized-networks=10.1.0.0/16"], dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]})),
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
+        ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
         ("bucket 狀態欄位不存在", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}),
     ]
     for name, argv, snap in blocked:
@@ -317,6 +321,11 @@ def t_classify():
         ("Cloud SQL 原本沒有授權網路", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--authorized-networks=203.0.113.0/24"],
          {"settings": {"ipConfiguration": {"ipv4Enabled": True}}}, True),
         ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, False),
+        ("清空防火牆 target-tags(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags="],
+         dict(fw, targetTags=["bastion"]), True),
+        ("提高防火牆優先序(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--priority=100"], fw, True),
+        ("SQL 取消用戶端憑證(放寬)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
+         {"settings": {"ipConfiguration": {"sslMode": "TRUSTED_CLIENT_CERTIFICATE_REQUIRED"}}}, True),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -364,6 +373,37 @@ def t_yaml(e):
     ok("YAML 審查:秘密值不入 findings", "hunter2" not in json.dumps(fs) and "s3cr3t" not in json.dumps(fs))
     r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run], env=env) if run else None
     ok("YAML 審查:render --check 通過", r2 and r2.returncode == 0, r2.stderr if r2 else "")
+    kd = os.path.join(e.tmp, "kust")
+    os.makedirs(kd)
+    shutil.copy(os.path.join(good, "app.yaml"), kd)
+    with open(os.path.join(kd, "kustomization.yaml"), "w") as f:
+        f.write("resources: [app.yaml]\nsecretGenerator:\n- name: db\n  namespace: shop\n  literals: [DB_PASSWORD=hunter2kustomize]\n")
+    lb = os.path.join(e.tmp, "lb")
+    os.makedirs(lb)
+    with open(os.path.join(lb, "svc.yaml"), "w") as f:
+        f.write("apiVersion: v1\nkind: Service\nmetadata:\n  name: ilb\n  namespace: shop\n  annotations:\n    cloud.google.com/load-balancer-type: Internal\nspec:\n  type: LoadBalancer\n")
+    r = e.run([os.path.join(S, "yaml-review.sh"), lb, "--label", "lb"], env=env)
+    run = run_dir(r.stdout)
+    fs = json.load(open(os.path.join(run, "findings.json"))) if run else ["x"]
+    ok("YAML 審查:cloud.google.com 內部 LB 不報 K8S-LB-001", not any(f["rule_id"] == "K8S-LB-001" for f in fs), fs)
+    kenv = dict(env)
+    real_kubectl = shutil.which("kubectl")  # 用真的 kubectl kustomize(不連叢集)
+    if real_kubectl:
+        kenv["PATH"] = os.path.dirname(real_kubectl) + ":" + env["PATH"]
+    else:
+        print("SKIP kustomize 測試:本機沒有 kubectl")
+    r = e.run([os.path.join(S, "yaml-review.sh"), kd, "--label", "kust"], env=kenv)
+    run = run_dir(r.stdout)
+    blob = ""
+    for root, _, fns in os.walk(run or e.tmp):
+        for fn in fns:
+            blob += open(os.path.join(root, fn), encoding="utf-8", errors="ignore").read()
+    import base64
+    r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run], env=env) if run else None
+    fs = json.load(open(os.path.join(run, "findings.json"))) if run else []
+    ok("YAML 審查 kustomize:secretGenerator 的值不落地(明文與 base64 都沒有)、--check ok、有 K8S-SEC-001",
+       not real_kubectl or run and "hunter2kustomize" not in blob and base64.b64encode(b"hunter2kustomize").decode() not in blob
+       and r2.returncode == 0 and any(f["rule_id"] == "K8S-SEC-001" for f in fs), (r.stderr[-500:], r2.stderr if r2 else ""))
     r = e.run([os.path.join(S, "yaml-review.sh"), good, "--label", "good"], env=env)
     run = run_dir(r.stdout)
     fs = json.load(open(os.path.join(run, "findings.json"))) if run else ["x"]
@@ -441,6 +481,15 @@ def t_review(e):
     und = json.load(open(os.path.join(run, "inventory", "undetermined.json")))
     ok("審查:沒有無法判定", und == [], und)
     return run
+
+
+def t_activate_fail(e):
+    e.state({"activate_fail": True})
+    r = e.run([os.path.join(S, "collect.sh"), FX.P])
+    runs = [os.path.join(dp, d) for dp, ds, _ in os.walk(e.reports) for d in ds if d == "gcloud" or d.endswith("kubeconfig")]
+    kc = [os.path.join(dp, f) for dp, _, fs in os.walk(e.reports) for f in fs if f == "kubeconfig"]
+    ok("SA 啟用失敗 → BLOCKED,run 目錄不殘留 gcloud/ 與 kubeconfig", r.returncode == 3 and not runs and not kc, (r.stderr, runs, kc))
+    e.state({})
 
 
 def t_undetermined(e):
@@ -705,6 +754,7 @@ def main():
         t_yaml(e)
         run = t_review(e)
         t_undetermined(e)
+        t_activate_fail(e)
         if run:
             t_plan_change(e, run)
     finally:

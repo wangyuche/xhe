@@ -21,6 +21,9 @@ if tool == "gke-gcloud-auth-plugin":
 sp = os.path.join(d, "state.json")
 state = json.load(open(sp)) if os.path.exists(sp) else {}
 if tool == "gcloud" and argv[:2] == ["auth", "activate-service-account"]:
+    if state.get("activate_fail"):
+        sys.stderr.write("ERROR: (gcloud.auth.activate-service-account) key disabled\n")
+        sys.exit(1)
     sys.exit(0)
 if tool == "gcloud" and argv[:3] == ["container", "clusters", "get-credentials"]:
     name = argv[3]

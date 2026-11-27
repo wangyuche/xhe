@@ -238,10 +238,14 @@ class Session:
         os.makedirs(self.gdir, 0o700, exist_ok=True)
         open(self.kube, "a").close()
         os.chmod(self.kube, 0o600)
-        r = self._exec(["gcloud", "auth", "activate-service-account", "<key>",
-                        f"--project={self.project}", "--quiet"], check_mode="read")
-        if r.returncode != 0:
-            raise Blocked("SA 啟用失敗:" + _short(r.stderr))
+        try:
+            r = self._exec(["gcloud", "auth", "activate-service-account", "<key>",
+                            f"--project={self.project}", "--quiet"], check_mode="read")
+            if r.returncode != 0:
+                raise Blocked("SA 啟用失敗:" + _short(r.stderr))
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def __exit__(self, *a):
