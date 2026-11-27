@@ -19,11 +19,8 @@ FORBIDDEN_CHARS = set(";&|`$<>()\n\r\\*?[]{}~!#")
 # 只留不會遞迴的唯讀指令。grep / find / diff 的遞迴旗標組合太多(含 ugrep 的 -9、--depth),不放行;
 # 搜尋內容請用 Grep 工具(路徑受 hook 檢查)。
 READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "shasum", "stat", "date", "pwd"}
-FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
                "curl", "wget", "googleapis")
-GREP_VALUE_OPTS = {"-d", "-D", "-m", "-A", "-B", "--directories", "--devices", "--max-count", "--after-context",
-                   "--before-context", "--label", "--include", "--exclude", "--exclude-dir", "--binary-files"}
 WRITABLE_NAMES = {"manual.json", "plan.input.json"}
 
 
@@ -157,62 +154,11 @@ def check_bash(cmd, cfg, cwd):
         return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))}){hint}"
     if first == "ls" and any(t.startswith("-") and not t.startswith("--") and ("R" in t or "L" in t) or t in ("--recursive", "--dereference") for t in toks[1:]):
         return "ls 不允許 -R / -L(會遞迴或跟隨 symlink)"
-    if first == "find" and any(t in FIND_DENY for t in toks):
-        return "find 不允許 -exec / -delete 等動作"
-    if (first == "grep" and any(t == "--dereference-recursive" or (t.startswith("-") and not t.startswith("--") and ("R" in t or "S" in t or "O" in t or "p" in t)) for t in toks[1:])) \
-            or (first == "find" and any(t in ("-L", "-H", "-follow") for t in toks[1:])) \
-            or (first == "ls" and any(t.startswith("-") and not t.startswith("--") and "L" in t for t in toks[1:])):
-        return "不允許跟隨 symlink 的遞迴(grep -R / -S / -O / -p、find -L、ls -L);改用 grep -r / find"
-    # 沒寫路徑時遞迴工具會掃 cwd:把 cwd 當成隱含路徑一起檢查
-    gtoks = toks[1:]
-    d_recurse = any((t == "-d" and i + 1 < len(gtoks) and gtoks[i + 1] == "recurse") or t.startswith("-drecurse")
-                    or (t.startswith("-") and not t.startswith("--") and "d" in t and t.endswith("recurse"))
-                    for i, t in enumerate(gtoks))
-    recursive = (first in ("grep", "diff") and (d_recurse or any(t in ("-r", "-R", "--recursive", "--dereference-recursive")
-                                                   or (t.startswith("-") and not t.startswith("--") and ("r" in t or "R" in t))
-                                                   or t.startswith("--directories") for t in gtoks))) \
-        or (first == "find" and (len(toks) == 1 or toks[1].startswith("-"))) \
-        or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]) and not any(not x.startswith("-") for x in toks[1:]))
-    nonflags = [t for t in toks[1:] if not t.startswith("-")]
-    if first == "grep":
-        # -e / -f / --regexp / --file 給了樣式時,其餘非旗標參數全都是路徑
-        pat_vals, has_pat_flag, skip = set(), False, False
-        for i, t in enumerate(toks[1:], 1):
-            if skip:
-                pat_vals.add(i)
-                skip = False
-                continue
-            if t in ("-e", "-f", "--regexp", "--file"):
-                has_pat_flag, skip = True, True
-            elif t in GREP_VALUE_OPTS:  # 這些選項的下一個參數是值,不是樣式也不是路徑
-                skip = True
-            elif t.startswith(("--regexp=", "--file=")) or (t.startswith(("-e", "-f")) and len(t) > 2):
-                has_pat_flag = True
-        gpaths = [t for i, t in enumerate(toks[1:], 1) if not t.startswith("-") and i not in pat_vals]
-        if not has_pat_flag:
-            gpaths = gpaths[1:]
-    # 不猜哪個參數是樣式:只有「實際存在的路徑」才算給了路徑;沒有就以 cwd 檢查(-rA 3 x 這類黏合旗標也不會被騙)
-    existing = [t for t in nonflags if os.path.lexists(_raw(t, cwd))]
-    no_path = (first in ("grep", "diff", "ls") and not existing) or (first == "find" and (len(toks) == 1 or toks[1].startswith("-") or not existing))
-    if recursive and no_path and is_protected(cwd, cfg, cwd, ancestor=True):
-        return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
-    if recursive and no_path and os.path.isdir(cwd):
-        bad = _protected_symlink_under(cwd, cfg, cwd)
-        if bad:
-            return bad
-    rec_tool = first in ("grep", "diff", "find") or (first == "ls" and any(x.startswith("-") and "R" in x for x in toks[1:]))
-    # 保守:每個參數(含旗標裡黏著的值)都當成可能的路徑檢查,不去猜哪個是樣式。
-    # 只有會遞迴走目錄的用法才檢查「上層目錄」(非遞迴的 grep 把 . 當樣式時不會誤擋)。
-    walks = recursive or first == "find" or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]))
-    path_toks = toks[1:]
-    for t in path_toks:
+    # READONLY_CMDS 只剩不遞迴的指令(ls 的 -R / -L 已在上面擋掉):每個參數(含旗標裡黏著的值)都當成可能的路徑檢查
+    for t in toks[1:]:
         for pth in arg_paths(t):
-            if rec_tool and pth and os.path.isdir(_raw(pth, cwd)):
-                bad = _protected_symlink_under(_raw(pth, cwd), cfg, cwd)
-                if bad:
-                    return bad
-            if pth and is_protected(pth, cfg, cwd, ancestor=walks):
-                return f"不可讀受保護路徑(或其上層目錄):{t}"
+            if pth and is_protected(pth, cfg, cwd, ancestor=False):
+                return f"不可讀受保護路徑:{t}"
     return None
 
 
@@ -253,6 +199,10 @@ def check_path_tool(tool, inp, cfg, cwd):
 
 def decide(payload):
     cfg = gglib.load_config(require=False)
+    try:
+        gglib.clean_stale_creds(cfg)  # 先清掉已死程序留下的憑證快取,避免它們擋住後續操作
+    except Exception:
+        pass
     tool = payload.get("tool_name", "")
     inp = payload.get("tool_input") or {}
     cwd = payload.get("cwd") or os.getcwd()

@@ -126,13 +126,16 @@ def clean_stale_creds(cfg):
             except OSError:
                 continue
         for run in os.listdir(pd):
-            for name in ("gcloud", "kubeconfig"):
-                p = os.path.join(pd, run, name)
-                try:
-                    if os.path.lexists(p) and now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
-                        shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
-                except OSError:
-                    pass
+            p = os.path.join(pd, run, "gcloud")
+            try:
+                if not os.path.lexists(p):
+                    continue
+                owner = read_json(os.path.join(p, "owner.json"), {}) or {}
+                dead = owner.get("pid") and not _pid_alive(owner.get("pid"))
+                if dead or now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
+                    shutil.rmtree(p, ignore_errors=True)  # 程序已不在(例如被 SIGKILL)就立刻清
+            except OSError:
+                pass
     for x in os.listdir(rd):
         if x.startswith(".check-"):
             p = os.path.join(rd, x)
@@ -300,6 +303,7 @@ class Session:
 
     def __enter__(self):
         os.makedirs(self.gdir, 0o700, exist_ok=True)
+        write_json(os.path.join(self.gdir, "owner.json"), {"pid": os.getpid(), "started": now_iso()})
         os.makedirs(self.home, 0o700, exist_ok=True)
         os.makedirs(os.path.dirname(self.kube), 0o700, exist_ok=True)
         open(self.kube, "a").close()

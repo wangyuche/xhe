@@ -248,7 +248,7 @@ export function check(run) {
   for (const f of ['meta.json']) if (!fs.existsSync(path.join(run, f))) errs.push(`缺 ${f}`);
   const meta = readJSON(path.join(run, 'meta.json'), {});
   if (['review', 'yaml', 'plan'].includes(meta.mode)) for (const f of ['findings.json', 'plan.json']) if (!fs.existsSync(path.join(run, f))) errs.push(`缺 ${f}`);
-  for (const p of ['gcloud', 'kubeconfig']) if (fs.existsSync(path.join(run, p))) errs.push(`run 目錄仍留有 ${p}(憑證快取)`);
+  if (fs.existsSync(path.join(run, 'gcloud'))) errs.push('run 目錄仍留有 gcloud/(憑證快取,含 kubeconfig)');
   for (const p of walk(run)) {
     const rel = path.relative(run, p);
     if (/^before\/C\d+\.rollback\.json$/.test(rel)) continue; // 還原用原始物件(權限 600,見 SKILL.md)

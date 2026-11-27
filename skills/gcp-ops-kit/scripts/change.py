@@ -158,7 +158,6 @@ class Runner:
         except gglib.Denied as e:  # 第二道防線在執行前拒絕:雲端沒被動到
             self.inflight = None
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
-        self.inflight = None
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
         if r.returncode != 0:
@@ -168,6 +167,7 @@ class Runner:
             else:
                 rec.update({"result": "失敗(可能部分套用)", "reason": f"指令失敗(rc={r.returncode});請先確認現況再決定是否還原"})
             self.results.append(rec)
+            self.inflight = None  # 先登記結果再清 inflight:中間被中斷也不會漏掉這條
             self.status = "ISSUES"
             return False
         rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
@@ -178,6 +178,7 @@ class Runner:
         # 指令已成功:立刻記錄(驗證期間被中斷也留得下這條與還原指令),之後就地更新結果
         rec.update({"result": "已執行(驗證中被中斷)", "reason": "指令已成功執行,驗證尚未完成"})
         self.results.append(rec)
+        self.inflight = None
         exp = it.get("expected") or []
         deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
         while True:
@@ -255,6 +256,12 @@ def main(argv):
         if not plan or os.path.realpath(plan.get("source_run") or "") != src_run or plan.get("project") != src_meta.get("project"):
             raise gglib.Blocked("plan.json 的 source_run / project 與所在 run 目錄不符")
         approved = parse_approved(approved_text)
+        # 核准檔:由主 agent 依使用者原話寫在計畫 run 目錄(gcp-guardian 的 hook 不准寫這個檔),旗標必須與它一致
+        appr = gglib.read_json(os.path.join(src_run, "approval.json"), None)
+        if not isinstance(appr, dict):
+            raise gglib.Blocked(f"缺核准檔 {os.path.join(src_run, 'approval.json')}(由主 agent 在使用者核准後寫入)")
+        if str(appr.get("sha256", "")).strip().lower() != sha or sorted(set(appr.get("approved") or []), key=lambda x: int(str(x)[1:]) if str(x)[1:].isdigit() else 0) != approved:
+            raise gglib.Blocked("核准旗標與核准檔(approval.json)的 sha256 / 編號不一致")
         project = gglib.check_project(plan["project"])
         run = gglib.new_run(cfg, project, "change")
         meta = gglib.read_json(os.path.join(run, "meta.json"))

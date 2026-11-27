@@ -4,6 +4,7 @@ python3 tests/selftest.py [-v]
 每個案例印 PASS / FAIL;有 FAIL 結束碼 1。暫存目錄結束時刪除。
 """
 import copy
+import re
 import json
 import os
 import shutil
@@ -221,6 +222,7 @@ def t_guard(e):
                             ("Read", {"file_path": os.path.join(e.tmp, "conf", "other.txt")}, 2),
                             ("Read", {"file_path": os.path.join(e.reports, "p", "r", "report.html")}, 0),
                             ("Write", {"file_path": os.path.join(e.reports, "p", "r", "plan.json")}, 2),
+                            ("Write", {"file_path": os.path.join(e.reports, "p", "r", "approval.json")}, 2),
                             ("Grep", {"pattern": "private_key", "path": e.tmp}, 2),
                             ("Glob", {"pattern": e.tmp + "/**/*.json"}, 2),
                             ("Grep", {"pattern": "x", "path": e.reports}, 2),
@@ -350,6 +352,15 @@ def t_sa_change():
                                                ["kubectl", "--context=gke_demo-proj-123_asia-east1_prod", "patch", "deployment", "web",
                                                 "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], FX.DEPLOY)
     ok("dry-run:workload 改 serviceAccountName → 高風險 K8S-WI-003", any(f["rule_id"] == "K8S-WI-003" for f in new), new)
+
+
+def t_dead_creds(e):
+    d = os.path.join(e.reports, "pk", "20261127-000000-review", "gcloud")
+    os.makedirs(d)
+    gglib.write_json(os.path.join(d, "owner.json"), {"pid": 999999})
+    cfg = {"GG_REPORT_DIR": e.reports}
+    gglib.clean_stale_creds(cfg)
+    ok("已死程序(SIGKILL)留下的憑證快取立刻清掉", not os.path.exists(d))
 
 
 def t_misc(e):
@@ -948,6 +959,18 @@ def _priv_deploy():
     return d
 
 
+def approve(plan_path, sha, text):
+    """模擬主 agent:使用者核准後在計畫 run 目錄寫 approval.json。"""
+    ids = sorted(set(re.findall(r"C[1-9][0-9]{0,2}", text)), key=lambda x: int(x[1:]))
+    gglib.write_json(os.path.join(os.path.dirname(plan_path), "approval.json"),
+                     {"sha256": sha, "approved": ids, "user_text": text})
+
+
+def run_change(e, ch, plan_path, sha, text, env=None):
+    approve(plan_path, sha, text)
+    return e.run([ch, plan_path, "--sha", sha, "--approved", text], env=env)
+
+
 def write_input(run, items):
     with open(os.path.join(run, "plan.input.json"), "w") as f:
         json.dump({"items": items}, f, ensure_ascii=False)
@@ -1020,13 +1043,20 @@ def t_plan_change(e, review_run):
 
     ch = os.path.join(S, "change.sh")
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", "0" * 64, "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, plan_path, "0" * 64, "使用者已核准變更 C1")
     ok("變更:plan sha256 不符 → BLOCKED,零變更呼叫", r.returncode == 3 and "status=BLOCKED" in r.stdout and not execs(), r.stdout + r.stderr)
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "請幫我做 C1"])
+    approve(plan_path, sha, "使用者已核准變更 C2")
+    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    ok("變更:旗標與 approval.json 編號不一致(agent 自己寫旗標)→ BLOCKED,零變更呼叫", r.returncode == 3 and "approval.json" in (r.stdout + r.stderr) and not execs(), r.stdout + r.stderr)
+    os.remove(os.path.join(os.path.dirname(plan_path), "approval.json"))
+    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    ok("變更:沒有 approval.json → BLOCKED", r.returncode == 3 and "核准檔" in (r.stdout + r.stderr) and not execs(), r.stdout + r.stderr)
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "請幫我做 C1")
     ok("變更:沒有核准旗標 → BLOCKED", r.returncode == 3 and not execs(), r.stdout + r.stderr)
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C2, C3"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C2, C3")
     ex = execs()
     ok("變更:C2 失敗 → ISSUES,C3 未執行(沒有 resize 呼叫)",
        r.returncode == 1 and "C3\t未執行" in r.stdout and not any("resize" in x for x in ex) and any("firewall-rules update" in x for x in ex),
@@ -1039,6 +1069,7 @@ def t_plan_change(e, review_run):
     import time as _t
     e.state({"slow": True})
     e.clear_log()
+    approve(plan_path, sha, "使用者已核准變更 C3")
     pr = subprocess.Popen([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C3"], env=e.env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     for _ in range(100):
         if any("resize" in " ".join(c["argv"]) for c in e.stub_calls()):
@@ -1059,6 +1090,7 @@ def t_plan_change(e, review_run):
     e.clear_log()
     env3 = e.env()
     env3["GG_VERIFY_WAIT"] = "120"
+    approve(plan_path, sha, "使用者已核准變更 C3")
     pr = subprocess.Popen([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C3"], env=env3, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     for _ in range(150):
         st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
@@ -1075,18 +1107,18 @@ def t_plan_change(e, review_run):
     e.state({})
     e.state({"flip_fw": True})
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1, C2"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1, C2")
     ok("變更:C1 已執行、C2 執行前被擋 → 整體 ISSUES(不是 BLOCKED),C1 附還原指令",
        r.returncode == 1 and "status=ISSUES" in r.stdout and "C1\t已執行" in r.stdout and "C2\tBLOCKED\tprecondition" in r.stdout
        and "add-iam-policy-binding" in r.stdout and not any("firewall-rules update" in " ".join(c["argv"]) for c in e.stub_calls()), r.stdout + r.stderr)
     e.state({"after_fail": True})
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1")
     ok("變更:指令成功但變更後快照失敗 → ISSUES,仍記錄「已執行」與還原指令",
        r.returncode == 1 and "已執行(驗證失敗)" in r.stdout and "add-iam-policy-binding" in r.stdout, r.stdout + r.stderr)
     e.state({})
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1")
     ex = execs()
     crun = run_dir(r.stdout)
     ok("變更:只核准 C1 → PASS,只呼叫 C1(未核准零呼叫)",
@@ -1096,10 +1128,10 @@ def t_plan_change(e, review_run):
         r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", crun])
         ok("變更:變更 run 的 --check 通過", r2.returncode == 0, r2.stderr)
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1")
     ok("變更:環境已變(precondition 不符)→ BLOCKED,零變更呼叫", r.returncode == 3 and "precondition" in r.stdout and not execs(), r.stdout + r.stderr)
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C4"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C4")
     ok("變更:計畫中 BLOCKED 的條目 → BLOCKED", r.returncode == 3 and not execs(), r.stdout + r.stderr)
     # 手改 plan.json 的 reversible 並重算雜湊
     edited = copy.deepcopy(plan)
@@ -1115,7 +1147,7 @@ def t_plan_change(e, review_run):
     with open(ep, "w") as f:
         f.write(json.dumps(edited, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     e.clear_log()
-    r = e.run([ch, ep, "--sha", gglib.sha256_file(ep), "--approved", "使用者已核准變更 C4"])
+    r = run_change(e, ch, ep, gglib.sha256_file(ep), "使用者已核准變更 C4")
     ok("變更:手改 plan.json 的 reversible 並重算雜湊 → change.sh 重算後 BLOCKED",
        r.returncode == 3 and not execs() and ("重新" in r.stdout or "不可還原" in r.stdout), r.stdout + r.stderr)
     # 專案鎖被佔用(另一個程序持有 flock)
@@ -1126,13 +1158,13 @@ def t_plan_change(e, review_run):
     os.pwrite(lf, json.dumps({"mode": "change", "run": "/other"}).encode(), 0)
     e.clear_log()
     e.state({})
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1")
     ok("變更:專案鎖被佔用 → BLOCKED", r.returncode == 3 and "鎖" in (r.stdout + r.stderr) and not execs(), r.stdout + r.stderr)
     os.close(lf)
     # 偽造計畫:拿 agent 可寫的 plan.input.json 當計畫
     fake = os.path.join(run, "plan.input.json")
     e.clear_log()
-    r = e.run([ch, fake, "--sha", gglib.sha256_file(fake), "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, fake, gglib.sha256_file(fake), "使用者已核准變更 C1")
     ok("變更:非 plan.py 產生的 plan.json(plan.input.json)→ BLOCKED", r.returncode == 3 and not execs(), r.stdout + r.stderr)
     # k8s:endpoint 不符、apply 新建、apply privileged
     CTX = f"gke_{P}_asia-east1_prod"
@@ -1160,7 +1192,7 @@ def t_plan_change(e, review_run):
     r, ksha = plan_build(e, krun)
     e.state({"endpoint": "https://10.9.9.9"})
     e.clear_log()
-    r = e.run([ch, os.path.join(krun, "plan.json"), "--sha", ksha, "--approved", "使用者已核准變更 C1"])
+    r = run_change(e, ch, os.path.join(krun, "plan.json"), ksha, "使用者已核准變更 C1")
     ok("變更 k8s:叢集 endpoint 與計畫不符 → BLOCKED,沒有 scale 呼叫",
        r.returncode == 3 and "endpoint" in r.stdout and not any(" scale " in " ".join(c["argv"]) for c in e.stub_calls()), r.stdout + r.stderr)
     write_input(krun, [
@@ -1258,6 +1290,7 @@ def main():
         t_rule_tables()
         t_yaml_bool()
         t_misc(e)
+        t_dead_creds(e)
         t_sa_change()
         t_check_pre_redact()
         t_bad_metadata()

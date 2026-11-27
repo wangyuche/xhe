@@ -58,6 +58,8 @@ def _remote_refs(kdir):
 def gather(paths):
     files, kustom = [], []
     for p in paths:
+        if os.path.islink(p) and os.path.isfile(p):
+            gglib.die(f"不審查 symlink 檔案:{p}", gglib.EXIT_USAGE)
         p = os.path.realpath(p)
         if os.path.isfile(p):
             files.append(p)
@@ -71,8 +73,9 @@ def gather(paths):
                 dirs[:] = []
                 continue
             for f in sorted(fns):
-                if f.endswith((".yaml", ".yml")):
-                    files.append(os.path.join(root, f))
+                fp = os.path.join(root, f)
+                if f.endswith((".yaml", ".yml")) and not os.path.islink(fp):  # 不跟隨 symlink(可能指向 ~/.kube 等)
+                    files.append(fp)
     return sorted(set(files)), kustom
 
 
