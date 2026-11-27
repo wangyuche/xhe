@@ -68,6 +68,27 @@ def _live_creds_under(top, rollback=True):
     return False
 
 
+def _raw(path, cwd):
+    return os.path.join(cwd, os.path.expanduser(path))
+
+
+WALK_LIMIT = 50000
+
+
+def _protected_symlink_under(top, cfg, cwd):
+    """目錄樹裡指向受保護路徑的 symlink(diff -r 等會跟隨)。"""
+    n = 0
+    for root, dirs, files in os.walk(top):
+        for name in dirs + files:
+            n += 1
+            if n > WALK_LIMIT:
+                return f"{top} 底下檔案太多(> {WALK_LIMIT}),請指定較小的範圍"
+            p = os.path.join(root, name)
+            if os.path.islink(p) and is_protected(os.path.realpath(p), cfg, cwd, ancestor=True):
+                return f"{p} 是指向受保護路徑的 symlink"
+    return None
+
+
 def arg_paths(tok):
     """從參數取出可能的路徑:一般參數、--opt=值、-f/路徑。"""
     if not tok.startswith("-"):
@@ -121,6 +142,10 @@ def check_bash(cmd, cfg, cwd):
         return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))})"
     if first == "find" and any(t in FIND_DENY for t in toks):
         return "find 不允許 -exec / -delete 等動作"
+    if (first == "grep" and any(t == "--dereference-recursive" or (t.startswith("-") and not t.startswith("--") and "R" in t) for t in toks[1:])) \
+            or (first == "find" and any(t in ("-L", "-H", "-follow") for t in toks[1:])) \
+            or (first == "ls" and any(t.startswith("-") and not t.startswith("--") and "L" in t for t in toks[1:])):
+        return "不允許跟隨 symlink 的遞迴(grep -R、find -L、ls -L);改用 grep -r / find"
     # 沒寫路徑時遞迴工具會掃 cwd:把 cwd 當成隱含路徑一起檢查
     gtoks = toks[1:]
     d_recurse = any((t == "-d" and i + 1 < len(gtoks) and gtoks[i + 1] == "recurse") or t.startswith("-drecurse")
@@ -133,8 +158,13 @@ def check_bash(cmd, cfg, cwd):
         or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]) and not any(not x.startswith("-") for x in toks[1:]))
     if recursive and is_protected(cwd, cfg, cwd, ancestor=True):
         return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
+    rec_tool = first in ("grep", "diff", "find") or (first == "ls" and any(x.startswith("-") and "R" in x for x in toks[1:]))
     for t in toks[1:]:
         for pth in arg_paths(t):
+            if rec_tool and pth and os.path.isdir(_raw(pth, cwd)):
+                bad = _protected_symlink_under(_raw(pth, cwd), cfg, cwd)
+                if bad:
+                    return bad
             ls_recursive = first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x or x == "--recursive" for x in toks[1:])
             if pth and is_protected(pth, cfg, cwd, ancestor=ls_recursive or first not in ("ls", "stat", "pwd", "date")):
                 return f"不可讀受保護路徑(或其上層目錄):{t}"

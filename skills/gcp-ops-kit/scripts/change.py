@@ -52,7 +52,9 @@ class Runner:
 
     def stop(self, status, cid, msg, executed=False):
         self.results.append({"id": cid, "result": "BLOCKED" if status == "BLOCKED" else "失敗", "reason": msg})
-        self.status = status
+        executed = any(str(r.get("result", "")).startswith("已執行") or r.get("rc") == 0 for r in self.results)
+        # 已經有條目改了雲端:整體不能回 BLOCKED(那代表「事前檢查不過、什麼都沒改」)
+        self.status = "ISSUES" if executed else status
         return False
 
     def precheck_static(self):
@@ -144,6 +146,8 @@ class Runner:
         rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
         if it.get("rollback_warning"):
             rec["rollback_warning"] = it["rollback_warning"]
+        if it.get("rollback_note"):
+            rec["rollback_note"] = it["rollback_note"]
         try:
             after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
         except (gglib.Blocked, gglib.Denied) as e:
@@ -176,7 +180,7 @@ def write_log(run, plan_path, sha, approved, runner):
              f"- 狀態:**{runner.status}**", f"- 時間:{gglib.now_iso()}", "",
              "| C | 結果 | 原因 / 驗證 | 結束碼 | 還原指令 |", "|---|---|---|---|---|"]
     for r in runner.results:
-        rb = shlex.join(r.get("rollback") or []) or "-"
+        rb = shlex.join(r.get("rollback") or []) or r.get("rollback_note") or "-"
         warn = f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""
         lines.append(f"| {r['id']} | {r['result']} | {r.get('reason', '')} | {r.get('rc', '-')} | `{rb}`{warn} |")
     lines += ["", "實際執行的指令見 `inventory/commands.log`(由 kit 記錄,agent 不寫此檔)。", ""]
@@ -188,6 +192,7 @@ def write_log(run, plan_path, sha, approved, runner):
 
 
 def main(argv):
+    gglib.install_signal_handlers()
     if len(argv) != 5 or argv[1] != "--sha" or argv[3] != "--approved":
         gglib.die(__doc__, gglib.EXIT_USAGE)
     plan_path, sha, approved_text = os.path.realpath(argv[0]), argv[2], argv[4]
@@ -228,6 +233,13 @@ def main(argv):
             runner.status = "BLOCKED"
             runner.results.append({"id": "-", "result": "BLOCKED", "reason": str(e)})
             status = "BLOCKED"
+        except SystemExit:
+            # 被中斷(例如逾時被砍):先寫紀錄(含已執行條目的還原指令)再結束
+            runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
+            runner.results.append({"id": "-", "result": "中斷", "reason": "change.sh 被中斷;進行中的雲端操作可能仍在跑,請先確認現況"})
+            gglib.release_lock(cfg, project, run)
+            write_log(run, plan_path, sha, approved, runner)
+            raise
         except Exception as e:
             runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
             runner.results.append({"id": "-", "result": "錯誤", "reason": f"{type(e).__name__}: {gglib._short(str(e), 300)}"})

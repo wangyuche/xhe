@@ -288,7 +288,7 @@ def scan(inv, gg_sa=None, now=None):
         if (c.get("legacyAbac") or {}).get("enabled"):
             o.add("GKE-ABAC-001", f"gke:{name}", cf, f"{base}/legacyAbac")
         np_cfg = c.get("networkConfig") or {}
-        if not pcc.get("enablePrivateNodes") and not np_cfg.get("defaultEnablePrivateNodes") and not c.get("autopilot", {}).get("enabled") is True:
+        if not pcc.get("enablePrivateNodes") and not np_cfg.get("defaultEnablePrivateNodes") and (c.get("autopilot") or {}).get("enabled") is not True:
             o.add("GKE-PRIV-001", f"gke:{name}", cf, f"{base}/privateClusterConfig")
         if not (c.get("workloadIdentityConfig") or {}).get("workloadPool"):
             o.add("GKE-WI-001", f"gke:{name}", cf, f"{base}/workloadIdentityConfig")

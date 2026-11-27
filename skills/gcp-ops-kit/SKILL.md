@@ -103,6 +103,8 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - 清空防火牆 `--source-ranges` 一律禁止(等於全開);Pod Security 任何 `-version` 變更或等級下降標放寬。
 - YAML 合併鍵 `<<` 與別名一律拒絕(列無法判定),避免藏住設定。`render.mjs` 只寫 GG_REPORT_DIR 底下的 run 目錄。
 - manifest / patch 含 `<redacted` 占位一律 BLOCKED(盤點是遮蔽過的,照抄會把真實值蓋掉:只寫要改的欄位)。系統 namespace(kube-system、gke-*…)一律不改。變更 KSA 的 `iam.gke.io/gcp-service-account` 視同高風險 → BLOCKED。
+- 已有條目執行後,後面的條目被擋:整體狀態是 ISSUES(不是 BLOCKED)。收到 SIGTERM / SIGHUP / SIGINT 會先寫紀錄、清憑證;被 SIGKILL 留下的憑證快取下次執行時清掉(超過 6 小時)。collect / plan / change 請在背景執行(可能超過 10 分鐘)。
+- guard 拒絕跟隨 symlink 的遞迴(grep -R、find -L、ls -L);目錄樹裡有指向受保護路徑的 symlink 時,遞迴工具也會被擋。
 - 變更指令成功但之後的快照 / 驗證失敗:結果記「已執行(驗證失敗)」並附還原指令。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減只接受 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定。

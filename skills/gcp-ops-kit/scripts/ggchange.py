@@ -95,6 +95,7 @@ def _rules_subset(new, old):
         if not m:
             return None
         p, a, b = m.groups()
+        p = PROTO_NUM.get(p, p)
         return (p, int(a) if a else 0, int(b or a) if a else 65535)
     olds = [expand(o) for o in old]
     for n in new:
@@ -105,6 +106,8 @@ def _rules_subset(new, old):
             return False
     return True
 
+
+PROTO_NUM = {"6": "tcp", "17": "udp", "132": "sctp", "1": "icmp", "50": "esp", "51": "ah"}
 
 POD_SECURITY_ORDER = {"privileged": 0, "baseline": 1, "restricted": 2}
 
@@ -142,7 +145,7 @@ def common_forbidden(argv, cfg):
 def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None, shape_only=False):
     """snapshot:變更前快照(dict,依 kind 不同)。manifest_findings:apply / patch dry-run 結果跑 k8s_rules 的 findings。
     diff_created:kubectl diff 是否出現新建資源。"""
-    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None,
+    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None, "rollback_note": None,
            "loosens_security": False, "loosens_reasons": [], "blocked_reason": None,
            "auto_pre": [], "dry_run": None}
 
@@ -222,7 +225,7 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
         res["blocked_reason"] = f"不可還原:{why_irrev}(請使用者自己執行)"
     else:
         res["reversible"] = True
-        res["rollback"] = rollback_args
+        res["rollback"] = rollback_args if rollback_args else None
     res["dry_run"] = k.get("dry_run")
     return res
 
@@ -616,7 +619,8 @@ def _k_kubectl_rollout_restart(pos, flags, snap, res, k, cfg, *_):
     if not re.fullmatch(r"(deployment|statefulset|daemonset)/[a-z0-9.-]+", pos[0]):
         res["blocked_reason"] = "rollout restart 只接受 deployment|statefulset|daemonset/<名稱>"
         return None, [], None
-    return ["（不需還原:只重啟 Pod)"], [], None
+    res["rollback_note"] = "不需還原:只重啟 Pod"
+    return None, [], None
 
 
 def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):

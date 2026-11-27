@@ -23,6 +23,7 @@ hooks:
 - Bash 一次只跑一個入口腳本或一個唯讀指令(ls、cat、head、tail、wc、grep、find、diff、shasum、stat;沒有 jq),不用 `;`、`&&`、`|`、`$( )`、`>`、萬用字元、`~`;路徑一律寫絕對路徑。
 - 不讀 `~/.config/gcp-guardian/`、金鑰檔、`~/.config/gcloud`、`~/.kube`。
 - Write 只能寫本次 run 目錄的 `manual.json` 與 `plan.input.json`;`plan.json`、`change-log.md`、`findings.json`、報告都由 kit 產生。
+- `collect.sh`、`plan.py build`、`change.sh` 可能跑很久(GKE 操作常超過 10 分鐘):一律用 Bash 的 `run_in_background` 執行,等完成通知後再讀輸出;不要用預設逾時前景執行(被砍掉時紀錄與還原指令可能來不及寫出)。
 - 被 hook 或 kit 拒絕時,照拒絕訊息改用正確的入口腳本;做不到就回 BLOCKED,不要找替代路徑。
 
 ## 模式與流程

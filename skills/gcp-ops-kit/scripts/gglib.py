@@ -89,7 +89,47 @@ def check_project(p):
 
 # ---------------------------------------------------------------- run 目錄 / 專案鎖
 
+def install_signal_handlers():
+    """SIGTERM / SIGHUP / SIGINT 轉成 SystemExit,讓 with / finally 清掉憑證快取、寫出紀錄。"""
+    import signal
+
+    def _h(signum, frame):
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, _h)
+
+
+STALE_CRED_SECONDS = 6 * 3600
+
+
+def clean_stale_creds(cfg):
+    """上次被強制結束(SIGKILL)留下的 gcloud/、kubeconfig:超過 6 小時就刪掉。"""
+    rd = cfg["GG_REPORT_DIR"]
+    if not os.path.isdir(rd):
+        return
+    now = time.time()
+    for proj in os.listdir(rd):
+        pd = os.path.join(rd, proj)
+        if not os.path.isdir(pd):
+            continue
+        for run in os.listdir(pd):
+            for name in ("gcloud", "kubeconfig"):
+                p = os.path.join(pd, run, name)
+                try:
+                    if os.path.lexists(p) and now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
+                        shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
+                except OSError:
+                    pass
+    for x in os.listdir(rd):
+        if x.startswith(".check-"):
+            p = os.path.join(rd, x)
+            if now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
+                shutil.rmtree(p, ignore_errors=True)
+
+
 def new_run(cfg, project, mode):
+    install_signal_handlers()
+    clean_stale_creds(cfg)
     base = os.path.join(cfg["GG_REPORT_DIR"], project)
     if not os.path.exists(cfg["GG_REPORT_DIR"]):
         os.makedirs(cfg["GG_REPORT_DIR"], mode=0o700)  # 只有 kit 自己建立時才設 700

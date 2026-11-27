@@ -209,6 +209,14 @@ def t_guard(e):
         tgt = inp.get("file_path") or inp.get("path") or inp.get("pattern")
         ok(f"guard hook {tool} {os.path.relpath(tgt, e.tmp) if tgt.startswith('/') else tgt} → {want}", r.returncode == want, r.stderr)
     os.makedirs(os.path.join(e.tmp, "sub"), exist_ok=True)
+    proj = os.path.join(e.tmp, "proj")
+    os.makedirs(proj, exist_ok=True)
+    if not os.path.lexists(os.path.join(proj, "creds")):
+        os.symlink(os.path.join(e.tmp, "conf"), os.path.join(proj, "creds"))
+    for cmd, want in ((f"grep -r private_key {proj}", "deny"), (f"grep -R private_key {e.reports}", "deny"),
+                      (f"diff -r {proj} {e.reports}", "deny"), (f"find -L {e.reports}", "deny")):
+        r = subprocess.run(["python3", g, "--test", cmd], env=env, capture_output=True, text=True)
+        ok(f"guard symlink:{cmd[-60:]!r} → {want}", r.stdout.split("\t")[0].strip() == want, r.stdout)
     for cwd, cmd, want in ((os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
                            (os.path.dirname(e.tmp), "grep -r private_key", 2),
                            (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
@@ -415,6 +423,9 @@ def t_classify():
         ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, False),
         ("清空防火牆 target-tags(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags="],
          dict(fw, targetTags=["bastion"]), True),
+        ("快照協定是數字 6:收緊到 tcp:443 不算放寬", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:443"],
+         dict(FX.FIREWALLS[1], allowed=[{"IPProtocol": "6", "ports": ["0-1000"]}]), False),
+        ("rollout restart(不需還原,rollback 為 None)", ["kubectl", f"--context={CTX}", "rollout", "restart", "deployment/web", "--namespace=shop"], FX.DEPLOY, False),
         ("防火牆從 all 收緊到 tcp:443", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=tcp:443"], FX.FIREWALLS[2], False),
         ("提高防火牆優先序(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--priority=100"], fw, True),
         ("SQL 取消用戶端憑證(放寬)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
@@ -442,12 +453,14 @@ def t_classify():
     ]
     for name, argv, snap, loosens in okcases:
         r = ggchange.classify(argv, cfg, snap)
-        good = not r["blocked_reason"] and r["reversible"] and r["rollback"]
+        good = not r["blocked_reason"] and r["reversible"] and (r["rollback"] or r.get("rollback_note"))
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
         if name.startswith("改防火牆描述"):
             import shlex
             good = good and shlex.split(shlex.join(r["rollback"])) == r["rollback"] and "--description=Allow SSH from office" in r["rollback"]
+        if name.startswith("rollout restart"):
+            good = good and r["rollback"] is None and r["rollback_note"]
         if name.startswith("開啟 autoscaling"):
             good = good and "--no-enable-autoscaling" in r["rollback"] and not any(a.startswith("--min-nodes") for a in r["rollback"])
         if name.startswith("關閉授權網路"):
@@ -644,10 +657,14 @@ def plan_fixtures():
     fx = FX.review_fixtures()
     nodes = lambda n: {"items": [{"metadata": {"name": f"n{i}"}} for i in range(n)]}
     fx = [
+        {"tool": "gcloud", "re": "^storage buckets remove-iam-policy-binding gs://public-assets --member=allUsers", "when": {"flip_fw": True}, "out": {},
+         "set": {"bucket_public": False, "fw_changed": True}},
         {"tool": "gcloud", "re": "^storage buckets remove-iam-policy-binding gs://public-assets --member=allUsers", "out": {},
          "set": {"bucket_public": False}},
         {"tool": "gcloud", "re": "^storage buckets get-iam-policy gs://public-assets ", "when": {"bucket_public": False, "after_fail": True},
          "rc": 1, "err": "ERROR: simulated describe failure"},
+        {"tool": "gcloud", "re": "^compute firewall-rules describe allow-ssh ", "when": {"fw_changed": True},
+         "out": dict(FX.FIREWALLS[0], sourceRanges=["1.2.3.0/24"])},
         {"tool": "gcloud", "re": "^compute firewall-rules describe allow-ssh ", "out": FX.FIREWALLS[0]},
         {"tool": "gcloud", "re": "^compute firewall-rules update allow-ssh ", "rc": 1, "err": "ERROR: simulated failure"},
         {"tool": "gcloud", "re": "^container clusters describe prod ", "out": FX.CLUSTER},
@@ -752,6 +769,12 @@ def t_plan_change(e, review_run):
     crun = run_dir(r.stdout)
     ok("變更:change-log.md 由 kit 產生,before/ 有紀錄", crun and os.path.exists(os.path.join(crun, "change-log.md"))
        and os.path.exists(os.path.join(crun, "before", "C2.json")))
+    e.state({"flip_fw": True})
+    e.clear_log()
+    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1, C2"])
+    ok("變更:C1 已執行、C2 執行前被擋 → 整體 ISSUES(不是 BLOCKED),C1 附還原指令",
+       r.returncode == 1 and "status=ISSUES" in r.stdout and "C1\t已執行" in r.stdout and "C2\tBLOCKED\tprecondition" in r.stdout
+       and "add-iam-policy-binding" in r.stdout and not any("firewall-rules update" in " ".join(c["argv"]) for c in e.stub_calls()), r.stdout + r.stderr)
     e.state({"after_fail": True})
     e.clear_log()
     r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])

@@ -49,6 +49,7 @@ def main(argv):
                 hint.append("gcloud components install gke-gcloud-auth-plugin")
             raise gglib.Blocked(f"缺工具 {', '.join(missing)}(請使用者自己安裝:{';'.join(hint) or '見 SKILL.md'})")
         cfg = gglib.load_config(require=True)
+        gglib.install_signal_handlers()
         os.makedirs(cfg["GG_REPORT_DIR"], 0o700, exist_ok=True)
         tmp = tempfile.mkdtemp(prefix=".check-", dir=cfg["GG_REPORT_DIR"])
         os.chmod(tmp, 0o700)

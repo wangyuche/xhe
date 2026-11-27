@@ -44,6 +44,7 @@ def build(run):
     ids = [it.get("id") for it in inp["items"]]
     if len(set(ids)) != len(ids) or not all(isinstance(i, str) and ID_RE.match(i) for i in ids):
         raise gglib.Blocked(f"id 要是不重複的 C<n>:{ids}")
+    gglib.install_signal_handlers()
     lock = gglib.acquire_lock(cfg, project, "plan", run)
     items = []
     try:
@@ -82,7 +83,7 @@ def build_item(s, cfg, run, project, raw, ctx_done):
     item["expected"] = item["expected"] or []
     item.update({"kind": None, "target": {}, "reversible": False, "rollback": None, "loosens_security": False,
                  "loosens_reasons": [], "blocked_reason": None, "auto_pre": [], "dry_run": None,
-                 "dry_run_log": [], "precondition_failed_at_plan": [], "rollback_warning": None})
+                 "dry_run_log": [], "precondition_failed_at_plan": [], "rollback_warning": None, "rollback_note": None})
 
     def blocked(msg):
         item["blocked_reason"] = item["blocked_reason"] or msg
@@ -133,7 +134,7 @@ def build_item(s, cfg, run, project, raw, ctx_done):
     else:
         res = ggchange.classify(argv, cfg, snap)
     for k in ("kind", "target", "reversible", "rollback", "loosens_security", "loosens_reasons",
-              "blocked_reason", "auto_pre", "dry_run", "rollback_warning"):
+              "blocked_reason", "auto_pre", "dry_run", "rollback_warning", "rollback_note"):
         item[k] = res[k]
     if endpoint:
         item["target"]["endpoint"] = endpoint

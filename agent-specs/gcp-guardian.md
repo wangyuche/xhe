@@ -19,8 +19,8 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 **隔離(由 kit 結構強制)**:
 - 每次執行一個 run 目錄 `<GG_REPORT_DIR>/<專案>/<YYYYMMDD-HHMMSS>-<模式>/`(權限 700)。該次的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/kubeconfig`(600),**不共用**、**不讀寫**使用者的 `~/.config/gcloud`、`~/.kube/config`。
 - kit 包裝的 gglib 內部包裝 缺 `--project` 時、kubectl 包裝 缺 `--context` 時,結束碼非 0、不執行。
-- **agent 不能直接呼叫裸 `gcloud` / `kubectl`(結構強制)**:agent frontmatter 掛 PreToolUse(Bash)hook `guard.py`,整條 Bash 指令只能是「**單一入口腳本 + 參數**」:入口限定 `<kit>/check.sh`、`collect.sh`、`plan.py`、`change.sh`、`render.mjs`、`yaml-review.sh`、`selftest.sh`;出現 `;`、`&`、`|`、`` ` ``、`$(`、`>`、`<`、換行一律拒絕;不含入口腳本但含 `gcloud` / `kubectl` / `CLOUDSDK_` / 金鑰路徑字樣的也拒絕。其他無害指令(`ls`、`cat` run 目錄)允許。`gglib.py` 的 `Session._exec`(內部函式庫,不是入口),不可單獨執行;包裝本身也依目前模式比對 `allow_read.txt` / `allow_dryrun.txt` / `allow_change.json`(第二道防線)。金鑰路徑只由 `env.sh` 讀取,不出現在 agent 指示與輸出。
-- **專案鎖**:計畫與變更模式在 `<GG_REPORT_DIR>/<專案>/.lock` 以 `mkdir` 取原子鎖(內含 pid 與模式),搶不到就 BLOCKED;結束時釋放,pid 已不存在的舊鎖可清掉並記錄。
+- **agent 不能直接呼叫裸 `gcloud` / `kubectl`(結構強制)**:agent frontmatter 掛 PreToolUse(Bash)hook `guard.py`,整條 Bash 指令只能是「**單一入口腳本 + 參數**」:入口限定 `<kit>/check.sh`、`collect.sh`、`plan.py`、`change.sh`、`render.mjs`、`yaml-review.sh`、`selftest.sh`;出現 `;`、`&`、`|`、`` ` ``、`$(`、`>`、`<`、換行一律拒絕;不含入口腳本但含 `gcloud` / `kubectl` / `CLOUDSDK_` / 金鑰路徑字樣的也拒絕。其他無害指令(`ls`、`cat` run 目錄)允許。`gglib.py` 的 `Session._exec`(內部函式庫,不是入口),不可單獨執行;包裝本身也依目前模式比對 `allow_read.txt` / `allow_dryrun.txt` / `allow_change.json`(第二道防線)。金鑰路徑只由 `gglib.py` 讀取,不出現在 agent 指示與輸出。
+- **專案鎖**:計畫與變更模式對 `<GG_REPORT_DIR>/<專案>/.lock` 取 `fcntl.flock`(內含 pid 與模式),搶不到就 BLOCKED;程序結束或當掉時由系統釋放。
 - 金鑰內容、access token 不印到輸出、報告、回報。run 目錄結束時刪掉 `gcloud/` 與 `kubeconfig`(內含憑證快取),只留報告與遮蔽後的盤點。
 
 ## 模式
@@ -82,10 +82,10 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 變更開新的 run 目錄;`change-log.md` 由 `change.sh` 自動產生(來源計畫目錄、plan sha256、每條結果、實際指令與結束碼),agent 不寫。
 
 ### 變更允許清單(其餘一律 BLOCKED,請使用者自己做)
-- `gcloud container clusters update`,只允許這些旗標:`--enable-master-authorized-networks`、`--master-authorized-networks`、`--enable-shielded-nodes`、`--workload-pool`、`--logging`、`--monitoring`、`--maintenance-window*`、`--enable-network-policy`、`--security-posture`、`--workload-vulnerability-scanning`;其他旗標(含 `--release-channel`、`--cluster-version`)BLOCKED。`--security-posture`、`--workload-vulnerability-scanning`、`--maintenance-window*` 沒有可靠的還原範本,實作上判「不可還原」→ BLOCKED(建置時決定,2026-11-27)。
+- `gcloud container clusters update`,只允許這些旗標:`--enable-master-authorized-networks`、`--master-authorized-networks`、`--enable-shielded-nodes`、`--workload-pool`、`--enable-network-policy`(及其反向旗標);其他旗標(含 `--logging`、`--monitoring`、`--security-posture`、`--maintenance-window*`、`--release-channel`、`--cluster-version`)沒有可靠的還原範本,BLOCKED(建置時決定,2026-11-27)。
 - `gcloud container node-pools update`(不含 `--node-version`、`--image-type`)、`gcloud container clusters resize`(node pool 台數;縮到 0 BLOCKED)。
 - `gcloud compute firewall-rules update`:`--source-ranges` 不得含 `0.0.0.0/0` 或 `::/0`;不得 `--disabled` 掉允許 GKE 控制平面 / IAP(35.235.240.0/20)的規則。
-- `gcloud storage buckets update`(公開存取防護、統一存取、版本、保存設定)、`gcloud storage buckets remove-iam-policy-binding`。
+- `gcloud storage buckets update`(公開存取防護、統一存取、版本;保存期限設定不可還原,禁止)、`gcloud storage buckets remove-iam-policy-binding`。
 - `gcloud projects add-iam-policy-binding` / `remove-iam-policy-binding`(不得動 `GG_SA` 自己的綁定、不得新增或移除 `roles/owner`)。
 - `gcloud sql instances patch`(限 SSL、授權網路、備份設定)。
 - `kubectl apply` / `kubectl patch`(必須先 `kubectl diff` 且 diff 不含刪除整個資源)、`kubectl scale`、`kubectl rollout restart`、`kubectl label namespace`。
@@ -170,7 +170,7 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 - 完成時回報:見「輸出」。
 - 可否平行:審查 / YAML 審查可平行(每次獨立 run 目錄與 kubeconfig);計畫與變更模式取專案鎖,只能在不同專案之間平行。
 - 建議模型:inherit。
-- 需要的 skill:`gcp-ops-kit`(新做)。理由:白名單、遮蔽、規則判定、HTML 產生、plan 雜湊與允許清單都是每次相同的固定程式,即興重寫每次會漏不同項目,且成功標準 2、4、5、6 需要可重現。內容:`env.sh`(載入設定、建 run 目錄、隔離、gglib 內部包裝 / kubectl 包裝 包裝、專案鎖)、`guard.py`(PreToolUse hook)、`allow_read.txt` / `deny_read.txt` / `allow_dryrun.txt` / `allow_change.json`(含還原範本與 loosens 規則)、`check.sh <模式>`、`collect.sh`(白名單 + 遮蔽)、`redact.py`、`yaml2json.rb`、`gcp_rules.py`、`k8s_rules.py`、`plan.py`(產生 / 驗證 plan.json 與 sha256)、`change.sh`(允許清單、precondition、dry-run、before/after)、`render.mjs`(含 `--check`、差異)、`tests/`(testdata、fixtures、stub)(問題與乾淨樣本、含秘密樣本、假盤點 JSON、`stub/gcloud`、`stub/kubectl`)、`selftest.sh`。
+- 需要的 skill:`gcp-ops-kit`(新做)。理由:白名單、遮蔽、規則判定、HTML 產生、plan 雜湊與允許清單都是每次相同的固定程式,即興重寫每次會漏不同項目,且成功標準 2、4、5、6 需要可重現。內容:`gglib.py`(內部函式庫:載入設定、建 run 目錄、隔離、gcloud / kubectl 包裝、白名單、遮蔽、專案鎖)、`guard.py`(PreToolUse hook)、`allow_read.txt` / `deny_read.txt` / `allow_dryrun.txt` / `allow_change.json`(含還原範本與 loosens 規則)、`check.sh <模式>`、`collect.sh`(白名單 + 遮蔽)、`yaml2json.rb`、`gcp_rules.py`、`k8s_rules.py`、`plan.py`(產生 / 驗證 plan.json 與 sha256)、`change.sh`(允許清單、precondition、dry-run、before/after)、`render.mjs`(含 `--check`、差異)、`tests/`(testdata、fixtures、stub)(問題與乾淨樣本、含秘密樣本、假盤點 JSON、`stub/gcloud`、`stub/kubectl`)、`selftest.sh`。
 
 ## 建置時的調整(2026-11-27)
 - 共用程式由 `env.sh` 改為 Python 內部函式庫 `gglib.py`(不在 hook 允許的入口清單,不能單獨執行);hook 由 `guard.sh` 改為 `guard.py`。
