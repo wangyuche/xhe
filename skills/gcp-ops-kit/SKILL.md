@@ -87,6 +87,8 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 
 - **共同禁止**:任何 delete / `set-iam-policy` / `services disable` / upgrade / `--cluster-version` / `--release-channel` / `--node-version` / `--image-type`;新增 allUsers / allAuthenticatedUsers;任何 `0.0.0.0/0`、`::/0`;防火牆 `all` 或 1–65535 全埠;動 gcp-guardian 自己的 SA;新增 / 移除 `roles/owner`;停用 GKE / IAP 防火牆規則;`--prune`、`--force`、kustomize apply;retention 設定;建立 SA 金鑰。
 - **反向旗標**(例 `--enable-shielded-nodes`)會先讀變更前狀態;已是目標狀態 → 判「不可還原」(其實不需變更,還原反而會改掉原設定),狀態記入 `auto_pre`。bucket / Cloud SQL 的狀態欄位讀不到也判不可還原。
+- gcloud 規定要成對的旗標(`--master-authorized-networks` 要帶 `--enable-master-authorized-networks`、`--min/max-nodes` 要帶 `--enable-autoscaling`)缺一就 BLOCKED;已啟用時這個 enable 旗標當「陪同旗標」,還原時保留。
+- kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減只接受 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定。
 - kubectl 不允許對 Secret、RBAC、webhook、CRD、Namespace 做 apply / patch(`k8s_forbidden_kinds`),在快照之前就擋;資源種類一律小寫。
 - `0.0.0.0/0` / `::/0` 以 ipaddress 解析判斷(`0::/0`、多段合起來涵蓋全部也擋)。

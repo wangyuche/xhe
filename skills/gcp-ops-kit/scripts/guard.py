@@ -123,12 +123,14 @@ def check_bash(cmd, cfg, cwd):
     recursive = (first in ("grep", "diff") and any(t in ("-r", "-R", "--recursive", "--dereference-recursive")
                                                    or (t.startswith("-") and not t.startswith("--") and ("r" in t or "R" in t))
                                                    or t.startswith("--directories") for t in toks[1:])) \
-        or (first == "find" and (len(toks) == 1 or toks[1].startswith("-")))
+        or (first == "find" and (len(toks) == 1 or toks[1].startswith("-"))) \
+        or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]) and not any(not x.startswith("-") for x in toks[1:]))
     if recursive and is_protected(cwd, cfg, cwd, ancestor=True):
         return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
     for t in toks[1:]:
         for pth in arg_paths(t):
-            if pth and is_protected(pth, cfg, cwd, ancestor=first not in ("ls", "stat", "pwd", "date")):
+            ls_recursive = first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x or x == "--recursive" for x in toks[1:])
+            if pth and is_protected(pth, cfg, cwd, ancestor=ls_recursive or first not in ("ls", "stat", "pwd", "date")):
                 return f"不可讀受保護路徑(或其上層目錄):{t}"
     return None
 

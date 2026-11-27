@@ -68,7 +68,10 @@
         "--enable-master-authorized-networks": {
           "inverse": "--no-enable-master-authorized-networks",
           "state": "/masterAuthorizedNetworksConfig/enabled",
-          "target": true
+          "target": true,
+          "companion_for": [
+            "--master-authorized-networks"
+          ]
         },
         "--no-enable-master-authorized-networks": {
           "inverse": "--enable-master-authorized-networks",
@@ -159,7 +162,11 @@
         "--enable-autoscaling": {
           "inverse": "--no-enable-autoscaling",
           "state": "/autoscaling/enabled",
-          "target": true
+          "target": true,
+          "companion_for": [
+            "--min-nodes",
+            "--max-nodes"
+          ]
         },
         "--no-enable-autoscaling": {
           "inverse": "--enable-autoscaling",
@@ -509,5 +516,10 @@
     "validatingwebhookconfiguration",
     "customresourcedefinition",
     "namespace"
-  ]
+  ],
+  "requires": {
+    "--master-authorized-networks": "--enable-master-authorized-networks",
+    "--min-nodes": "--enable-autoscaling",
+    "--max-nodes": "--enable-autoscaling"
+  }
 }

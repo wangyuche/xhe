@@ -191,6 +191,9 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     for fl in flags:
         if fl not in allowed:
             return block(f"{kind} 不允許旗標 {fl}")
+    for fl, need in rules.get("requires", {}).items():
+        if fl in flags and need not in flags:
+            return block(f"{fl} 要同時帶 {need}(gcloud 規定)")
     for fl, val in flags.items():
         only = (k.get("flags", {}).get(fl) or {}).get("only_values")
         if only is not None and str(val) not in only:
@@ -263,6 +266,11 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             now_on = _as_bool(cur)
             want = rule["target"]
             want_on = bool(want) if want != "nonempty" else True
+            if now_on == want_on and any(c in flags for c in rule.get("companion_for", [])):
+                # 已啟用、只是 gcloud 要求同時帶這個旗標:還原時保留它
+                res["auto_pre"].append({"field": rule["state"], "expect": cur})
+                out.append(fl)
+                continue
             if now_on == want_on:
                 return None, f"{fl}:變更前已是目標狀態({rule['state']}={cur!r}),不需變更;還原會反向改掉原設定"
             res["auto_pre"].append({"field": rule["state"], "expect": cur})
@@ -273,7 +281,7 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             fmt = rule.get("format", "scalar")
             if cur is None and not rule.get("empty_ok") and not rule.get("state_required") and fmt != "join":
                 return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"
-            if cur is None and not rule.get("empty_ok"):
+            if cur is None and not rule.get("empty_ok") and not rule.get("clear_flag"):
                 return None, f"快照沒有 {rule['restore']},無法產生 {fl} 的還原值"
             if fmt == "join":
                 key = rule.get("item_key")
@@ -332,8 +340,6 @@ def _k_gke_cluster_update(pos, flags, snap, res, k, cfg, *_):
         man = snap.get("masterAuthorizedNetworksConfig") or {}
         if not man.get("cidrBlocks") and man.get("enabled"):
             return None, reasons, "授權網路原本已啟用且清單為空,沒有不放寬的還原寫法"
-        if not man.get("cidrBlocks") and "--enable-master-authorized-networks" not in flags:
-            return None, reasons, "授權網路原本未啟用:請同時加 --enable-master-authorized-networks"
     if "--master-authorized-networks" in flags:
         old = [c.get("cidrBlock") for c in (gglib.ptr_get(snap, "/masterAuthorizedNetworksConfig/cidrBlocks") or [])]
         if not _subset_cidrs(_ranges(flags["--master-authorized-networks"]), old):
@@ -430,7 +436,7 @@ def _k_project_iam_add(pos, flags, snap, res, k, cfg, *_):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
         return None, [], None
     rb = ["gcloud", "projects", "remove-iam-policy-binding", pos[0], f"--member={flags['--member']}",
-          f"--role={flags['--role']}", f"--project={flags['--project']}", "--quiet"]
+          f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     if _has_binding(snap, flags["--member"], flags["--role"]):
         return None, reasons, "綁定原本就存在(還原會移除原有綁定)"
     res["auto_pre"].append({"binding_absent": [flags["--member"], flags["--role"]]})
@@ -526,6 +532,14 @@ def _k_kubectl_patch(pos, flags, snap, res, k, cfg, mf, dc):
 def _k_kubectl_scale(pos, flags, snap, res, k, cfg, *_):
     if not re.fullmatch(r"(deployment|statefulset|replicaset)/[a-z0-9.-]+", pos[0]):
         res["blocked_reason"] = "scale 只接受 deployment|statefulset|replicaset/<名稱>"
+        return None, [], None
+    try:
+        n = int(flags["--replicas"])
+    except (ValueError, TypeError):
+        res["blocked_reason"] = "--replicas 要是整數"
+        return None, [], None
+    if n <= 0:
+        res["blocked_reason"] = "一律禁止:縮到 0(會停止服務,請使用者自己執行)"
         return None, [], None
     cur = gglib.ptr_get(snap, "/spec/replicas")
     if cur is None:

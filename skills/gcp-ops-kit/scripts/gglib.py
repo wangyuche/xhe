@@ -62,6 +62,8 @@ def load_config(require=True):
     elif require:
         raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,權限 600)")
     cfg.setdefault("GG_REPORT_DIR", os.path.expanduser("~/gcp-guardian-reports"))
+    if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
+        raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
     if require:
         key = cfg.get("GG_SA_KEY_FILE")
         if not key or not os.path.isfile(key):
@@ -100,6 +102,8 @@ def new_run(cfg, project, mode):
             break
         except FileExistsError:
             continue
+    else:
+        raise Blocked("同一秒內建立的 run 目錄太多,請稍後再試")
     write_json(os.path.join(run, "meta.json"), {
         "project": project, "mode": mode, "started": now_iso(),
         "kit": KIT, "sa": cfg.get("GG_SA"),
@@ -475,9 +479,11 @@ def ptr_get(obj, pointer, default=None):
     for part in pointer.lstrip("/").split("/"):
         part = part.replace("~1", "/").replace("~0", "~")
         if isinstance(cur, list):
+            if not part.isdigit():
+                return default
             try:
                 cur = cur[int(part)]
-            except (ValueError, IndexError):
+            except IndexError:
                 return default
         elif isinstance(cur, dict):
             if part not in cur:

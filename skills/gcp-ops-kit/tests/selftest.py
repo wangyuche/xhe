@@ -162,6 +162,7 @@ def t_guard(e):
         (f"grep -f{e.key} x", "deny"),
         (f"cat {e.reports}/p/r/report.html", "allow"),
         (f"ls {e.tmp}", "allow"),
+        (f"ls -laR {e.reports}", "deny-live"),
         (f"cat {e.cfg.replace('/conf/', '/CONF/')}", "deny"),
         (f"cat {e.key.replace('sa.json', 'SA.JSON')}", "deny"),
         (f"grep -r private_key {e.reports}", "deny-live"),
@@ -209,6 +210,10 @@ def t_redact():
     ok("遮蔽:metadata 布林設定保留明文", '"value": "TRUE"' in s)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
+
+
+def t_misc():
+    ok("ptr_get 拒絕負數索引", gglib.ptr_get({"a": [1, 2]}, "/a/-1", "NONE") == "NONE" and gglib.ptr_get({"a": [1, 2]}, "/a/1") == 2)
 
 
 def t_yaml_bool():
@@ -278,6 +283,9 @@ def t_classify():
          {"name": "deny-ssh", "direction": "INGRESS", "denied": [{"IPProtocol": "tcp", "ports": ["22"]}], "sourceRanges": ["10.0.0.0/8"]}),
         ("授權網路已啟用且清單空(還原會變寬)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
                                           "--master-authorized-networks=10.0.0.0/8"], dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True})),
+        ("授權網路只給網段沒帶 enable", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                       "--master-authorized-networks=10.1.0.0/16"], dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]})),
+        ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("bucket 狀態欄位不存在", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}),
     ]
     for name, argv, snap in blocked:
@@ -303,6 +311,12 @@ def t_classify():
                                         "--enable-master-authorized-networks", "--master-authorized-networks=203.0.113.0/24"], FX.CLUSTER, False),
         ("防火牆 tcp:443,icmp(icmp 不算全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:8080,icmp"],
          dict(FX.FIREWALLS[1], allowed=[{"IPProtocol": "tcp", "ports": ["8080"]}, {"IPProtocol": "icmp"}]), False),
+        ("收窄已啟用的授權網路", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                              "--enable-master-authorized-networks", "--master-authorized-networks=10.1.0.0/16"],
+         dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), False),
+        ("Cloud SQL 原本沒有授權網路", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--authorized-networks=203.0.113.0/24"],
+         {"settings": {"ipConfiguration": {"ipv4Enabled": True}}}, True),
+        ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -310,6 +324,13 @@ def t_classify():
         good = not r["blocked_reason"] and r["reversible"] and r["rollback"]
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
+        if name == "收窄已啟用的授權網路":
+            good = good and "--enable-master-authorized-networks" in r["rollback"] and "--master-authorized-networks=10.0.0.0/8" in r["rollback"] \
+                and "--no-enable-master-authorized-networks" not in r["rollback"]
+        if name == "Cloud SQL 原本沒有授權網路":
+            good = not r["blocked_reason"] and r["reversible"] and "--clear-authorized-networks" in r["rollback"]
+        if name.startswith("新增 IAM"):
+            good = good and "--condition=None" in r["rollback"]
         if name.startswith("開控制平面授權網路"):
             good = good and r["rollback"].count("--no-enable-master-authorized-networks") == 1
         if name == "收緊防火牆來源":
@@ -676,6 +697,7 @@ def main():
         t_redact()
         t_rule_tables()
         t_yaml_bool()
+        t_misc()
         t_approve_parse()
         t_classify()
         t_wrapper(e)
