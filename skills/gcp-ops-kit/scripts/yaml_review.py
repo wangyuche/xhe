@@ -48,7 +48,9 @@ def _remote_refs(kdir):
                             if not isinstance(v, str):
                                 continue
                             local = os.path.join(d, v)
-                            if os.path.isdir(local):
+                            if os.path.islink(local):
+                                refs.append(f"{v}(symlink,不跟隨)")
+                            elif os.path.isdir(local):
                                 todo.append(local)
                             elif not os.path.isfile(local):
                                 refs.append(v)  # 白名單:只有本機存在的檔案 / 目錄才展開,其餘視為遠端

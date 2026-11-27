@@ -194,6 +194,7 @@ def t_guard(e):
         (f"grep -C 2 x {e.key}", "deny"),
         ("python3 -c 'print(1)'", "deny"),
         (f"cat /System/Volumes/Data{e.key}", "deny"),
+        (f"cat {e.reports}/p/20261127-000001-change/before/C1.rollback.json.tmp", "deny"),
         (f"find {e.reports}/p/r -name ..", "deny"),
         (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "deny"),
         (f"ls {e.tmp}", "allow"),
@@ -353,6 +354,17 @@ def t_sa_change():
                                                ["kubectl", "--context=gke_demo-proj-123_asia-east1_prod", "patch", "deployment", "web",
                                                 "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], FX.DEPLOY)
     ok("dry-run:workload 改 serviceAccountName → 高風險 K8S-WI-003", any(f["rule_id"] == "K8S-WI-003" for f in new), new)
+
+
+def t_guard_import_fail(e):
+    bad = os.path.join(e.tmp, "kitcopy")
+    shutil.copytree(KIT, bad, ignore=shutil.ignore_patterns("tests"))
+    with open(os.path.join(bad, "rules", "secret_patterns.json"), "w") as f:
+        f.write("{broken")
+    r = subprocess.run(["python3", os.path.join(bad, "scripts", "guard.py")], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+                       capture_output=True, text=True, env=e.env())
+    ok("guard 載入失敗時拒絕(結束碼 2)", r.returncode == 2, (r.returncode, r.stderr[-200:]))
+    shutil.rmtree(bad, ignore_errors=True)
 
 
 def t_dead_creds(e):
@@ -548,6 +560,8 @@ def t_classify():
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}),
         ("來源網段與現值相同(不需變更)", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--source-ranges=10.0.0.0/8"], FX.FIREWALLS[2]),
         ("python3 -c", ["python3", "-c", "x"], None),
+        ("一條 update 改兩類設定", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                  "--enable-shielded-nodes", "--enable-network-policy"], dict(FX.CLUSTER, shieldedNodes={})),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
@@ -889,10 +903,21 @@ def t_rbac_broad():
     doc = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "oops"}, "roleRef": {"name": "cluster-admin"},
                    "subjects": [{"kind": "Group", "name": "system:authenticated"}, {"kind": "Group", "name": "system:masters"}]}, "file": "f"}
     fs = [f for f in k8s_rules.scan([doc], live=True) if f["rule_id"] == "K8S-RBAC-002"]
-    doc2 = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "x"}, "roleRef": {"name": "cluster-admin"},
+    doc2 = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "x", "labels": {"addonmanager.kubernetes.io/mode": "Reconcile"}}, "roleRef": {"name": "cluster-admin"},
                     "subjects": [{"kind": "ServiceAccount", "name": "foo", "namespace": "kube-system"}]}, "file": "f"}
-    ok("RBAC:kube-system 的 SA 綁 cluster-admin 不報", not [f for f in k8s_rules.scan([doc2], live=True) if f["rule_id"] == "K8S-RBAC-002"])
+    ok("RBAC:GKE 管理的 kube-system SA 綁定不報(線上)", not [f for f in k8s_rules.scan([doc2], live=True) if f["rule_id"] == "K8S-RBAC-002"])
+    doc3 = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "ci"}, "roleRef": {"name": "cluster-admin"},
+                    "subjects": [{"kind": "ServiceAccount", "name": "ci-deployer", "namespace": "kube-system"}]}, "file": "f"}
+    ok("RBAC:自建的 kube-system SA 綁 cluster-admin 要報", [f for f in k8s_rules.scan([doc3], live=True) if f["rule_id"] == "K8S-RBAC-002"]
+       and [f for f in k8s_rules.scan([doc3], live=False) if f["rule_id"] == "K8S-RBAC-002"])
     ok("RBAC:cluster-admin 綁 system:authenticated 要報、system:masters 不報", len(fs) == 1 and "system:authenticated" in fs[0]["detail"], fs)
+
+
+def t_prev_scope(e, full_run):
+    r = e.run([os.path.join(S, "collect.sh"), FX.P, "--scope", "iam", "--prev", full_run])
+    run = run_dir(r.stdout)
+    html = open(os.path.join(run, "report.html")).read() if run else ""
+    ok("與上次差異:範圍不同時不比較(不會把沒掃的列成已修復)", "不比較" in html and "已修復" not in html, r.stderr[-300:])
 
 
 def t_missing_cluster(e):
@@ -1296,6 +1321,7 @@ def main():
         t_yaml_bool()
         t_misc(e)
         t_dead_creds(e)
+        t_guard_import_fail(e)
         t_sa_change()
         t_check_pre_redact()
         t_bad_metadata()
@@ -1314,6 +1340,7 @@ def main():
         t_missing_cluster(e)
         t_rbac_broad()
         if run:
+            t_prev_scope(e, run)
             t_plan_change(e, run)
     finally:
         e.close()

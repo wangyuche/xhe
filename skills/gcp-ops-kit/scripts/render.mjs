@@ -60,6 +60,10 @@ function diffPrev(d, all) {
     if (!prev.startsWith(reportDir() + path.sep) || !fs.existsSync(path.join(prev, 'meta.json'))) return null;
   } catch { return null; }
   const pd = load(prev);
+  const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  if (!same(pd.meta.project, d.meta.project) || !same(pd.meta.areas, d.meta.areas) || !same(pd.meta.clusters, d.meta.clusters)) {
+    return { prev, mismatch: true, added: [], fixed: [], still: [] };
+  }
   const key = (f) => `${f.rule_id}|${f.resource}`;
   const now = new Set(all.map(key));
   const before = new Set(allFindings(pd).map(key));
@@ -186,7 +190,7 @@ export function render(run) {
   const modeName = { review: '審查', yaml: 'YAML 審查', plan: '計畫', change: '變更' }[m.mode] || m.mode;
   const tiles = [...COUNTED, '無法判定'].map((k) => `<div class="tile"><b class="${k === '無法判定' ? '' : 's-' + k}">${s[k]}</b><span>${k}</span></div>`).join('');
   const und = d.und.length ? `<table><thead><tr><th>範圍</th><th>項目</th><th>原始錯誤</th></tr></thead><tbody>${d.und.map((u) => `<tr><td>${esc(u.area)}</td><td class="mono">${esc(u.item)}</td><td class="mono">${esc(u.error)}</td></tr>`).join('')}</tbody></table>` : '<p class="sub">無。</p>';
-  const diffHTML = diff ? `<h2>與上次差異</h2><p class="sub">上次:<span class="mono">${esc(diff.prev)}</span></p>
+  const diffHTML = diff && diff.mismatch ? `<h2>與上次差異</h2><p class="sub">上次(<span class="mono">${esc(diff.prev)}</span>)的專案或掃描範圍不同,不比較。</p>` : diff ? `<h2>與上次差異</h2><p class="sub">上次:<span class="mono">${esc(diff.prev)}</span></p>
 <p>新增 ${diff.added.length} · 已修復 ${diff.fixed.length} · 仍存在 ${diff.still.length}</p>
 <details><summary>新增</summary>${findingsTable(diff.added)}</details><details><summary>已修復</summary>${findingsTable(diff.fixed)}</details>` : '';
   const statsJSON = JSON.stringify(s);

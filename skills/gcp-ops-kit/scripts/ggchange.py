@@ -253,6 +253,11 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
         only = (k.get("flags", {}).get(fl) or {}).get("only_values")
         if only is not None and str(val) not in only:
             return block(f"{fl} 只允許 {only}")
+    groups = rules.get("exclusive_groups", {}).get(kind)
+    if groups:
+        hit = [i for i, g in enumerate(groups) if any(f in flags for f in g)]
+        if len(hit) > 1:
+            return block("gcloud 一次只能改一類設定:請拆成多個 C 編號")
     pre = _resource_precheck(kind, pos, flags)
     if pre:
         return block(pre)

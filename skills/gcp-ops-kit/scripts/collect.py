@@ -166,6 +166,9 @@ def analyze(run, cfg):
     meta["sa_roles"] = sorted(b.get("role") for b in pol.get("bindings") or [] if me in (b.get("members") or []))
     gglib.write_json(os.path.join(run, "meta.json"), meta)
     findings = gcp_rules.scan(inv, cfg.get("GG_SA"))
+    areas = (gglib.read_json(os.path.join(run, "meta.json"), {}) or {}).get("areas") or []
+    if areas and "gke" not in areas:  # 只掃 k8s 時仍要抓叢集清單,但不報 GKE 層規則
+        findings = [f for f in findings if not f["rule_id"].startswith("GKE-")]
     by_ctx = {}
     for d in k8s_docs(inv):
         by_ctx.setdefault(d.get("context"), []).append(d)

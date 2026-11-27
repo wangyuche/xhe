@@ -576,5 +576,44 @@
     "--quiet",
     "--uniform-bucket-level-access",
     "--versioning"
-  ]
+  ],
+  "exclusive_groups": {
+    "gke-cluster-update": [
+      [
+        "--enable-master-authorized-networks",
+        "--no-enable-master-authorized-networks",
+        "--master-authorized-networks"
+      ],
+      [
+        "--enable-shielded-nodes",
+        "--no-enable-shielded-nodes"
+      ],
+      [
+        "--workload-pool"
+      ],
+      [
+        "--enable-network-policy",
+        "--no-enable-network-policy"
+      ]
+    ],
+    "gke-nodepool-update": [
+      [
+        "--enable-autoupgrade",
+        "--no-enable-autoupgrade"
+      ],
+      [
+        "--enable-autorepair",
+        "--no-enable-autorepair"
+      ],
+      [
+        "--workload-metadata"
+      ],
+      [
+        "--enable-autoscaling",
+        "--no-enable-autoscaling",
+        "--min-nodes",
+        "--max-nodes"
+      ]
+    ]
+  }
 }

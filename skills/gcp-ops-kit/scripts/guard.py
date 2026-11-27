@@ -10,7 +10,11 @@ import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import gglib  # noqa: E402
+try:
+    import gglib  # noqa: E402
+except BaseException as _e:  # 守門自己壞掉時一律拒絕(Claude Code 只有結束碼 2 才會擋)
+    print(f"gcp-guardian guard 載入失敗,拒絕:{_e}", file=sys.stderr)
+    sys.exit(2)
 
 SCRIPTS = os.path.join(gglib.KIT, "scripts")
 ENTRIES = {"check.sh", "collect.sh", "plan.py", "change.sh", "render.mjs", "yaml-review.sh", "selftest.sh"}
@@ -96,7 +100,7 @@ def is_protected(path, cfg, cwd, ancestor=True, rollback_ancestor=True):
             return True
     parts = p.split(os.sep)
     rd = os.path.realpath(cfg["GG_REPORT_DIR"]).lower()
-    if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig" or parts[-1].endswith(".rollback.json")):
+    if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig" or ".rollback.json" in parts[-1]):
         return True
     if ancestor and (p == rd or p.startswith(rd + os.sep) or rd.startswith(p.rstrip(os.sep) + os.sep)):
         # 報告目錄(或其上層):執行中的 run 會有 gcloud/ 憑證快取與 kubeconfig,遞迴工具不可碰
@@ -114,36 +118,12 @@ def _live_creds_under(top, rollback=True):
     try:
         for root, dirs, files in os.walk(top, onerror=_err):  # 讀不到的子目錄 → 例外 → 拒絕
             low = [d.lower() for d in dirs] + [f.lower() for f in files]
-            if "gcloud" in low or "kubeconfig" in low or (rollback and any(x.endswith(".rollback.json") for x in low)):
+            if "gcloud" in low or "kubeconfig" in low or (rollback and any(".rollback.json" in x for x in low)):
                 return True
             dirs[:] = [d for d in dirs if not d.startswith(".lock")]
     except OSError:
         return True
     return False
-
-
-def _raw(path, cwd):
-    return os.path.join(cwd, os.path.expanduser(path))
-
-
-WALK_LIMIT = 50000
-
-
-def _protected_symlink_under(top, cfg, cwd):
-    """目錄樹裡指向受保護路徑的 symlink(diff -r 等會跟隨)。"""
-    n = 0
-    for root, dirs, files in os.walk(top):
-        for name in dirs + files:
-            n += 1
-            if n > WALK_LIMIT:
-                return f"{top} 底下檔案太多(> {WALK_LIMIT}),請指定較小的範圍"
-            p = os.path.join(root, name)
-            if os.path.islink(p):
-                if os.path.isdir(p):  # 目錄 symlink:遞迴工具會跟隨,可串接多層,一律不允許
-                    return f"{p} 是目錄 symlink,遞迴讀取可能跟隨到受保護路徑;請指定不含目錄 symlink 的範圍"
-                if is_protected(os.path.realpath(p), cfg, cwd, ancestor=True):
-                    return f"{p} 是指向受保護路徑的 symlink"
-    return None
 
 
 def arg_paths(tok):
