@@ -1,0 +1,67 @@
+{
+ "11": {
+  "class_type": "PreviewImage",
+  "inputs": {
+   "images": [
+    "14",
+    0
+   ]
+  }
+ },
+ "12": {
+  "class_type": "RMBG",
+  "inputs": {
+   "image": [
+    "21",
+    0
+   ],
+   "model": "{{bg_model}}",
+   "sensitivity": 1,
+   "process_res": 1024,
+   "mask_blur": 0,
+   "mask_offset": 0,
+   "invert_output": false,
+   "refine_foreground": true,
+   "background": "Alpha",
+   "background_color": "#222222"
+  }
+ },
+ "13": {
+  "class_type": "InvertMask",
+  "inputs": {
+   "mask": [
+    "12",
+    1
+   ]
+  }
+ },
+ "14": {
+  "class_type": "JoinImageWithAlpha",
+  "inputs": {
+   "image": [
+    "21",
+    0
+   ],
+   "alpha": [
+    "13",
+    0
+   ]
+  }
+ },
+ "21": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "{{image}}"
+  }
+ },
+ "_meta": {
+  "title": "本機去背(上傳的圖 → RMBG → 透明 PNG)",
+  "family": "rmbg",
+  "params": {
+   "image": "上傳的圖(upload 印出的 loadImage 名稱)",
+   "bg_model": "RMBG 去背模型(check 的 background_removal[].models)"
+  },
+  "numeric": [],
+  "output": "RGBA PNG"
+ }
+}

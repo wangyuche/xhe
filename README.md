@@ -17,7 +17,7 @@
 | `github-bot` | 以機器人身分(GitHub App 或機器人帳號)commit、push 功能分支、開 PR,自己 code review 沒問題就以 review 過的 SHA 合併(只限沒有 CI 的 repo;不直接推 main) |
 | `gitlab-bot` | 在自建 GitLab(或 gitlab.com)commit、push 功能分支、開 MR,review 沒問題以 review 過的 SHA 合併(只限沒有 CI 的專案;不直接推 main);多專案共用一筆鑰匙圈 token(需 `api` + `write_repository`) |
 | `short-video-kit` | 9:16 短影音腳本:轉文字、停頓偵測、say 旁白、卡片 / 字幕渲染、錄網頁、ffmpeg 合成(含 AI 圖運鏡、音效)、ComfyUI 影格組影片、規格驗證(short-video-maker 使用) |
-| `game-art-kit` | 區網 ComfyUI 出圖腳本:check、上傳參考圖、送 workflow 輪詢下載(不在伺服器留檔)、workflow 骨架(出圖、LTX-2.3 / Wan 2.2 圖生影片、配樂、音效)、拼分鏡表(game-concept-artist、short-video-maker 使用);位址放 `~/.config/game-art-kit/config` |
+| `game-art-kit` | 區網 ComfyUI 出圖腳本:check、上傳參考圖、送 workflow 輪詢下載(不在伺服器留檔)、workflow 骨架(出圖、LTX-2.3 / Wan 2.2 圖生影片、配樂、音效)、角色動作圖(Qwen-Edit / Z-Image 兩段局部重畫、本機去背清理、頭像)、角色語音(Qwen3-TTS 聲音設計 + 台詞增量)、拼分鏡表(game-concept-artist、short-video-maker 使用);位址放 `~/.config/game-art-kit/config` |
 | `spec-site-kit` | 產品規格網頁腳本:schema、依狀態檢查來源(檔案與行號存在、已完成每端有程式與測試、未開始的關鍵字在程式裡 git grep 不到)、合併各模組、產生單一自足 HTML(無 JavaScript、無品牌樣式)、可重現抽查(product-spec-writer 使用) |
 | `gcp-ops-kit` | GCP / GKE 審查與受控變更腳本:唯讀白名單盤點(寫檔前遮蔽秘密)、固定嚴重度規則(CIS GCP Foundations v3.0.0)、k8s YAML / kustomize 審查、變更計畫(允許清單、可否還原、還原指令、放寬安全標示、sha256)、只執行逐條核准的變更、單一 HTML 報告、PreToolUse 守門 hook(gcp-guardian 使用) |
 | `db-review-kit` | PostgreSQL / goose migration 審查腳本(只連自己建立的暫存容器):暫存容器(tmpfs、唯讀 bootstrap、隨機秘密、DSN 守門、拒絕非本機 docker)、goose roundtrip、鎖觀察、GRANT 矩陣、併發 / deadlock、種子與 EXPLAIN、分區檢查、隔離跑整合測試(db-reviewer 使用) |
@@ -36,7 +36,7 @@
 | `integration-verifier` | 網站整合驗證(只讀):真實前後端一起跑,轉發、截圖、E2E、情境對照 |
 | `short-video-maker` | 短影音:GitHub repo、影片或主題 / 文案 → 1080×1920、≤60 秒 MP4(圖卡 / 錄網頁 / 挑精華 / 去停頓 / ComfyUI 生成插圖、動態鏡頭、配樂、音效),旁白與字幕,實際驗證規格與響度 |
 | `game-frontend-owner` | PixiJS 遊戲 / 大廳玩家端(正式版):新專案用 stack-pixi 骨架、既有專案照專案規則;Vitest + Playwright 三尺寸、效能預算、資源釋放、MUST 對照;缺素材寫 assets.needs.json 交給 game-concept-artist |
-| `game-concept-artist` | 遊戲示意圖與分鏡:ComfyUI 出圖,照各遊戲 `art/STYLE.md`,角色多張一致(參考圖編輯模型),逐張看圖;風格試作 / 定稿 / 角色定裝 / 一般 |
+| `game-concept-artist` | 遊戲示意圖與分鏡:ComfyUI 出圖,照各遊戲 `art/STYLE.md`,角色多張一致(參考圖編輯模型),逐張看圖;風格試作 / 定稿 / 角色定裝 / 一般 / 遊戲素材 / 角色動作 / 角色語音 |
 | `product-spec-writer` | 產品規格整理(企劃角色,只整理現況):讀規格、進度與程式,產出 `docs/spec-site/`(spec.json + index.html),每個功能標狀態並附檔案行號;待決事項、文件與程式不一致;不改規格與程式、不寫新企劃 |
 | `gcp-guardian` | GCP 專案 / GKE 管家:用專用 SA 審查 IAM、網路、GCS、Cloud SQL、Compute、GKE 與 workload,審 k8s YAML,網頁報告;管理 GKE / 修正問題先出計畫,只執行使用者逐條核准的條目(dry-run、before/after、還原指令) |
 | `db-reviewer` | PostgreSQL / migration 審查(只讀):9 個面向、暫存容器實測(up/down/up、鎖、GRANT、併發、EXPLAIN、整合測試)、編號意見與總結;專案值來自 `.claude/db-review.md`,缺時產出設定草稿 |

@@ -206,6 +206,10 @@ async function check() {
   workflows['qwen-edit-2ref'] = workflows['qwen-edit-3ref'] = workflows['qwen-edit-1ref'];
   workflows['qwen-t2i-sprite'] = workflows['qwen-t2i'] && bgOk;
   workflows['qwen-edit-1ref-sprite'] = workflows['qwen-edit-1ref'] && bgOk;
+  // 〔2026-11-27〕角色動作:Z-Image 遮罩重畫(LoadImage 的透明處 = 遮罩)、漸層遮罩(Differential Diffusion)、單獨去背(上傳的圖)
+  workflows['zimage-inpaint'] = !!(d.zimage_unet && d.zimage_clip && d.flux_vae && ['ModelSamplingAuraFlow', 'LoadImage', 'VAEEncode', 'SetLatentNoiseMask', 'ConditioningZeroOut', 'KSampler', 'VAEDecode', 'PreviewImage'].every(has));
+  workflows['zimage-inpaint-soft'] = workflows['zimage-inpaint'] && has('DifferentialDiffusion');
+  workflows['rmbg'] = bgOk && has('LoadImage') && has('PreviewImage');
   workflows['stable-audio-sfx'] = !!(d.sfx_ckpt && d.sfx_clip && ['CheckpointLoaderSimple', 'CLIPLoader', 'ConditioningStableAudio', 'EmptyLatentAudio', 'VAEDecodeAudio', 'PreviewAudio'].every(has));
   const wanOk = !!(d.wan_ti2v_unet && d.wan_clip && d.wan_vae && ['UNETLoader', 'CLIPLoader', 'VAELoader', 'CLIPTextEncode', 'ModelSamplingSD3', 'Wan22ImageToVideoLatent', 'KSampler', 'VAEDecode', 'PreviewImage'].every(has));
   workflows['wan22-i2v'] = wanOk && has('LoadImage') && has('ImageScale');
@@ -221,6 +225,8 @@ async function check() {
     const rt = combo(qin.optional?.runtime_mode) ?? combo(qin.required?.runtime_mode);
     // 骨架與 tts.mjs 送出的是固定字串,要完全相同才算可用(寬鬆比對會讓 check 說可用、實際送出卻被 ComfyUI 驗證擋下)
     const shared = Array.isArray(rt) && rt.includes('⚠️ Shared Runtime');
+    // 〔2026-11-27〕qwen3-tts-design 的 language 參數要在節點選項裡(角色語音 voice.json 的 language 依它驗證)
+    d.tts_languages = combo(qin.required?.language) ?? combo(qin.optional?.language) ?? [];
     const exact = (name) => variants.includes(name) ? name : null;
     d.tts_variant = exact('local:Qwen3-TTS-12Hz-1.7B-CustomVoice');
     d.tts_design_variant = exact('local:Qwen3-TTS-12Hz-1.7B-VoiceDesign');

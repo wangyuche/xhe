@@ -123,7 +123,7 @@ main(() => {
     const wf = join(GAK, 'workflows', mode === 'preset' ? 'qwen3-tts.json' : 'qwen3-tts-design.json');
     const sets = mode === 'preset'
       ? ['variant=local:Qwen3-TTS-12Hz-1.7B-CustomVoice', `voice=${preset}`, `instruct=${a.instruct ?? ''}`, `text=${text}`, `seed=${s}`]
-      : [`design=${design}`, `ref=${ref}`, `text=${text}`, `seed=${s}`, `dseed=${dseed}`];
+      : [`design=${design}`, `ref=${ref}`, `text=${text}`, `seed=${s}`, `dseed=${dseed}`, 'language=Chinese']; // 骨架 2026-11-27 起 language 參數化;旁白一律中文
     const p = spawnSync('node', [comfy, 'run', wf, '--out', join(outDir, 'raw'), '--name', name, ...sets.flatMap(x => ['--set', x]), '--timeout', '200', '--queue-timeout', '60'],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     if (p.status !== 0) {

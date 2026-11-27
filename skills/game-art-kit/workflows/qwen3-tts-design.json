@@ -5,7 +5,7 @@
    "model_variant": "local:Qwen3-TTS-12Hz-1.7B-VoiceDesign",
    "device": "auto",
    "voice_preset": "None (Zero-shot / Custom)",
-   "language": "Chinese",
+   "language": "{{language}}",
    "instruct": "",
    "top_k": 50,
    "top_p": 1,
@@ -35,7 +35,7 @@
    "model_variant": "local:Qwen3-TTS-12Hz-1.7B-Base",
    "device": "auto",
    "voice_preset": "None (Zero-shot / Custom)",
-   "language": "Chinese",
+   "language": "{{language}}",
    "instruct": "",
    "top_k": 50,
    "top_p": 1,
@@ -82,7 +82,8 @@
    "ref": "設計聲音時念的參考句(同一支片每句都用同一句,聲音才一致)",
    "text": "要念的一句話(Base 1.7B 複製設計出來的聲音念)",
    "seed": "念句子的 seed",
-   "dseed": "設計聲音的 seed(同一支片每句都用同一個,聲音才一致)"
+   "dseed": "設計聲音的 seed(同一支片每句都用同一個,聲音才一致)",
+   "language": "語言(Qwen3TTSEngineNode 的 language 選項,例如 Chinese、English;check 的 defaults.tts_languages)"
   },
   "numeric": [
    "seed",

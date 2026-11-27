@@ -187,8 +187,8 @@ echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));co
   && ok "check:Qwen3-TTS 本機模型 + Shared Runtime → qwen3-tts / qwen3-tts-design 可用、defaults.tts_variant" || bad "check qwen3-tts" "$(echo "$c" | grep -n 'tts' )"
 r="$(C run "$K/workflows/qwen3-tts.json" --out "$W/a" --name t1 --set variant=local:Qwen3-TTS-12Hz-1.7B-CustomVoice --set voice=Vivian --set 'instruct=輕快' --set 'text=你好,世界' --set seed=7)" && [ -s "$W/a/t1.wav" ] \
   && grep -q '"runtime_mode": "⚠️ Shared Runtime"' "$W/a/workflows/t1.json" && ok "qwen3-tts:送出並下載音訊(runtime_mode 固定 Shared Runtime)" || bad "qwen3-tts" "$r"
-r="$(C run "$K/workflows/qwen3-tts-design.json" --out "$W/a" --name t2 --set 'design=台灣年輕女生' --set 'ref=大家好' --set 'text=你好' --set seed=7 --set dseed=11)" && [ -s "$W/a/t2.wav" ] \
-  && [ "$(grep -c '"runtime_mode": "⚠️ Shared Runtime"' "$W/a/workflows/t2.json")" = 2 ] && grep -q '"seed": 11' "$W/a/workflows/t2.json" && ok "qwen3-tts-design:聲音設計 + Base 複製,兩個 engine 都 Shared Runtime、dseed 是數字" || bad "qwen3-tts-design" "$r"
+r="$(C run "$K/workflows/qwen3-tts-design.json" --out "$W/a" --name t2 --set 'design=台灣年輕女生' --set 'ref=大家好' --set 'text=你好' --set seed=7 --set dseed=11 --set language=Chinese)" && [ -s "$W/a/t2.wav" ] \
+  && [ "$(grep -c '"runtime_mode": "⚠️ Shared Runtime"' "$W/a/workflows/t2.json")" = 2 ] && grep -q '"seed": 11' "$W/a/workflows/t2.json" && [ "$(grep -c '"language": "Chinese"' "$W/a/workflows/t2.json")" -ge 2 ] && ok "qwen3-tts-design:聲音設計 + Base 複製,兩個 engine 都 Shared Runtime、dseed 是數字、language 兩個 engine 都填" || bad "qwen3-tts-design" "$r"
 o="$(C run "$K/workflows/qwen3-tts.json" --out "$W/a" --name t3 --set variant=x --set voice=Vivian --set instruct= --set text=x --set seed=4294967296 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q seed && ok "qwen3-tts:seed 超過 4294967295 → 結束碼 2" || bad "qwen3-tts seed 上限" "$o"
 P7=$((PORT - 7100))
 FAKE_COMBO=1 node "$K/tests/fake-comfy.mjs" "$P7" "$W/req7.log" > "$W/fake7.out" 2>&1 & PID2=$!
@@ -418,6 +418,91 @@ echo '{"version":1,"assets":[{"id":"hero.idle","type":"sprite","group":"table","
 o="$(V assets "$W/v/name.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '檔名' && echo "$o" | grep -q '未知欄位 constructor' && ok "schema:檔名要等於 id、prototype 名稱的欄位也算未知" || bad "schema 檔名 / prototype" "$o"
 cp "$W/sp/one.png" "$W/v/table/hero.run.png"
 o="$(V assets "$W/v/assets.json" --root "$W/v" 2>&1)"; echo "$o" | grep -q 'hero.run.png 實際 120×160,應為 480×160' && ok "schema --root:PNG 實際尺寸要等於 1x(sheet)" || bad "schema --root PNG 尺寸" "$o"
+
+# 9. 角色動作與角色語音(2026-11-27):Z-Image 遮罩重畫 / rmbg 骨架、sprite.mjs clean / headshot、actions.mjs、audio.mjs --type voice、voice.mjs
+c="$(C check)"
+echo "$c" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const w=d.workflows_available;process.exit(w["zimage-inpaint"]&&w["zimage-inpaint-soft"]&&w.rmbg&&d.defaults.tts_languages.includes("English")?0:1)' \
+  && ok "check:zimage-inpaint(-soft)、rmbg 可用;defaults.tts_languages 列出節點的語言選項" || bad "check 角色動作骨架" "$c"
+S() { node "$K/scripts/sprite.mjs" "$@"; }; A() { node "$K/scripts/actions.mjs" "$@"; }; VO() { node "$K/scripts/voice.mjs" "$@"; }
+mkdir -p "$W/act"
+# 合成測試圖:中間的人(alpha 253)、背景霧(alpha 10)、角落不相連的碎塊(alpha 255)
+GAK_SPRITE="$K/scripts/sprite.mjs" GAK_OUT="$W/act" node --input-type=module -e '
+const { encodePng } = await import(process.env.GAK_SPRITE); const fs = await import("node:fs"); const OUT = process.env.GAK_OUT;
+const mk = (w, h, f) => { const d = Buffer.alloc(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = (y * w + x) * 4, v = f(x, y); d[o] = v[0]; d[o + 1] = v[1]; d[o + 2] = v[2]; d[o + 3] = v[3]; } return { width: w, height: h, data: d }; };
+const body = (x, y) => x >= 24 && x < 40 && y >= 16 && y < 80;
+fs.writeFileSync(OUT + "/cut.png", encodePng(mk(64, 96, (x, y) => body(x, y) ? [200, 80, 40, 253] : x < 4 && y < 4 ? [0, 0, 0, 255] : [180, 180, 180, 10])));
+fs.writeFileSync(OUT + "/white.png", encodePng(mk(64, 96, (x, y) => body(x, y) ? [30, 30, 30, 255] : [255, 255, 255, 255])));
+fs.writeFileSync(OUT + "/grey.png", encodePng(mk(64, 96, (x, y) => body(x, y) ? [200, 80, 40, 255] : [220, 220, 220, 255])));
+fs.writeFileSync(OUT + "/touch.png", encodePng(mk(64, 96, (x, y) => x >= 24 && x < 40 && y >= 16 ? [200, 80, 40, 255] : [0, 0, 0, 0])));
+'
+o="$(S clean "$W/act/cut.png" --out "$W/act/c.png")" && GAK_SPRITE="$K/scripts/sprite.mjs" GAK_IN="$W/act/c.png" node --input-type=module -e '
+const { decodePng } = await import(process.env.GAK_SPRITE); const i = decodePng((await import("node:fs")).readFileSync(process.env.GAK_IN)); const a = (x, y) => i.data[(y * 64 + x) * 4 + 3];
+process.exit(a(30, 40) === 255 && a(1, 1) === 0 && a(55, 60) === 0 ? 0 : 1)' \
+  && ok "sprite clean:人物 alpha 253 → 255、背景霧清掉、不相連的碎塊刪掉" || bad "sprite clean" "$o"
+o="$(S clean "$W/act/grey.png" --out "$W/act/x.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q rmbg && ok "sprite clean:不透明輸入沒加 --key-white → 結束碼 2(先 rmbg)" || bad "clean 不透明輸入" "$o"
+o="$(S clean "$W/act/white.png" --key-white --out "$W/act/w.png")" && echo "$o" | grep -q '"ok":true' && ok "sprite clean --key-white:白底去背 + 自我檢查通過" || bad "clean --key-white" "$o"
+o="$(S clean "$W/act/touch.png" --out "$W/act/t.png")"; [ $? -eq 1 ] && echo "$o" | grep -q '"touches":\["bottom"\]' && ok "sprite clean:碰邊 → 結束碼 1、touches 列出碰到的邊" || bad "clean touches" "$o"
+o="$(S headshot "$W/act/c.png" --anchor 0.5,0.3,0.3 --size 64 --pad 0,10,0,0 --out "$W/act/av.png")" && echo "$o" | grep -q '"width":64,"height":64' && ok "sprite headshot:依 anchor 裁方形頭像(--pad 平移)" || bad "headshot" "$o"
+o="$(S headshot "$W/act/c.png" --anchor 0.5,1.3,0.3 --out "$W/act/av.png" 2>&1)"; [ $? -eq 2 ] && ok "sprite headshot:anchor 超出 0–1 → 結束碼 2" || bad "headshot anchor" "$o"
+# actions.mjs
+AD="$W/act/art/characters/fox/actions"; mkdir -p "$AD"; cp "$W/act/grey.png" "$AD/base.png"
+MODELS='"models":{"edit":{"unet":"qwen_image_edit_2511_fp8mixed.safetensors","clip":"qwen_2.5_vl_7b_fp8_scaled.safetensors","vae":"qwen_image_vae.safetensors","lora":"none","lora_strength":1,"shift":3.1,"steps":4,"cfg":1,"sampler":"euler","scheduler":"simple"},"inpaint":{"unet":"z_image_turbo_bf16.safetensors","clip":"qwen_3_4b.safetensors","vae":"ae.safetensors","shift":3,"steps":8,"cfg":1,"sampler":"res_multistep","scheduler":"simple"},"bg_model":"RMBG-2.0"}'
+echo "{\"id\":\"fox\",\"name\":\"Mr. Fox\",\"pronoun\":\"she\",\"base\":\"characters/fox/actions/base.png\",\"style\":\"2D cartoon\",\"look\":\"orange fox\",\"anchor\":{\"x\":0.5,\"y\":0.3,\"h\":0.3},\"head\":[{\"rect\":[0,0,64,20]},{\"ellipse\":[20,10,44,40]}],\"drop\":[{\"rect\":[38,30,44,40]}],\"face\":[24,18,40,36],$MODELS}" > "$AD/actions.json"
+o="$(A prompt --config "$AD/actions.json" --action happy)" && echo "$o" | grep -q 'in front of her chest' && echo "$o" | grep -q 'The character in image 1' && ok "actions prompt:代名詞依 pronoun 代入(she → her)、edit 用 image 1 指稱" || bad "actions prompt" "$o"
+o="$(A cut --config "$AD/actions.json" --input "$AD/base.png" --out "$W/act/out/x.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q work-dir && ok "actions cut:沒給 --work-dir → 結束碼 2" || bad "cut --work-dir" "$o"
+sed 's/"models":{"edit":{"unet":"[^"]*","clip"/"models":{"edit":{"clip"/' "$AD/actions.json" > "$AD/nounet.json"
+o="$(A gen --config "$AD/nounet.json" --action happy --seed 1 --out-dir "$W/act/out" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '缺 unet' && echo "$o" | grep -q '要的鍵' && ok "actions gen:models.edit 缺鍵 → 結束碼 2 並列出要的鍵" || bad "models 缺鍵" "$o"
+o="$(A masks --config "$AD/actions.json" --out "$W/act/out/masks.png")" && [ -e "$W/act/out/masks.png" ] && ok "actions masks:遮罩預覽" || bad "actions masks" "$o"
+n0=$(grep -c '"/upload/image"' "$W/req.log")
+o="$(A gen --config "$AD/actions.json" --action happy --seed 3 --method inpaint --out-dir "$W/act/out" --prefix t-fox)" && echo "$o" | grep -q '"generations":2' && [ "$(C pngsize "$W/act/out/happy-3.png")" = '{"width":64,"height":96}' ] \
+  && [ $(( $(grep -c '"/upload/image"' "$W/req.log") - n0 )) -eq 2 ] && grep -q SetLatentNoiseMask "$W/act/out/work/workflows/happy-3-body.json" && grep -q '"denoise": 0.7' "$W/act/out/work/workflows/happy-3-face.json" \
+  && ok "actions gen inpaint:兩段(身體 0.95 → 五官 0.7)、上傳 2 次、輸出縮回底圖尺寸" || bad "actions gen inpaint" "$o $(ls "$W/act/out/work/workflows" 2>&1)"
+o="$(A gen --config "$AD/actions.json" --action idle1 --seed 3 --method inpaint --out-dir "$W/act/out")" && echo "$o" | grep -q '"generations":1' && echo "$o" | grep -q '"step":"light"' && ok "actions gen:light 動作(idle1)整張輕改 1 段" || bad "actions gen light" "$o"
+o="$(A gen --config "$AD/actions.json" --action happy --seed 4 --out-dir "$W/act/out")" && echo "$o" | grep -q '"generations":1' && grep -q TextEncodeQwenImageEditPlus "$W/act/out/work/workflows/happy-4-edit.json" && ok "actions gen edit(預設):qwen-edit-1ref 1 次" || bad "actions gen edit" "$o"
+sed 's/"head":\[[^]]*\]\]*,//' "$AD/actions.json" > "$AD/nohead.json"; node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));delete j.head;require("fs").writeFileSync(f,JSON.stringify(j))' "$AD/nohead.json"
+o="$(A gen --config "$AD/nohead.json" --action happy --seed 3 --method inpaint --out-dir "$W/act/out" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q 'head' && ok "actions gen inpaint 缺 head → 結束碼 2" || bad "actions 缺 head" "$o"
+node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.base="/Users/x/ref.png";require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$AD/actions.json" "$AD/abs.json"
+o="$(A masks --config "$AD/abs.json" --out "$W/act/out/m2.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '相對 art/' && ok "actions:base 是本機絕對路徑 → 結束碼 2" || bad "actions base 絕對路徑" "$o"
+o="$(A cut --config "$AD/actions.json" --input "$AD/base.png" --out "$AD/idle1.png" --work-dir "$W/act/out/work")" && echo "$o" | grep -q '"generations":0' && grep -q '"RMBG"' "$W/act/out/work/workflows/idle1-rmbg.json" && [ ! -e "$AD/work" ] && [ "$(C pngsize "$AD/idle1.png")" = '{"width":64,"height":96}' ] \
+  && ok "actions cut:rmbg 骨架去背(不算生成)→ clean、縮回原尺寸、過程檔只在 --work-dir(不進成品目錄)" || bad "actions cut" "$o"
+o="$(A extend --config "$AD/actions.json" --action happy --input "$W/act/touch.png" --grey "$W/act/grey.png" --seed 1 --pad 32 --out-dir "$W/act/out/ext")" && echo "$o" | grep -q '"pad":{"left":0,"top":0,"right":0,"bottom":32}' && echo "$o" | grep -q '"generations":1' \
+  && [ "$(C pngsize "$W/act/out/ext/touch-x.png")" = '{"width":64,"height":128}' ] && grep -q DifferentialDiffusion "$W/act/out/ext/work/workflows/happy-1-extend.json" && ok "actions extend:只補碰到的邊(bottom +32)、漸層重畫 1 次" || bad "actions extend" "$o"
+o="$(A extend --config "$AD/actions.json" --action happy --input "$W/act/c.png" --grey "$W/act/grey.png" --seed 1 --out-dir "$W/act/out/ext")" && echo "$o" | grep -q '"generations":0' && ok "actions extend:沒碰邊 → 不補、不生成" || bad "actions extend 沒碰邊" "$o"
+o="$(A sheet --out "$W/act/out/sheet.png" "$AD/base.png" "$W/act/out/happy-3.png" "$W/act/out/happy-4.png")" && echo "$o" | grep -q '"columns":2,"rows":2' && ok "actions sheet:候選對照表" || bad "actions sheet" "$o"
+grep -rq "127.0.0.1:$PORT" "$W/act" && bad "角色動作產出含 ComfyUI 位址" || ok "角色動作產出(workflow、actions.json)不含 ComfyUI 位址"
+# 語音
+if [ -z "$(node "$K/scripts/audio.mjs" tools 2>/dev/null | grep '"ok":true')" ]; then skip "角色語音(沒有 ffmpeg / libopus / aac)"; else
+  VD="$W/act/art/characters/fox"
+  echo '{"id":"fox","design":"A cheerful young man","design_source":"開朗","ref":"Hello everyone","language":"English","variants":{"design":"d","base":"b"}}' > "$VD/voice.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines /dev/null --out "$W/act/art/voice/fox" --raw-dir "$W/act/out/vl" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '還沒選定音色' && ok "voice lines:還沒選定音色 → 結束碼 2" || bad "voice 未選定" "$o"
+  VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/voice-fox" --only 1 >/dev/null; o="$(VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/voice-fox" --only 2)" && echo "$o" | grep -q '"generations":1' && [ -e "$W/act/art/out/voice-fox/candidate-2.m4a" ] && [ "$(grep -c '"n": ' "$VD/voice.json")" -eq 2 ] && grep -q '"path": "out/voice-fox/candidate-1.ogg"' "$VD/voice.json" \
+    && grep -q '"language": "English"' "$W/act/art/out/voice-fox/raw/workflows/candidate-1.json" && ok "voice design --only:一次一個候選(--type voice 正規化)、每個完成就寫回 candidates(相對 art/)、language 送進骨架" || bad "voice design" "$o"
+  echo '{"id":"x","design":"SILENT voice","ref":"hi","language":"English"}' > "$W/act/vs.json"
+  for i in 1 2 3; do VO design --voice "$W/act/vs.json" --out-dir "$W/act/out/vs" --only 1 >/dev/null 2>&1; done
+  o="$(VO design --voice "$W/act/vs.json" --out-dir "$W/act/out/vs" --only 1 2>&1)"; rc=$?
+  [ $rc -eq 1 ] && echo "$o" | grep -q '上限 3' && [ "$(grep -c '"kind": "candidate"' "$W/act/out/vs/manifest.json")" -eq 3 ] && ok "voice design:同一個候選失敗 3 次後不再重出(每次換 dseed)" || bad "voice design 重出上限" "rc=$rc $o"
+  o="$(VO pick --voice "$VD/voice.json" --n 2)" && echo "$o" | grep -q '"n":2' && ok "voice pick:選定候選的 dseed 寫回" || bad "voice pick" "$o"
+  o="$(VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/voice-fox-2" --only 1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q redesign && echo "$o" | grep -q 全部重錄 && ok "voice design:已選定音色沒加 --redesign → 結束碼 2" || bad "voice redesign 保護" "$o"
+  cp "$VD/voice.json" "$W/act/v-before.json"
+  o="$(COMFYUI_URL=http://127.0.0.1:1 VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/voice-fox-r" --only 1 --redesign 2>&1)"; rc=$?
+  [ $rc -eq 5 ] && cmp -s "$VD/voice.json" "$W/act/v-before.json" && ok "voice design --redesign:ComfyUI 連不上 → 結束碼 5,已選定的音色不動" || bad "redesign 失敗保護" "rc=$rc $o"
+  node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.design="A different voice";delete j.dseed;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/v2.json"
+  o="$(VO design --voice "$W/act/v2.json" --out-dir "$W/act/out/v2" --only 2)" && node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1]));process.exit(j.candidates.length===1&&j.candidates[0].n===2?0:1)' "$W/act/v2.json" && ok "voice design:音色描述改了 → 舊候選自動作廢(只剩新的 n=2)" || bad "design 換描述" "$o $(cat "$W/act/v2.json")"
+  echo '{"greet":"[cheerfully] Hello!","win":"I win!"}' > "$W/act/lines.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/vl")" && echo "$o" | grep -q '"redone":2' && echo "$o" | grep -q '"tags_removed":\["greet"\]' \
+    && grep -q '"text": "Hello!"' "$W/act/art/out/vl/raw/workflows/greet.json" && [ -e "$W/act/art/out/vl/manifest.json" ] && ok "voice lines:2 句、情緒標記念之前去掉" || bad "voice lines" "$o"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/vl")" && echo "$o" | grep -q '"redone":0,"skipped":2' && ok "voice lines:沒改的台詞不重做(雜湊相同且檔案都在)" || bad "voice 增量" "$o"
+  echo '{"greet":"[cheerfully] Hello!","win":"I win again!"}' > "$W/act/lines.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/vl")" && echo "$o" | grep -q '"redone":1,"skipped":1' && ok "voice lines:只重做改過的那句" || bad "voice 改一句" "$o"
+  o="$(VO status --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox")" && echo "$o" | grep -q '"outdated":\[\]' && ok "voice status:雜湊等於重算值、檔案都在" || bad "voice status" "$o"
+  echo '{"greet":"[cheerfully] Hello!","win":"I win again!","lose":"SILENT"}' > "$W/act/lines.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/vl")"; rc=$?
+  [ $rc -eq 1 ] && echo "$o" | grep -q '"key":"lose"' && [ "$(grep -c '"key": "lose"' "$W/act/art/out/vl/manifest.json")" -eq 3 ] && ok "voice lines:靜音輸出換 seed 重出,最多 2 次,仍不過 → 結束碼 1" || bad "voice 重出上限" "rc=$rc $o"
+  o="$(VO status --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox")"; [ $? -eq 1 ] && echo "$o" | grep -q '"outdated":\["lose"\]' && ok "voice status:缺檔的 key 列為 outdated、結束碼 1" || bad "voice status 缺檔" "$o"
+  echo '{"../x":"hi"}' > "$W/act/bad.json"; o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/bad.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/out/vl2" 2>&1)"; [ $? -eq 2 ] && [ ! -e "$W/act/out/vl2" ] && ok "voice lines:key 不合規(../x)→ 整批結束碼 2,不做任何一句" || bad "voice key 檢查" "$o"
+  echo '{"a1":"one","a2":"two","a3":"three"}' > "$W/act/l3.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l3.json" --out "$W/act/art/voice/fox3" --raw-dir "$W/act/out/vl3" --max 2)" && echo "$o" | grep -q '"redone":2' && echo "$o" | grep -q '"deferred":1' && ok "voice lines --max 2:只做前 2 句,其餘留到下次" || bad "voice --max" "$o"
+fi
 
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束

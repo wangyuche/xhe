@@ -1,6 +1,6 @@
 ---
 name: game-art-kit
-description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:位址解析(本機設定,不進 git)、check(模型、模型家族、可用的角色一致性方法、本機去背、音訊模型)、上傳參考圖到 temp、送 workflow 並輪詢下載圖片與音訊(含逾時、刪 history、不在伺服器留檔、拒絕雲端 API 節點)、workflow 技術骨架(Qwen-Image、Qwen-Image-Edit 1–3 張參考圖、Flux、Flux Kontext、Z-Image、ControlNet canny、同 workflow 去背的透明 sprite、Stable Audio 音效、ACE-Step 配樂、Qwen3-TTS 旁白(預設聲音 / 台灣口音聲音設計)、LTX-2.3 / Wan 2.2 圖生影片(逐格輸出))、拼分鏡表、sprite.mjs(純 Node PNG 裁切 / 對齊 / 拼 sheet / 檢查)、audio.mjs(ffmpeg 響度 / 循環 / ogg + m4a / 檢查)、遊戲素材介面 schema(needs / assets)、產出不含位址檢查。game-concept-artist 出圖與做遊戲素材時使用;game-frontend-owner 用 schema 寫素材需求;short-video-maker 生成短影音的 AI 插圖、動態鏡頭、配樂、音效、旁白時也使用;任何要用區網 ComfyUI 批次出圖、出影片或出音效的情境也可用。
+description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:位址解析(本機設定,不進 git)、check(模型、模型家族、可用的角色一致性方法、本機去背、音訊模型)、上傳參考圖到 temp、送 workflow 並輪詢下載圖片與音訊(含逾時、刪 history、不在伺服器留檔、拒絕雲端 API 節點)、workflow 技術骨架(Qwen-Image、Qwen-Image-Edit 1–3 張參考圖、Flux、Flux Kontext、Z-Image、ControlNet canny、同 workflow 去背的透明 sprite、Stable Audio 音效、ACE-Step 配樂、Qwen3-TTS 旁白(預設聲音 / 台灣口音聲音設計)、LTX-2.3 / Wan 2.2 圖生影片(逐格輸出))、角色動作圖(actions.mjs:遮罩預覽、Qwen-Edit 改表情姿勢 / Z-Image 兩段局部重畫 / 補邊、本機去背清理、候選對照表;8 種動作提示詞範本)、角色語音(voice.mjs:Qwen3-TTS 聲音設計候選 → 選定 → 台詞批次、雜湊增量)、拼分鏡表、sprite.mjs(純 Node PNG 裁切 / 對齊 / 拼 sheet / 檢查 / 清理 / 頭像)、audio.mjs(ffmpeg 響度 / 循環 / ogg + m4a / 檢查)、遊戲素材介面 schema(needs / assets)、產出不含位址檢查。game-concept-artist 出圖與做遊戲素材時使用;game-frontend-owner 用 schema 寫素材需求;short-video-maker 生成短影音的 AI 插圖、動態鏡頭、配樂、音效、旁白時也使用;任何要用區網 ComfyUI 批次出圖、出影片或出音效的情境也可用。
 ---
 
 # game-art-kit
@@ -43,6 +43,12 @@ node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> 
 node <kit>/scripts/deliver.mjs --stage <stage 根目錄> --assets art/assets --json <新的 assets.json> <相對 art/assets 的檔案>...
 #   stage → art/assets 全有或全無交付(有交付日誌,提交前失敗全部還原,結束碼 1);有變更的項目 files 要全部一起交付;
 #   上次中斷留下日誌時先 node <kit>/scripts/deliver.mjs --recover --assets art/assets
+node <kit>/scripts/sprite.mjs clean <去背後.png> --out <out.png> [--key-white]
+#   角色動作圖清理:alpha 依 16..250 拉開(人物調實、背景霧清掉)→ 只留跟中間直帶連在一起的塊 → 離實心處 > 4 px 的淡線透明;--key-white 只給白底不透明圖。
+#   印 {ok,errors,coverage,border,touches};碰邊(touches)或覆蓋率不對 → 結束碼 1
+node <kit>/scripts/sprite.mjs headshot <透明圖> --anchor x,y,h --out <avatar.png> [--size 256] [--zoom 1.15] [--pad l,t,r,b]   # 依頭中心 / 頭高(0–1)裁方形頭像
+node <kit>/scripts/actions.mjs prompt|masks|gen|extend|cut|sheet …   # 角色動作(見下方「角色動作」)
+node <kit>/scripts/voice.mjs design|pick|lines|status …              # 角色語音(見下方「角色語音」)
 node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
 #   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
 #   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
@@ -75,7 +81,9 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 | `ltx23-i2v` | **圖生影片(優先)**:第一格 = 參考圖,LTX-2.3 + 8 步蒸餾 LoRA,cfg 1(負向提示詞固定在骨架裡) | 704×1280、`length` = 8k+1(24 fps,121 格 ≈ 5 秒):121 格約 110 秒(含載入模型),49 格約 40 秒。`run` 加 `--queue-timeout 120 --download-timeout 90`(121 張 PNG 約 140 MB;240 + 120 + 抓 /object_info 30 + 偵測 50 + 90 + 收尾 40 = 570 秒 < 600)。`lora` 用 `defaults.ltx_distill_lora`(主機只有已蒸餾的 checkpoint 時是 `none`)。同名重跑時 `run` 只覆寫 `<name>-1..N`,上一輪多出來的格數還在:組影片用 short-video-kit 的 `frames.sh --frames N`(N = 這次的 `length`)只取 1..N。動作與運鏡明顯,但背景偶爾冒出亂碼字,逐格看圖 |
 | `wan22-i2v` | 圖生影片(備援,`ltx23-i2v` 不可用時) | 704×1280、`length` = 4k+1,**上限 97 格(≈ 4 秒)**、steps 20、cfg 5、shift 8、uni_pc/simple:97 格約 270 秒,121 格約 340 秒(冷啟動再加載入模型的時間,會逼近時限,所以不用 121 格;`--timeout 360 --queue-timeout 40`,下載維持預設 60 秒:360 + 40 + 30 + 50 + 60 + 40 = 580 秒;主機忙碌排隊超過 40 秒會逾時,改用 LTX 或稍後再試;慢速網路下載不完時改用 LTX 或縮短格數),49 格約 110 秒。畫面穩、動作小 |
 | `ace-step-bgm` | 配樂(ACE-Step 1.5 turbo,本機,純音樂) | steps 8、cfg 1、shift 3、euler/simple;`lyrics` = `[instrumental]`;另需 `bpm`、`timesignature`(2 / 3 / 4 / 6)、`keyscale`(例如 `C major`);seconds = 目標長度 + 1(循環要多 0.5 秒以上;20 秒約 11 秒) |
-| `qwen3-tts-design` | **旁白(台灣口音,motion-video-kit `tts.mjs` 預設)**:VoiceDesign 1.7B 依 `design` 描述設計聲音(念 `ref` 參考句)→ Base 1.7B 複製該聲音念 `text`;兩個 engine 都 `⚠️ Shared Runtime` | 同一支片 `design` / `ref` / `dseed` 固定,聲音才一致;`seed` 控制念法。`check`:`workflows_available.qwen3-tts-design` 要主機有 `local:Qwen3-TTS-12Hz-1.7B-VoiceDesign` 與 `-Base` 和 `UnifiedVoiceDesignerNode`。`--timeout 200 --queue-timeout 60` |
+| `zimage-inpaint` / `zimage-inpaint-soft` | **遮罩重畫(角色動作)**:`image` = 上傳的初始圖,**透明處重畫、不透明處保留**(LoadImage 的 mask = 1 − alpha → `SetLatentNoiseMask`);soft 版加 `DifferentialDiffusion`,灰階遮罩邊緣只在最後幾步小改(補邊、整張輕改) | steps 8、cfg 1、res_multistep / simple、shift 3(Z-Image Turbo);denoise:身體 0.95、五官 0.7、整張輕改 0.55、補邊 0.9(832×1248 一張約 20 秒)。負向用 `ConditioningZeroOut`,沒有 negative 參數 |
+| `rmbg` | **單獨去背**:上傳的圖 → RMBG → 透明 PNG(角色動作挑好之後才去背,不算生成次數) | `bg_model` 用 `background_removal[].models`(RMBG-2.0) |
+| `qwen3-tts-design` | **旁白(台灣口音,motion-video-kit `tts.mjs` 預設)/ 角色語音**:`language` 參數(2026-11-27 起必填;選項見 check 的 `defaults.tts_languages`;旁白 `tts.mjs` 固定傳 Chinese)。VoiceDesign 1.7B 依 `design` 描述設計聲音(念 `ref` 參考句)→ Base 1.7B 複製該聲音念 `text`;兩個 engine 都 `⚠️ Shared Runtime` | 同一支片 `design` / `ref` / `dseed` 固定,聲音才一致;`seed` 控制念法。`check`:`workflows_available.qwen3-tts-design` 要主機有 `local:Qwen3-TTS-12Hz-1.7B-VoiceDesign` 與 `-Base` 和 `UnifiedVoiceDesignerNode`。`--timeout 200 --queue-timeout 60` |
 | `qwen3-tts` | 旁白(Qwen3 預設聲音,偏大陸口音):CustomVoice 1.7B,`voice`(Vivian 等)+ `instruct` 語氣指示 | `variant` = `defaults.tts_variant`;`runtime_mode` 固定 `⚠️ Shared Runtime`(2026-11-24 實測 Main Environment 載入失敗,只回 1 秒靜音);seed ≤ 4294967295 |
 
 模型檔名用 `check` 的 `defaults` 或 STYLE.md 的生成設定,不要寫死。
@@ -89,6 +97,41 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 - 去背骨架下載的 PNG 是 RGBA(`run` 輸出 `channels: 4`);接著 `sprite.mjs fit` 再 `check`,不要直接交未裁切的生成圖。
 - **影片骨架逐格輸出**:ComfyUI 沒有不存檔的影片預覽節點(`SaveVideo` 會留檔,`run` 拒絕),所以影片骨架用 `PreviewImage` 輸出每一格,`run` 下載成 `<name>-1.png … <name>-N.png`(121 格 704×1280 約 140 MB,有線區網實測 60 秒內下載完;Wi-Fi 等慢速網路加大 `--download-timeout` 時要同時調小 `--queue-timeout`,三者合計 ≤ 480,例如 LTX 用 `--queue-timeout 60 --download-timeout 180`);組成影片用 short-video-kit 的 `frames.sh`。LTX-2.3 會同時生成音訊,骨架直接丟棄。
 - 音訊只做機械檢查(長度、響度、峰值、非靜音、接縫),沒有人耳試聽;回報要寫明。
+
+## 角色動作(`actions.mjs`、`templates/character-actions.json`)
+
+立繪級的表情 / 姿勢集(不是動畫格)。設定檔 `art/characters/<id>/actions/actions.json`:`id`、`name`、`pronoun`(he / she / they)、`base`(相對 `art/`,不寫本機絕對路徑)、`style`、`look`、`features`、`outfit`、`method`(edit / inpaint)、`seeds`、`anchor {x,y,h}`(0–1)、inpaint 才要的 `head` / `drop`(`{rect|ellipse:[x0,y0,x1,y1]}` 陣列)與 `face`(`[x0,y0,x1,y1]`,重畫內切橢圓並羽化)、`models.edit` / `models.inpaint` / `models.bg_model`、`negative`、`actions.<動作>` 覆寫(expr / pose / prompt / light)、`candidates.<動作>`、`picks.<動作> = {seed, reason}`、`extend_pad.<動作>`。`models.edit` 鍵:`unet, clip, vae, lora, lora_strength, shift, steps, cfg, sampler, scheduler`;`models.inpaint` 鍵:`unet, clip, vae, shift, steps, cfg, sampler, scheduler`(缺鍵 → 結束碼 2 並列出)。
+
+```bash
+node <kit>/scripts/actions.mjs prompt --config <actions.json> --action happy                     # 看各段提示詞
+node <kit>/scripts/actions.mjs masks  --config <actions.json> --out <out>/masks.png [--image <png>]  # 綠 head、藍 drop、紅 face、橘頭像框、黃 anchor
+node <kit>/scripts/actions.mjs gen    --config <actions.json> --action happy --seed 11 --out-dir <out> [--method edit|inpaint] [--prefix <專案>-<id>]
+#   edit:qwen-edit-1ref(1 次生成);inpaint:head 保留、身體重畫(0.95)→ 只重畫五官(0.7)(2 次);light 動作(idle1)整張輕改(1 次)
+#   → <out>/<動作>-<seed>.png(淺灰底)、<out>/work/(各段原圖與 workflows/);印 {generations, steps, prompts}
+node <kit>/scripts/actions.mjs cut    --config <actions.json> --input <選定圖> --out <透明.png> --work-dir <out>/work   # rmbg 去背(不算生成)→ clean;結束碼 1 = clean 不過(看 touches)
+node <kit>/scripts/actions.mjs extend --config <actions.json> --action happy --input <透明.png> --grey <選定圖> --seed 5 --out-dir <out> [--pad 96] [--band 48]
+#   只補 clean 回報碰到的邊(soft 重畫 1 次)→ <out>/<名稱>-x.png,印 pad(寫進 actions.json 的 extend_pad,headshot --pad 用)
+node <kit>/scripts/actions.mjs sheet  --out <sheet.png> <底圖> <候選>... [--tile 360] [--cols N]
+```
+
+實測(2026-11):edit 表情與姿勢都改得動、臉最穩;inpaint 頭部原封不動但 denoise 太低時表情改不動(五官 0.55 → 0.7 才有效);head 的頂端橫條沒蓋滿圖寬時,頭旁邊會長出耳朵 / 帽子殘影;extend 能把被切掉的腳和尾巴自然補回。提示詞範本的教訓(恰好兩隻手、不寫道具名、識別特徵要寫進 look)寫在範本的 `comment`。
+
+## 角色語音(`voice.mjs`)
+
+`art/characters/<id>/voice.json`:`design`(英文聲音描述)、`design_source`、`ref`(試聽句)、`language`、`variants`、`candidates`、`dseed`(選定)、`seed`(選填)、`line_seeds`、`lines`(key → 雜湊)。
+
+```bash
+node <kit>/scripts/voice.mjs design --voice <voice.json> --out-dir art/out/<日期>-voice-<id> --only <k> [--redesign]   # 一次一個候選(約 70 秒);k = 1..3;失敗再呼叫同一個 k 會換 dseed(最多 3 次)
+node <kit>/scripts/voice.mjs pick   --voice <voice.json> --n 2
+node <kit>/scripts/voice.mjs lines  --voice <voice.json> --lines <lines.json> --out art/voice/<id> --raw-dir art/out/<日期>-voice-<id> [--all] [--max N]
+node <kit>/scripts/voice.mjs status --voice <voice.json> --lines <lines.json> --out art/voice/<id>
+```
+
+- 時限:每次 `comfy.mjs run` 用短時限,`actions.mjs gen`(inpaint 兩段)與 `voice.mjs design --only` 都放得進一次 Bash 600 秒;`voice.mjs lines` 每句完成就存,被中止再跑一次會依雜湊略過已完成的。
+- 台詞 key 要符合 `^[a-z0-9][a-z0-9._-]*$`(不合 → 整批結束碼 2)。雜湊 = 原文(去標記前)+ design + ref + dseed + language + variants + seed;只重做雜湊不同或缺檔的。
+- `[sweetly]` 這類情緒標記 Qwen3-TTS 不支援,念之前去掉(輸出列在 `tags_removed`)。
+- `audio.mjs --type voice`:去頭尾靜音、不裁切、−16 LUFS、≤ 15 秒(超過 → 結束碼 1,請拆句);check 不過自動換 seed 重出,每句最多 2 次。
+- 實測(2026-11,English):3 個候選約 3.5 分鐘;每句約 2 秒;whisper 轉回文字與台詞相符。音色好壞仍要人耳試聽。
 
 ## 遊戲素材介面(`schemas/`)
 

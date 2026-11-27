@@ -18,7 +18,9 @@ const NODES = ['UNETLoader', 'CLIPLoader', 'DualCLIPLoader', 'VAELoader', 'LoraL
   'ModelSamplingSD3', 'Wan22ImageToVideoLatent', 'LTXAVTextEncoderLoader', 'LTXVConditioning', 'LTXVPreprocess', 'EmptyLTXVLatentVideo', 'LTXVImgToVideoInplace',
   'LTXVAudioVAELoader', 'LTXVEmptyLatentAudio', 'LTXVConcatAVLatent', 'CFGGuider', 'KSamplerSelect', 'ManualSigmas', 'RandomNoise', 'SamplerCustomAdvanced', 'LTXVSeparateAVLatent', 'VAEDecodeTiled',
   // 旁白(TTS Audio Suite 的 Qwen3-TTS)
-  'Qwen3TTSEngineNode', 'UnifiedTTSTextNode', 'UnifiedVoiceDesignerNode'];
+  'Qwen3TTSEngineNode', 'UnifiedTTSTextNode', 'UnifiedVoiceDesignerNode',
+  // 角色動作:Z-Image 遮罩重畫
+  'SetLatentNoiseMask', 'DifferentialDiffusion'];
 const OUTPUT_NODES = new Set(['PreviewImage', 'PreviewAudio', 'SaveImage', 'SaveAudio', 'CheckpointSave']);
 // 雲端 API 節點(object_info 帶 api_node: true)
 const API_NODES = new Set(['BriaRemoveImageBackground', 'FancyApiNode']);
@@ -29,12 +31,12 @@ const NO_TTS = process.env.FAKE_NO_TTS === '1', TTS_MAIN_ONLY = process.env.FAKE
 const COMBO = process.env.FAKE_COMBO === '1';
 const cb = (opts) => COMBO ? ['COMBO', { options: opts }] : [opts];
 const QWEN3_INPUT = { required: { model_variant: cb(['TTS - Base 1.7B (Voice Clone)', 'TTS - CustomVoice 1.7B (Presets + Instruction)', ...(NO_TTS ? [] : ['local:Qwen3-TTS-12Hz-1.7B-Base', 'local:Qwen3-TTS-12Hz-1.7B-CustomVoice', 'local:Qwen3-TTS-12Hz-1.7B-VoiceDesign'])]) },
-  optional: { runtime_mode: cb(['Main Environment', ...(TTS_MAIN_ONLY ? [] : ['⚠️ Shared Runtime'])]) } };
+  optional: { runtime_mode: cb(['Main Environment', ...(TTS_MAIN_ONLY ? [] : ['⚠️ Shared Runtime'])]), language: cb(['Auto', 'Chinese', 'English', 'Japanese']) } };
 // 環境變數 FAKE_NO_RMBG=1:沒有去背模型檔;FAKE_NO_AUDIO=1:沒有音訊模型;FAKE_NO_VIDEO=1:沒有影片模型
 const NO_RMBG = process.env.FAKE_NO_RMBG === '1', NO_AUDIO = process.env.FAKE_NO_AUDIO === '1', NO_VIDEO = process.env.FAKE_NO_VIDEO === '1', LTX_NOLORA = process.env.FAKE_LTX_NOLORA === '1', SEP = process.env.FAKE_WIN_PATHS === '1' ? '\\' : '/';
 let MODELS = {
-  diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors', ...(NO_VIDEO ? [] : ['wan2.2_ti2v_5B_fp16.safetensors'])],
-  text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5gemma_b_b_ul2.safetensors', ...(NO_VIDEO ? [] : ['umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'])],
+  diffusion_models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_image_edit_2511_fp8mixed.safetensors', 'flux1-dev-fp8.safetensors', 'z_image_turbo_bf16.safetensors', ...(NO_VIDEO ? [] : ['wan2.2_ti2v_5B_fp16.safetensors'])],
+  text_encoders: ['qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_3_4b.safetensors', 'clip_l.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5gemma_b_b_ul2.safetensors', ...(NO_VIDEO ? [] : ['umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'])],
   vae: ['qwen_image_vae.safetensors', 'ae.safetensors', ...(NO_VIDEO ? [] : ['wan2.2_vae.safetensors'])], loras: ['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors', ...(NO_VIDEO || LTX_NOLORA ? [] : ['ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors'])],
   checkpoints: [...(NO_AUDIO ? [] : ['stable_audio_3_small_sfx.safetensors', 'ace_step_1.5_turbo_aio.safetensors', 'ace_step_v1_3.5b.safetensors']), ...(NO_VIDEO ? [] : ['ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors'])], controlnet: [], clip_vision: [], style_models: [],
   // RMBG-2.0 檔案齊全;BEN 少權重檔、BEN2 少 BEN2.py → 不應列出
