@@ -419,6 +419,145 @@ o="$(V assets "$W/v/name.json")"; [ $? -eq 1 ] && echo "$o" | grep -q '檔名' &
 cp "$W/sp/one.png" "$W/v/table/hero.run.png"
 o="$(V assets "$W/v/assets.json" --root "$W/v" 2>&1)"; echo "$o" | grep -q 'hero.run.png 實際 120×160,應為 480×160' && ok "schema --root:PNG 實際尺寸要等於 1x(sheet)" || bad "schema --root PNG 尺寸" "$o"
 
+# 9. 角色動作(Codex)與角色語音(ElevenLabs)(2026-11-27,付費服務;測試用假 codex / 假 ElevenLabs,不花錢)
+S() { node "$K/scripts/sprite.mjs" "$@"; }; A() { node "$K/scripts/actions.mjs" "$@"; }; VO() { node "$K/scripts/voice.mjs" "$@"; }
+mkdir -p "$W/act"
+GAK_SPRITE="$K/scripts/sprite.mjs" GAK_OUT="$W/act" node --input-type=module -e '
+const { encodePng } = await import(process.env.GAK_SPRITE); const fs = await import("node:fs"); const OUT = process.env.GAK_OUT;
+const mk = (w, h, f) => { const d = Buffer.alloc(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = (y * w + x) * 4, v = f(x, y); d[o] = v[0]; d[o + 1] = v[1]; d[o + 2] = v[2]; d[o + 3] = v[3]; } return { width: w, height: h, data: d }; };
+const body = (x, y) => x >= 24 && x < 40 && y >= 16 && y < 80;
+fs.writeFileSync(OUT + "/cut.png", encodePng(mk(64, 96, (x, y) => body(x, y) ? [200, 80, 40, 253] : x < 4 && y < 4 ? [0, 0, 0, 255] : [180, 180, 180, 10])));
+fs.writeFileSync(OUT + "/white.png", encodePng(mk(64, 96, (x, y) => body(x, y) ? [30, 30, 30, 255] : [255, 255, 255, 255])));
+fs.writeFileSync(OUT + "/touch.png", encodePng(mk(64, 96, (x, y) => x >= 24 && x < 40 && y >= 16 ? [200, 80, 40, 255] : [0, 0, 0, 0])));
+'
+o="$(S clean "$W/act/cut.png" --out "$W/act/c.png")" && GAK_SPRITE="$K/scripts/sprite.mjs" GAK_IN="$W/act/c.png" node --input-type=module -e '
+const { decodePng } = await import(process.env.GAK_SPRITE); const i = decodePng((await import("node:fs")).readFileSync(process.env.GAK_IN)); const a = (x, y) => i.data[(y * 64 + x) * 4 + 3];
+process.exit(a(30, 40) === 255 && a(1, 1) === 0 && a(55, 60) === 0 ? 0 : 1)' \
+  && ok "sprite clean:人物 alpha 253 → 255、背景霧清掉、不相連的碎塊刪掉" || bad "sprite clean" "$o"
+o="$(S clean "$W/act/white.png" --out "$W/act/x.png" 2>&1)"; [ $? -eq 2 ] && ok "sprite clean:沒有透明像素、沒加 --key-white → 結束碼 2" || bad "clean 不透明輸入" "$o"
+o="$(S clean "$W/act/white.png" --key-white --out "$W/act/w.png")" && echo "$o" | grep -q '"ok":true' && ok "sprite clean --key-white:白底去背 + 自我檢查通過" || bad "clean --key-white" "$o"
+o="$(S clean "$W/act/touch.png" --out "$W/act/t.png")"; [ $? -eq 1 ] && echo "$o" | grep -q '"touches":\["bottom"\]' && ok "sprite clean:碰邊 → 結束碼 1、touches 列出碰到的邊" || bad "clean touches" "$o"
+o="$(S headshot "$W/act/c.png" --anchor 0.5,0.3,0.3 --size 64 --out "$W/act/av.png")" && echo "$o" | grep -q '"width":64,"height":64' && ok "sprite headshot:依 anchor 裁方形頭像" || bad "headshot" "$o"
+# actions.mjs(假 codex)
+export CODEX_EXE="$K/tests/fake-codex.mjs" CODEX_HOME="$W/codexhome" FAKE_CODEX_LOG="$W/codex.log"; mkdir -p "$CODEX_HOME"; : > "$FAKE_CODEX_LOG"
+AD="$W/act/art/characters/fox/actions"; O="$W/act/art/out/20261127-actions-fox"; BG="$W/act/budget/r1/budget.json"; mkdir -p "$AD"; cp "$W/act/c.png" "$AD/base.png"
+echo '{"id":"fox","name":"Mr. Fox","pronoun":"she","base":"characters/fox/actions/base.png","style":"2D cartoon","features":"big brown eyes","outfit":"green waistcoat","anchor":{"x":0.5,"y":0.3,"h":0.3}}' > "$AD/actions.json"
+o="$(A prompt --config "$AD/actions.json" --action happy)" && echo "$o" | grep -q 'in front of her chest' && echo "$o" | grep -q 'model sheet for Mr. Fox' && ok "actions prompt:代名詞依 pronoun 代入(she → her)、鎖定句帶角色特徵" || bad "actions prompt" "$o"
+o="$(OPENAI_API_KEY=sk-should-not-pass ELEVENLABS_API_KEY=el-should-not-pass GH_TOKEN=gh-should-not-pass A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)" && [ -e "$O/happy-1.png" ] && echo "$o" | grep -q '"thread_cleaned":true' \
+  && [ -z "$(ls -A "$CODEX_HOME/generated_images" 2>/dev/null)" ] && tail -1 "$FAKE_CODEX_LOG" | grep -q '"hasOpenAIKey":false' && tail -1 "$FAKE_CODEX_LOG" | grep -q '"hasElevenKey":false,"hasOtherToken":false' && tail -1 "$FAKE_CODEX_LOG" | grep -q '"-s","read-only"' && grep -q '"used": 1' "$BG" \
+  && ok "actions gen:Codex 出圖 → 抄出、刪掉 thread 目錄、子程序只拿白名單環境變數(沒有 OPENAI / ElevenLabs 金鑰、其他 token)、唯讀沙箱、累計 1 張" || bad "actions gen" "$o $(tail -1 "$FAKE_CODEX_LOG")"
+o="$(A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)" && [ -e "$O/happy-2.png" ] && ok "actions gen:同一個動作再出 → 往上編號(happy-2),不覆蓋" || bad "actions 編號" "$o"
+o="$(HOME="$W/realhome" A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)"; node $K/scripts/comfy.mjs scrub-check "$W/act/art" --paths >/dev/null && ! grep -q "$W" "$O/manifest.json" && ok "actions manifest:不記本機絕對路徑(scrub-check --paths 通過)" || bad "manifest 路徑" "$(grep -n 'Users\|home' "$O/manifest.json" | head -3)"
+n0=$(wc -l < "$FAKE_CODEX_LOG")
+o="$(A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG" --limit 3 --run t-1 2>&1)"; rc=$?
+[ $rc -eq 6 ] && [ "$(wc -l < "$FAKE_CODEX_LOG")" -eq "$n0" ] && [ ! -e "$O/sad-1.png" ] && ok "actions gen:超過張數上限 → 結束碼 6,沒有呼叫 codex" || bad "actions 張數上限" "rc=$rc $o"
+o="$(FAKE_CODEX_LOGIN=apikey A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$W/act/budget/r2/budget.json" --limit 5 --run t-2 2>&1)"; rc=$?
+[ $rc -eq 2 ] && echo "$o" | grep -q ChatGPT && [ ! -e "$W/act/budget/r2/budget.json" ] && ok "actions gen:codex 用 API key 登入 → 結束碼 2,不送出、不記用量" || bad "actions apikey" "rc=$rc $o"
+BG3="$W/act/budget/r3/budget.json"
+o="$(FAKE_CODEX_MODE=violation A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG3" --limit 5 --run t-3 2>&1)"; rc=$?
+[ $rc -eq 7 ] && [ ! -e "$O/sad-1.png" ] && echo "$o" | grep -q command_execution && [ -z "$(ls -A "$CODEX_HOME/generated_images" 2>/dev/null)" ] && grep -q '"used": 1' "$BG3" \
+  && ! grep -rq FAKELEAK "$W/act/art" && ! echo "$o" | grep -q FAKELEAK \
+  && ok "actions gen:Codex 執行了指令(白名單以外)→ 結束碼 7、不採用、仍刪 thread、算 1 張、指令輸出(含金鑰)不進 manifest 與輸出" || bad "actions violation" "rc=$rc $o"
+o="$(FAKE_CODEX_MODE=noimage A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG3" --limit 5 --run t-3 2>&1)"; rc=$?
+[ $rc -eq 3 ] && echo "$o" | grep -q '"quota":true' && grep -q '"used": 2' "$BG3" && ok "actions gen:沒出圖(額度上限)→ 結束碼 3、quota:true、算 1 張" || bad "actions noimage" "rc=$rc $o"
+o="$(FAKE_CODEX_MODE=badthread A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG3" --limit 5 --run t-3 2>&1)"; rc=$?
+[ $rc -eq 3 ] && [ -d "$CODEX_HOME/generated_images/not-a-uuid" ] && echo "$o" | grep -q '"thread_cleaned":false' && ok "actions gen:thread id 不是 UUID → 不刪、不採用(結束碼 3)" || bad "actions badthread" "rc=$rc $o"
+rm -rf "$CODEX_HOME/generated_images/not-a-uuid"
+t0=$(date +%s); o="$(FAKE_CODEX_MODE=slow A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG3" --limit 5 --run t-3 --timeout 2 2>&1)"; rc=$?; t1=$(date +%s)
+sleep 1; [ $rc -eq 4 ] && [ $((t1 - t0)) -lt 15 ] && ! pgrep -f "fake-codex.mjs exec" >/dev/null && ok "actions gen:逾時 → 殺整個程序群組、結束碼 4" || bad "actions 逾時" "rc=$rc $((t1 - t0))s $o"
+o="$(FAKE_CODEX_MODE=todolist A gen --config "$AD/actions.json" --action idle2 --out-dir "$O" --budget "$W/act/budget/r4/b.json" --limit 5 --run t-4)" && [ -s "$O/idle2-1.png" ] && ok "actions gen:todo_list 這類非工具 item 不算違規" || bad "actions todo_list" "$o"
+o="$(FAKE_CODEX_MODE=exitearly A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$W/act/budget/r5/b.json" --limit 5 --run t-5 2>&1)"; rc=$?
+[ $rc -eq 3 ] && [ ! -e "$O/sad-1.png" ] && ok "actions gen:codex 沒讀提示詞就結束 → 不當掉(EPIPE 已處理)、結束碼 3、不留佔位檔" || bad "actions EPIPE" "rc=$rc $o"
+o="$(S headshot "$W/act/c.png" --anchor 0.5,0.3,0.3 --zoom 1,2 --out "$W/act/avx.png" 2>&1)"; [ $? -eq 2 ] && ok "sprite headshot:--zoom 不是數字 → 結束碼 2" || bad "headshot zoom" "$o"
+o="$(A sheet --out "$W/act/s0.png" --cols 0 "$AD/base.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '正整數' && ok "actions sheet --cols 0 → 用法錯誤(結束碼 2)" || bad "sheet cols 0" "$o"
+[ ! -e "$O/sad-1.png" ] && ok "actions gen:沒出圖時檔名佔位檔已刪" || bad "佔位檔殘留" "$(ls -la "$O" | head)"
+BP="$W/act/budget/par/b.json"; ( A gen --config "$AD/actions.json" --action nervous --out-dir "$O" --budget "$BP" --limit 1 --run t-p >/dev/null 2>&1; echo $? > "$W/act/p1" ) & PA=$!; ( A gen --config "$AD/actions.json" --action nervous --out-dir "$O" --budget "$BP" --limit 1 --run t-p >/dev/null 2>&1; echo $? > "$W/act/p2" ) & PB=$!; wait $PA $PB   # 只等這兩個(不帶參數的 wait 會連背景的假伺服器一起等)
+[ "$(cat "$W/act/p1" "$W/act/p2" | sort | tr '\n' ' ')" = "0 6 " ] && grep -q '"used": 1' "$BP" && [ ! -e "$BP.lock" ] && ok "budget:兩個 gen 同時跑、上限 1 → 只有一個送出(檔案鎖),另一個結束碼 6" || bad "budget 平行" "$(cat "$W/act/p1" "$W/act/p2") $(cat "$BP")"
+BS="$W/act/budget/stale/b.json"; mkdir -p "$(dirname "$BS")"; echo x > "$BS.lock"; touch -t 202001010000 "$BS.lock"
+o="$(A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BS" --limit 5 --run t-s 2>&1)"; rc=$?; [ $rc -eq 6 ] && echo "$o" | grep -q '手動刪除' && [ -e "$BS.lock" ] && ok "budget:鎖超過 30 秒 → 不自動刪、結束碼 6、請人確認" || bad "budget 舊鎖" "rc=$rc $o"
+( A gen --config "$AD/actions.json" --action idle2 --out-dir "$O" --budget "$W/act/budget/pm/b.json" --limit 5 --run t-pm >/dev/null 2>&1 ) & PA=$!; ( A gen --config "$AD/actions.json" --action idle2 --out-dir "$O" --budget "$W/act/budget/pm/b.json" --limit 5 --run t-pm >/dev/null 2>&1 ) & PB=$!; wait $PA $PB
+[ "$(grep -c '"run": "t-pm"' "$O/manifest.json")" -eq 2 ] && ok "manifest:兩個 gen 同時寫同一份 manifest,兩筆都在(加鎖 + 改名)" || bad "manifest 平行" "$(grep -c t-pm "$O/manifest.json")"
+o="$(A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG" --limit 24 --run t-1 2>&1)"; [ $? -eq 6 ] && echo "$o" | grep -q '上限不能改' && ok "budget:同一個累計檔換更大的 --limit → 結束碼 6(上限不能中途放寬)" || bad "budget 改上限" "$o"
+echo 'see https://example.com/home/page and ~/.codex/generated_images' > "$O/notes.md"; node $K/scripts/comfy.mjs scrub-check "$W/act/art" --paths >/dev/null && ok "scrub-check --paths:網址裡的 /home/、已遮蔽的 ~/.codex/generated_images 不誤報" || bad "scrub 誤報" "$(node $K/scripts/comfy.mjs scrub-check "$W/act/art" --paths | head -3)"; rm "$O/notes.md"
+( FAKE_CODEX_MODE=slow A gen --config "$AD/actions.json" --action discard --out-dir "$O" --budget "$W/act/budget/sig/b.json" --limit 5 --run t-sig >/dev/null 2>&1 ) & PS=$!; sleep 2; pkill -TERM -f 'actions.mjs gen .*--run t-sig'; wait $PS 2>/dev/null
+sleep 1; [ ! -e "$O/discard-1.png" ] && ! pgrep -f 'fake-codex.mjs exec' >/dev/null && ok "actions gen:被 SIGTERM 中止 → 不留佔位檔、codex 一起結束" || bad "actions SIGTERM" "$(ls -la "$O" | grep discard)"
+o="$(A masks --config "$AD/actions.json" --image "$O/happy-1.png" --out "$O/masks.png")" && [ -e "$O/masks.png" ] && ok "actions masks:anchor 預覽" || bad "actions masks" "$o"
+o="$(A sheet --out "$AD/sheet.png" "$AD/base.png" "$O/happy-1.png" "$O/happy-2.png")" && echo "$o" | grep -q '"columns":2,"rows":2' && ok "actions sheet:候選對照表" || bad "actions sheet" "$o"
+node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.base="/Users/x/ref.png";require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$AD/actions.json" "$W/act/abs.json"
+o="$(A prompt --config "$W/act/abs.json" --art "$W/act/art" --action happy 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '相對 art/' && ok "actions:base 是本機絕對路徑 → 結束碼 2" || bad "actions base 絕對路徑" "$o"
+unset CODEX_EXE CODEX_HOME FAKE_CODEX_LOG
+# 語音(假 ElevenLabs)
+if [ -z "$(node "$K/scripts/audio.mjs" tools 2>/dev/null | grep '"ok":true')" ]; then skip "角色語音(沒有 ffmpeg / libopus / aac)"; else
+  EP=$((PORT - 5300)); node "$K/tests/fake-elevenlabs.mjs" "$EP" "$W/el.log" > "$W/el.out" 2>&1 & PID2=$!
+  for i in $(seq 1 50); do grep -q listening "$W/el.out" 2>/dev/null && break; sleep 0.1; done
+  mkdir -p "$HOME/.elevenlabs"; echo 'ELEVENLABS_API_KEY=sk_REALKEY_must_not_be_used' > "$HOME/.elevenlabs/.env"
+  export ELEVENLABS_API_URL="http://127.0.0.1:$EP"
+  VD="$W/act/art/characters/fox"; VB="$W/act/budget/v1/budget.json"; PT="$(printf 'Good evening, everyone! [playfully] Shall we have a fun game tonight? I promise to play fair, mostly. Ha ha!')"
+  node -e 'require("fs").writeFileSync(process.argv[1],JSON.stringify({id:"fox",design:"A cheerful young man, warm tenor",design_source:"開朗",preview_text:process.argv[2],voice_name:"test Fox"}))' "$VD/voice.json" "$PT"
+  o="$(ELEVENLABS_API_URL=https://evil.example VO design --voice "$VD/voice.json" --out-dir "$W/x" --budget "$VB" --limit 2000 --run v-1 2>&1)"; [ $? -eq 2 ] && ok "voice:ELEVENLABS_API_URL 不是 127.0.0.1 → 結束碼 2" || bad "voice URL 白名單" "$o"
+  o="$(VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/v" --budget "$VB" --limit 2000 --run v-1)" && echo "$o" | grep -q '"n":3' && [ -e "$W/act/art/out/v/candidate-3.m4a" ] \
+    && grep -q "\"used\": ${#PT}" "$VB" && ! grep -q REALKEY "$W/el.log" && grep -q '"key":"test-key-not-real"' "$W/el.log" && echo "$o" | grep -q '"key_scan":{"found":false' \
+    && ok "voice design:3 個候選(--type voice 正規化)、字元累計 = preview_text 長度、測試模式不讀真金鑰、金鑰掃描無" || bad "voice design" "$o"
+  node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.preview_text="too short";require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/vshort.json"
+  n0=$(wc -l < "$W/el.log"); o="$(VO design --voice "$W/act/vshort.json" --out-dir "$W/x" --budget "$W/act/budget/v9/b.json" --limit 2000 --run v-9 2>&1)"; [ $? -eq 2 ] && [ "$(wc -l < "$W/el.log")" -eq "$n0" ] && ok "voice design:preview_text 不在 100–1000 字元 → 結束碼 2,沒有送出" || bad "voice preview 長度" "$o"
+  o="$(VO pick --voice "$VD/voice.json" --n 2)" && grep -q '"voice_id": "voice-gen-2"' "$VD/voice.json" && ok "voice pick:候選建成正式 voice,voice_id 寫回" || bad "voice pick" "$o"
+  o="$(VO pick --voice "$VD/voice.json" --n 1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q repick && grep -q '"voice_id": "voice-gen-2"' "$VD/voice.json" && ok "voice pick:已選定沒加 --repick → 結束碼 2,不換" || bad "voice repick 保護" "$o"
+  o="$(VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/v" --budget "$VB" --limit 2000 --run v-1 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q redesign && ok "voice design:已選定音色沒加 --redesign → 結束碼 2" || bad "voice redesign 保護" "$o"
+  echo '{"greet":"[cheerfully] Hello there!","win":"I win!"}' > "$W/act/lines.json"
+  o="$(VO plan --voice "$VD/voice.json" --lines "$W/act/lines.json")" && echo "$o" | grep -q '"first_chars":31' && echo "$o" | grep -q '"max_chars":93' && ok "voice plan:首次字元與含重錄最多字元(× 3)" || bad "voice plan" "$o"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$VB" --limit 2000 --run v-1)" && echo "$o" | grep -q '"recorded":2' \
+    && grep -q '"text":"\[cheerfully\] Hello there!"' "$W/el.log" && [ -e "$W/act/art/voice/fox/greet.m4a" ] && [ -e "$W/act/art/out/v/raw/greet.mp3" ] && ok "voice lines:2 句、情緒標記保留送出、原檔在 raw/" || bad "voice lines" "$o"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$VB" --limit 2000 --run v-1)" && echo "$o" | grep -q '"recorded":0,"skipped":2' && ok "voice lines:沒改的不重錄" || bad "voice 增量" "$o"
+  echo '{"greet":"[cheerfully] Hello there!","win":"I win again!"}' > "$W/act/lines.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$VB" --limit 2000 --run v-1)" && echo "$o" | grep -q '"recorded":1,"skipped":1' && ok "voice lines:只重錄改過的那句" || bad "voice 改一句" "$o"
+  o="$(VO status --voice "$VD/voice.json" --lines "$W/act/lines.json" --out "$W/act/art/voice/fox")" && echo "$o" | grep -q '"outdated":\[\]' && ok "voice status:雜湊一致、檔案都在" || bad "voice status" "$o"
+  echo '{"yes":"SHORT yes"}' > "$W/act/ls.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/ls.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vs/b.json" --limit 500 --run v-s)" && echo "$o" | grep -q '"recorded":1' && ok "voice lines:短於 0.4 秒的台詞(峰值正規化)check 通過、不重錄" || bad "voice 短台詞" "$o"
+  echo '{"long":"LONG line"}' > "$W/act/ll.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/ll.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vl/b.json" --limit 500 --run v-l)"; rc=$?
+  [ $rc -eq 1 ] && [ "$(grep -c '"key": "long"' "$W/act/art/out/v/manifest.json")" -eq 1 ] && [ ! -e "$W/act/art/voice/fox/long.ogg" ] && ok "voice lines:超過 15 秒 → 不重錄(請拆句)、不放進成品" || bad "voice 太長" "rc=$rc $o"
+  s0=$(shasum "$W/act/art/voice/fox/win.ogg" | cut -c1-40); echo '{"win":"SILENT now"}' > "$W/act/lw.json"
+  VO lines --voice "$VD/voice.json" --lines "$W/act/lw.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vw/b.json" --limit 500 --run v-w >/dev/null 2>&1
+  [ "$(shasum "$W/act/art/voice/fox/win.ogg" | cut -c1-40)" = "$s0" ] && ok "voice lines:重錄全部失敗 → 原本好的錄音不被蓋掉" || bad "voice 覆蓋好錄音" "$s0"
+  echo '{"lose":"SILENT"}' > "$W/act/l2.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l2.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$VB" --limit 2000 --run v-1)"; rc=$?
+  [ $rc -eq 1 ] && [ "$(grep -c '"key": "lose"' "$W/act/art/out/v/manifest.json")" -eq 3 ] && ok "voice lines:靜音換 seed 重錄,最多 2 次,仍不過 → 結束碼 1" || bad "voice 重錄上限" "rc=$rc $o"
+  echo '{"a1":"one two three four","a2":"five six seven"}' > "$W/act/l3.json"; VB2="$W/act/budget/v2/budget.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l3.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$VB2" --limit 25 --run v-2 2>&1)"; rc=$?
+  [ $rc -eq 6 ] && [ -e "$W/act/art/voice/fox/a1.ogg" ] && [ ! -e "$W/act/art/voice/fox/a2.ogg" ] && grep -q '"used": 18' "$VB2" && ok "voice lines:下一句會超過字元上限 → 不送、結束碼 6,已完成的保留" || bad "voice 字元上限" "rc=$rc $o"
+  for t in 'QUOTA:4' 'AUTH:5'; do echo "{\"q\":\"${t%%:*} line\"}" > "$W/act/l4.json"
+    o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l4.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/v3$t/b.json" --limit 500 --run v-3 2>&1)"; rc=$?
+    [ $rc -eq "${t##*:}" ] && ok "voice:${t%%:*} → 結束碼 ${t##*:}" || bad "voice ${t%%:*}" "rc=$rc $o"; done
+  echo '{"r1":"REJECT me","r2":"fine line"}' > "$W/act/lr.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lr.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vr/b.json" --limit 500 --run v-r)"; rc=$?
+  [ $rc -eq 1 ] && echo "$o" | grep -q '"recorded":1' && echo "$o" | grep -q '"key":"r1"' && ok "voice lines:一句被拒(400)→ 只記這句失敗,其他句照錄" || bad "voice 400 單句" "rc=$rc $o"
+  o="$(A prompt --config "$AD/actions.json" --action '../x' 2>&1)"; [ $? -eq 2 ] && ok "actions:動作名稱不合規(../x)→ 結束碼 2" || bad "action 名稱" "$o"
+  echo '{"b":"BUSY line"}' > "$W/act/l5.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l5.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/v5/b.json" --limit 500 --run v-5)" && echo "$o" | grep -q '"recorded":1' && grep -q '"used": 9' "$W/act/budget/v5/b.json" && ok "voice:429 → 看 retry-after 重試後成功;429 那次不計費、退回字元" || bad "voice 429" "$o $(grep used "$W/act/budget/v5/b.json")"
+  node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.voice_name="LIMIT";delete j.voice_id;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/vlimit.json"
+  o="$(VO pick --voice "$W/act/vlimit.json" --n 1 2>&1)"; [ $? -eq 8 ] && ok "voice pick:帳號 voice 名額已滿 → 結束碼 8" || bad "voice limit" "$o"
+  echo '{"d1":"deadline one"}' > "$W/act/ld.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/ld.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vd/b.json" --limit 500 --run v-d --max-seconds 60 2>&1)"; rc=$?
+  [ $rc -eq 2 ] && echo "$o" | grep -q '至少 120' && [ ! -e "$W/act/budget/vd/b.json" ] && ok "voice lines:--max-seconds < 120 → 結束碼 2(不會一句都錄不到又叫人一直重跑)" || bad "voice 時限下限" "rc=$rc $o"
+  node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.voice_name="FIVEXX";delete j.voice_id;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/v5xx.json"
+  n0=$(grep -c '"/v1/text-to-voice"' "$W/el.log"); o="$(VO pick --voice "$W/act/v5xx.json" --n 1 2>&1)"; rc=$?
+  [ $rc -eq 3 ] && [ $(( $(grep -c '"/v1/text-to-voice"' "$W/el.log") - n0 )) -eq 1 ] && ok "voice pick:5xx 不重送(建立 voice 不是冪等,避免重複建立付費 voice)" || bad "voice pick 不重送" "rc=$rc $o"
+  echo '{"m1":"one","m2":"two","m3":"three"}' > "$W/act/lm.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lm.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vm/b.json" --limit 500 --run v-m --max 2)" && echo "$o" | grep -q '"recorded":2' && echo "$o" | grep -q '"deferred":1' && ok "voice lines --max 2:只錄前 2 句、其餘 deferred" || bad "voice --max" "$o"
+  echo '{"../x":"hi"}' > "$W/act/bad.json"; o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/bad.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/out/vbad" --budget "$W/act/budget/v6/b.json" --limit 99 --run v-6 2>&1)"; [ $? -eq 2 ] && [ ! -e "$W/act/out/vbad" ] && ok "voice lines:key 不合規 → 整批結束碼 2,不送任何一句" || bad "voice key 檢查" "$o"
+  o="$(VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/v" --budget "$W/act/budget/v7/b.json" --limit 2000 --run v-7 --redesign)" && grep -q '"prev_voice_id": "voice-gen-2"' "$VD/voice.json" && ! grep -q '"voice_id"' <(node -e 'const j=require(process.argv[1]);console.log(JSON.stringify({voice_id:j.voice_id}))' "$VD/voice.json" | grep -v undefined) && ok "voice design --redesign:新候選有了才取消舊選定(留 prev_voice_id)" || bad "voice redesign" "$o"
+  mkdir -p "$W/act/art/characters/wolf"
+  node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.design="LONGPREVIEW BADPREVIEW warm voice";delete j.voice_id;delete j.candidates_for;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/art/characters/wolf/voice.json"
+  o="$(VO design --voice "$W/act/art/characters/wolf/voice.json" --out-dir "$W/act/art/out/vlong" --budget "$W/act/budget/vlong/b.json" --limit 2000 --run v-lg)" && node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1]));process.exit(j.candidates.length===2&&j.candidates.every(c=>c.check==="ok")?0:1)' "$W/act/art/characters/wolf/voice.json" \
+    && ok "voice design:20 秒試聽候選 check 通過(上限 60 秒);缺欄位的 preview 略過,其餘照存" || bad "voice design 長試聽 / 壞 preview" "$o $(node -e 'console.log(JSON.stringify(require(process.argv[1]).candidates))' "$W/act/art/characters/wolf/voice.json")"
+  echo 'leak test-key-not-real' > "$W/act/art/out/leak.txt"; o="$(VO scan --art "$W/act/art")"; rc=$?
+  o2="$(VO design --voice "$VD/voice.json" --out-dir "$W/act/art/out/v" --budget "$W/act/budget/v8/b.json" --limit 2000 --run v-8 --redesign)"; rc2=$?; rm "$W/act/art/out/leak.txt"
+  [ $rc2 -eq 1 ] && echo "$o2" | grep -q '"key_scan":{"found":true' && ok "voice design:金鑰掃描找到 → 結束碼 1(不是 0)" || bad "key_scan 結束碼" "rc=$rc2 $o2"
+  [ $rc -eq 1 ] && echo "$o" | grep -q '"found":true' && ! echo "$o" | grep -q 'test-key-not-real' && ok "voice scan:金鑰出現在 art/ → 列檔名、不印金鑰、結束碼 1" || bad "voice scan" "$o"
+  node $K/scripts/comfy.mjs scrub-check "$W/act/art" --paths >/dev/null && ok "語音 / 動作產出不含本機絕對路徑(scrub-check --paths)" || bad "語音路徑" "$(node $K/scripts/comfy.mjs scrub-check "$W/act/art" --paths | head -3)"
+  kill $PID2 2>/dev/null; wait $PID2 2>/dev/null; PID2=""; unset ELEVENLABS_API_URL
+fi
+
 # 7. sheet.mjs
 # 不需要 Chrome:尺寸讀不出來時,在啟動 Chrome 之前就結束
 mkdir -p "$W/o"; printf 'RIFFxxxxWEBPVP8X' > "$W/o/bad.webp"

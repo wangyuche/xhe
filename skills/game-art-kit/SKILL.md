@@ -1,6 +1,6 @@
 ---
 name: game-art-kit
-description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:位址解析(本機設定,不進 git)、check(模型、模型家族、可用的角色一致性方法、本機去背、音訊模型)、上傳參考圖到 temp、送 workflow 並輪詢下載圖片與音訊(含逾時、刪 history、不在伺服器留檔、拒絕雲端 API 節點)、workflow 技術骨架(Qwen-Image、Qwen-Image-Edit 1–3 張參考圖、Flux、Flux Kontext、Z-Image、ControlNet canny、同 workflow 去背的透明 sprite、Stable Audio 音效、ACE-Step 配樂、Qwen3-TTS 旁白(預設聲音 / 台灣口音聲音設計)、LTX-2.3 / Wan 2.2 圖生影片(逐格輸出))、拼分鏡表、sprite.mjs(純 Node PNG 裁切 / 對齊 / 拼 sheet / 檢查)、audio.mjs(ffmpeg 響度 / 循環 / ogg + m4a / 檢查)、遊戲素材介面 schema(needs / assets)、產出不含位址檢查。game-concept-artist 出圖與做遊戲素材時使用;game-frontend-owner 用 schema 寫素材需求;short-video-maker 生成短影音的 AI 插圖、動態鏡頭、配樂、音效、旁白時也使用;任何要用區網 ComfyUI 批次出圖、出影片或出音效的情境也可用。
+description: 遊戲示意圖、分鏡與遊戲素材用的 ComfyUI 固定腳本:位址解析(本機設定,不進 git)、check(模型、模型家族、可用的角色一致性方法、本機去背、音訊模型)、上傳參考圖到 temp、送 workflow 並輪詢下載圖片與音訊(含逾時、刪 history、不在伺服器留檔、拒絕雲端 API 節點)、workflow 技術骨架(Qwen-Image、Qwen-Image-Edit 1–3 張參考圖、Flux、Flux Kontext、Z-Image、ControlNet canny、同 workflow 去背的透明 sprite、Stable Audio 音效、ACE-Step 配樂、Qwen3-TTS 旁白(預設聲音 / 台灣口音聲音設計)、LTX-2.3 / Wan 2.2 圖生影片(逐格輸出))、角色動作圖(actions.mjs:Codex 以預設圖出表情 / 姿勢候選,ChatGPT 方案額度,事件白名單、張數累計;8 種動作提示詞範本)、角色語音(voice.mjs:ElevenLabs 設計 / 選定 / 台詞雜湊增量、字元累計、金鑰掃描)、拼分鏡表、sprite.mjs(純 Node PNG 裁切 / 對齊 / 拼 sheet / 檢查 / 清理 / 頭像)、audio.mjs(ffmpeg 響度 / 循環 / ogg + m4a / 檢查)、遊戲素材介面 schema(needs / assets)、產出不含位址檢查。game-concept-artist 出圖與做遊戲素材時使用;game-frontend-owner 用 schema 寫素材需求;short-video-maker 生成短影音的 AI 插圖、動態鏡頭、配樂、音效、旁白時也使用;任何要用區網 ComfyUI 批次出圖、出影片或出音效的情境也可用。
 ---
 
 # game-art-kit
@@ -32,7 +32,7 @@ node <kit>/scripts/comfy.mjs run <kit>/workflows/<骨架>.json --out <目錄> --
 #     印 {"status":"ok","seconds":…,"files":[{file,width,height,channels} 或 {file,kind:"audio",bytes}]}
 #   逾時印 {"status":"timeout","reason":"run|queue|total","seconds":<設定的上限>,"elapsed":<實際秒數>}
 node <kit>/scripts/comfy.mjs pngsize <圖>              # {"width":…,"height":…}
-node <kit>/scripts/comfy.mjs scrub-check <目錄>        # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1
+node <kit>/scripts/comfy.mjs scrub-check <目錄> [--paths]   # 產出含 ComfyUI 位址 / 私有 IP / :8188 → 結束碼 1;--paths 另查 $HOME、/Users/、/home/、generated_images(角色動作 / 語音用)
 node <kit>/scripts/sheet.mjs <spec.json> <輸出.png>    # 拼分鏡表 / 標註表(格式見檔頭)
 node <kit>/scripts/sprite.mjs density --width <顯示寬> --height <顯示高> [--frames N] [--density d]   # 整數 1x 尺寸 + 實際 density(單格與 sheet 都 ≤ 2048)
 node <kit>/scripts/sprite.mjs fit <去背後.png>... --out <id>.png --width <1x 寬> --height <1x 高> [--align bottom|center] [--margin 0] [--foot px]
@@ -43,10 +43,16 @@ node <kit>/scripts/sprite.mjs check <id>.png --width <1x 寬> --height <1x 高> 
 node <kit>/scripts/deliver.mjs --stage <stage 根目錄> --assets art/assets --json <新的 assets.json> <相對 art/assets 的檔案>...
 #   stage → art/assets 全有或全無交付(有交付日誌,提交前失敗全部還原,結束碼 1);有變更的項目 files 要全部一起交付;
 #   上次中斷留下日誌時先 node <kit>/scripts/deliver.mjs --recover --assets art/assets
-node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
+node <kit>/scripts/sprite.mjs clean <透明圖> --out <out.png> [--key-white]
+#   角色動作圖清理:alpha 依 16..250 拉開(人物調實、背景霧清掉)→ 只留跟中間直帶連在一起的塊 → 離實心處 > 4 px 的淡線透明;--key-white 只給白底不透明圖。
+#   印 {ok,errors,coverage,border,touches};碰邊(touches)或覆蓋率不對 → 結束碼 1
+node <kit>/scripts/sprite.mjs headshot <透明圖> --anchor x,y,h --out <avatar.png> [--size 256] [--zoom 1.15] [--pad l,t,r,b]   # 依頭中心 / 頭高(0–1)裁方形頭像
+node <kit>/scripts/actions.mjs prompt|gen|masks|sheet …   # 角色動作(Codex,見下方「角色動作」)
+node <kit>/scripts/voice.mjs design|pick|plan|lines|status|scan …   # 角色語音(ElevenLabs,見下方「角色語音」)
+node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm|voice --duration <秒> --out <目錄> --name <id> [--loop]
 #   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
 #   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
-node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm --duration <秒> [--loop [--approx]] [--peak]
+node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm|voice --duration <秒> [--loop [--approx]] [--peak]
 #   長度、非靜音(RMS > −50 dBFS)、true peak ≤ −1 dBTP、響度(sfx −20~−12、bgm −20~−16 LUFS)、接縫 RMS 差 ≤ 6 dB(--loop)
 node <kit>/schemas/validate.mjs needs|assets <檔案.json> [--root <art/assets>]   # 遊戲素材介面 schema 驗證(--root 檢查檔案存在)
 bash <kit>/tests/run.sh                                # 離線自我測試(假 ComfyUI)
@@ -89,6 +95,51 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 - 去背骨架下載的 PNG 是 RGBA(`run` 輸出 `channels: 4`);接著 `sprite.mjs fit` 再 `check`,不要直接交未裁切的生成圖。
 - **影片骨架逐格輸出**:ComfyUI 沒有不存檔的影片預覽節點(`SaveVideo` 會留檔,`run` 拒絕),所以影片骨架用 `PreviewImage` 輸出每一格,`run` 下載成 `<name>-1.png … <name>-N.png`(121 格 704×1280 約 140 MB,有線區網實測 60 秒內下載完;Wi-Fi 等慢速網路加大 `--download-timeout` 時要同時調小 `--queue-timeout`,三者合計 ≤ 480,例如 LTX 用 `--queue-timeout 60 --download-timeout 180`);組成影片用 short-video-kit 的 `frames.sh`。LTX-2.3 會同時生成音訊,骨架直接丟棄。
 - 音訊只做機械檢查(長度、響度、峰值、非靜音、接縫),沒有人耳試聽;回報要寫明。
+
+## 角色動作(`actions.mjs`,Codex)
+
+立繪級的表情 / 姿勢集(不是動畫格)。**用使用者 ChatGPT 方案額度**(`codex exec`;`codex login status` 必須是「Logged in using ChatGPT」,否則結束碼 2;子程序環境拿掉 `OPENAI_API_KEY` / `CODEX_API_KEY`)。會把底圖送到 OpenAI:只在簡報有使用者同意旗標時用。
+
+設定檔 `art/characters/<id>/actions/actions.json`:`id`、`name`、`pronoun`(he / she / they)、`base`(相對 `art/`,不寫本機絕對路徑)、`style`、`features`、`outfit`、`hands`(選填)、`anchor {x,y,h}`(0–1,在選定的 idle1 上估)、`count`(預設 2)、`candidates.<動作>`、`picks.<動作> = {n, reason}`、`actions.<動作>` 覆寫(expr / pose / extra)。
+
+```bash
+node <kit>/scripts/actions.mjs prompt --config <actions.json> --action happy
+node <kit>/scripts/actions.mjs gen    --config <actions.json> --action happy --out-dir art/out/<日期>-actions-<id> --budget $TMPDIR/game-art-kit/<name>/<派工 id>/budget.json --limit <M> --run <派工 id> [--timeout 540]
+#   一次一張(約 1–3 分鐘)→ <out-dir>/<動作>-<n>.png(n 往上編號)、追加 manifest.json;結束碼:3 沒出圖("quota":true = 額度上限,停止)、4 逾時(殺程序群組)、
+#   6 超過 M 張(沒送出)、7 Codex 用了白名單以外的工具(item 只允許 agent_message / reasoning / todo_list / error 與 image_gen* 開頭的出圖工具;不採用、停止剩下的動作)
+node <kit>/scripts/actions.mjs masks  --config <actions.json> --image <選定的 idle1> --out art/out/<日期>-actions-<id>/masks.png   # anchor 預覽
+node <kit>/scripts/actions.mjs sheet  --out art/characters/<id>/actions/sheet.png <底圖> <候選>...
+node <kit>/scripts/sprite.mjs clean <選定候選> --out art/characters/<id>/actions/<動作>.png
+node <kit>/scripts/sprite.mjs headshot art/characters/<id>/actions/idle1.png --anchor x,y,h --out art/characters/<id>/actions/avatar.png
+```
+
+- Codex 的圖從 `$CODEX_HOME/generated_images/<thread id>/` 抄出後就刪掉該目錄(thread id 要是 UUID、realpath 在 generated_images 底下);manifest 不記本機路徑。
+- 實測(2026-11,codex-cli 0.172):一張 57 秒–3 分鐘,1024×1536 透明 PNG;`--json` 事件只有 `agent_message`(出圖工具不出現在事件裡);臉、服裝、尾巴與底圖一致,表情與姿勢照指示改。
+- 已知限制:codex 0.172 沒有能關掉 shell 工具的旗標,白名單是事後偵測(資料可能已送出),違規就整批停下。
+
+## 角色語音(`voice.mjs`,ElevenLabs)
+
+付費:只在簡報有「使用者同意 ElevenLabs 付費:最多 N 字元」時用。金鑰:環境變數 `ELEVENLABS_API_KEY` 或 `~/.elevenlabs/.env`(`ELEVENLABS_API_KEY=...`,chmod 600,使用者自己建立,不貼進對話);只進記憶體。字元 = 送出文字的長度(含 `[sweetly]` 這類標記)。
+
+`art/characters/<id>/voice.json`:`design`(英文描述;不寫真實人物 / 既有角色的名字)、`design_notes`、`design_source`、`preview_text`(100–1000 字元)、`voice_name`、`models`(預設 `eleven_ttv_v3` / `eleven_v4` / `mp3_44100_128`)、`stability`(0.5)、`candidates`、`voice_id`、`prev_voice_id`、`line_seeds`、`lines`(key → 雜湊)。
+
+```bash
+node <kit>/scripts/voice.mjs design --voice <voice.json> --out-dir art/out/<日期>-voice-<id> --budget … --limit <N> --run <派工 id> [--redesign]   # 3 個候選 → 請使用者試聽
+node <kit>/scripts/voice.mjs pick   --voice <voice.json> --n 2 [--repick]           # 建成正式 voice(已選定要換選加 --repick,舊的留 prev_voice_id)
+node <kit>/scripts/voice.mjs plan   --voice <voice.json> --lines <lines.json> [--out art/voice/<id>]   # 首次字元、含重錄最多字元
+node <kit>/scripts/voice.mjs lines  --voice <voice.json> --lines <lines.json> --out art/voice/<id> --raw-dir art/out/<日期>-voice-<id> --budget … --limit <N> --run <派工 id> [--all] [--max-seconds 480]
+node <kit>/scripts/voice.mjs status --voice <voice.json> --lines <lines.json> --out art/voice/<id>
+node <kit>/scripts/voice.mjs scan   --art art          # 金鑰完全比對(只印有 / 無與檔名)
+```
+
+- 字元在**每次 HTTP 嘗試**前都記(逾時 / 5xx 重試的請求服務端可能已計費;429 限流退回);`plan` 的 `max_chars` 含重錄、不含網路重試,上限 N 宜留一點餘裕;試聽候選的長度上限是 60 秒;錄音先放過程目錄的 `stage/`,check 通過才換掉 `art/voice/` 的成品(失敗不蓋掉原本好的);超過 15 秒不重錄(請拆句)。
+- 台詞 key 要符合 `^[a-z0-9][a-z0-9._-]*$`(不合 → 整批結束碼 2)。雜湊 = sha256(JSON([原文, voice_id, tts 模型, stability, output_format, seed]));只重錄雜湊不同或缺檔的;check 不過換 seed 重錄,每句最多 2 次;每句完成就存。
+- 結束碼:1 有句子不合格;3 HTTP 錯誤(429 / 409 / 5xx 已退避重試,最多 5 次嘗試 = 4 次重試);4 額度用完(402 / 401 quota);5 金鑰錯誤或找不到;6 超過字元上限(沒送出);8 帳號 voice 名額已滿。
+- 測試:`ELEVENLABS_API_URL` 只接受 `http://127.0.0.1:<埠>`,有設時用假金鑰、不讀真的。尚未以真實帳號實測(使用者買了 ElevenLabs 之後補)。
+
+## 付費用量累計(`budget.mjs`)
+
+角色動作的張數(M)與角色語音的字元(N)都記在本次派工專屬的累計檔(`$TMPDIR/game-art-kit/<name>/<派工 id>/budget.json`);每次送出前檢查「累計 + 本次 ≤ 上限」,超過不送(結束碼 6)。manifest 每筆記派工 id 與當時累計值。
 
 ## 遊戲素材介面(`schemas/`)
 

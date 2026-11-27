@@ -2,15 +2,16 @@
 // game-art-kit:遊戲音效 / 配樂後處理與檢查(需要 ffmpeg、ffprobe,含 libopus 與 AAC 編碼器)。
 // 用法:
 //   node audio.mjs tools                                                 → 檢查 ffmpeg / ffprobe / libopus / aac
-//   node audio.mjs process <輸入音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <檔名> [--loop]
+//   node audio.mjs process <輸入音訊> --type sfx|bgm|voice --duration <秒>(voice 可省略,預設 15)--out <目錄> --name <檔名> [--loop]
 //        sfx:去頭尾靜音(−50 dB)→ 裁到 ≤ duration(結尾 20 ms 淡出)→ 響度 −16 LUFS、true peak ≤ −1.5 dBTP(留編碼餘量);
 //        短於 0.4 秒(量不到整體響度)改以峰值正規化到 −3 dBTP,輸出 normalized: "peak"、lufs: null
 //        bgm:裁到 duration(--loop:輸入至少要 duration + 0.5 秒,頭尾 0.5 秒交叉淡化成可循環)→ −18 LUFS、≤ −1.5 dBTP
 //        輸出 <name>.ogg(Opus)與 <name>.m4a(AAC),印 {"files":[…],"durationSec":…,"lufs":…,"truePeak":…,"loop":true|false|"approx"}
-//   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm --duration <秒> [--loop [--approx]] [--peak]
+//        voice(角色台詞):去頭尾靜音,不裁切;去靜音後長於 duration(預設 15 秒)→ 結束碼 1(請拆句);−16 LUFS、≤ −1.5 dBTP(短於 0.4 秒同 sfx 改峰值正規化)
+//   node audio.mjs check <name.ogg> <name.m4a> --type sfx|bgm|voice --duration <秒>(voice 可省略,預設 15)[--loop [--approx]] [--peak]
 //        --approx:process 輸出 loop: "approx" 的配樂,接縫只回報不判失敗
 //        兩檔都在、長度(sfx ≤ duration + 0.05;bgm 與 duration 差 ≤ 0.5)、非靜音(RMS > −50 dBFS)、
-//        無削波(true peak ≤ −1 dBTP)、響度(sfx −20 至 −12、bgm −20 至 −16 LUFS;--peak(process 輸出 normalized: peak 的短音效)不檢查)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
+//        無削波(true peak ≤ −1 dBTP)、響度(sfx / voice −20 至 −12、bgm −20 至 −16 LUFS;--peak(process 輸出 normalized: peak 的短音效)不檢查)、--loop 接縫(頭尾 50 ms RMS 差 ≤ 6 dB)。
 //        印 {"ok":…,"errors":[…],"measure":{…}};不通過結束碼 1。
 // 結束碼:0 成功;1 檢查不通過;2 用法 / 工具 / 檔案錯誤。
 import { spawnSync } from 'node:child_process';
@@ -21,7 +22,7 @@ import { join } from 'node:path';
 
 class Fail extends Error { constructor(m, c) { super(m); this.code = c; } }
 const die = (m, c = 2) => { throw new Fail(m, c); };
-const TARGET = { sfx: { lufs: -16, range: [-20, -12] }, bgm: { lufs: -18, range: [-20, -16] } };
+const TARGET = { sfx: { lufs: -16, range: [-20, -12] }, voice: { lufs: -16, range: [-20, -12] }, bgm: { lufs: -18, range: [-20, -16] } };
 const TP_OUT = -1.5, TP_MAX = -1, XFADE = 0.5, SHORT = 0.4;
 
 function sh(cmd, args, { allowFail = false } = {}) {
@@ -66,11 +67,13 @@ function process_(input, { type, dur, out, name, loop }) {
     const stage1 = join(tmp, 'a.wav');
     const inDur = duration(input);
     let loopState = false;
-    if (type === 'sfx') {
+    if (type === 'sfx' || type === 'voice') {
       const trim = 'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.01,areverse,silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.02,areverse';
-      ff(['-i', input, '-af', `${trim},atrim=0:${dur},asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo`, stage1]);
+      // 台詞不裁切(裁掉會斷句):去靜音後超過 duration 就失敗,請拆句
+      ff(['-i', input, '-af', `${trim}${type === 'sfx' ? `,atrim=0:${dur}` : ''},asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo`, stage1]);
       const d = duration(stage1);
       if (!(d > 0.02)) die('去掉靜音後沒有聲音(輸入是靜音?)', 1);
+      if (type === 'voice' && d > dur + 0.01) die(`台詞去靜音後 ${d.toFixed(2)} 秒,超過 ${dur} 秒(請拆句)`, 1);
       const faded = join(tmp, 'b.wav');
       ff(['-i', stage1, '-af', `afade=t=out:st=${Math.max(0, d - 0.02).toFixed(3)}:d=0.02`, faded]);
       renameSync(faded, stage1);
@@ -148,7 +151,7 @@ export function check([ogg, m4a], { type, dur, loop, peak, approx }) {
   for (const f of [ogg, m4a]) {
     const d = duration(f), m = measure(f), k = f.endsWith('.ogg') ? 'ogg' : 'm4a';
     measureOut[k] = { durationSec: +d.toFixed(3), ...m };
-    if (type === 'sfx' ? d > dur + 0.05 : Math.abs(d - dur) > 0.5) errs.push(`${k} 長度 ${d.toFixed(2)} 秒(${type === 'sfx' ? `應 ≤ ${dur}` : `應約 ${dur}`})`);
+    if (type !== 'bgm' ? d > dur + 0.05 : Math.abs(d - dur) > 0.5) errs.push(`${k} 長度 ${d.toFixed(2)} 秒(${type !== 'bgm' ? `應 ≤ ${dur}` : `應約 ${dur}`})`);
     if (m.rms == null || !(m.rms > -50)) errs.push(`${k} RMS ${m.rms} dBFS(應 > −50;疑似靜音)`);
     if (m.truePeak == null || m.truePeak > TP_MAX) errs.push(`${k} true peak ${m.truePeak} dBTP(應 ≤ ${TP_MAX})`);
     const [lo, hi] = TARGET[type].range;
@@ -172,17 +175,17 @@ if (isMain) {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (['--loop', '--peak', '--approx'].includes(a)) flags[a.slice(2)] = true; else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else pos.push(a); }
     const opts = () => {
-      const type = flags.type; if (!['sfx', 'bgm'].includes(type)) die('--type 要 sfx 或 bgm');
-      const dur = Number(flags.duration); if (!(dur > 0 && dur <= 600)) die('--duration 要是 0–600 的秒數');
+      const type = flags.type; if (!['sfx', 'bgm', 'voice'].includes(type)) die('--type 要 sfx、bgm 或 voice');
+      const dur = Number(flags.duration ?? (type === 'voice' ? 15 : NaN)); if (!(dur > 0 && dur <= 600)) die('--duration 要是 0–600 的秒數');
       if (flags.loop && type !== 'bgm') die('--loop 只用於 bgm');
-      if (flags.peak && type !== 'sfx') die('--peak 只用於 sfx');
+      if (flags.peak && type === 'bgm') die('--peak 只用於 sfx / voice');
       if (flags.approx && !flags.loop) die('--approx 要和 --loop 一起用');
       return { type, dur, loop: !!flags.loop, peak: !!flags.peak, approx: !!flags.approx };
     };
     if (cmd === 'tools') { const e = tools(); console.log(JSON.stringify({ ok: !e.length, errors: e })); process.exit(e.length ? 2 : 0); }
     const te = tools(); if (te.length) die(te.join(';'));
     if (cmd === 'process') {
-      const o = opts(); const name = flags.name ?? die('缺 --name'); if (!/^[a-z0-9][a-z0-9.-]*$/.test(name)) die('--name 只能用小寫英數、. -');
+      const o = opts(); const name = flags.name ?? die('缺 --name'); if (!(o.type === 'voice' ? /^[a-z0-9][a-z0-9._-]*$/ : /^[a-z0-9][a-z0-9.-]*$/).test(name)) die(o.type === 'voice' ? '--name 只能用小寫英數、. _ -' : '--name 只能用小寫英數、. -(底線只給 voice)');
       console.log(JSON.stringify(process_(pos[0] ?? die('用法:process <輸入> …'), { ...o, out: flags.out ?? die('缺 --out'), name })));
     } else if (cmd === 'check') {
       const { errs, measure: m } = check(pos, opts());

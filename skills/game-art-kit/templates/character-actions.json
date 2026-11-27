@@ -1,0 +1,69 @@
+{
+ "comment": "角色動作提示詞範本(game-art-kit actions.mjs prompt / gen --engine codex)。{his} / {him} 依 actions.json 的 pronoun 代入;{name}、{features}、{outfit}、{hands}、{style} 取自 actions.json(features / outfit 從 character.md 抄,臉上的識別特徵一定要寫,不然會掉)。實測教訓:恰好兩隻手要寫明;不寫遊戲道具名稱(寫 no X 反而畫出 X,例如出牌動作手是空的,道具由遊戲畫);style 裡的畫風關鍵字不能省(少了會被拉成別的畫風);Codex 一張約 1–3 分鐘。codex 範本與原遊戲專案的賭場手遊風動作範本同結構:{body}(身材補充,選填,前面加逗號)、{always}(這隻角色的固定規則,例如「帽子一定在頭上、討喜不嚇人」);每隻角色每個動作的表情 / 姿勢最好照個性各寫一套(actions.<動作>.expr / pose),通用的 8 種只是預設。新角色的預設圖(idle1)要附客戶 / 使用者給的官方參考圖(使用者授權上傳參考圖旗標),長相與頭身比例才會照設計稿。",
+ "pronouns": {
+  "he": {
+   "his": "his",
+   "him": "him"
+  },
+  "she": {
+   "his": "her",
+   "him": "her"
+  },
+  "they": {
+   "his": "their",
+   "him": "them"
+  }
+ },
+ "codex": "Use the attached image as the exact model sheet for {name}. Draw this SAME character again in a new, lively pose. Change only the expression and the pose.\n\nKEEP EXACTLY THE SAME (strict):\n- Face: {features}. Only the expression moves; the shape, size, color and placement of every facial feature stay identical.\n- Outfit: {outfit}. Same pieces, same colors, same patterns, same details. Do not add, remove, open, recolor or restyle anything.\n- Body: same proportions and the same head size{body}.\n- Art style: identical line weight, colors, shading, texture and rendering.\n- Framing: same canvas (vertical 2:3, 1024x1536), same camera distance and scale, full body from head to feet, with the head at about the same height, position and size as in the attached image. Nothing cropped. Transparent background (true transparency), no glow, no text.\n- If anything in this list differs from the attached image, follow the attached image.\n\nCHANGE ONLY THIS:\n- Expression: {expr}.\n- Pose: {pose}. Make it clearly different from the attached image, lively and full of personality, with the whole body acting like a frame from an animated cartoon, while the head stays at about the same place and size.\n- {hands} Nothing in the hands, no props, nothing else in the image{allowed}.\n- {always}",
+ "hands": "Exactly two arms and two hands, each hand with five clearly drawn fingers.",
+ "actions": [
+  {
+   "id": "idle1",
+   "zh": "預設站姿",
+   "expr": "a friendly, relaxed closed-mouth smile, eyes looking at the viewer",
+   "pose": "standing relaxed and facing the viewer, arms resting naturally at {his} sides"
+  },
+  {
+   "id": "idle2",
+   "zh": "托腮想事情",
+   "expr": "a calm, thoughtful little closed-mouth smile, eyes glancing slightly to one side as if planning the next move",
+   "pose": "standing relaxed, resting {his} chin on one hand; the other arm lies across {his} waist and holds that elbow. Exactly two arms: no third hand, no arms crossed over the chest"
+  },
+  {
+   "id": "discard",
+   "zh": "伸手放東西",
+   "expr": "a focused, confident little smile, eyes looking straight ahead at the viewer (not down)",
+   "pose": "leaning slightly forward, one arm reaching straight forward toward the viewer, the hand in front of the belly, with the empty hand open and the palm facing down, as if setting something down in front of {him}; the other arm relaxed at {his} side. The head stays up and faces forward. Do not draw a table"
+  },
+  {
+   "id": "happy",
+   "zh": "大笑比讚",
+   "expr": "a big, joyful open-mouthed laugh, eyes squeezed into happy upside-down curves",
+   "pose": "both hands giving a thumbs-up in front of {his} chest, elbows bent"
+  },
+  {
+   "id": "surprised",
+   "zh": "嚇一跳",
+   "expr": "startled: eyes wide open, eyebrows shot up high, mouth open in a round \"oh!\"",
+   "pose": "both hands open with the fingers spread, raised beside {his} head at shoulder height with the palms facing forward, not touching the face; shoulders jerked up a little"
+  },
+  {
+   "id": "nervous",
+   "zh": "緊張冒汗",
+   "expr": "a nervous, awkward wobbly smile, eyebrows tilted up with worry, eyes glancing sideways, two or three sweat drops on the forehead",
+   "pose": "shoulders hunched a little, the tips of the two index fingers poking together in front of {his} chest"
+  },
+  {
+   "id": "excited",
+   "zh": "興奮握拳",
+   "expr": "a thrilled wide open grin, eyes shining with little star-shaped highlights",
+   "pose": "leaning forward eagerly, both hands clenched into fists in front of {his} chest"
+  },
+  {
+   "id": "sad",
+   "zh": "難過",
+   "expr": "sad but gentle and a little comical: eyebrows tilted up in the middle, teary eyes with one tear running down each cheek, a small wobbly frown",
+   "pose": "shoulders drooping, head slightly lowered, both hands loosely clasped in front of {his} chest with one hand resting over the other, with a clear outline between them so they read as two separate hands"
+  }
+ ]
+}

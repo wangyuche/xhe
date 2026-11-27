@@ -6,7 +6,7 @@
 //   node comfy.mjs run <workflow 骨架.json> --out <目錄> --name <檔名> [--set key=value]... [--timeout 240] [--queue-timeout 180] [--download-timeout 60]
 //                                                           → 填參數、送出、輪詢、下載 PNG / 音訊、刪除 history,印出結果 JSON;拒絕 Save* 與雲端 API 節點
 //   node comfy.mjs pngsize <圖檔>                           → {"width":…,"height":…}
-//   node comfy.mjs scrub-check <目錄>                       → 產出不含 ComfyUI 位址 / 私有 IP;找到就結束碼 1
+//   node comfy.mjs scrub-check <目錄> [--paths]             → 產出不含 ComfyUI 位址 / 私有 IP(--paths 另查 $HOME、/Users/、/home/、generated_images);找到就結束碼 1
 // 共同參數:--url <位址> 臨時覆寫。位址優先序:--url > 環境變數 COMFYUI_URL > ~/.config/game-art-kit/config 的 COMFYUI_URL=。
 // 位址只印到 stderr / 終端機,不寫進任何產出檔案。
 // 結束碼:0 成功;1 一般錯誤 / scrub 找到位址;2 用法或參數錯誤;3 ComfyUI 回報錯誤;4 逾時;5 連不上。
@@ -31,6 +31,7 @@ const pos = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--set') flags.set.push(argv[++i] ?? die('--set 缺值', 2));
+  else if (a === '--paths') flags.paths = true; // scrub-check:另查本機絕對路徑(角色動作 / 角色語音)
   else if (a.startsWith('--')) flags[a.slice(2)] = argv[++i] ?? die(`${a} 缺值`, 2);
   else pos.push(a);
 }
@@ -570,7 +571,10 @@ function scrub() {
       ? new RegExp(`${b}${esc(hostname)}${a}`)
       : new RegExp(`//${esc(hostname)}(?![\\w.-])|${b}${esc(hostname)}${port ? `:${port}` : ':\\d+'}\\b`);
   }
-  const pats = [/\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/, /\b169\.254\.\d{1,3}\.\d{1,3}\b/, /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /\b192\.168\.\d{1,3}\.\d{1,3}\b/, /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, /:8188\b/];
+  // --paths:本機絕對路徑($HOME 實際值、/Users/<名>、/home/<名>、Codex 的 generated_images)
+  const home = homedir(), esc2 = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pathPats = flags.paths ? [...(home && home.length > 1 ? [new RegExp(esc2(home))] : []), /(?:^|[\s"'=(:])\/Users\/[^/\s"']+/, /(?:^|[\s"'=(:])\/home\/[^/\s"']+/, /(?:^|[\s"'=(:])\/[^\s"']*generated_images/] : [];
+  const pats = [...pathPats, /\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/, /\b169\.254\.\d{1,3}\.\d{1,3}\b/, /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /\b192\.168\.\d{1,3}\.\d{1,3}\b/, /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, /:8188\b/];
   const hits = [];
   const walk = (p) => {
     for (const e of readdirSync(p, { withFileTypes: true })) {
