@@ -91,7 +91,8 @@ function runCodex(text, ref, timeoutSec, onAbort) {
     let out = '', err = '', timedOut = false;
     // 父程序被中止(例如 Bash 逾時)時連 codex 整個程序群組一起結束,不讓它在背景繼續花額度
     const killGroup = () => { try { process.kill(-p.pid, 'SIGTERM'); } catch { /* */ } };
-    const onSig = (sig) => { killGroup(); try { onAbort?.(); } catch { /* */ } rmSync(work, { recursive: true, force: true }); process.exit(sig === 'SIGINT' ? 130 : 143); };
+    // 中止時:殺程序群組 → 用已收到的事件找 thread id,交給呼叫端刪 thread 目錄、刪佔位檔、補一筆 manifest → 才結束
+    const onSig = (sig) => { killGroup(); try { onAbort?.(parseEvents(out).thread); } catch { /* */ } rmSync(work, { recursive: true, force: true }); process.exit(sig === 'SIGINT' ? 130 : 143); };
     process.once('SIGTERM', onSig); process.once('SIGINT', onSig); process.once('SIGHUP', onSig);
     p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
     let killer = null;
@@ -140,7 +141,11 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   let n = nextN(outDir, action);
   for (;; n++) { try { writeFileSync(join(outDir, `${action}-${n}.png`), '', { flag: 'wx' }); break; } catch (e) { if (e.code !== 'EEXIST') throw e; } }
   // 被中止(Ctrl-C / Bash 逾時)時刪掉佔位檔,不留 0 位元組的圖
-  const r = await runCodex(text, basePath, timeout, () => rmSync(join(outDir, `${action}-${n}.png`), { force: true }));
+  const r = await runCodex(text, basePath, timeout, (thread) => {
+    rmSync(join(outDir, `${action}-${n}.png`), { force: true });
+    const d = threadDir(codexHome, thread); if (d) rmSync(d, { recursive: true, force: true });
+    try { appendManifest(outDir, { run, action, n: null, file: null, thread, thread_cleaned: !!d, status: '被中止', budget_used: used, budget_limit: limit }); } catch { /* */ }
+  });
   if (r.spawnError) { rmSync(join(outDir, `${action}-${n}.png`), { force: true }); appendManifest(outDir, { run, action, status: `跑不了 codex:${r.spawnError.code ?? ''}`, budget_used: used, budget_limit: limit }); die(`跑不了 codex:${r.spawnError.message}`, 3); }
   const ev = parseEvents(r.out), file = `${action}-${n}.png`;
   const dir = threadDir(codexHome, ev.thread);
@@ -157,7 +162,7 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
       const src = made[made.length - 1], dst = join(outDir, file);
       copyFileSync(src, dst);
       if (sha(src) !== sha(dst)) { status = '抄出的圖雜湊不符(磁碟滿?)'; code = 3; ev.errors.push(status); }
-      else status = 'ok'; entry.images = made.length; entry.sha256 = sha(dst).slice(0, 16);
+      else { status = 'ok'; entry.images = made.length; entry.sha256 = sha(dst).slice(0, 16); }
     }
   } finally {
     // 不論成敗,只要 thread id 合法就刪掉 Codex 留下的圖(不留副本)
@@ -165,10 +170,11 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
     entry.status = status ?? '失敗'; entry.thread_cleaned = cleaned;
     if (status !== 'ok') { rmSync(join(outDir, file), { force: true }); entry.file = null; entry.n = null; } // 佔位檔;失敗的不佔編號,manifest 不會出現同一個檔名兩筆
     if (code === 3) entry.errors = ev.errors.map(e => scrubPaths(e, codexHome).slice(0, 300));
-    appendManifest(outDir, entry);
+    // manifest 寫不進去(例如殘留的鎖)不能蓋掉出圖結果:改成警告
+    try { appendManifest(outDir, entry); } catch (e) { entry.manifest_warning = `manifest 沒寫進去:${e.message}`; }
   }
   const quota = code === 3 && ev.errors.some(e => /quota|usage limit|rate limit|limit reached|credits/i.test(e));
-  const res = { ok: code === 0, status: entry.status, file: code === 0 ? join(outDir, file) : null, action, n, thread: ev.thread, thread_cleaned: cleaned, violations: entry.violations, errors: entry.errors, quota, budget: { used, limit } };
+  const res = { ok: code === 0, status: entry.status, manifest_warning: entry.manifest_warning, file: code === 0 ? join(outDir, file) : null, action, n, thread: ev.thread, thread_cleaned: cleaned, violations: entry.violations, errors: entry.errors, quota, budget: { used, limit } };
   if (code) die(`${entry.status}${ev.errors.length ? ':' + ev.errors.map(e => scrubPaths(e, codexHome).slice(0, 300)).join(' / ') : ''}`, code, res);
   return res;
 }

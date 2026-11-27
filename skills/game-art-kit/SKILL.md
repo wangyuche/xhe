@@ -104,7 +104,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 
 ```bash
 node <kit>/scripts/actions.mjs prompt --config <actions.json> --action happy
-node <kit>/scripts/actions.mjs gen    --config <actions.json> --action happy --out-dir art/out/<日期>-actions-<id> --budget <tmp>/<派工 id>/budget.json --limit <M> --run <派工 id> [--timeout 540]
+node <kit>/scripts/actions.mjs gen    --config <actions.json> --action happy --out-dir art/out/<日期>-actions-<id> --budget $TMPDIR/game-art-kit/<name>/<派工 id>/budget.json --limit <M> --run <派工 id> [--timeout 540]
 #   一次一張(約 1–3 分鐘)→ <out-dir>/<動作>-<n>.png(n 往上編號)、追加 manifest.json;結束碼:3 沒出圖("quota":true = 額度上限,停止)、4 逾時(殺程序群組)、
 #   6 超過 M 張(沒送出)、7 Codex 用了白名單以外的工具(item 只允許 agent_message / reasoning / todo_list / error 與 image_gen* 開頭的出圖工具;不採用、停止剩下的動作)
 node <kit>/scripts/actions.mjs masks  --config <actions.json> --image <選定的 idle1> --out art/out/<日期>-actions-<id>/masks.png   # anchor 預覽

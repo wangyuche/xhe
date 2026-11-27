@@ -36,7 +36,9 @@ export function openBudget(file, limit, unit) {
     if (b.unit !== unit) throw new BudgetError(`累計檔單位是 ${b.unit},這次是 ${unit}:不要混用同一個累計檔`);
     return b;
   };
-  read(); // 先驗證格式與單位
+  const first = read(); // 先驗證格式與單位
+  // 同一個累計檔的上限不能中途改大(只能照使用者同意的那個值):不同就停
+  if (existsSync(file) && first.limit != null && first.limit !== limit) throw new BudgetError(`累計檔記的上限是 ${first.limit},這次傳 ${limit}:同一次派工的上限不能改,照簡報的同意旗標`);
   // 先寫暫存檔再改名(原子):沒拿鎖的讀者不會讀到寫一半的檔
   const write = (b) => { const t = `${file}.${process.pid}.tmp`; writeFileSync(t, JSON.stringify({ ...b, limit }, null, 1) + '\n'); renameSync(t, file); };
   return {

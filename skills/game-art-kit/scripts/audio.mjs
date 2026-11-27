@@ -185,7 +185,7 @@ if (isMain) {
     if (cmd === 'tools') { const e = tools(); console.log(JSON.stringify({ ok: !e.length, errors: e })); process.exit(e.length ? 2 : 0); }
     const te = tools(); if (te.length) die(te.join(';'));
     if (cmd === 'process') {
-      const o = opts(); const name = flags.name ?? die('缺 --name'); if (!/^[a-z0-9][a-z0-9._-]*$/.test(name)) die('--name 只能用小寫英數、. _ -');
+      const o = opts(); const name = flags.name ?? die('缺 --name'); if (!(o.type === 'voice' ? /^[a-z0-9][a-z0-9._-]*$/ : /^[a-z0-9][a-z0-9.-]*$/).test(name)) die(o.type === 'voice' ? '--name 只能用小寫英數、. _ -' : '--name 只能用小寫英數、. -(底線只給 voice)');
       console.log(JSON.stringify(process_(pos[0] ?? die('用法:process <輸入> …'), { ...o, out: flags.out ?? die('缺 --out'), name })));
     } else if (cmd === 'check') {
       const { errs, measure: m } = check(pos, opts());

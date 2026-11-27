@@ -76,7 +76,9 @@ async function post(A, path, body, { binary = false, before, rejected, deadline 
     const retryable = res.status === 429 || res.status === 409 || res.status >= 500;
     if (!retryable || attempt >= MAX_ATTEMPTS) die(`ElevenLabs HTTP ${res.status}:${text}`, 3);
     const after = Number(res.headers.get('retry-after'));
-    await new Promise(r => setTimeout(r, after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1)));
+    const wait = Math.min(after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1), 30_000); // 最多等 30 秒
+    if (deadline && Date.now() + wait + 75_000 > deadline) throw new Deadline(); // 等完就超過時限:這句留到下次
+    await new Promise(r => setTimeout(r, wait));
   }
 }
 
