@@ -142,6 +142,12 @@ try:
     check("舊背離早就跌破 → 不報失效", "失效" not in o and ("② 底部背離: 沒有 ❌" in o or "② 底部背離: ⏸" in o))
     o = run(old, "--days", "3")
     check("跌破在回看範圍內 → 照樣報失效", "② 底部背離: 失效 ❌ 11/19 09:30" in o)
+    # 第三輪 review:較新的背離在「回看範圍內」被跌破,也要往回找仍有效的舊背離,並附註較新那組已失效
+    #               → --days 1 與 --days 3 結論一致(都是 11/04→11/06)
+    o = run(old, "--days", "3", "--keep-days", "15")
+    check("跌破在回看範圍內也往回找舊背離＋附註",
+          "② 底部背離: 有 ✅ 前低 11/04 12:00 41,856" in o and "附註:較新的背離 11/17 09:00 39,786.45 → 11/18 10:00 39,260.99 已在 11/19 09:30 跌破失效" in o
+          and "失效 ❌" not in o)
     # 第二輪 review:較新的背離(11/17→11/18)在回看前就被跌破時,要繼續往回找;11/04→11/06(37,837 沒破)仍保留
     o = run(old, "--days", "1", "--keep-days", "15")
     check("跳過早就跌破的新背離,找到更早仍有效的背離",
@@ -157,6 +163,13 @@ check("① 不成立時仍報 ② 失效", "① 低檔鈍化 D<20: 沒有 ❌" i
 # 6g. 「首次站上」是當下這次連續站上的第一根;旗標沒帶值要報用法錯誤
 r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--channel-from"], capture_output=True, text=True)
 check("旗標沒帶值 → 用法錯誤", r.returncode != 0 and "後面要接值" in r.stderr and "Traceback" not in r.stderr)
+o = run(F30c, "--asof", "2026-11-19 09:30", "--channel-from", "2026-11-13 09:15")
+check("沒走到 ③ 也印通道提示", "STAGE 1/6" in o and "⚠️ 通道:找不到 --channel-from 指定的 K 棒 2026-11-13 09:15" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-18 12:00")
+check("低點 1 晚於 --asof → 另外說明", "⚠️ 通道:低點 1 2026-11-18 12:00 晚於資料最後一根 K 棒" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--title", "--測試", "--svg", os.path.join(TMP, "bs_t5.svg"))
+check("--title 值以 -- 開頭照收", "SVG" in o and "--測試" in open(os.path.join(TMP, "bs_t5.svg")).read())
+if os.path.exists(os.path.join(TMP, "bs_t5.svg")): os.remove(os.path.join(TMP, "bs_t5.svg"))
 o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 10:00")
 check("低點 1 不是波段低點 → 警告", "⚠️ 通道:低點 1 2026-11-13 10:00 不是確認的波段低點" in o and "通道上緣:" in o)
 
