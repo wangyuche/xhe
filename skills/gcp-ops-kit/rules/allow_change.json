@@ -420,22 +420,8 @@
           "restore": "/settings/ipConfiguration/sslMode",
           "loosens_values": {
             "ALLOW_UNENCRYPTED_AND_ENCRYPTED": "允許未加密連線"
-          }
-        },
-        "--require-ssl": {
-          "restore": "/settings/ipConfiguration/requireSsl",
-          "format": "bool_flag",
-          "true_flag": "--require-ssl",
-          "false_flag": "--no-require-ssl",
-          "default": false
-        },
-        "--no-require-ssl": {
-          "restore": "/settings/ipConfiguration/requireSsl",
-          "format": "bool_flag",
-          "true_flag": "--require-ssl",
-          "false_flag": "--no-require-ssl",
-          "loosens": "允許未加密連線",
-          "default": false
+          },
+          "state_required_restore": true
         },
         "--authorized-networks": {
           "restore": "/settings/ipConfiguration/authorizedNetworks",
@@ -556,7 +542,6 @@
     "--no-enable-master-authorized-networks": "還原會關閉控制平面授權網路",
     "--no-enable-shielded-nodes": "還原會關閉 Shielded Nodes",
     "--no-enable-network-policy": "還原會關閉 NetworkPolicy",
-    "--no-require-ssl": "還原會允許未加密連線",
     "--no-public-access-prevention": "還原會關閉公開存取防護",
     "--no-uniform-bucket-level-access": "還原會改回 ACL",
     "--no-enable-autoupgrade": "還原會關閉自動升級",
@@ -584,13 +569,11 @@
     "--no-enable-point-in-time-recovery",
     "--no-enable-shielded-nodes",
     "--no-public-access-prevention",
-    "--no-require-ssl",
     "--no-uniform-bucket-level-access",
     "--no-versioning",
     "--overwrite",
     "--public-access-prevention",
     "--quiet",
-    "--require-ssl",
     "--uniform-bucket-level-access",
     "--versioning"
   ]

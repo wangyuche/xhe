@@ -191,7 +191,19 @@ def check_bash(cmd, cfg, cwd):
         if bad:
             return bad
     rec_tool = first in ("grep", "diff", "find") or (first == "ls" and any(x.startswith("-") and "R" in x for x in toks[1:]))
-    for t in toks[1:]:
+    # 只檢查真的是路徑的參數:grep 用 gpaths(+ -f / --file 的值)、find 用表達式前的起點,其餘指令看全部參數
+    if first == "grep":
+        path_toks = gpaths + [toks[i] for i in pat_vals if i > 1 and toks[i - 1] in ("-f", "--file")] + \
+            [t for t in toks[1:] if (t.startswith("--file=") or (t.startswith("-f") and not t.startswith("--"))) and len(t) > 2]
+    elif first == "find":
+        path_toks = []
+        for t in toks[1:]:
+            if t.startswith("-") or t in ("!", "("):
+                break
+            path_toks.append(t)
+    else:
+        path_toks = toks[1:]
+    for t in path_toks:
         for pth in arg_paths(t):
             if rec_tool and pth and os.path.isdir(_raw(pth, cwd)):
                 bad = _protected_symlink_under(_raw(pth, cwd), cfg, cwd)

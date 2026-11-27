@@ -171,6 +171,8 @@ def t_guard(e):
         (f"grep -f{e.key} x", "deny"),
         (f"cat {e.reports}/p/r/report.html", "allow"),
         (f"grep cloud-platform.googleapis {e.reports}/p/r/x.json", "allow"),
+        (f"grep -c . {e.reports}/p/r/x.json", "allow"),
+        (f"find {e.reports}/p/r -name ..", "allow"),
         (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "allow"),
         (f"ls {e.tmp}", "allow"),
         (f"ls -laR {e.reports}", "deny-live"),
@@ -484,6 +486,9 @@ def t_classify():
         ("停用公開 SSH 規則(不是 IAP 規則)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--disabled"], fw, "ok-disabled"),
         ("公開端點關閉授權網路", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--no-enable-master-authorized-networks"],
          dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]})),
+        ("舊的 --require-ssl 旗標(還原不完整,已移除)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--require-ssl"],
+         {"settings": {"ipConfiguration": {"sslMode": "ENCRYPTED_ONLY"}}}),
+        ("新值等於現值(--priority=1000)", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--priority=1000"], FX.FIREWALLS[2]),
         ("IAM 授權給 domain:gmail.com", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=domain:gmail.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
@@ -587,8 +592,8 @@ def t_classify():
         ("autoscaling min=0 被省略時調 max", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
                                           f"--project={P}", "--enable-autoscaling", "--max-nodes=10"], {"autoscaling": {"enabled": True, "maxNodeCount": 5}}, False),
         ("描述含 delete 字樣", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=temp rule, delete later"], fw, False),
-        ("SQL 加 --require-ssl(快照沒有 requireSsl)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--require-ssl"],
-         {"settings": {"ipConfiguration": {"sslMode": "ENCRYPTED_ONLY"}}}, False),
+        ("SQL --ssl-mode 收緊(還原回原 sslMode)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
+         {"settings": {"ipConfiguration": {"sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED"}}}, False),
         ("開 GKE_METADATA:還原回 GCE_METADATA 要警示", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
                                                      f"--project={P}", "--workload-metadata=GKE_METADATA"], dict(FX.NODEPOOLS[0], config={"workloadMetadataConfig": {"mode": "GCE_METADATA"}}), False),
         ("開授權網路(原本關但留有網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
@@ -618,7 +623,7 @@ def t_classify():
             good = good and r.get("rollback_warning")
         if name.startswith("從 all 收緊"):
             good = good and r.get("rollback_warning")
-        if name.startswith(("GKE_METADATA", "autoscaling min=0", "SQL 加 --require-ssl")):
+        if name.startswith(("GKE_METADATA", "autoscaling min=0", "SQL --ssl-mode")):
             import ggplan
             good = good and not ggplan.check_pre(r["auto_pre"], snap)  # 預設值補上的欄位,precondition 仍要對得上快照
         if name.startswith("GKE_METADATA"):

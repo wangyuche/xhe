@@ -88,7 +88,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 | bucket-update | `gcloud storage buckets update`:public access prevention、uniform access、versioning | describe | 反向旗標 |
 | bucket-iam-remove | `gcloud storage buckets remove-iam-policy-binding` | get-iam-policy | add 回去 |
 | project-iam-add / remove | `gcloud projects add/remove-iam-policy-binding` | get-iam-policy | 反向 |
-| sql-patch | `gcloud sql instances patch`:ssl、授權網路、備份時間、PITR | describe | 原值 |
+| sql-patch | `gcloud sql instances patch`:`--ssl-mode`(不接受舊的 --require-ssl,它的還原無法回到原 sslMode)、授權網路、備份時間、PITR | describe | 原值 |
 | kubectl-apply | 只能修改既有資源(diff 出現新建 → 不可還原) | 線上物件 | `kubectl replace -f before/C<n>.rollback.json` |
 | kubectl-patch | deployment、statefulset、daemonset、cronjob、HPA、PDB、configmap | 線上物件 | 同上 |
 | kubectl-scale / rollout-restart / label-namespace(只限 pod-security 標籤) | | 線上物件 | 原 replicas / 不需 / 原 label |
@@ -108,6 +108,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - 已有條目執行後,後面的條目被擋:整體狀態是 ISSUES(不是 BLOCKED)。收到 SIGTERM / SIGHUP / SIGINT 會先寫紀錄、清憑證;被 SIGKILL 留下的憑證快取下次執行時清掉(超過 6 小時)。collect / plan / change 請在背景執行(可能超過 10 分鐘)。
 - guard 拒絕跟隨 symlink 的遞迴(grep -R、find -L、ls -L);目錄樹裡有指向受保護路徑的 symlink 時,遞迴工具也會被擋。
 - 變更指令成功但之後的快照 / 驗證失敗:結果記「已執行(驗證失敗)」並附還原指令。
+- 新值等於現值的條目判「不需變更」→ BLOCKED(避免空操作被記成修正)。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。
 - YAML 審查:kustomization 引用遠端 base(https / git / github.com…)時不展開(不連網),列無法判定。

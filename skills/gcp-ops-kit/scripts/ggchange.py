@@ -411,6 +411,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 continue
             raw = gglib.ptr_get(snap, rule["restore"])  # precondition 用快照原值(可能是 None)
             cur = raw
+            if raw is None and rule.get("state_required_restore"):
+                return None, f"快照沒有 {rule['restore']},無法確認原值"
             if cur is None and "default" in rule:
                 cur = rule["default"]  # GKE API 省略 0 / 預設值的欄位:還原指令用預設值
             fmt = rule.get("format", "scalar")
@@ -437,6 +439,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             elif fmt == "per_zone":
                 out.append(f"{fl}={cur}")
             else:
+                if val is not True and str(val) == ("" if cur is None else str(cur)):
+                    return None, f"{fl} 已是 {cur}(不需變更)"
                 out.append(f"{fl}={'' if cur is None else cur}")
             res["auto_pre"].append({"field": rule["restore"], "expect": raw})
             changed = True
