@@ -80,6 +80,13 @@ class Runner:
     def execute(self, run):
         self.run = run
         items = self.precheck_static()
+        # 核准檔用過即作廢:改名(原子),之後同一份核准不能再執行一次
+        src = os.path.join(os.path.dirname(self.plan_path), "approval.json")
+        used = os.path.join(os.path.dirname(self.plan_path), f"approval.used-{os.path.basename(run)}.json")
+        try:
+            os.rename(src, used)
+        except OSError:
+            raise gglib.Blocked("核准檔已被使用或不存在(每份核准只能執行一次,請使用者重新核准)")
         ctx_done = set()
         with gglib.Session(self.cfg, run, self.project, "change") as s:
             for n, it in enumerate(items):

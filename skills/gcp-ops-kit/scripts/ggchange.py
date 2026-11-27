@@ -823,7 +823,7 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
             res["blocked_reason"] = f"Pod Security 等級不認得:{val}"
             return None, [], None
     if key.startswith("pod-security.kubernetes.io/") and not key.endswith("-version") and (
-            old is None or POD_SECURITY_ORDER.get(old, -1) < POD_SECURITY_ORDER.get(val, -1)):
+            (old is None and val != "privileged") or (old is not None and POD_SECURITY_ORDER.get(old, -1) < POD_SECURITY_ORDER.get(val, -1))):
         res["rollback_warning"] = f"還原會把 Pod Security {key.rsplit('/', 1)[1]} 降回 {old or '(未設定)'},執行前請確認"
     res["auto_pre"].append({"field": "/metadata/labels/" + key.replace("~", "~0").replace("/", "~1"), "expect": old})
     rb_label = f"{key}={old}" if old is not None else f"{key}-"

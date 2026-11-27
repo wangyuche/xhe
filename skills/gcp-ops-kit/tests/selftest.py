@@ -193,6 +193,7 @@ def t_guard(e):
         (f"diff -r {proj2} {e.reports}", "deny"),
         (f"grep -C 2 x {e.key}", "deny"),
         ("python3 -c 'print(1)'", "deny"),
+        (f"cat /System/Volumes/Data{e.key}", "deny"),
         (f"find {e.reports}/p/r -name ..", "deny"),
         (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "deny"),
         (f"ls {e.tmp}", "allow"),
@@ -1121,6 +1122,10 @@ def t_plan_change(e, review_run):
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1")
     ex = execs()
     crun = run_dir(r.stdout)
+    used_ok = any(f.startswith("approval.used-") for f in os.listdir(os.path.dirname(plan_path))) and not os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json"))
+    ok("變更:核准檔用過即作廢(approval.json 改名為 used)", used_ok, os.listdir(os.path.dirname(plan_path)))
+    r_again = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    ok("變更:同一份核准不能再執行一次", r_again.returncode == 3, r_again.stdout + r_again.stderr)
     ok("變更:只核准 C1 → PASS,只呼叫 C1(未核准零呼叫)",
        r.returncode == 0 and "status=PASS" in r.stdout and len(ex) == 1 and "remove-iam-policy-binding" in ex[0], r.stdout + r.stderr + str(ex))
     ok("變更:回報 C1 還原指令(add-iam-policy-binding allUsers)", "add-iam-policy-binding" in r.stdout)

@@ -24,12 +24,54 @@ CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-p
 WRITABLE_NAMES = {"manual.json", "plan.input.json"}
 
 
-def protected_paths(cfg):
+def _raw_protected(cfg):
     home = os.path.expanduser("~")
     ps = [os.path.dirname(gglib.config_path()), os.path.join(home, ".config", "gcloud"), os.path.join(home, ".kube")]
     if cfg.get("GG_SA_KEY_FILE"):
         ps.append(cfg["GG_SA_KEY_FILE"])
-    return [os.path.realpath(p).lower() for p in ps]
+    # 使用者自訂位置的憑證也保護
+    for var in ("CLOUDSDK_CONFIG", "GOOGLE_APPLICATION_CREDENTIALS"):
+        if os.environ.get(var):
+            ps.append(os.environ[var])
+    for kc in (os.environ.get("KUBECONFIG") or "").split(":"):
+        if kc:
+            ps.append(kc)
+    return [os.path.expanduser(p) for p in ps]
+
+
+def protected_paths(cfg):
+    return [os.path.realpath(p).lower() for p in _raw_protected(cfg)]
+
+
+def _ids(path):
+    """path 與它所有上層目錄的 (st_dev, st_ino);路徑寫法不同(firmlink、/.vol)也能認出同一個檔案。"""
+    out, p = [], os.path.realpath(path)
+    while True:
+        try:
+            st = os.stat(p)
+            out.append((st.st_dev, st.st_ino))
+        except OSError:
+            pass
+        parent = os.path.dirname(p)
+        if parent == p:
+            return out
+        p = parent
+
+
+def _same_file_protected(path, cfg, ancestor):
+    target = _ids(path)
+    if not target:
+        return False
+    mine = target[0] if os.path.exists(path) else None  # 不存在的路徑只檢查「是否在受保護路徑底下」
+    for q in _raw_protected(cfg):
+        qids = _ids(q)
+        if not qids:
+            continue
+        if qids[0] in target:  # path 是受保護路徑本身或在它底下
+            return True
+        if ancestor and mine is not None and mine in qids:  # path 是受保護路徑的上層
+            return True
+    return False
 
 
 def _norm(path, cwd):
@@ -40,6 +82,10 @@ def _norm(path, cwd):
 def is_protected(path, cfg, cwd, ancestor=True, rollback_ancestor=True):
     """path 本身或其下層是受保護路徑;ancestor=True 時,path 是受保護路徑的上層目錄也算(遞迴工具可讀到)。"""
     p = _norm(path, cwd)
+    if p.startswith(("/system/volumes/data", "/.vol/", "/.vol")) and p != "/.volumeicon.icns":
+        return True  # macOS firmlink / inode 路徑:一律不准
+    if _same_file_protected(os.path.join(cwd, os.path.expanduser(path)), cfg, ancestor):
+        return True
     p_raw = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))  # 實際走訪用原始大小寫
     rd_raw = os.path.realpath(cfg["GG_REPORT_DIR"])
     prot = protected_paths(cfg)

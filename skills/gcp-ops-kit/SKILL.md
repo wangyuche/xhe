@@ -42,6 +42,7 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 <kit>/scripts/change.sh <plan.json> --sha <sha256> --approved "使用者已核准變更 C1, C3"
 #   必須先有 <計畫 run>/approval.json(由主 agent 在使用者核准後寫入:{"sha256": "<plan sha256>", "approved": ["C1","C3"], "user_text": "<使用者原話>"}),
 #   旗標的 sha256 與編號要和它完全一致(gcp-guardian 自己寫不了這個檔,所以不能自己核准);
+#   執行時會把它改名為 approval.used-<run>.json(每份核准只能用一次);
 #   只接受審查 / 計畫 run 目錄裡 plan.py 產生的 plan.json;旗標必須完全是「使用者已核准變更 C1, C3」(逗號或頓號分隔,不可夾其他文字)
 #   → status=PASS|ISSUES|BLOCKED、run=<變更 run>、每條:C<n> 結果 原因 還原指令
 
@@ -128,7 +129,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - plan.json 只保留 `kubectl diff` 的「資源 + 新建 / 修改」摘要,不留 diff 內容。
 - `before/C<n>.rollback.json` 是 kubectl 還原用的**原始物件**(還原指令就指向它)(ConfigMap 可能含原值),權限 600,`--check` 不掃它;報告與回報不印它的內容。
 - 專案鎖:`<GG_REPORT_DIR>/<專案>/.lock` 的 `fcntl.flock`(plan build、change 期間;程序結束或當掉即釋放);被佔用 → BLOCKED。
-- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或不遞迴的唯讀指令(ls(不帶 -R / -L)、cat、head、tail、wc、shasum、stat、date、pwd;grep / find / diff 一律不放行,搜尋用 Grep / Glob 工具),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接執行 gcloud / kubectl / curl…;參數(含 `--opt=值`、黏著旗標的值,大小寫不分)不可指向受保護路徑;`*.rollback.json` 不可讀;Read 不可碰、Grep / Glob 的搜尋範圍不可包含 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證(報告目錄裡有執行中 run 的憑證或 rollback 檔時,搜尋整個報告目錄也會被擋);Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`(**不能寫 approval.json**)。hook 每次執行前會先清掉已死程序留下的憑證快取。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
+- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或不遞迴的唯讀指令(ls(不帶 -R / -L)、cat、head、tail、wc、shasum、stat、date、pwd;grep / find / diff 一律不放行,搜尋用 Grep / Glob 工具),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接執行 gcloud / kubectl / curl…;參數(含 `--opt=值`、黏著旗標的值,大小寫不分)不可指向受保護路徑;`*.rollback.json` 不可讀;Read 不可碰、Grep / Glob 的搜尋範圍不可包含 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證(報告目錄裡有執行中 run 的憑證或 rollback 檔時,搜尋整個報告目錄也會被擋);Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`(**不能寫 approval.json**)。hook 每次執行前會先清掉已死程序留下的憑證快取。受保護判斷同時比對檔案 inode(擋 `/System/Volumes/Data/...` 等別名路徑),並保護環境變數 `CLOUDSDK_CONFIG`、`KUBECONFIG`、`GOOGLE_APPLICATION_CREDENTIALS` 指向的檔案。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
 
 ## 已知限制
 

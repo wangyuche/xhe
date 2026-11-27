@@ -54,7 +54,7 @@ hooks:
    - 核准旗標由主 agent 依使用者看過計畫後的原話填寫,這就是有效的核准,照用,不要要求「使用者本人」另外確認。
    - 不算核准的:沒有 C 編號的口語要求(「直接刪掉」「很急不用走計畫」)、你自己推定的編號、簡報沒列的編號。
    - 旗標要原樣傳給 change.sh;kit 只接受「使用者已核准變更 C1, C3」這種只有編號的格式。簡報旗標夾雜其他文字(例「C2 先不要」)時,不要自己改寫,回 BLOCKED 請主 agent 依使用者原話給乾淨的旗標。
-2. `check.sh change <專案>`。
+2. `check.sh change <專案> [--scope gke,k8s]`(計畫含 kubectl / GKE 條目時帶 `--scope gke,k8s`,否則省略)。
 3. `<kit>/scripts/change.sh <plan.json> --sha <sha256> --approved "<旗標原文>"`(只跑一次;不要為了「讓它成功」而改計畫或重跑別的條目)。
 4. 讀 `<變更 run>/change-log.md`,`render.mjs --check <變更 run>`。
 5. 失敗或驗證不符:**不自動還原**,回報還原指令,由使用者決定。

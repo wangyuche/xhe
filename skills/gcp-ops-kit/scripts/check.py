@@ -46,7 +46,7 @@ def main(argv):
             return gglib.EXIT_BLOCKED
     try:
         gglib.check_project(project)
-        need = ["gcloud"] + (["kubectl", "gke-gcloud-auth-plugin"] if {"gke", "k8s"} & set(scope.split(",")) or mode == "change" else [])
+        need = ["gcloud"] + (["kubectl", "gke-gcloud-auth-plugin"] if {"gke", "k8s"} & set(scope.split(",")) else [])
         missing += [t for t in need if shutil.which(t) is None]
         if missing:
             hint = []
