@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""刀神「均線三刀流」(依《海期刀神教你用100張圖實戰均線三刀流》《海期刀神的60分K獲利術》公開介紹的做法)。
+用法: python3 -I three_blades.py <60分K.json> [--asof "YYYY-MM-DD HH:MM"] [--slope-n 5] [--svg out.svg] [--title T]
+資料: Fugle candles JSON({"data":[{date,open,high,low,close,volume}...]}),歷史 + 今天盤中已由 run.sh 合併。
+
+做法(60 分 K,簡單移動平均):
+  小藍 = 20MA、小綠 = 60MA、小橘 = 240MA(大魔王)
+  方向  : 小橘斜率為正 = 多方環境;為負 = 空方環境(切忌積極做多)。另列價格在小橘上方或下方
+  進場  : 小藍上穿小綠(藍綠黃金交叉)＋ KD 轉強(K > D)= 做多的第一步;
+          小藍下穿小綠(藍綠死亡交叉)= 往下走的徵兆
+  排列  : 小藍 > 小綠 > 小橘 = 多頭排列;反之空頭排列;其他 = 糾結
+  不逆勢: 價格還沒站上小藍、小綠,尤其小橘之前,不挑戰均線
+  雙斜率: 小藍、小綠斜率與小橘同方向時,勝率較高
+斜率 = 這根的 MA 減 --slope-n 根前的 MA(預設 5 根 ≈ 1 個交易日),只看正負。
+KD(9,3,3):RSV 9 根;K = 2/3 前K + 1/3 RSV;D = 2/3 前D + 1/3 K;初值 50。
+"""
+import datetime as _dt, html, json, math, sys
+
+args = sys.argv[1:]
+USAGE = "用法: python3 -I three_blades.py <60分K.json> [--asof ...] [--slope-n 5] [--svg out.svg] [--title T]"
+def opt(name, default=None):
+    if name in args:
+        i = args.index(name)
+        if i + 1 >= len(args):
+            sys.exit(f"{USAGE}\n{name} 要帶值")
+        v = args[i+1]; del args[i:i+2]; return v
+    return default
+asof = opt("--asof"); svg = opt("--svg"); title = opt("--title", "加權指數")
+try:
+    slope_n = int(opt("--slope-n", "5"))
+except ValueError:
+    sys.exit(f"{USAGE}\n--slope-n 要是正整數")
+if slope_n < 1:
+    sys.exit(f"{USAGE}\n--slope-n 要是正整數")
+PER = (20, 60, 240)
+NAME = {20: "小藍 20MA", 60: "小綠 60MA", 240: "小橘 240MA"}
+COL = {20: "#2b6cb0", 60: "#1e8449", 240: "#e08a1e"}
+
+def tstr(b): return b["date"][:16].replace("T", " ")
+
+if len(args) != 1 or args[0].startswith("-"):
+    sys.exit(f"{USAGE}\n看不懂的參數:{' '.join(args) or '(缺資料檔)'}")
+try:
+    raw = json.load(open(args[0]))
+except Exception as e:
+    sys.exit(f"資料錯誤: 讀不到 {args[0]}: {e}")
+if not isinstance(raw, dict) or not raw.get("data"):
+    sys.exit(f"資料錯誤: {args[0]} 沒有 K 棒(Fugle 回應: {str(raw)[:200]})")
+def _ok_bar(b):
+    return isinstance(b, dict) and isinstance(b.get("date"), str) and all(
+        isinstance(b.get(k), (int, float)) and not isinstance(b.get(k), bool) for k in ("open", "high", "low", "close"))
+bad_bars = [b for b in raw["data"] if not _ok_bar(b)]
+if bad_bars:
+    sys.exit(f"資料錯誤: {len(bad_bars)} 根 K 棒缺日期或價格欄位(例:{str(bad_bars[0])[:120]})")
+bars = sorted({b["date"]: b for b in raw["data"]}.values(), key=lambda b: b["date"])
+if asof:
+    if len(asof) == 10:  # 只給日期:包含當天整天
+        asof += " 23:59"
+    try:
+        asof = _dt.datetime.strptime(asof, "%Y-%m-%d %H:%M").strftime("%Y-%m-%d %H:%M")  # 正規化(9:00 → 09:00)再做字串比較
+    except ValueError:
+        sys.exit(f"{USAGE}\n--asof 格式要是 YYYY-MM-DD 或 YYYY-MM-DD HH:MM")
+    bars = [b for b in bars if tstr(b) <= asof]
+n = len(bars)
+need = 240 + slope_n + 1
+if n < need:
+    sys.exit(f"資料錯誤: 60 分 K 只有 {n} 根,算 240MA 與斜率至少要 {need} 根")
+O = [b["open"] for b in bars]; H = [b["high"] for b in bars]
+L = [b["low"] for b in bars]; C = [b["close"] for b in bars]
+MA = {p: [sum(C[i-p+1:i+1])/p if i >= p-1 else None for i in range(n)] for p in PER}
+K, D = [], []
+k = d = 50.0
+for i in range(n):
+    lo, hi = min(L[max(0, i-8):i+1]), max(H[max(0, i-8):i+1])
+    rsv = 50.0 if hi == lo else (C[i] - lo) / (hi - lo) * 100
+    k = 2/3*k + rsv/3; d = 2/3*d + k/3
+    K.append(k); D.append(d)
+last = n - 1
+def slope(p, i):
+    a, b = MA[p][i], MA[p][i-slope_n] if i-slope_n >= 0 else None
+    return None if a is None or b is None else a - b
+t = lambda i: tstr(bars[i])[5:].replace("-", "/")
+def px(v):   # 指數、高價股取整數;低價股保留小數(65.8 不要變 66)
+    if abs(v) >= 1000: return f"{v:,.0f}"
+    s = f"{v:,.2f}".rstrip("0").rstrip("."); return s
+
+# 藍綠交叉(全部列出,最後一次是目前訊號)
+# 只在「小藍 − 小綠」的正負號真的翻轉時才算交叉;剛好相等(碰到又彈回)不算
+crosses = []
+side = 0
+for i in range(n):
+    a1, b1 = MA[20][i], MA[60][i]
+    if a1 is None or b1 is None: continue
+    cur = (a1 > b1) - (a1 < b1)
+    if cur == 0: continue
+    if side and cur != side:
+        crosses.append(("黃金交叉" if cur > 0 else "死亡交叉", i))
+    side = cur
+# 小橘斜率、小藍斜率最近一次翻轉
+def sgn3(v):   # 1 = 正、-1 = 負、0 = 走平
+    return (v > 0) - (v < 0)
+def last_flip(p):
+    """最近一次斜率由負轉正 / 由正轉負(走平的根略過)。回傳 (翻轉那根, 目前方向 1 / -1)。"""
+    prev = None; prev_i = None
+    for i in range(last, 0, -1):
+        s = slope(p, i)
+        if s is None: break
+        sg_ = sgn3(s)
+        if sg_ == 0: continue
+        if prev is None: prev, prev_i = sg_, i; continue
+        if sg_ != prev: return prev_i, prev
+        prev_i = i
+    return None, prev
+# 價格最近一次穿越某條均線(收盤由下往上 = 站上;由上往下 = 跌破)
+def last_cross_price(p):
+    for i in range(last, 0, -1):
+        m0, m1 = MA[p][i-1], MA[p][i]
+        if m0 is None or m1 is None: break
+        if C[i-1] <= m0 and C[i] > m1: return i, "站上"
+        if C[i-1] >= m0 and C[i] < m1: return i, "跌破"
+    return None, None
+
+start = _dt.datetime.strptime(tstr(bars[last]), "%Y-%m-%d %H:%M")
+end = min(start + _dt.timedelta(minutes=60), start.replace(hour=13, minute=30))  # 13:00 那根在 13:30 收盤就結束
+now = (_dt.datetime.strptime(__import__("os").environ["TB_NOW"], "%Y-%m-%d %H:%M") if __import__("os").environ.get("TB_NOW")
+       else _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8))).replace(tzinfo=None))  # TB_NOW:測試用,台北時間
+live = not asof and now < end
+out = [f"【60分K 均線三刀流】{t(last)} 收 {px(C[last])}  K {K[last]:.1f} / D {D[last]:.1f}  斜率=比 {slope_n} 根前"
+       + ("  ⚠️ 最後一根還沒走完,訊號可能變動" if live else "")]
+sg = {}
+for p in PER:
+    m = MA[p][last]; s = slope(p, last); sg[p] = sgn3(s)
+    ci, kind = last_cross_price(p)
+    since = f",{t(ci)} {kind}" if ci else ""
+    sgn = lambda v: ("+" if v > 0 else "-" if v < 0 else "±") + px(abs(v))
+    word = {1: "正 ↗", -1: "負 ↘", 0: "走平 →"}[sg[p]]
+    where = "在上方" if C[last] > m else "在下方" if C[last] < m else "貼著均線"
+    out.append(f"{NAME[p]} {px(m)}:價格{where} {sgn(C[last]-m)}、斜率{word}({sgn(s)}){since}")
+m20, m60, m240 = MA[20][last], MA[60][last], MA[240][last]
+order = "多頭排列(小藍>小綠>小橘)" if m20 > m60 > m240 else "空頭排列(小藍<小綠<小橘)" if m20 < m60 < m240 else "糾結(非多空排列)"
+out.append(f"排列:{order}")
+fi, before = last_flip(240)
+env = {1: "多方環境", -1: "空方環境", 0: "小橘走平(方向不明)"}[sg[240]]
+flip = f"(小橘斜率 {t(fi)} 由{'負轉正' if before == 1 else '正轉負'})" if fi and sg[240] else ""   # before = 目前的斜率方向
+pos240 = "價格在小橘之上" if C[last] > m240 else "價格在小橘之下" if C[last] < m240 else "價格貼著小橘"
+out.append(f"① 方向(小橘斜率):{env}{flip};{pos240}" + (" → 斜率仍負,切忌積極做多" if sg[240] < 0 and C[last] >= m240 else "")
+           + (" → 斜率為正但價格已跌破小橘,多方結構受損" if sg[240] > 0 and C[last] < m240 else ""))
+if crosses:
+    kind, ci = crosses[-1]
+    kd_now = "K>D 轉強" if K[last] > D[last] else "K<D 轉弱"
+    out.append(f"② 藍綠交叉:最近一次 {t(ci)} {kind}(交叉那根收 {px(C[ci])},K{K[ci]:.0f}/D{D[ci]:.0f});目前 KD {kd_now}")
+else:
+    out.append("② 藍綠交叉:資料期間內沒有交叉")
+if sg[240] == 0:
+    out.append("③ 雙斜率:小橘走平,無法比較方向")
+else:
+    rel = {p: ("同方向" if sg[p] == sg[240] else "走平" if sg[p] == 0 else "反方向") for p in (20, 60)}
+    out.append("③ 雙斜率:" + "、".join(f"{NAME[p].split()[0]}{rel[p]}" for p in (20, 60)) + "(相對小橘)")
+above_all = all(C[last] > MA[p][last] for p in PER)
+below_all = all(C[last] < MA[p][last] for p in PER)
+out.append("④ 不逆勢:" + ("價格站上三條線" if above_all else "價格在三條線之下" if below_all
+           else "價格還沒全部站上(" + "、".join(NAME[p].split()[0] + ("貼著" if C[last] == MA[p][last] else "在上方壓著") for p in PER if C[last] <= MA[p][last]) + ")"))
+# 綜合:書中的順勢條件
+gold = crosses and crosses[-1][0] == "黃金交叉"
+if sg[240] > 0 and gold and K[last] > D[last] and above_all:
+    verdict = "偏多:小橘向上＋藍綠黃金交叉＋KD 轉強＋價格站上三線,符合書中做多條件"
+elif sg[240] < 0 and crosses and not gold and below_all:
+    verdict = "偏空:小橘向下＋藍綠死亡交叉＋價格在三線之下"
+elif sg[240] == 0:
+    verdict = "小橘走平,方向不明,等斜率出現方向再判斷"
+elif sg[240] > 0:
+    miss = [x for x, ok in (("藍綠未金叉", gold), ("KD 未轉強", K[last] > D[last]), ("價格未站上三線", above_all)) if not ok]
+    verdict = "多方環境但條件未齊(" + "、".join(miss) + "),等條件到齊"
+elif gold:
+    verdict = "空方環境但出現藍綠黃金交叉,屬逆勢反彈,書中建議不積極做多"
+else:
+    miss = [x for x, ok in (("沒有藍綠死亡交叉", bool(crosses)), ("價格未在三線之下", below_all)) if not ok]
+    verdict = "空方環境,偏空條件未齊(" + "、".join(miss) + ")"
+out.append(f"結論:{verdict}")
+print("\n".join(out))
+
+# ---- 圖:最近約 15 個交易日的 60 分 K ＋ 三條均線 ＋ 藍綠交叉 ----
+if svg:
+    i0 = max(0, n - 75); N = n - i0 + 2
+    Wd, Ht, Lm, Rm, T, P1b, P2t, P2b = 1200, 1200, 110, 40, 160, 820, 900, 1110
+    vals = [v for i in range(i0, n) for v in (L[i], H[i]) + tuple(MA[p][i] for p in PER if MA[p][i])]
+    lo, hi = min(vals), max(vals)
+    if hi == lo:  # 停牌等價格完全不動:給最小區間,避免除以零
+        hi, lo = hi + max(abs(hi) * 0.01, 0.01), lo - max(abs(lo) * 0.01, 0.01)
+    pad = (hi-lo)*0.05; lo -= pad; hi += pad
+    X = lambda i: Lm + (Wd-Lm-Rm)*(i-i0+0.5)/N
+    Y = lambda v: T + (P1b-T)*(1-(v-lo)/(hi-lo))
+    YK = lambda v: P2t + (P2b-P2t)*(1-v/100)
+    f = 'font-family="PingFang TC, Heiti TC, sans-serif"'
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 {Wd} {Ht}">',
+         f'<rect width="{Wd}" height="{Ht}" fill="#fcfcfb"/>',
+         f'<text x="{Lm}" y="60" {f} font-size="38" font-weight="600" fill="#0b0b0b">{html.escape(title)}　60分K 均線三刀流</text>',
+         f'<text x="{Lm}" y="104" {f} font-size="24" fill="#52514e">{t(i0)} – {t(last)}　收 {px(C[last])}　{env}　{order.split("(")[0]}　Fugle</text>']
+    lg = "　".join(f'<tspan fill="{COL[p]}">— {NAME[p]} {px(MA[p][last])}</tspan>' for p in PER)
+    o.append(f'<text x="{Lm}" y="{T-20}" {f} font-size="22">{lg}</text>')
+    # 刻度間距依價格區間的數量級取 1 / 2 / 5 × 10^k(低價股、高價指數都有刻度)
+    raw_step = (hi - lo) / 8; mag = 10 ** math.floor(math.log10(raw_step))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw_step)
+    dec = max(0, -math.floor(math.log10(step)))
+    v = math.floor(lo / step + 1) * step
+    while v < hi:
+        o.append(f'<line x1="{Lm}" x2="{Wd-Rm}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" stroke="#ecebe6"/>')
+        o.append(f'<text x="{Lm-10}" y="{Y(v)+8:.1f}" {f} font-size="20" fill="#52514e" text-anchor="end">{v:,.{dec}f}</text>'); v += step
+    for lv in (20, 50, 80):
+        o.append(f'<line x1="{Lm}" x2="{Wd-Rm}" y1="{YK(lv):.1f}" y2="{YK(lv):.1f}" stroke="#e2e1dc" stroke-dasharray="6 4"/>')
+        o.append(f'<text x="{Lm-10}" y="{YK(lv)+7:.1f}" {f} font-size="20" fill="#52514e" text-anchor="end">{lv}</text>')
+    o.append(f'<text x="{Lm+6}" y="{P2t-12}" {f} font-size="22" fill="#52514e">KD(9,3,3)　<tspan fill="#2b6cb0">K</tspan>　<tspan fill="#c0392b">D</tspan></text>')
+    prev, lastx = None, -999
+    for i in range(i0, n):
+        day = tstr(bars[i])[5:10]
+        if day != prev:
+            o.append(f'<line x1="{X(i)-6:.1f}" x2="{X(i)-6:.1f}" y1="{T}" y2="{P2b}" stroke="#f1f0ec"/>')
+            if X(i) - lastx > 60:  # 標籤太擠才省略文字,分隔線照畫
+                o.append(f'<text x="{X(i):.1f}" y="{P2b+34}" {f} font-size="20" fill="#52514e">{day.replace("-", "/")}</text>'); lastx = X(i)
+        prev = day
+    cw = (Wd-Lm-Rm)/N*0.6
+    for i in range(i0, n):
+        col = "#d64545" if C[i] >= O[i] else "#2f9e5a"
+        o.append(f'<line x1="{X(i):.1f}" x2="{X(i):.1f}" y1="{Y(H[i]):.1f}" y2="{Y(L[i]):.1f}" stroke="{col}" stroke-width="1.4"/>')
+        yt, yb = Y(max(O[i], C[i])), Y(min(O[i], C[i]))
+        o.append(f'<rect x="{X(i)-cw/2:.1f}" y="{yt:.1f}" width="{cw:.1f}" height="{max(yb-yt, 1.5):.1f}" fill="{col}"/>')
+    for p in PER:
+        pts = [(i, MA[p][i]) for i in range(i0, n) if MA[p][i]]
+        o.append('<path d="' + " ".join(f'{"M" if j == 0 else "L"}{X(i):.1f},{Y(m):.1f}' for j, (i, m) in enumerate(pts))
+                 + f'" fill="none" stroke="{COL[p]}" stroke-width="3"/>')
+    for arr, colr in ((K, "#2b6cb0"), (D, "#c0392b")):
+        o.append('<path d="' + " ".join(f'{"M" if j == 0 else "L"}{X(i):.1f},{YK(arr[i]):.1f}' for j, i in enumerate(range(i0, n)))
+                 + f'" fill="none" stroke="{colr}" stroke-width="2"/>')
+    for kind, i in crosses:
+        if i < i0: continue
+        y = Y(MA[20][i]); up = kind == "黃金交叉"; colr = "#c0392b" if up else "#1e8449"
+        o.append(f'<circle cx="{X(i):.1f}" cy="{y:.1f}" r="9" fill="none" stroke="{colr}" stroke-width="3"/>')
+        ty = y + (46 if up else -26)
+        o.append(f'<text x="{X(i):.1f}" y="{ty:.1f}" {f} font-size="20" font-weight="700" fill="{colr}" text-anchor="middle">{"金叉" if up else "死叉"} {t(i)[:5]}</text>')
+    o.append("</svg>")
+    open(svg, "w").write("\n".join(o))
+    print(f"SVG {svg}")
