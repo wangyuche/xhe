@@ -56,3 +56,13 @@ export function openBudget(file, limit, unit) {
     },
   };
 }
+
+// manifest 追加:同一把檔案鎖 + 暫存檔改名,平行的程序不會互相蓋掉;manifest 壞了就另存備份再重建,不讓已完成的工作失敗
+export function appendJsonItem(file, item) {
+  return withLock(file, () => {
+    let m = { items: [] };
+    if (existsSync(file)) { try { m = JSON.parse(readFileSync(file, 'utf8')); if (!Array.isArray(m.items)) throw new Error('no items'); } catch { renameSync(file, `${file}.broken-${Date.now()}`); m = { items: [] }; } }
+    m.items.push(item);
+    const t = `${file}.${process.pid}.tmp`; writeFileSync(t, JSON.stringify(m, null, 1) + '\n'); renameSync(t, file);
+  });
+}

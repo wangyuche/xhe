@@ -21,9 +21,9 @@
 //        --tileable:左右、上下邊緣像素平均差 ≤ 8(0–255)。--full-bleed(UI / 九宮格,fit --margin 0 的產出):不檢查外框與覆蓋率上限。印 {"ok":…,"errors":[…],"frames":[…]},不通過結束碼 1。
 //   node sprite.mjs clean <in.png> --out <out.png> [--key-white]
 //        角色動作圖清理(rmbg 去背之後):alpha 依 16..250 拉開(人物調實、背景霧清掉)→ 只留跟中間直帶連在一起的塊 → 離實心處 > 4 px 的淡線透明。
-//        --key-white:輸入是白底不透明圖(白底立繪)時先做白底去背。印 {ok,errors,coverage,border,touches}(touches = 主體碰到的邊,extend 用);不通過結束碼 1。
+//        --key-white:輸入是白底不透明圖(白底立繪)時先做白底去背。印 {ok,errors,coverage,border,touches}(touches = 主體碰到的邊:主體被切到,換候選或重出);不通過結束碼 1。
 //   node sprite.mjs headshot <in.png> --anchor x,y,h --out <out.png> [--size 256] [--zoom 1.15] [--dx 0] [--pad l,t,r,b]
-//        依頭中心 / 頭高(0–1,補邊前的原圖比例)裁方形頭像;--pad 是 extend 各邊補的像素(自動平移)。
+//        依頭中心 / 頭高(0–1,原圖比例)裁方形頭像;--pad 是圖各邊另外加的像素(有的話自動平移 anchor)。
 // 結束碼:0 成功;1 檢查不通過;2 用法或檔案錯誤。
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

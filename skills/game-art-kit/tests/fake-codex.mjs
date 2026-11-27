@@ -21,6 +21,7 @@ const stdin = readFileSync(0, 'utf8');
 const mode = process.env.FAKE_CODEX_MODE || 'ok';
 if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ argv: args, hasOpenAIKey: !!process.env.OPENAI_API_KEY, hasCodexKey: !!process.env.CODEX_API_KEY, hasElevenKey: !!process.env.ELEVENLABS_API_KEY, hasOtherToken: !!process.env.GH_TOKEN, prompt: stdin.slice(0, 80), mode }) + '\n');
 if (mode === 'slow') await new Promise(r => setTimeout(r, 60000));
+
 const thread = mode === 'badthread' ? 'not-a-uuid' : randomUUID();
 const ev = (o) => console.log(JSON.stringify(o));
 ev({ type: 'thread.started', thread_id: thread });

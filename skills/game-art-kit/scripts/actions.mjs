@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename, sep } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { decodePng, encodePng, blank, resample } from './sprite.mjs';
-import { openBudget, BudgetError } from './budget.mjs';
+import { openBudget, BudgetError, appendJsonItem } from './budget.mjs';
 
 class Fail extends Error { constructor(m, c = 2, extra) { super(m); this.code = c; this.extra = extra; } }
 const die = (m, c = 2, extra) => { throw new Fail(m, c, extra); };
@@ -59,7 +59,8 @@ export function prompt(c, id) {
   if (!t && !(o.expr && o.pose)) die(`動作 ${id} 不在範本裡,actions.json 的 actions.${id} 要自己給 expr 與 pose`);
   const pr = TEMPLATE.pronouns[c.pronoun];
   const expr = fill(o.expr ?? t.expr, pr), pose = fill(o.pose ?? t.pose, pr);
-  return fill(TEMPLATE.codex, { name: c.name, features: c.features, outfit: c.outfit, style: c.style, hands: c.hands ?? TEMPLATE.hands, expr, pose, allowed: o.extra ? ` except ${o.extra}` : '' });
+  const always = c.always ?? ''; // 畫風靠附上的預設圖(範本的 Art style 行要求與附圖一致),和原流程相同
+  return fill(TEMPLATE.codex, { name: c.name, features: c.features, outfit: c.outfit, body: c.body ?? '', style: c.style, hands: c.hands ?? TEMPLATE.hands, expr, pose, allowed: o.extra ? ` except ${o.extra}` : '', always });
 }
 
 // ---------- 路徑遮蔽(manifest 不留本機絕對路徑)----------
@@ -82,18 +83,23 @@ export function loginMode() {
 const ENV_KEEP = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|TMPDIR|LANG|LC_[A-Z]+|TZ|CODEX_HOME|FAKE_CODEX_[A-Z]+)$/;
 function cleanEnv() { return Object.fromEntries(Object.entries(process.env).filter(([k]) => ENV_KEEP.test(k))); }
 
-function runCodex(text, ref, timeoutSec) {
+function runCodex(text, ref, timeoutSec, onAbort) {
   const work = mkdtempSync(join(tmpdir(), 'gak-codex-')), last = join(work, 'last.txt'), cwd = join(work, 'cwd'); mkdirSync(cwd);
   return new Promise((done) => {
     const p = spawn(codexExe(), ['exec', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-C', cwd, '--json', '-o', last, '-', '-i', ref],
       { env: cleanEnv(), detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '', timedOut = false;
+    // 父程序被中止(例如 Bash 逾時)時連 codex 整個程序群組一起結束,不讓它在背景繼續花額度
+    const killGroup = () => { try { process.kill(-p.pid, 'SIGTERM'); } catch { /* */ } };
+    const onSig = (sig) => { killGroup(); try { onAbort?.(); } catch { /* */ } rmSync(work, { recursive: true, force: true }); process.exit(sig === 'SIGINT' ? 130 : 143); };
+    process.once('SIGTERM', onSig); process.once('SIGINT', onSig); process.once('SIGHUP', onSig);
     p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
     let killer = null;
     const timer = setTimeout(() => { timedOut = true; try { process.kill(-p.pid, 'SIGTERM'); } catch { /* */ } killer = setTimeout(() => { try { process.kill(-p.pid, 'SIGKILL'); } catch { /* */ } }, 5000); killer.unref(); }, timeoutSec * 1000);
     p.on('error', (e) => { clearTimeout(timer); rmSync(work, { recursive: true, force: true }); done({ spawnError: e }); });
     p.on('close', (code) => {
       clearTimeout(timer); if (killer) clearTimeout(killer);
+      process.removeListener('SIGTERM', onSig); process.removeListener('SIGINT', onSig); process.removeListener('SIGHUP', onSig);
       const reply = existsSync(last) ? readFileSync(last, 'utf8').trim() : '';
       rmSync(work, { recursive: true, force: true });
       done({ code, out, err, reply, timedOut });
@@ -118,11 +124,7 @@ function threadDir(codexHome, thread) {
 }
 const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex');
 const nextN = (outDir, action) => { let n = 1; while (existsSync(join(outDir, `${action}-${n}.png`))) n++; return n; };
-function appendManifest(outDir, entry) {
-  const f = join(outDir, 'manifest.json');
-  const m = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : { items: [] };
-  m.items.push(entry); mkdirSync(outDir, { recursive: true }); writeFileSync(f, JSON.stringify(m, null, 1) + '\n');
-}
+function appendManifest(outDir, entry) { mkdirSync(outDir, { recursive: true }); appendJsonItem(join(outDir, 'manifest.json'), entry); }
 
 export async function gen(cfgFile, { action, outDir, budget, limit, run, art, timeout = 540 }) {
   const { c, basePath } = loadConfig(cfgFile, art);
@@ -137,11 +139,13 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   mkdirSync(outDir, { recursive: true });
   let n = nextN(outDir, action);
   for (;; n++) { try { writeFileSync(join(outDir, `${action}-${n}.png`), '', { flag: 'wx' }); break; } catch (e) { if (e.code !== 'EEXIST') throw e; } }
-  const r = await runCodex(text, basePath, timeout);
+  // 被中止(Ctrl-C / Bash 逾時)時刪掉佔位檔,不留 0 位元組的圖
+  const r = await runCodex(text, basePath, timeout, () => rmSync(join(outDir, `${action}-${n}.png`), { force: true }));
   if (r.spawnError) { rmSync(join(outDir, `${action}-${n}.png`), { force: true }); appendManifest(outDir, { run, action, status: `跑不了 codex:${r.spawnError.code ?? ''}`, budget_used: used, budget_limit: limit }); die(`跑不了 codex:${r.spawnError.message}`, 3); }
   const ev = parseEvents(r.out), file = `${action}-${n}.png`;
   const dir = threadDir(codexHome, ev.thread);
-  const made = dir ? readdirSync(dir).filter(f => f.endsWith('.png')).map(f => join(dir, f)).sort((a, b2) => statSync(a).mtimeMs - statSync(b2).mtimeMs) : [];
+  let made = [];
+  try { made = dir ? readdirSync(dir).filter(f => f.endsWith('.png')).map(f => join(dir, f)).sort((a, b2) => statSync(a).mtimeMs - statSync(b2).mtimeMs) : []; } catch { made = []; }
   const entry = { run, action, n, file, prompt: text, thread: ev.thread, reply: redactSecrets(scrubPaths(r.reply, codexHome)).slice(0, 500), usage: ev.usage, violations: ev.violations.map(v => ({ type: v.type, detail: scrubPaths(v.detail, codexHome) })), budget_used: used, budget_limit: limit };
   let status, code = 0, cleaned = false;
   try {
