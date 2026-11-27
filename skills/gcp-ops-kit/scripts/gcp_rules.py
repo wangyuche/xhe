@@ -181,7 +181,7 @@ def scan(inv, gg_sa=None, now=None):
             for p in ports:
                 lo, _, hi = str(p).partition("-")
                 lo, hi = int(lo), int(hi or lo)
-                if proto == "tcp" and (lo <= 22 <= hi or lo <= 3389 <= hi):
+                if (proto == "tcp" and (lo <= 22 <= hi or lo <= 3389 <= hi)) or (proto == "udp" and lo <= 3389 <= hi):
                     admin.append(f"{proto}:{p}")
                 else:
                     other.append(f"{proto}:{p}")

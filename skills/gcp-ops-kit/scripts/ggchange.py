@@ -171,6 +171,8 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
                 and argv[1].startswith("--context=") and argv[2:2 + len(pre) - 1] == pre[1:]:
             kind = name
             break
+    if argv[0] == "kubectl" and not (len(argv) > 1 and argv[1].startswith("--context=")):
+        return block("kubectl 的第二個參數必須是 --context=gke_<專案>_<位置>_<叢集>")
     if not kind:
         return block("不在變更允許清單(請使用者自己執行)")
     res["kind"] = kind
@@ -219,6 +221,9 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
         return res
     res["loosens_reasons"] = reasons
     res["loosens_security"] = bool(reasons)
+    loosen_flags = {f for f, r in k.get("flags", {}).items() if r.get("loosens")}
+    if rollback_args and not res.get("rollback_warning") and any(a.split("=")[0] in loosen_flags for a in rollback_args if isinstance(a, str)):
+        res["rollback_warning"] = "這條還原會放寬安全設定(回到變更前較寬鬆的狀態),執行前請確認"
     if why_irrev:
         res["reversible"] = False
         res["rollback"] = None
@@ -471,8 +476,11 @@ def _iam_common(pos, flags, res, cfg, adding):
     reasons = []
     if adding:
         hi = change_rules()["high_privilege_roles"]
+        low = role in ("roles/viewer", "roles/browser") or re.fullmatch(r"roles/[A-Za-z0-9]+\.(viewer|reader|[A-Za-z]*Viewer|[A-Za-z]*Reader)", role)
         if role in hi or re.search(r"(?i)admin$", role):
             reasons.append(f"新增高權角色 {role} 給 {member}")
+        elif not low:
+            reasons.append(f"新增非唯讀角色 {role} 給 {member}(自訂角色或寫入權限,請確認內容)")
     return reasons
 
 

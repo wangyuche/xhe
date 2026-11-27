@@ -108,10 +108,22 @@ def clean_stale_creds(cfg):
     if not os.path.isdir(rd):
         return
     now = time.time()
+    import fcntl
     for proj in os.listdir(rd):
         pd = os.path.join(rd, proj)
         if not os.path.isdir(pd):
             continue
+        lp = os.path.join(pd, ".lock")
+        if os.path.exists(lp):  # 計畫 / 變更進行中(鎖被持有)就不碰這個專案
+            try:
+                fd = os.open(lp, os.O_RDWR)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
+            except OSError:
+                continue
         for run in os.listdir(pd):
             for name in ("gcloud", "kubeconfig"):
                 p = os.path.join(pd, run, name)
@@ -318,6 +330,12 @@ class Session:
         else:
             raise Denied("未知模式")
         real = [("--key-file=" + self.cfg["GG_SA_KEY_FILE"]) if a == "<key>" else a for a in argv]
+        if check_mode == "change":
+            append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": None, "state": "started"})
+        try:
+            os.utime(self.gdir)  # 心跳:讓其他 run 的殘留清理知道這個憑證快取還在用
+        except OSError:
+            pass
         t0 = time.time()
         try:
             r = subprocess.run(real, env=self.env, capture_output=True, text=True,

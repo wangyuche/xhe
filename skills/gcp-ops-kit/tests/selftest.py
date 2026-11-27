@@ -297,6 +297,10 @@ def t_misc(e):
                      [{"name": "n", "direction": "INGRESS", "sourceRanges": ["0.0.0.0/0"], "allowed": [{"IPProtocol": "6", "ports": ["22"]}]}])
     ids = [f["rule_id"] for f in gcp_rules.scan(os.path.join(tmpi, "inventory"))]
     ok("GCP 規則:IPProtocol 用數字 6 的 SSH 也判 GCP-NET-001", ids == ["GCP-NET-001"], ids)
+    gglib.write_json(os.path.join(tmpi, "inventory", "firewalls.json"),
+                     [{"name": "n", "direction": "INGRESS", "sourceRanges": ["0.0.0.0/0"], "allowed": [{"IPProtocol": "udp", "ports": ["3389"]}]}])
+    ids = [f["rule_id"] for f in gcp_rules.scan(os.path.join(tmpi, "inventory"))]
+    ok("GCP 規則:udp 3389 對全網開放判 GCP-NET-001", ids == ["GCP-NET-001"], ids)
     shutil.rmtree(tmpi, ignore_errors=True)
     cf = os.path.join(e.tmp, "conf", "config-comment")
     with open(cf, "w") as f:
@@ -413,6 +417,7 @@ def t_classify():
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
         ("kubectl 帶 --quiet", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=3", "--quiet"], FX.DEPLOY),
+        ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
         ("防火牆 tcp:2-65535(幾乎全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:2-65535"], FX.FIREWALLS[1]),
         ("patch networkpolicy(網路類資源請使用者自己改)", ["kubectl", f"--context={CTX}", "patch", "networkpolicy", "default-deny", "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
         ("namespace 一般 label(可能影響 NetworkPolicy)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "team=x", "--overwrite"], {"metadata": {"labels": {}}}),
@@ -481,6 +486,8 @@ def t_classify():
                                                     "--role=roles/viewer", f"--project={P}", "--condition=None"], pol, False),
         ("改防火牆描述(還原值含空白)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=new"],
          dict(fw, description="Allow SSH from office"), False),
+        ("授予自訂角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", f"--role=projects/{P}/roles/superuser",
+                                 f"--project={P}", "--condition=None"], pol, True),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
@@ -510,6 +517,8 @@ def t_classify():
             good = not r["blocked_reason"] and r["reversible"] and "--clear-authorized-networks" in r["rollback"]
         if name.startswith("新增 IAM"):
             good = good and "--condition=None" in r["rollback"]
+        if name.startswith("開控制平面授權網路"):
+            good = good and r.get("rollback_warning")
         if name.startswith("開控制平面授權網路"):
             good = good and r["rollback"].count("--no-enable-master-authorized-networks") == 1
         if name == "收緊防火牆來源":
@@ -707,6 +716,7 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "out": FX.NODEPOOLS[0]},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": None}, "out": nodes(4)},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
         {"tool": "kubectl", "re": " get configmap new-cm -n shop -o json", "rc": 1, "err": 'Error from server (NotFound): configmaps "new-cm" not found'},
@@ -805,6 +815,26 @@ def t_plan_change(e, review_run):
     crun = run_dir(r.stdout)
     ok("變更:change-log.md 由 kit 產生,before/ 有紀錄", crun and os.path.exists(os.path.join(crun, "change-log.md"))
        and os.path.exists(os.path.join(crun, "before", "C2.json")))
+    # 執行中被中斷(SIGTERM):紀錄要有「執行中被中斷」那條與還原指令,狀態 ISSUES
+    import signal
+    import time as _t
+    e.state({"slow": True})
+    e.clear_log()
+    pr = subprocess.Popen([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C3"], env=e.env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for _ in range(100):
+        if any("resize" in " ".join(c["argv"]) for c in e.stub_calls()):
+            break
+        _t.sleep(0.2)
+    _t.sleep(0.5)
+    pr.send_signal(signal.SIGTERM)
+    out, err = pr.communicate(timeout=60)
+    pd_ = os.path.join(e.reports, P)
+    cruns = sorted((d for d in os.listdir(pd_) if "-change" in d), key=lambda d: os.path.getmtime(os.path.join(pd_, d)))
+    cj = gglib.read_json(os.path.join(e.reports, P, cruns[-1], "change.json"), {}) if cruns else {}
+    ok("變更:執行中收到 SIGTERM → change.json 記「執行中被中斷」+ 還原指令、狀態 ISSUES、憑證快取已清",
+       cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "中斷" in r.get("result", "") and r.get("rollback") for r in cj.get("results", []))
+       and not os.path.exists(os.path.join(e.reports, P, cruns[-1], "gcloud")), (cj, err[-400:]))
+    e.state({})
     e.state({"flip_fw": True})
     e.clear_log()
     r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1, C2"])

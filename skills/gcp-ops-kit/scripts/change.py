@@ -48,6 +48,7 @@ class Runner:
         self.project = plan["project"]
         self.results = []
         self.status = "PASS"
+        self.inflight = None
 
     def stop(self, status, cid, msg, executed=False):
         self.results.append({"id": cid, "result": "BLOCKED" if status == "BLOCKED" else "失敗", "reason": msg})
@@ -136,7 +137,13 @@ class Runner:
             rb = {"apiVersion": "v1", "kind": "List", "items": [rollback_object(o) for o in objs if not o.get("_absent")]}
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
+        # 先記「執行中」:若在執行途中被中斷,紀錄仍會有這條與還原指令
+        self.inflight = {"id": cid, "kind": kind, "argv": it["command"], "result": "執行中被中斷(狀態不明)",
+                         "reason": "指令已送出但沒有等到結果;請先確認現況",
+                         "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
+                         "rollback_warning": it.get("rollback_warning")}
         r = s._exec(argv, "change", timeout=1800)
+        self.inflight = None
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
         if r.returncode != 0:
@@ -236,8 +243,10 @@ def main(argv):
             runner.results.append({"id": "-", "result": "BLOCKED", "reason": str(e)})
             status = "BLOCKED"
         except SystemExit:
-            # 被中斷(例如逾時被砍):先寫紀錄(含已執行條目的還原指令)再結束
-            runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
+            # 被中斷(例如逾時被砍):先寫紀錄(含已執行 / 執行中條目的還原指令)再結束
+            if runner.inflight:
+                runner.results.append(runner.inflight)
+            runner.status = "ISSUES" if runner.inflight or any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
             runner.results.append({"id": "-", "result": "中斷", "reason": "change.sh 被中斷;進行中的雲端操作可能仍在跑,請先確認現況"})
             gglib.release_lock(cfg, project, run)
             write_log(run, plan_path, sha, approved, runner)

@@ -48,6 +48,9 @@ for fx in fixtures:
     if fx.get("set"):
         state.update(fx["set"])
         json.dump(state, open(sp, "w"))
+    if fx.get("sleep"):
+        import time
+        time.sleep(fx["sleep"])
     out = fx.get("out", "")
     sys.stdout.write(out if isinstance(out, str) else json.dumps(out))
     sys.stderr.write(fx.get("err", ""))
