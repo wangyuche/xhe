@@ -492,13 +492,15 @@ def _redact_inline(x):
 def _redact_argv(items):
     out, hide_next = [], False
     for x in items:
-        x = _redact_inline(x)
+        x = x if hide_next else _redact_inline(x)
         if hide_next:
-            out.append(redact_value(x))
+            out.append(x if x.startswith("<redacted") else redact_value(x))
             hide_next = False
             continue
         m = ARG_SECRET_RE.match(x)
-        if m:
+        if m and "<redacted" in m.group(2):
+            out.append(x)  # _redact_inline 已遮過
+        elif m:
             out.append(m.group(1) + redact_value(m.group(2)))
         elif re.fullmatch(r"--?[A-Za-z0-9_.-]*(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential)", x, re.I):
             out.append(x)

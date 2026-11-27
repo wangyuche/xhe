@@ -229,9 +229,16 @@ def k8s_dryrun(s, kind, argv, snap):
         if r.returncode != 0:
             return False, [], log, "server dry-run 失敗:" + gglib._short(r.stderr)
         after, before, created = [_json(r) or {}], [snap or {}], False
-    key = lambda x: (x["rule_id"], x["resource"], x["evidence"].get("path"), x.get("detail"), json.dumps(x["evidence"].get("value"), sort_keys=True))
-    old = {key(x) for x in _obj_findings(before)}
-    new = [x for x in _obj_findings(after) if key(x) not in old]
+    # 比對鍵不含陣列索引(刪掉 / 重排前面的 volume、container 不會讓既有問題變「新」);用計數處理重複
+    from collections import Counter
+    key = lambda x: (x["rule_id"], x["resource"], x.get("detail"), json.dumps(x["evidence"].get("value"), sort_keys=True))
+    old = Counter(key(x) for x in _obj_findings(before))
+    new = []
+    for x in _obj_findings(after):
+        if old[key(x)] > 0:
+            old[key(x)] -= 1
+        else:
+            new.append(x)
     WI = "iam.gke.io/gcp-service-account"
 
     def wi(objs):

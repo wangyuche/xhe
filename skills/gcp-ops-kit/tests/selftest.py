@@ -277,6 +277,20 @@ def t_hostpath_value_change():
                                      ["kubectl", "--context=gke_demo-proj-123_asia-east1_prod", "patch", "deployment", "web",
                                       "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], dep("/var/log"))
     ok("dry-run:同欄位改成更危險的值(hostPath /var/log → /)算新問題", any(f["rule_id"] == "K8S-HOST-002" for f in new), new)
+    def dep2(vols):
+        d = copy.deepcopy(FX.DEPLOY)
+        d["spec"]["template"]["spec"]["volumes"] = [{"name": n, "hostPath": {"path": pth}} for n, pth in vols]
+        return d
+
+    class FakeS2:
+        def kubectl(self, ctx, args, mode="read", **kw):
+            return subprocess.CompletedProcess(args, 0, json.dumps(dep2([("b", "/etc")])), "")
+    _, new2, _, _ = ggplan.k8s_dryrun(FakeS2(), "kubectl-patch",
+                                      ["kubectl", "--context=gke_demo-proj-123_asia-east1_prod", "patch", "deployment", "web",
+                                       "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], dep2([("a", "/var/log"), ("b", "/etc")]))
+    ok("dry-run:刪掉前面的 hostPath volume,後面既有的不算新問題", not any(f["rule_id"] == "K8S-HOST-002" for f in new2), new2)
+    a = gglib.redact({"x": {"args": ["--db-password=hunter2", "--token", "abc123"]}})
+    ok("遮蔽:args 長度正確(不重複遮蔽)", a["x"]["args"] == ["--db-password=<redacted len=7>", "--token", "<redacted len=6>"], a)
     ok("遮蔽值不附雜湊", "sha256" not in gglib.redact_value("hunter2"), gglib.redact_value("hunter2"))
 
 
