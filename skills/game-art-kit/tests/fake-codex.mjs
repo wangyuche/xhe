@@ -6,7 +6,8 @@
 // 每次呼叫追加一行 JSON 到 FAKE_CODEX_LOG:{argv, hasOpenAIKey, hasCodexKey, prompt 前 80 字}
 import { appendFileSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { deflateSync, crc32 } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const args = process.argv.slice(2);
@@ -28,13 +29,11 @@ ev({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 
 if (mode === 'todolist') ev({ type: 'item.completed', item: { id: 'item_t', type: 'todo_list', items: [{ text: 'generate image', completed: true }] } });
 if (mode === 'violation') ev({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'cat ~/.elevenlabs/.env', aggregated_output: 'ELEVENLABS_API_KEY=sk_FAKELEAK0123456789abcdef', status: 'completed' } });
 if (mode === 'noimage') { ev({ type: 'error', message: "You've hit your usage limit. Try again later." }); ev({ type: 'turn.failed', error: { message: 'usage limit' } }); process.exit(1); }
-// 透明 PNG:64×96,中間一塊不透明
-const w = 64, h = 96;
-const chunk = (t, d) => { const b = Buffer.alloc(12 + d.length); b.writeUInt32BE(d.length, 0); b.write(t, 4); d.copy(b, 8); b.writeUInt32BE(crc32(Buffer.concat([Buffer.from(t), d])) >>> 0, 8 + d.length); return b; };
-const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
-const raw = Buffer.alloc((w * 4 + 1) * h);
-for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = y * (w * 4 + 1) + 1 + x * 4; raw[o] = 220; raw[o + 1] = 120; raw[o + 2] = 40; if (x >= 20 && x < 44 && y >= 10 && y < 86) raw[o + 3] = 255; }
-const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+// 透明 PNG:64×96,中間一塊不透明(用 sprite.mjs 的 encodePng,不依賴 Node 22.2 才有的 zlib.crc32)
+const { encodePng } = await import(join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'sprite.mjs'));
+const w = 64, h = 96, data = Buffer.alloc(w * h * 4);
+for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = (y * w + x) * 4; data[o] = 220; data[o + 1] = 120; data[o + 2] = 40; if (x >= 20 && x < 44 && y >= 10 && y < 86) data[o + 3] = 255; }
+const png = encodePng({ width: w, height: h, data });
 const dir = join(process.env.CODEX_HOME, 'generated_images', thread); mkdirSync(dir, { recursive: true });
 writeFileSync(join(dir, `exec-${randomUUID()}.png`), png);
 const o = args.indexOf('-o'); if (o >= 0) writeFileSync(args[o + 1], 'done');

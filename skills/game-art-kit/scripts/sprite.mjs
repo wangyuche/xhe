@@ -395,6 +395,7 @@ export function cleanReport(img) {
   const touches = Object.entries(touch).filter(([, n]) => n >= 4).map(([k]) => k);
   if (!transparent) errs.push('沒有透明像素');
   if (coverage < 0.1 || coverage > 0.9) errs.push(`主體覆蓋率 ${(coverage * 100).toFixed(1)}%(應 10–90%)`);
+  if (touches.length && b < 0.01) errs.push(`主體碰到圖邊:${touches.join(', ')}(主體被切到:換候選或重出)`);
   if (b >= 0.01) errs.push(`外框 2 px 內有 ${(b * 100).toFixed(2)}% 主體像素(應 < 1%;碰邊:${touches.join(', ') || '—'};主體被切到:換候選或重出)`);
   return { ok: !errs.length, errors: errs, coverage, border: b, touches };
 }

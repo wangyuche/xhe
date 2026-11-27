@@ -67,7 +67,7 @@ export function scrubPaths(s, codexHome) {
   let out = String(s ?? '');
   if (codexHome) out = out.split(join(codexHome, 'generated_images')).join('<codex>');
   const home = homedir(); if (home && home.length > 1) out = out.split(home).join('~');
-  return out.replace(/\/(Users|home)\/[^/\s"']+/g, '~');
+  return out.replace(/(^|[\s"'=(:])\/(Users|home)\/[^/\s"']+/g, '$1~');
 }
 
 // ---------- Codex ----------
@@ -152,8 +152,8 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
       mkdirSync(outDir, { recursive: true });
       const src = made[made.length - 1], dst = join(outDir, file);
       copyFileSync(src, dst);
-      if (sha(src) !== sha(dst)) die('抄出的圖雜湊不符', 3);
-      status = 'ok'; entry.images = made.length; entry.sha256 = sha(dst).slice(0, 16);
+      if (sha(src) !== sha(dst)) { status = '抄出的圖雜湊不符(磁碟滿?)'; code = 3; ev.errors.push(status); }
+      else status = 'ok'; entry.images = made.length; entry.sha256 = sha(dst).slice(0, 16);
     }
   } finally {
     // 不論成敗,只要 thread id 合法就刪掉 Codex 留下的圖(不留副本)

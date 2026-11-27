@@ -49,10 +49,10 @@ node <kit>/scripts/sprite.mjs clean <透明圖> --out <out.png> [--key-white]
 node <kit>/scripts/sprite.mjs headshot <透明圖> --anchor x,y,h --out <avatar.png> [--size 256] [--zoom 1.15] [--pad l,t,r,b]   # 依頭中心 / 頭高(0–1)裁方形頭像
 node <kit>/scripts/actions.mjs prompt|gen|masks|sheet …   # 角色動作(Codex,見下方「角色動作」)
 node <kit>/scripts/voice.mjs design|pick|plan|lines|status|scan …   # 角色語音(ElevenLabs,見下方「角色語音」)
-node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm --duration <秒> --out <目錄> --name <id> [--loop]
+node <kit>/scripts/audio.mjs process <下載的音訊> --type sfx|bgm|voice --duration <秒> --out <目錄> --name <id> [--loop]
 #   sfx:去頭尾靜音、裁到 ≤ duration、−16 LUFS(短於 0.4 秒改峰值正規化,輸出 normalized: peak,check 要加 --peak);bgm:裁到 duration(--loop 頭尾 0.5 秒交叉淡化,輸入要 ≥ duration + 0.5)、−18 LUFS;
 #   限幅器保證 true peak ≤ −1.5 dBTP;輸出 <id>.ogg(Opus)+ <id>.m4a(AAC)
-node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm --duration <秒> [--loop [--approx]] [--peak]
+node <kit>/scripts/audio.mjs check <id>.ogg <id>.m4a --type sfx|bgm|voice --duration <秒> [--loop [--approx]] [--peak]
 #   長度、非靜音(RMS > −50 dBFS)、true peak ≤ −1 dBTP、響度(sfx −20~−12、bgm −20~−16 LUFS)、接縫 RMS 差 ≤ 6 dB(--loop)
 node <kit>/schemas/validate.mjs needs|assets <檔案.json> [--root <art/assets>]   # 遊戲素材介面 schema 驗證(--root 檢查檔案存在)
 bash <kit>/tests/run.sh                                # 離線自我測試(假 ComfyUI)

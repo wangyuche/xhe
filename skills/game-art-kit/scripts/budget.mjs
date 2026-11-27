@@ -1,6 +1,7 @@
 // game-art-kit:付費服務的用量累計(角色動作 Codex 張數 / 角色語音 ElevenLabs 字元)。
 // 累計檔 = 本次派工專屬(agent 放在 $TMPDIR/game-art-kit/<name>/<派工 id>/budget.json);每次送出前 reserve 檢查「累計 + 本次 ≤ 上限」,
-// 超過就丟 BudgetError(呼叫端以結束碼 6 結束,不送出)。讀 → 檢查 → 寫在檔案鎖(<累計檔>.lock,獨佔建立)裡做,平行的程序不會一起超額。
+// 超過就丟 BudgetError(呼叫端以結束碼 6 結束,不送出)。讀 → 檢查 → 寫在檔案鎖(<累計檔>.lock,獨佔建立)裡做,平行的程序不會一起超額;
+// 寫入用暫存檔 + 改名(原子);鎖超過 30 秒還在不自動刪(結束碼 6,請人確認後手動刪)。
 // 服務端明確拒絕、不計費的嘗試(例如 429 限流)可以 refund 退回。
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, openSync, closeSync, statSync, renameSync, writeSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -16,8 +17,8 @@ function withLock(file, fn) {
     try { const fd = openSync(lock, 'wx'); writeSync(fd, token); closeSync(fd); break; }
     catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      // 持有者當掉留下的舊鎖(超過 30 秒):先改名成自己專屬的名字再刪(rename 是原子的,兩個等待者不會都以為自己拿走了舊鎖)
-      try { if (Date.now() - statSync(lock).mtimeMs > 30_000) { const mine = `${lock}.stale-${token}`; renameSync(lock, mine); rmSync(mine, { force: true }); continue; } } catch { /* 別人先處理了 */ }
+      // 鎖只在讀寫累計檔的幾毫秒內存在;超過 30 秒還在 = 之前的程序中斷留下的。不自動刪(刪除與別人新建的鎖之間有競爭,可能兩個程序一起超額),停下來請人確認後手動刪
+      try { if (Date.now() - statSync(lock).mtimeMs > 30_000) throw new BudgetError(`累計檔的鎖 ${lock} 已存在超過 30 秒(之前的程序可能中斷):確認沒有其他程序在跑之後手動刪除它`); } catch (e2) { if (e2 instanceof BudgetError) throw e2; }
       if (i > 600) throw new BudgetError(`拿不到累計檔的鎖 ${lock}(60 秒)`);
       sleep(100);
     }

@@ -60,9 +60,12 @@ async function post(A, path, body, { binary = false, before, rejected } = {}) {
     let res;
     try { res = await fetch(A.base + path, { method: 'POST', headers: { 'xi-api-key': A.key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal }); }
     catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS) die(`ElevenLabs 連線失敗:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
+    // 計時器要等內容讀完才清掉(伺服器送了標頭、內容卻卡住時也會逾時)
+    let bodyBuf, text;
+    try { if (res.ok) bodyBuf = Buffer.from(await res.arrayBuffer()); else text = scrubKey(await res.text(), A.key).slice(0, 400); }
+    catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS) die(`ElevenLabs 讀取回應失敗:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
     clearTimeout(t);
-    if (res.ok) return binary ? Buffer.from(await res.arrayBuffer()) : res.json();
-    const text = scrubKey(await res.text(), A.key).slice(0, 400);
+    if (res.ok) return binary ? bodyBuf : JSON.parse(bodyBuf.toString('utf8'));
     if (res.status === 429) rejected?.(attempt); // 限流:服務端沒處理,不計費 → 退回這次的用量(放在任何放棄判斷之前)
     if (res.status === 402 || (res.status === 401 && /quota|insufficient_credits|credits/i.test(text))) die(`ElevenLabs 額度用完(HTTP ${res.status}):${text}`, 4);
     if (res.status === 401 || res.status === 403) die(`ElevenLabs 金鑰錯誤(HTTP ${res.status}):${text}`, 5);
@@ -92,11 +95,11 @@ function loadLines(f) {
 }
 const artOf = (voiceFile) => resolve(dirname(voiceFile), '..', '..');
 function audio(input, outDir, name, dur = 15) {
-  const a = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'process', input, '--type', 'voice', '--duration', String(dur), '--out', outDir, '--name', name], { encoding: 'utf8' });
+  const a = spawnSync(process.execPath, [join(KIT, 'scripts', 'audio.mjs'), 'process', input, '--type', 'voice', '--duration', String(dur), '--out', outDir, '--name', name], { encoding: 'utf8' });
   if (a.status === 2) die(`audio.mjs process 失敗:${(a.stderr || '').trim().split('\n').pop()}`);
   if (a.status !== 0) { const err = (a.stderr || '').trim().split('\n').pop(); return { ok: false, error: err, noRetry: /超過 \d+ 秒|請拆句/.test(err) }; }
   let j = {}; try { j = JSON.parse(a.stdout.trim().split('\n').pop()); } catch { /* */ }
-  const c = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'check', join(outDir, `${name}.ogg`), join(outDir, `${name}.m4a`), '--type', 'voice', '--duration', String(dur), ...(j.normalized === 'peak' ? ['--peak'] : [])], { encoding: 'utf8' });
+  const c = spawnSync(process.execPath, [join(KIT, 'scripts', 'audio.mjs'), 'check', join(outDir, `${name}.ogg`), join(outDir, `${name}.m4a`), '--type', 'voice', '--duration', String(dur), ...(j.normalized === 'peak' ? ['--peak'] : [])], { encoding: 'utf8' });
   let cj = {}; try { cj = JSON.parse(c.stdout.trim().split('\n').pop()); } catch { /* */ }
   return { ok: c.status === 0, error: c.status === 0 ? null : (cj.errors ?? [c.stderr]).join(';'), durationSec: j.durationSec };
 }
