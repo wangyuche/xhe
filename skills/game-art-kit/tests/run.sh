@@ -528,6 +528,10 @@ if [ -z "$(node "$K/scripts/audio.mjs" tools 2>/dev/null | grep '"ok":true')" ];
   for t in 'QUOTA:4' 'AUTH:5'; do echo "{\"q\":\"${t%%:*} line\"}" > "$W/act/l4.json"
     o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l4.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/v3$t/b.json" --limit 500 --run v-3 2>&1)"; rc=$?
     [ $rc -eq "${t##*:}" ] && ok "voice:${t%%:*} → 結束碼 ${t##*:}" || bad "voice ${t%%:*}" "rc=$rc $o"; done
+  echo '{"r1":"REJECT me","r2":"fine line"}' > "$W/act/lr.json"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lr.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vr/b.json" --limit 500 --run v-r)"; rc=$?
+  [ $rc -eq 1 ] && echo "$o" | grep -q '"recorded":1' && echo "$o" | grep -q '"key":"r1"' && ok "voice lines:一句被拒(400)→ 只記這句失敗,其他句照錄" || bad "voice 400 單句" "rc=$rc $o"
+  o="$(A prompt --config "$AD/actions.json" --action '../x' 2>&1)"; [ $? -eq 2 ] && ok "actions:動作名稱不合規(../x)→ 結束碼 2" || bad "action 名稱" "$o"
   echo '{"b":"BUSY line"}' > "$W/act/l5.json"
   o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/l5.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/v5/b.json" --limit 500 --run v-5)" && echo "$o" | grep -q '"recorded":1' && grep -q '"used": 9' "$W/act/budget/v5/b.json" && ok "voice:429 → 看 retry-after 重試後成功;429 那次不計費、退回字元" || bad "voice 429" "$o $(grep used "$W/act/budget/v5/b.json")"
   node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.voice_name="LIMIT";delete j.voice_id;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/vlimit.json"

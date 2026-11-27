@@ -54,7 +54,9 @@ export function loadConfig(file, artDir) {
 }
 const anchorOf = (c) => { const a = c.anchor ?? die('actions.json 缺 anchor({x,y,h},頭中心與頭高 0–1)'); if (![a.x, a.y, a.h].every(v => typeof v === 'number' && v > 0 && v <= 1)) die('anchor 的 x、y、h 都要是 0–1 的數字'); return a; };
 const fill = (s, vars) => s.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m);
+export const ACTION_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export function prompt(c, id) {
+  if (!ACTION_RE.test(id)) die(`動作名稱 ${id} 不合規(要符合 ${ACTION_RE})`);
   const t = TEMPLATE.actions.find(a => a.id === id), o = c.actions?.[id] ?? {};
   if (!t && !(o.expr && o.pose)) die(`動作 ${id} 不在範本裡,actions.json 的 actions.${id} 要自己給 expr 與 pose`);
   const pr = TEMPLATE.pronouns[c.pronoun];
@@ -97,7 +99,7 @@ function runCodex(text, ref, timeoutSec, onAbort) {
     p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
     let killer = null;
     const timer = setTimeout(() => { timedOut = true; try { process.kill(-p.pid, 'SIGTERM'); } catch { /* */ } killer = setTimeout(() => { try { process.kill(-p.pid, 'SIGKILL'); } catch { /* */ } }, 5000); killer.unref(); }, timeoutSec * 1000);
-    p.on('error', (e) => { clearTimeout(timer); rmSync(work, { recursive: true, force: true }); done({ spawnError: e }); });
+    p.on('error', (e) => { clearTimeout(timer); process.removeListener('SIGTERM', onSig); process.removeListener('SIGINT', onSig); process.removeListener('SIGHUP', onSig); rmSync(work, { recursive: true, force: true }); done({ spawnError: e }); });
     p.on('close', (code) => {
       clearTimeout(timer); if (killer) clearTimeout(killer);
       process.removeListener('SIGTERM', onSig); process.removeListener('SIGINT', onSig); process.removeListener('SIGHUP', onSig);

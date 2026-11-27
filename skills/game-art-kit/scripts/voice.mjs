@@ -28,8 +28,8 @@ import { dirname, join, resolve, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { openBudget, BudgetError, appendJsonItem } from './budget.mjs';
 
-class Fail extends Error { constructor(m, c = 2) { super(m); this.code = c; } }
-const die = (m, c = 2) => { throw new Fail(m, c); };
+class Fail extends Error { constructor(m, c = 2, http) { super(m); this.code = c; this.http = http; } }
+const die = (m, c = 2, http) => { throw new Fail(m, c, http); };
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const KEY_RE = /^[a-z0-9][a-z0-9._-]*$/;
 const SEED_MAX = 4294967295, TRIES = 3, MAX_ATTEMPTS = 5, REQ_TIMEOUT = 60_000;
@@ -54,12 +54,12 @@ function api() {
 }
 const scrubKey = (s, key) => String(s ?? '').split(key).join('<key>');
 class Deadline extends Error {}
-async function post(A, path, body, { binary = false, before, rejected, deadline, idempotent = true } = {}) {
+async function post(A, path, body, { binary = false, before, rejected, deadline, idempotent = true, timeoutMs = REQ_TIMEOUT } = {}) {
   for (let attempt = 1; ; attempt++) {
     // 每次 HTTP 嘗試前檢查時限(最壞一次 60 秒 + 退避):到時間就不送,交給呼叫端停下來
     if (deadline && Date.now() + 75_000 > deadline) throw new Deadline();
     before?.(attempt); // 每次 HTTP 嘗試都先記用量(逾時的請求服務端可能已計費)
-    const ac = new AbortController(), t = setTimeout(() => ac.abort(), REQ_TIMEOUT);
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), timeoutMs);
     let res;
     try { res = await fetch(A.base + path, { method: 'POST', headers: { 'xi-api-key': A.key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal }); }
     catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS || !idempotent) die(`ElevenLabs 連線失敗:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
@@ -75,7 +75,7 @@ async function post(A, path, body, { binary = false, before, rejected, deadline,
     if (/voice_limit|voice limit|maximum number of voices/i.test(text)) die(`ElevenLabs 帳號 voice 名額已滿:請使用者自己到 ElevenLabs 刪舊 voice(HTTP ${res.status})`, 8);
     // 建立 voice 不是冪等的:只在 429(服務端沒處理)重試,逾時 / 409 / 5xx 不重送,避免重複建立付費 voice
     const retryable = res.status === 429 || (idempotent && (res.status === 409 || res.status >= 500));
-    if (!retryable || attempt >= MAX_ATTEMPTS) die(`ElevenLabs HTTP ${res.status}:${text}`, 3);
+    if (!retryable || attempt >= MAX_ATTEMPTS) die(`ElevenLabs HTTP ${res.status}:${text}`, 3, res.status);
     const after = Number(res.headers.get('retry-after'));
     const wait = Math.min(after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1), 30_000); // 最多等 30 秒
     if (deadline && Date.now() + wait + 75_000 > deadline) throw new Deadline(); // 等完就超過時限:這句留到下次
@@ -128,7 +128,7 @@ export async function design(voiceFile, { outDir, budget, limit, run, redesign =
   if (!run) die('缺 --run <派工 id>');
   const A = api(), b = openBudget(budget, limit, '字元'), art = artOf(voiceFile);
   let used = b.used;
-  const res = await postLogged(A, `/v1/text-to-voice/design?output_format=${encodeURIComponent(v.models.output_format)}`, { voice_description: v.design, text: v.preview_text, model_id: v.models.design, ...(v.seed != null ? { seed: v.seed } : {}) }, { before: (n) => { used = b.reserve(len, `voice design(第 ${n} 次嘗試)`); }, rejected: (n) => { used = b.refund(len, `voice design 第 ${n} 次 429`); } }, (st) => appendManifest(outDir, { kind: 'design', chars: len, status: st }, used, run));
+  const res = await postLogged(A, `/v1/text-to-voice/design?output_format=${encodeURIComponent(v.models.output_format)}`, { voice_description: v.design, text: v.preview_text, model_id: v.models.design, ...(v.seed != null ? { seed: v.seed } : {}) }, { idempotent: false, timeoutMs: 180_000, before: (n) => { used = b.reserve(len, `voice design(第 ${n} 次嘗試)`); }, rejected: (n) => { used = b.refund(len, `voice design 第 ${n} 次 429`); } }, (st) => appendManifest(outDir, { kind: 'design', chars: len, status: st }, used, run));
   const dh = createHash('sha256').update(JSON.stringify([v.design, v.preview_text, v.models.design])).digest('hex').slice(0, 12);
   if (v.candidates_for !== dh) v.candidates = [];
   let n = v.next_n ?? 1; const made = [];
@@ -198,7 +198,11 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
       // 每次 HTTP 嘗試都先記用量;超過上限 → BudgetError(結束碼 6),已完成的都已寫回
       let buf;
       try { buf = await postLogged(A, `/v1/text-to-speech/${encodeURIComponent(v.voice_id)}?output_format=${encodeURIComponent(v.models.output_format)}`, { text, model_id: v.models.tts, voice_settings: { stability: v.stability }, seed }, { binary: true, deadline: t0 + maxSeconds * 1000, before: (n) => { used = b.reserve(len, `line ${k}(第 ${n} 次嘗試)`); }, rejected: (n) => { used = b.refund(len, `line ${k} 第 ${n} 次 429`); } }, (st) => appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: st }, used, run)); }
-      catch (e) { if (e instanceof Deadline) { hitDeadline = true; if (tries > 0) v.line_seeds[k] = seed; break; } throw e; } // 已失敗過:下次從新 seed 開始
+      catch (e) {
+        if (e instanceof Deadline) { hitDeadline = true; if (tries > 0 && !prevGood) v.line_seeds[k] = seed; break; } // 已失敗過:下次從新 seed 開始(原本是好錄音就不動,免得變成過期)
+        if (e instanceof Fail && e.http >= 400 && e.http < 500) { res = { ok: false, error: e.message, noRetry: true }; break; } // 這句被拒(400 等):記失敗,繼續下一句
+        throw e;
+      }
       const mp3 = join(raw, `${k}.mp3`); writeFileSync(mp3, buf);
       res = audio(mp3, stage, k); // 先放過程目錄,check 通過才換掉成品(失敗不會蓋掉原本好的錄音)
       if (res.ok) for (const ext of ['ogg', 'm4a']) renameSync(join(stage, `${k}.${ext}`), join(out, `${k}.${ext}`));

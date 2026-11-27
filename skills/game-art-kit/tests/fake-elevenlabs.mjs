@@ -20,6 +20,7 @@ createServer((req, res) => {
       const t = body.text ?? '';
       if (/QUOTA/.test(t)) return send(402, { detail: { status: 'insufficient_credits' } });
       if (/AUTH/.test(t)) return send(401, { detail: { status: 'invalid_api_key' } });
+      if (/REJECT/.test(t)) return send(400, { detail: { status: 'invalid_text' } });
       if (/BUSY/.test(t) && busy++ === 0) return send(429, { detail: 'busy' }, 'application/json', { 'retry-after': '1' });
       return send(200, wav(/SILENT/.test(t), /SHORT/.test(t) ? 0.25 : /LONG/.test(t) ? 16 : 1), 'audio/wav');
     }
