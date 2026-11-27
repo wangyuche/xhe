@@ -428,6 +428,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 if key and any(isinstance(i, dict) and any(v not in (None, "") for kk, v in i.items() if kk not in (key, "kind")) for i in items):
                     return None, f"{fl}:原值的項目含名稱 / 到期時間等欄位,還原會遺失"
                 vals = [str(i.get(key) if key else i) for i in items]
+                if val is not True and sorted(_ranges(val)) == sorted(vals):
+                    return None, f"{fl} 已是 {','.join(vals)}(不需變更)"
                 if not vals:
                     if rule.get("clear_flag"):
                         out.append(rule["clear_flag"])
@@ -519,6 +521,8 @@ def _k_gke_resize(pos, flags, snap, res, k, cfg, *_):
     cur = snap.get("node_count_per_zone")
     if not isinstance(cur, int) or cur <= 0:
         return None, [], "快照取不到目前每區節點數"
+    if cur == n:
+        return None, [], f"每區節點數已是 {n}(不需變更)"
     res["auto_pre"].append({"field": "/node_count_per_zone", "expect": cur})
     rb = ["gcloud", "container", "clusters", "resize", pos[0], f"--node-pool={flags['--node-pool']}",
           f"--num-nodes={cur}", f"--location={flags['--location']}", f"--project={flags['--project']}", "--quiet"]
@@ -775,6 +779,8 @@ def _k_kubectl_scale(pos, flags, snap, res, k, cfg, *_):
     cur = gglib.ptr_get(snap, "/spec/replicas")
     if cur is None:
         return None, [], "快照沒有 /spec/replicas"
+    if cur == n:
+        return None, [], f"replicas 已是 {n}(不需變更)"
     res["auto_pre"].append({"field": "/spec/replicas", "expect": cur})
     return ["kubectl", f"--context={res['target']['context']}", "scale", pos[0],
             f"--namespace={flags['--namespace']}", f"--replicas={cur}"], [], None
@@ -799,6 +805,8 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
         res["blocked_reason"] = "namespace label 只允許改 pod-security.kubernetes.io/*(其他標籤可能被 NetworkPolicy 選擇器使用)"
         return None, [], None
     old = (gglib.ptr_get(snap, "/metadata/labels") or {}).get(key)
+    if old == val:
+        return None, [], f"label {key} 已是 {val}(不需變更)"
     if old is not None and "--overwrite" not in flags:
         res["blocked_reason"] = f"label {key} 已有值 {old},要加 --overwrite"
         return None, [], None

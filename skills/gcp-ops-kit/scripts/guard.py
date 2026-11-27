@@ -127,6 +127,8 @@ def check_bash(cmd, cfg, cwd):
         return "空指令"
     i = 0
     if toks[0] in ("bash", "python3", "node") and len(toks) > 1:
+        if toks[1].startswith("-"):
+            return "不允許直譯器旗標(-c、-e、-m…);直接執行 kit 入口腳本"
         i = 1
     first = toks[i]
     if "/" in first:
@@ -135,8 +137,6 @@ def check_bash(cmd, cfg, cwd):
         if os.path.dirname(real) == os.path.realpath(SCRIPTS) and base in ENTRIES:
             if i == 1 and toks[0] not in INTERP[os.path.splitext(base)[1]]:
                 return f"{base} 不能用 {toks[0]} 執行"
-            if any(t.startswith("-") and t in ("-c", "-e", "-i", "--eval") for t in toks[:i]):
-                return "不允許直譯器旗標"
             for t in toks[i + 1:]:
                 for pth in arg_paths(t):
                     # 入口腳本自己讀 run 目錄(不會印出 rollback.json 內容),只擋憑證快取
@@ -186,7 +186,9 @@ def check_bash(cmd, cfg, cwd):
         gpaths = [t for i, t in enumerate(toks[1:], 1) if not t.startswith("-") and i not in pat_vals]
         if not has_pat_flag:
             gpaths = gpaths[1:]
-    no_path = (first == "grep" and not gpaths) or (first == "find" and (len(toks) == 1 or toks[1].startswith("-"))) or (first in ("diff", "ls") and not nonflags)
+    # 不猜哪個參數是樣式:只有「實際存在的路徑」才算給了路徑;沒有就以 cwd 檢查(-rA 3 x 這類黏合旗標也不會被騙)
+    existing = [t for t in nonflags if os.path.lexists(_raw(t, cwd))]
+    no_path = (first in ("grep", "diff", "ls") and not existing) or (first == "find" and (len(toks) == 1 or toks[1].startswith("-") or not existing))
     if recursive and no_path and is_protected(cwd, cfg, cwd, ancestor=True):
         return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
     if recursive and no_path and os.path.isdir(cwd):

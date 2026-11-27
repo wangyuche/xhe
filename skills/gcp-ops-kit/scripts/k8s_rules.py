@@ -127,6 +127,8 @@ def scan(docs, live=False):
             if (obj.get("roleRef") or {}).get("name") == "cluster-admin":
                 for i, s in enumerate(obj.get("subjects") or []):
                     nm = s.get("name", "")
+                    if s.get("kind") == "ServiceAccount" and s.get("namespace") == "kube-system":
+                        continue  # kube-system 的系統 SA
                     if nm in ("system:masters", "system:kube-controller-manager", "system:kube-scheduler") or \
                             nm.startswith(("system:kube-", "system:serviceaccount:kube-system:")) or nm in ("system:nodes",):
                         continue  # 只排除控制平面身分;system:authenticated / unauthenticated / anonymous / serviceaccounts 照報

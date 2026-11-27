@@ -283,7 +283,7 @@ class Session:
     def __init__(self, cfg, run, project, mode):
         self.cfg, self.run, self.project, self.mode = cfg, run, project, mode
         self.gdir = os.path.join(run, "gcloud")
-        self.kube = os.path.join(run, "kubeconfig")
+        self.kube = os.path.join(run, "gcloud", "kubeconfig")  # 放在 gcloud/ 裡:旁邊的外掛快取也一起受保護、一起刪
         self.home = os.path.join(run, "gcloud", "home")  # kubectl / auth plugin 的快取都留在 run 內,結束一起刪
         self.env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -301,6 +301,7 @@ class Session:
     def __enter__(self):
         os.makedirs(self.gdir, 0o700, exist_ok=True)
         os.makedirs(self.home, 0o700, exist_ok=True)
+        os.makedirs(os.path.dirname(self.kube), 0o700, exist_ok=True)
         open(self.kube, "a").close()
         os.chmod(self.kube, 0o600)
         try:

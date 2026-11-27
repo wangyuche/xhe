@@ -186,6 +186,7 @@ def t_guard(e):
         (f"find -f {e.tmp}/conf", "deny"),
         (f"diff -r {proj2} {e.reports}", "deny"),
         (f"grep -C 2 x {e.key}", "deny"),
+        ("python3 -c 'print(1)'", "deny"),
         (f"find {e.reports}/p/r -name ..", "allow"),
         (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "allow"),
         (f"ls {e.tmp}", "allow"),
@@ -240,6 +241,8 @@ def t_guard(e):
     for cwd, cmd, want in ((os.path.dirname(e.tmp), f"grep -r foo {safe}", 0), (proj, "grep -r server", 2), (proj, "grep -rS server", 2), (proj, "grep -r -e private_key -e client_email", 2),
                            (os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
                            (os.path.dirname(e.tmp), "grep -r private_key", 2),
+                           (os.path.dirname(e.tmp), "grep -rA 3 private_key", 2),
+                           (os.path.dirname(e.tmp), "grep -rm1 private_key", 2),
                            (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
                            (os.path.dirname(e.tmp), "grep -drecurse private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
                            (os.path.dirname(e.tmp), "find -name sa.json", 2), (os.path.join(e.reports, "p", "other"), "grep -n x", 0)):
@@ -523,6 +526,11 @@ def t_classify():
         ("IAM 授權給 domain:gmail.com", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=domain:gmail.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol),
         ("SQL 授權網路原值有名稱(還原會遺失)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--authorized-networks=198.51.100.0/24"],
          {"settings": {"ipConfiguration": {"authorizedNetworks": [{"value": "203.0.113.0/24", "name": "office", "kind": "sql#aclEntry"}]}}}),
+        ("scale 到現值(不需變更)", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], FX.DEPLOY),
+        ("label 已是同值(不需變更)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=restricted", "--overwrite"],
+         {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}),
+        ("來源網段與現值相同(不需變更)", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--source-ranges=10.0.0.0/8"], FX.FIREWALLS[2]),
+        ("python3 -c", ["python3", "-c", "x"], None),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
@@ -864,6 +872,9 @@ def t_rbac_broad():
     doc = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "oops"}, "roleRef": {"name": "cluster-admin"},
                    "subjects": [{"kind": "Group", "name": "system:authenticated"}, {"kind": "Group", "name": "system:masters"}]}, "file": "f"}
     fs = [f for f in k8s_rules.scan([doc], live=True) if f["rule_id"] == "K8S-RBAC-002"]
+    doc2 = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "x"}, "roleRef": {"name": "cluster-admin"},
+                    "subjects": [{"kind": "ServiceAccount", "name": "foo", "namespace": "kube-system"}]}, "file": "f"}
+    ok("RBAC:kube-system 的 SA 綁 cluster-admin 不報", not [f for f in k8s_rules.scan([doc2], live=True) if f["rule_id"] == "K8S-RBAC-002"])
     ok("RBAC:cluster-admin 綁 system:authenticated 要報、system:masters 不報", len(fs) == 1 and "system:authenticated" in fs[0]["detail"], fs)
 
 

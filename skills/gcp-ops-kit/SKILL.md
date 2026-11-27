@@ -119,7 +119,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 
 ## 隔離與安全
 
-- 每個 run 自己的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/kubeconfig`、`HOME=<run>/gcloud/home`(kubectl 與 auth plugin 的快取),結束刪除;`commands.log` 記錄每個指令(金鑰路徑以 `<key>` 代替)。
+- 每個 run 自己的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/gcloud/kubeconfig`、`HOME=<run>/gcloud/home`(kubectl 與 auth plugin 的快取),結束刪除;`commands.log` 記錄每個指令(金鑰路徑以 `<key>` 代替)。
 - 唯讀:`rules/allow_read.txt`(審查)、`rules/allow_dryrun.txt`(計畫 / 變更前快照與 dry-run),先過 `rules/deny_read.txt`(Secret 值、序列埠、`--raw`、exec、token…)。
 - 遮蔽值寫成 `<redacted len=N>`(不附雜湊,避免離線猜密碼)。resize 的驗證會等新節點加入(最多 `GG_VERIFY_WAIT` 秒,預設 600)。
 - 遮蔽(寫檔前):Secret `data`、ConfigMap 值、env `value`(另標 `looks_secret`)、VM metadata 值(布林設定保留)、`masterAuth.*`、last-applied annotation、秘密樣式(`rules/secret_patterns.json`)。
