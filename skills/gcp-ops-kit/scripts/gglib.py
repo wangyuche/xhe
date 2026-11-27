@@ -91,8 +91,9 @@ def check_project(p):
 
 def new_run(cfg, project, mode):
     base = os.path.join(cfg["GG_REPORT_DIR"], project)
+    if not os.path.exists(cfg["GG_REPORT_DIR"]):
+        os.makedirs(cfg["GG_REPORT_DIR"], mode=0o700)  # 只有 kit 自己建立時才設 700
     os.makedirs(base, mode=0o700, exist_ok=True)
-    os.chmod(cfg["GG_REPORT_DIR"], 0o700)
     os.chmod(base, 0o700)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     for i in range(100):

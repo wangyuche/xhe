@@ -92,7 +92,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - YAML 審查的 kustomize 展開結果只存遮蔽後的 JSON(`inventory/rendered/*.json`);`--check` 不允許 inventory 有其他格式的檔案。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減只接受 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定。
-- kubectl 不允許對 Secret、RBAC、webhook、CRD、Namespace 做 apply / patch(`k8s_forbidden_kinds`),在快照之前就擋;資源種類一律小寫。
+- kubectl apply / patch 只允許 `k8s_patch_kinds` 列的資源種類(deployment、statefulset、daemonset、service、ingress、networkpolicy、configmap、serviceaccount、cronjob、HPA、PDB);Secret、RBAC、webhook、CRD、Namespace 等在快照之前就擋;patch 的資源種類一律小寫。
 - `0.0.0.0/0` / `::/0` 以 ipaddress 解析判斷(`0::/0`、多段合起來涵蓋全部也擋)。
 - **沒有還原範本的旗標**(例 `--security-posture`、`--maintenance-window-*`)一律判「不可還原」→ BLOCKED,請使用者自己做。
 - **放寬安全**(`loosens_security`)由固定規則判斷:新增高權角色、關閉公開存取防護 / 統一存取 / 版本、放寬授權網路或防火牆、Pod Security 降級、apply 後出現新的「中」問題。apply / patch 後出現新的「嚴重 / 高」問題 → BLOCKED。

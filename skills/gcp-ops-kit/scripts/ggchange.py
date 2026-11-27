@@ -340,7 +340,8 @@ def _k_gke_cluster_update(pos, flags, snap, res, k, cfg, *_):
         man = snap.get("masterAuthorizedNetworksConfig") or {}
         if not man.get("cidrBlocks") and man.get("enabled"):
             return None, reasons, "授權網路原本已啟用且清單為空,沒有不放寬的還原寫法"
-    if "--master-authorized-networks" in flags:
+    if "--master-authorized-networks" in flags and (snap.get("masterAuthorizedNetworksConfig") or {}).get("enabled"):
+        # 原本未啟用 = 控制平面對所有來源開放;加上任何網段都是收緊
         old = [c.get("cidrBlock") for c in (gglib.ptr_get(snap, "/masterAuthorizedNetworksConfig/cidrBlocks") or [])]
         if not _subset_cidrs(_ranges(flags["--master-authorized-networks"]), old):
             reasons.append("放寬控制平面授權網路(新網段不在原網段內)")
@@ -389,7 +390,7 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
         reasons.append("放寬防火牆來源網段")
     if "--target-tags" in flags:
         new_t, old_t = set(_ranges(flags["--target-tags"])), set(snap.get("targetTags") or [])
-        if not new_t or not new_t <= old_t:
+        if (not new_t and old_t) or (old_t and not new_t <= old_t):
             reasons.append("放寬防火牆套用對象(target-tags 清空或新增)")
     if "--priority" in flags:
         try:
@@ -418,7 +419,8 @@ def _k_bucket_update(pos, flags, snap, res, k, cfg, *_):
 
 def _iam_common(pos, flags, res, cfg, adding):
     member, role = flags.get("--member"), flags.get("--role")
-    if member and member != member.lower() and member not in ("allUsers", "allAuthenticatedUsers"):
+    ident = (member or "").split(":", 1)[1] if ":" in (member or "") else ""
+    if ident and ident != ident.lower():
         res["blocked_reason"] = "--member 請用小寫(GCP 會把 email 轉成小寫,大小寫不同會讓還原比對錯誤)"
         return None
     if role == "roles/owner":

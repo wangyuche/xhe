@@ -228,7 +228,8 @@ def t_yaml_bool():
 
 def t_approve_parse():
     import change
-    good = {"使用者已核准變更 C1, C3": ["C1", "C3"], "使用者已核准變更C1、C3": ["C1", "C3"], "使用者已核准變更 C2": ["C2"]}
+    good = {"使用者已核准變更 C1, C3": ["C1", "C3"], "使用者已核准變更C1、C3": ["C1", "C3"], "使用者已核准變更 C2": ["C2"],
+            "使用者已核准變更 C1\uff0cC3": ["C1", "C3"]}
     for t, want in good.items():
         try:
             ok(f"核准旗標解析:{t}", change.parse_approved(t) == want, change.parse_approved(t))
@@ -326,6 +327,9 @@ def t_classify():
         ("提高防火牆優先序(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--priority=100"], fw, True),
         ("SQL 取消用戶端憑證(放寬)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
          {"settings": {"ipConfiguration": {"sslMode": "TRUSTED_CLIENT_CERTIFICATE_REQUIRED"}}}, True),
+        ("移除 SA 的 editor(serviceAccount: 前綴)", ["gcloud", "projects", "remove-iam-policy-binding", P, f"--member=serviceAccount:{FX.DEF_SA}",
+                                               "--role=roles/editor", f"--project={P}"], pol, False),
+        ("防火牆從全部 VM 收窄到 tag", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags=bastion"], fw, False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -344,8 +348,8 @@ def t_classify():
             good = good and r["rollback"].count("--no-enable-master-authorized-networks") == 1
         if name == "收緊防火牆來源":
             good = good and not r["loosens_security"] and "--source-ranges=0.0.0.0/0" in r["rollback"]
-        elif loosens:
-            good = good and r["loosens_security"]
+        else:
+            good = good and r["loosens_security"] == loosens
         ok(f"分類可執行:{name}", good, r)
 
 

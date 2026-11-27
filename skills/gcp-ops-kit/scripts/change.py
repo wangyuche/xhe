@@ -20,7 +20,7 @@ APPROVE_PREFIX = "使用者已核准變更"
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
 
 
-APPROVE_RE = re.compile(r"^使用者已核准變更\s*(C[1-9][0-9]{0,2}(?:\s*[,,、]\s*C[1-9][0-9]{0,2})*)\s*$")
+APPROVE_RE = re.compile(r"^使用者已核准變更\s*(C[1-9][0-9]{0,2}(?:\s*[,\uff0c\u3001]\s*C[1-9][0-9]{0,2})*)\s*$")
 
 
 def parse_approved(text):
@@ -94,7 +94,7 @@ class Runner:
             return self.stop("BLOCKED", cid, str(e))
         if err:
             return self.stop("BLOCKED", cid, "變更前快照失敗:" + err)
-        if argv[0] == "kubectl" and endpoint != it["target"].get("endpoint"):
+        if (argv[0] == "kubectl" or it["target"].get("endpoint")) and endpoint != it["target"].get("endpoint"):
             return self.stop("BLOCKED", cid, f"叢集 endpoint 不符(計畫 {it['target'].get('endpoint')},現在 {endpoint})")
         bad = ggplan.check_pre((it.get("precondition") or []) + (it.get("auto_pre") or []), snap)
         if bad:

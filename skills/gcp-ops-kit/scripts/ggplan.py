@@ -144,7 +144,9 @@ def snapshot(s, kind, argv, project, ctx_done):
             md = o.get("metadata") or {}
             if not o.get("kind") or not md.get("name"):
                 return None, endpoint, "manifest 每份文件都要有 kind 與 metadata.name"
-            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", str(o["kind"])) or o["kind"].lower() in ggchange.change_rules()["k8s_forbidden_kinds"]:
+            rules_ = ggchange.change_rules()
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", str(o["kind"])) or o["kind"].lower() in rules_["k8s_forbidden_kinds"] \
+                    or o["kind"].lower() not in rules_["k8s_patch_kinds"]:
                 return None, endpoint, f"manifest 不允許這種資源:{o['kind']}"
             snap1, err = kget(o["kind"].lower(), md["name"], md.get("namespace"))
             if err:
