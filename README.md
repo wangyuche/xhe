@@ -7,6 +7,7 @@
 | `agent-forge` | 造專業 agent、協調多個 agent 同時做事、依使用成果改進 agent |
 | `tw-stock-calc` | 台股技術指標與合理價的固定計算腳本(tw-stock-analyst 使用) |
 | `tw-bottom-signal` | 台股大盤 / 個股「底部訊號」:30 / 60 分 K 依序判斷鈍化、背離、黃金交叉、突破,輸出標記點位的 SVG(需 `fugle.sh`) |
+| `tw-three-blades` | 台股大盤 / 個股「均線三刀流」(刀神):60 分 K 的 20 / 60 / 240MA,小橘斜率判方向、藍綠交叉＋KD 判進場、排列與雙斜率,輸出結論與 SVG(需 `fugle.sh`) |
 | `audio-transcribe` | 錄音 / 影片轉中文逐字稿:ffmpeg 轉 wav → whisper.cpp 轉錄(防重複參數)→ 清幻覺與重複 |
 | `mac-widget-kit` | Mac 桌面浮窗 / 選單列 widget 骨架與腳本,免 Xcode(mac-widget-builder 使用) |
 | `web-dev-kit` | 網站驗證腳本:啟停 dev server、Chrome 整頁截圖、轉發比對、範圍檢查、秘密掃描、本機 PostgreSQL |
