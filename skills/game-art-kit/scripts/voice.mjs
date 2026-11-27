@@ -14,7 +14,7 @@
 //   node voice.mjs lines  --voice <voice.json> --lines <lines.json> --out <art/voice/<id>> --raw-dir <過程目錄> --budget … --limit … --run … [--all] [--max K] [--max-seconds 480]
 //        --max K:本次最多 K 句(依 key 排序的前 K 句,其餘 deferred,下次照雜湊補)
 //        只錄雜湊不同或缺檔的;原檔 <過程目錄>/raw/<key>.mp3 → audio.mjs --type voice → <out>/<key>.{ogg,m4a};check 不過換 seed 重錄(每句最多 2 次);
-//        每句完成就寫回 voice.json 與 <過程目錄>/manifest.json;超過 --max-seconds 就停,印 remaining(再呼叫一次即可)
+//        每句完成就寫回 voice.json 與 <過程目錄>/manifest.json;超過 --max-seconds 就停,印 remaining(結束碼 0;remaining 不是空的就再呼叫一次)
 //   node voice.mjs status --voice <voice.json> --lines <lines.json> --out <art/voice/<id>>
 //   node voice.mjs scan   --art <art 目錄>                         用記憶體裡的金鑰完全比對 art/ 下的檔案,只印有 / 無與檔名
 // 雜湊 = sha256(JSON.stringify([原文, voice_id, tts 模型, stability, output_format, seed]))。
@@ -63,12 +63,12 @@ async function post(A, path, body, { binary = false, before, rejected } = {}) {
     clearTimeout(t);
     if (res.ok) return binary ? Buffer.from(await res.arrayBuffer()) : res.json();
     const text = scrubKey(await res.text(), A.key).slice(0, 400);
+    if (res.status === 429) rejected?.(attempt); // 限流:服務端沒處理,不計費 → 退回這次的用量(放在任何放棄判斷之前)
     if (res.status === 402 || (res.status === 401 && /quota|insufficient_credits|credits/i.test(text))) die(`ElevenLabs 額度用完(HTTP ${res.status}):${text}`, 4);
     if (res.status === 401 || res.status === 403) die(`ElevenLabs 金鑰錯誤(HTTP ${res.status}):${text}`, 5);
     if (/voice_limit|voice limit|maximum number of voices/i.test(text)) die(`ElevenLabs 帳號 voice 名額已滿:請使用者自己到 ElevenLabs 刪舊 voice(HTTP ${res.status})`, 8);
     const retryable = res.status === 429 || res.status === 409 || res.status >= 500;
     if (!retryable || attempt >= MAX_ATTEMPTS) die(`ElevenLabs HTTP ${res.status}:${text}`, 3);
-    if (res.status === 429) rejected?.(attempt); // 限流:服務端沒處理,不計費 → 退回這次的用量
     const after = Number(res.headers.get('retry-after'));
     await new Promise(r => setTimeout(r, after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1)));
   }
@@ -178,6 +178,8 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
   for (const k of todo) {
     if ((Date.now() - t0) / 1000 > maxSeconds) { stoppedAt = k; break; }
     const text = L[k], len = [...text].length; let seed = lineSeed(v, k), res = null, tries = 0, lastSeed = seed;
+    // 重錄前這句已是有效成品(雜湊相同、檔案都在,例如 --all):全部失敗時保留原本的雜湊與 seed,不讓好的錄音變成過期
+    const prevGood = v.lines?.[k] === lineHash(v, k, text) && existsSync(join(out, `${k}.ogg`)) && existsSync(join(out, `${k}.m4a`));
     for (; tries < TRIES; tries++) {
       lastSeed = seed;
       // 每次 HTTP 嘗試都先記用量;超過上限 → BudgetError(結束碼 6),已完成的都已寫回
@@ -189,12 +191,13 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
       if (res.ok || res.noRetry) break; // 超過 15 秒換 seed 也不會變短:不重錄,請拆句
       seed = (seed + 1000003) % SEED_MAX;
     }
-    if (lastSeed !== lineSeed(v, k)) v.line_seeds[k] = lastSeed; // 記實際送出的最後一個 seed
-    if (res.ok) { v.lines[k] = lineHash(v, k, text); done.push(k); } else { delete v.lines[k]; failed.push({ key: k, error: res.error }); }
+    if (res.ok) { if (lastSeed !== lineSeed(v, k)) v.line_seeds[k] = lastSeed; v.lines[k] = lineHash(v, k, text); done.push(k); }
+    else { if (!prevGood) { if (lastSeed !== lineSeed(v, k)) v.line_seeds[k] = lastSeed; delete v.lines[k]; } failed.push({ key: k, error: res.error, kept_previous: prevGood }); }
     writeJson(voiceFile, v); // 每句存一次:中途停下來,再跑會略過已完成的
   }
   const remaining = stoppedAt ? todo.slice(todo.indexOf(stoppedAt)) : [];
-  return { ok: !failed.length && !remaining.length, recorded: done.length, skipped: Object.keys(L).length - todo.length - deferred, deferred, failed, remaining, budget: { used, limit }, key_scan: scan(art, A.key) };
+  // 只是到時間停下(remaining)不算失敗:結束碼 0,呼叫端看 remaining 再跑一次
+  return { ok: !failed.length, recorded: done.length, skipped: Object.keys(L).length - todo.length - deferred, deferred, failed, remaining, budget: { used, limit }, key_scan: scan(art, A.key) };
 }
 
 export function status(voiceFile, { linesFile, out }) {

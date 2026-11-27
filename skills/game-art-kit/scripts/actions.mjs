@@ -78,7 +78,9 @@ export function loginMode() {
   const out = `${r.stdout}\n${r.stderr}`;
   return /Logged in using ChatGPT/i.test(out) ? 'chatgpt' : /api key/i.test(out) ? 'apikey' : /not logged in/i.test(out) ? 'none' : 'unknown';
 }
-function cleanEnv() { const e = { ...process.env }; delete e.OPENAI_API_KEY; delete e.CODEX_API_KEY; return e; }
+// codex 子程序只拿白名單內的環境變數(Codex 的 shell 工具關不掉:不讓它從環境讀到任何金鑰 / token);FAKE_CODEX_* 只給離線測試的假 codex
+const ENV_KEEP = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|TMPDIR|LANG|LC_[A-Z]+|TZ|CODEX_HOME|FAKE_CODEX_[A-Z]+)$/;
+function cleanEnv() { return Object.fromEntries(Object.entries(process.env).filter(([k]) => ENV_KEEP.test(k))); }
 
 function runCodex(text, ref, timeoutSec) {
   const work = mkdtempSync(join(tmpdir(), 'gak-codex-')), last = join(work, 'last.txt'), cwd = join(work, 'cwd'); mkdirSync(cwd);
@@ -96,6 +98,7 @@ function runCodex(text, ref, timeoutSec) {
       rmSync(work, { recursive: true, force: true });
       done({ code, out, err, reply, timedOut });
     });
+    p.stdin.on('error', () => { /* codex 提早結束(EPIPE):照 close 的結束碼處理,不讓整支程式掛掉 */ });
     p.stdin.end(CODEX_TASK + text);
   });
 }
@@ -162,7 +165,7 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   }
   const quota = code === 3 && ev.errors.some(e => /quota|usage limit|rate limit|limit reached|credits/i.test(e));
   const res = { ok: code === 0, status: entry.status, file: code === 0 ? join(outDir, file) : null, action, n, thread: ev.thread, thread_cleaned: cleaned, violations: entry.violations, errors: entry.errors, quota, budget: { used, limit } };
-  if (code) die(`${entry.status}${ev.errors.length ? ':' + entry.errors?.join(' / ') : ''}`, code, res);
+  if (code) die(`${entry.status}${ev.errors.length ? ':' + ev.errors.map(e => scrubPaths(e, codexHome).slice(0, 300)).join(' / ') : ''}`, code, res);
   return res;
 }
 

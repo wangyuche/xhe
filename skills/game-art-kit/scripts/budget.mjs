@@ -2,26 +2,28 @@
 // 累計檔 = 本次派工專屬(agent 放在 $TMPDIR/game-art-kit/<name>/<派工 id>/budget.json);每次送出前 reserve 檢查「累計 + 本次 ≤ 上限」,
 // 超過就丟 BudgetError(呼叫端以結束碼 6 結束,不送出)。讀 → 檢查 → 寫在檔案鎖(<累計檔>.lock,獨佔建立)裡做,平行的程序不會一起超額。
 // 服務端明確拒絕、不計費的嘗試(例如 429 限流)可以 refund 退回。
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, openSync, closeSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, openSync, closeSync, statSync, renameSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 
 export class BudgetError extends Error { constructor(m) { super(m); this.code = 6; } }
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 function withLock(file, fn) {
-  const lock = `${file}.lock`;
+  const lock = `${file}.lock`, token = `${process.pid}-${randomUUID()}`;
   mkdirSync(dirname(file), { recursive: true });
   for (let i = 0; ; i++) {
-    try { closeSync(openSync(lock, 'wx')); break; }
+    try { const fd = openSync(lock, 'wx'); writeSync(fd, token); closeSync(fd); break; }
     catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      // 持有者當掉留下的舊鎖(超過 30 秒)直接拿掉
-      try { if (Date.now() - statSync(lock).mtimeMs > 30_000) rmSync(lock, { force: true }); } catch { /* */ }
+      // 持有者當掉留下的舊鎖(超過 30 秒):先改名成自己專屬的名字再刪(rename 是原子的,兩個等待者不會都以為自己拿走了舊鎖)
+      try { if (Date.now() - statSync(lock).mtimeMs > 30_000) { const mine = `${lock}.stale-${token}`; renameSync(lock, mine); rmSync(mine, { force: true }); continue; } } catch { /* 別人先處理了 */ }
       if (i > 600) throw new BudgetError(`拿不到累計檔的鎖 ${lock}(60 秒)`);
       sleep(100);
     }
   }
-  try { return fn(); } finally { rmSync(lock, { force: true }); }
+  try { return fn(); }
+  finally { try { if (readFileSync(lock, 'utf8') === token) rmSync(lock, { force: true }); } catch { /* 鎖已不是自己的,不動 */ } }
 }
 
 export function openBudget(file, limit, unit) {
@@ -34,7 +36,8 @@ export function openBudget(file, limit, unit) {
     return b;
   };
   read(); // 先驗證格式與單位
-  const write = (b) => writeFileSync(file, JSON.stringify({ ...b, limit }, null, 1) + '\n');
+  // 先寫暫存檔再改名(原子):沒拿鎖的讀者不會讀到寫一半的檔
+  const write = (b) => { const t = `${file}.${process.pid}.tmp`; writeFileSync(t, JSON.stringify({ ...b, limit }, null, 1) + '\n'); renameSync(t, file); };
   return {
     get used() { return read().used; }, limit,
     // 送出前呼叫:超過上限就丟錯,不送;沒超過就先記上(送出失敗也算用掉,和服務端計費一致)

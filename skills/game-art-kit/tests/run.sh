@@ -443,9 +443,9 @@ export CODEX_EXE="$K/tests/fake-codex.mjs" CODEX_HOME="$W/codexhome" FAKE_CODEX_
 AD="$W/act/art/characters/fox/actions"; O="$W/act/art/out/20261127-actions-fox"; BG="$W/act/budget/r1/budget.json"; mkdir -p "$AD"; cp "$W/act/c.png" "$AD/base.png"
 echo '{"id":"fox","name":"Mr. Fox","pronoun":"she","base":"characters/fox/actions/base.png","style":"2D cartoon","features":"big brown eyes","outfit":"green waistcoat","anchor":{"x":0.5,"y":0.3,"h":0.3}}' > "$AD/actions.json"
 o="$(A prompt --config "$AD/actions.json" --action happy)" && echo "$o" | grep -q 'in front of her chest' && echo "$o" | grep -q 'model sheet for Mr. Fox' && ok "actions prompt:代名詞依 pronoun 代入(she → her)、鎖定句帶角色特徵" || bad "actions prompt" "$o"
-o="$(OPENAI_API_KEY=sk-should-not-pass A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)" && [ -e "$O/happy-1.png" ] && echo "$o" | grep -q '"thread_cleaned":true' \
-  && [ -z "$(ls -A "$CODEX_HOME/generated_images" 2>/dev/null)" ] && tail -1 "$FAKE_CODEX_LOG" | grep -q '"hasOpenAIKey":false' && tail -1 "$FAKE_CODEX_LOG" | grep -q '"-s","read-only"' && grep -q '"used": 1' "$BG" \
-  && ok "actions gen:Codex 出圖 → 抄出、刪掉 thread 目錄、子程序沒有 OPENAI_API_KEY、唯讀沙箱、累計 1 張" || bad "actions gen" "$o $(tail -1 "$FAKE_CODEX_LOG")"
+o="$(OPENAI_API_KEY=sk-should-not-pass ELEVENLABS_API_KEY=el-should-not-pass GH_TOKEN=gh-should-not-pass A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)" && [ -e "$O/happy-1.png" ] && echo "$o" | grep -q '"thread_cleaned":true' \
+  && [ -z "$(ls -A "$CODEX_HOME/generated_images" 2>/dev/null)" ] && tail -1 "$FAKE_CODEX_LOG" | grep -q '"hasOpenAIKey":false' && tail -1 "$FAKE_CODEX_LOG" | grep -q '"hasElevenKey":false,"hasOtherToken":false' && tail -1 "$FAKE_CODEX_LOG" | grep -q '"-s","read-only"' && grep -q '"used": 1' "$BG" \
+  && ok "actions gen:Codex 出圖 → 抄出、刪掉 thread 目錄、子程序只拿白名單環境變數(沒有 OPENAI / ElevenLabs 金鑰、其他 token)、唯讀沙箱、累計 1 張" || bad "actions gen" "$o $(tail -1 "$FAKE_CODEX_LOG")"
 o="$(A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)" && [ -e "$O/happy-2.png" ] && ok "actions gen:同一個動作再出 → 往上編號(happy-2),不覆蓋" || bad "actions 編號" "$o"
 o="$(HOME="$W/realhome" A gen --config "$AD/actions.json" --action happy --out-dir "$O" --budget "$BG" --limit 3 --run t-1)"; node $K/scripts/comfy.mjs scrub-check "$W/act/art" --paths >/dev/null && ! grep -q "$W" "$O/manifest.json" && ok "actions manifest:不記本機絕對路徑(scrub-check --paths 通過)" || bad "manifest 路徑" "$(grep -n 'Users\|home' "$O/manifest.json" | head -3)"
 n0=$(wc -l < "$FAKE_CODEX_LOG")
@@ -466,6 +466,9 @@ rm -rf "$CODEX_HOME/generated_images/not-a-uuid"
 t0=$(date +%s); o="$(FAKE_CODEX_MODE=slow A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$BG3" --limit 5 --run t-3 --timeout 2 2>&1)"; rc=$?; t1=$(date +%s)
 sleep 1; [ $rc -eq 4 ] && [ $((t1 - t0)) -lt 15 ] && ! pgrep -f "fake-codex.mjs exec" >/dev/null && ok "actions gen:逾時 → 殺整個程序群組、結束碼 4" || bad "actions 逾時" "rc=$rc $((t1 - t0))s $o"
 o="$(FAKE_CODEX_MODE=todolist A gen --config "$AD/actions.json" --action idle2 --out-dir "$O" --budget "$W/act/budget/r4/b.json" --limit 5 --run t-4)" && [ -s "$O/idle2-1.png" ] && ok "actions gen:todo_list 這類非工具 item 不算違規" || bad "actions todo_list" "$o"
+o="$(FAKE_CODEX_MODE=exitearly A gen --config "$AD/actions.json" --action sad --out-dir "$O" --budget "$W/act/budget/r5/b.json" --limit 5 --run t-5 2>&1)"; rc=$?
+[ $rc -eq 3 ] && [ ! -e "$O/sad-1.png" ] && ok "actions gen:codex 沒讀提示詞就結束 → 不當掉(EPIPE 已處理)、結束碼 3、不留佔位檔" || bad "actions EPIPE" "rc=$rc $o"
+o="$(S headshot "$W/act/c.png" --anchor 0.5,0.3,0.3 --zoom 1,2 --out "$W/act/avx.png" 2>&1)"; [ $? -eq 2 ] && ok "sprite headshot:--zoom 不是數字 → 結束碼 2" || bad "headshot zoom" "$o"
 o="$(A sheet --out "$W/act/s0.png" --cols 0 "$AD/base.png" 2>&1)"; [ $? -eq 2 ] && echo "$o" | grep -q '正整數' && ok "actions sheet --cols 0 → 用法錯誤(結束碼 2)" || bad "sheet cols 0" "$o"
 [ ! -e "$O/sad-1.png" ] && ok "actions gen:沒出圖時檔名佔位檔已刪" || bad "佔位檔殘留" "$(ls -la "$O" | head)"
 BP="$W/act/budget/par/b.json"; ( A gen --config "$AD/actions.json" --action nervous --out-dir "$O" --budget "$BP" --limit 1 --run t-p >/dev/null 2>&1; echo $? > "$W/act/p1" ) & PA=$!; ( A gen --config "$AD/actions.json" --action nervous --out-dir "$O" --budget "$BP" --limit 1 --run t-p >/dev/null 2>&1; echo $? > "$W/act/p2" ) & PB=$!; wait $PA $PB   # 只等這兩個(不帶參數的 wait 會連背景的假伺服器一起等)

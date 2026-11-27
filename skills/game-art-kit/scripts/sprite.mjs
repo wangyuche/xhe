@@ -468,7 +468,9 @@ if (isMain) {
       const nums = (k, n) => { const v = String(flags[k] ?? die(`缺 --${k}`)).split(',').map(Number); if (v.length !== n || v.some(x => !Number.isFinite(x))) die(`--${k} 要 ${n} 個數字(逗號分隔)`); return v; };
       const [x, y, h] = nums('anchor', 3); if (![x, y, h].every(v => v > 0 && v <= 1)) die('--anchor 的 x、y、h 都要在 0–1');
       const [l, t, r, b] = flags.pad != null ? nums('pad', 4) : [0, 0, 0, 0];
-      const res = headshot(img, { x, y, h }, { size: flags.size != null ? int('size') : 256, zoom: flags.zoom != null ? Number(flags.zoom) : 1.15, dx: flags.dx != null ? Number(flags.dx) : 0, pad: { left: l, top: t, right: r, bottom: b } });
+      const zoom = flags.zoom != null ? Number(flags.zoom) : 1.15, dx = flags.dx != null ? Number(flags.dx) : 0;
+      if (!(Number.isFinite(zoom) && zoom > 0)) die('--zoom 要是正數'); if (!Number.isFinite(dx)) die('--dx 要是數字');
+      const res = headshot(img, { x, y, h }, { size: flags.size != null ? int('size') : 256, zoom, dx, pad: { left: l, top: t, right: r, bottom: b } });
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, encodePng(res));
       let cover = 0; for (let i = 3; i < res.data.length; i += 4) if (res.data[i] >= ALPHA_MIN) cover++;
