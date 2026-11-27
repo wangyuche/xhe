@@ -22,7 +22,8 @@ const sha256 = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).dig
 function load(run) {
   const meta = readJSON(path.join(run, 'meta.json'), {});
   const findings = readJSON(path.join(run, 'findings.json'), []);
-  const manual = readJSON(path.join(run, 'manual.json'), []);
+  const manualRaw = readJSON(path.join(run, 'manual.json'), []);
+  const manual = Array.isArray(manualRaw) ? manualRaw.filter((x) => x && typeof x === 'object') : [];
   const planPath = path.join(run, 'plan.json');
   const plan = readJSON(planPath, { items: [] });
   const planSha = fs.existsSync(planPath) ? sha256(planPath) : null;
@@ -281,6 +282,7 @@ export function check(run) {
   if (manual !== null) {
     if (!Array.isArray(manual)) errs.push('manual.json 要是陣列');
     else manual.forEach((f, i) => {
+      if (!f || typeof f !== 'object') { errs.push(`manual.json[${i}] 要是物件`); return; }
       if (!/^MANUAL-\d+$/.test(f.rule_id || '')) errs.push(`manual.json[${i}] rule_id 要是 MANUAL-<n>`);
       if (!SEV.includes(f.severity)) errs.push(`manual.json[${i}] severity 不對`);
       for (const k of ['title', 'resource', 'evidence', 'fix', 'reason']) if (!f[k]) errs.push(`manual.json[${i}] 缺 ${k}`);

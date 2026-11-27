@@ -163,6 +163,9 @@ class Runner:
             rec["rollback_warning"] = it["rollback_warning"]
         if it.get("rollback_note"):
             rec["rollback_note"] = it["rollback_note"]
+        # 指令已成功:立刻記錄(驗證期間被中斷也留得下這條與還原指令),之後就地更新結果
+        rec.update({"result": "已執行(驗證中被中斷)", "reason": "指令已成功執行,驗證尚未完成"})
+        self.results.append(rec)
         exp = it.get("expected") or []
         deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
         while True:
@@ -176,7 +179,6 @@ class Runner:
             time.sleep(15)
         if err:
             rec.update({"result": "已執行(驗證失敗)", "reason": "指令已成功執行,但變更後快照失敗:" + err})
-            self.results.append(rec)
             self.status = "ISSUES"
             return False
         gglib.write_json(os.path.join(self.run, "after", f"{cid}.json"), gglib.redact(after))
@@ -188,11 +190,9 @@ class Runner:
             badexp = ggplan.check_pre(exp, after)
         if badexp:
             rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
-            self.results.append(rec)
             self.status = "ISSUES"
             return False
         rec.update({"result": "已執行", "reason": "驗證符合"})
-        self.results.append(rec)
         return True
 
 

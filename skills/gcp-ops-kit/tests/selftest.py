@@ -362,6 +362,12 @@ def t_misc(e):
     before = set(os.listdir(e.reports))
     r = e.run([os.path.join(S, "yaml-review.sh"), os.path.join(e.tmp, "no-such-dir"), "--label", "typo"], env=env2)
     ok("YAML 審查:輸入路徑不存在 → 用法錯誤且不留空 run 目錄", r.returncode == 2 and "yaml-typo" not in os.listdir(e.reports), (r.returncode, os.listdir(e.reports)))
+    mr = run_dir(e.run([os.path.join(S, "yaml-review.sh"), lf, "--label", "manual-obj"], env=env2).stdout)
+    with open(os.path.join(mr, "manual.json"), "w") as f:
+        json.dump({"rule_id": "MANUAL-1"}, f)
+    r1 = e.run(["node", os.path.join(S, "render.mjs"), mr], env=env2)
+    r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", mr], env=env2)
+    ok("manual.json 寫成物件:render 不當掉、--check 指出要是陣列", r1.returncode == 0 and r2.returncode == 1 and "要是陣列" in r2.stderr, (r1.stderr[-200:], r2.stderr[-300:]))
     other = os.path.join(e.tmp, "not-a-run")
     os.makedirs(other, exist_ok=True)
     r = e.run(["node", os.path.join(S, "render.mjs"), other])
@@ -444,6 +450,8 @@ def t_classify():
         ("kubectl 帶 --quiet", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=3", "--quiet"], FX.DEPLOY),
         ("label 已有值但沒帶 --overwrite", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=restricted"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "baseline"}}}),
+        ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
+        ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
         ("防火牆 tcp:2-65535(幾乎全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:2-65535"], FX.FIREWALLS[1]),
         ("patch networkpolicy(網路類資源請使用者自己改)", ["kubectl", f"--context={CTX}", "patch", "networkpolicy", "default-deny", "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
@@ -543,6 +551,8 @@ def t_classify():
         if name.startswith("改防火牆描述"):
             import shlex
             good = good and shlex.split(shlex.join(r["rollback"])) == r["rollback"] and "--description=Allow SSH from office" in r["rollback"]
+        if name == "防火牆從全部 VM 收窄到 tag":
+            good = good and r.get("rollback_warning") and "target-tags" in r["rollback_warning"]
         if name.startswith("開 GKE_METADATA"):
             good = good and r.get("rollback_warning")
         if name.startswith("從 all 收緊"):
@@ -766,6 +776,7 @@ def plan_fixtures():
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": None}, "out": nodes(4)},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
         {"tool": "kubectl", "re": " get configmap new-cm -n shop -o json", "rc": 1, "err": 'Error from server (NotFound): configmaps "new-cm" not found'},
@@ -888,6 +899,24 @@ def t_plan_change(e, review_run):
     ok("變更:執行中收到 SIGTERM → change.json 記「執行中被中斷」+ 還原指令、狀態 ISSUES、憑證快取已清",
        cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "中斷" in r.get("result", "") and r.get("rollback") for r in cj.get("results", []))
        and not os.path.exists(os.path.join(e.reports, P, cruns[-1], "gcloud")), (cj, err[-400:]))
+    # 驗證等待中被中斷:指令已成功(節點數還沒到),紀錄要有「已執行」與還原指令,狀態 ISSUES
+    e.state({"verify_slow": True})
+    e.clear_log()
+    env3 = e.env()
+    env3["GG_VERIFY_WAIT"] = "120"
+    pr = subprocess.Popen([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C3"], env=env3, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for _ in range(150):
+        st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
+        if st_.get("resize_ran"):
+            break
+        _t.sleep(0.2)
+    _t.sleep(2)
+    pr.send_signal(signal.SIGTERM)
+    out, err = pr.communicate(timeout=60)
+    cruns = sorted((d for d in os.listdir(pd_) if "-change" in d), key=lambda d: os.path.getmtime(os.path.join(pd_, d)))
+    cj = gglib.read_json(os.path.join(pd_, cruns[-1], "change.json"), {}) if cruns else {}
+    ok("變更:驗證等待中被中斷 → 記「已執行(驗證中被中斷)」+ 還原、狀態 ISSUES",
+       cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "已執行" in r.get("result", "") and r.get("rollback") for r in cj.get("results", [])), (cj, err[-300:]))
     e.state({})
     e.state({"flip_fw": True})
     e.clear_log()

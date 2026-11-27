@@ -224,6 +224,12 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     for fl in flags:
         if fl not in allowed:
             return block(f"{kind} 不允許旗標 {fl}")
+    bools = set(rules.get("bool_flags", []))
+    for fl, val in flags.items():
+        if val is True and fl not in bools:
+            return block(f"{fl} 要帶值(寫成 {fl}=值)")
+        if val is not True and fl in bools:
+            return block(f"{fl} 是布林旗標,不可帶值")
     for fl, need in rules.get("requires", {}).items():
         if fl in flags and need not in flags:
             return block(f"{fl} 要同時帶 {need}(gcloud 規定)")
@@ -274,6 +280,11 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
             old_rules = _ranges(rbf["--rules"])
             if any(_port_all(r) for r in old_rules) or not _rules_subset(old_rules, _ranges(flags["--rules"])):
                 res["rollback_warning"] = "這條還原會把協定 / 埠放寬回變更前的範圍(可能是全部),執行前請確認"
+        if "--target-tags" in flags:
+            old_t = set(_ranges(rbf.get("--target-tags", "")))
+            new_t = set(_ranges(flags["--target-tags"])) if flags["--target-tags"] is not True else set()
+            if (not old_t and new_t) or (new_t and not old_t <= new_t):
+                res["rollback_warning"] = "這條還原會擴大防火牆套用對象(target-tags 清空或變多),執行前請確認"
         if "--priority" in rbf and "--priority" in flags:
             try:
                 if int(rbf["--priority"]) < int(flags["--priority"]):
