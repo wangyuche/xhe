@@ -13,6 +13,7 @@ open <本目錄>/build/<Name>.app
 
 - 桌面浮窗:拖曳移動(位置存在 `~/Library/Application Support/com.widget.<name>/state.json`),右鍵可「重新整理」「結束」。
 - 選單列:點一下開啟完整畫面,右鍵可「重新整理」「結束」。
+- `placement` 為 `both` 時:選單列一定在;桌面浮窗可從選單列右鍵「顯示桌面浮窗」開關(打勾 = 顯示,預設顯示),浮窗右鍵也有「隱藏桌面浮窗」。選擇記在同資料夾的 `prefs.json`,重開後沿用。
 
 ## 開機自動啟動
 

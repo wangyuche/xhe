@@ -64,11 +64,16 @@ struct ErrorView: View {
 struct RootView: View {
     @ObservedObject var model: WidgetModel
     let config: WidgetConfig
+    /// 桌面浮窗且也有選單列時才給:右鍵多一個「隱藏桌面浮窗」(之後從選單列右鍵再打開)。
+    var onHideDesktop: (() -> Void)? = nil
 
     var body: some View {
         WidgetContainer(state: model.state, config: config)
             .contextMenu {
                 Button("重新整理") { Task { await model.refresh() } }
+                if let hide = onHideDesktop {
+                    Button("隱藏桌面浮窗") { hide() }
+                }
                 Button("結束") { NSApp.terminate(nil) }
             }
     }
@@ -88,6 +93,12 @@ private struct SavedPosition: Codable {
     var y: Double
 }
 
+/// placement = both 時,桌面浮窗要不要顯示(選單列右鍵切換)。
+/// 存在 prefs.json,不和 state.json 混用(骨架拖曳視窗後會整檔覆寫 state.json)。
+private struct SavedPrefs: Codable {
+    var showDesktop: Bool?
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let config = AppEnv.config
@@ -98,8 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var refreshTask: Task<Void, Never>?
     private let isSelfCheck = CommandLine.arguments.contains("--self-check")
 
+    /// placement = both:選單列一定有,桌面浮窗可從選單列右鍵開關(預設顯示,選擇會記住)。
+    private var canToggleDesktop: Bool { config.showsDesktop && config.showsMenuBar }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if config.showsDesktop { makeWindow() }
+        // --self-check 一律建立視窗,才能檢查層級等狀態;不讀也不寫 prefs.json。
+        if config.showsDesktop && (!canToggleDesktop || isSelfCheck || loadShowDesktop()) { makeWindow() }
         if config.showsMenuBar { makeStatusItem() }
 
         model.onChange = { [weak self] in self?.updateStatusTitle() }
@@ -132,6 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let item = statusItem {
             print("statusItem: \(item.button?.title ?? "")")
         }
+        if canToggleDesktop {
+            print("desktopToggle: menubar-right-click")
+        }
     }
 
     // MARK: 桌面浮窗
@@ -155,7 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             : [.canJoinAllSpaces, .stationary, .ignoresCycle]
         w.isMovableByWindowBackground = true
         w.isReleasedWhenClosed = false
-        w.contentView = DraggableHostingView(rootView: RootView(model: model, config: config))
+        let hide: (() -> Void)? = canToggleDesktop ? { [weak self] in self?.setDesktopVisible(false) } : nil
+        w.contentView = DraggableHostingView(rootView: RootView(model: model, config: config, onHideDesktop: hide))
         w.delegate = self
         if isSelfCheck { w.alphaValue = 0 }   // 自我檢查:建立但不讓人看見
         w.orderFront(nil)
@@ -163,6 +182,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var stateURL: URL? { AppEnv.supportDir?.appendingPathComponent("state.json") }
+    private var prefsURL: URL? { AppEnv.supportDir?.appendingPathComponent("prefs.json") }
+
+    private func loadShowDesktop() -> Bool {
+        guard let url = prefsURL, let data = try? Data(contentsOf: url),
+              let prefs = try? JSONDecoder().decode(SavedPrefs.self, from: data) else { return true }
+        return prefs.showDesktop ?? true
+    }
+
+    private var isDesktopVisible: Bool { window?.isVisible ?? false }
+
+    private func setDesktopVisible(_ show: Bool) {
+        if show {
+            if let w = window { w.orderFront(nil) } else { makeWindow() }
+        } else {
+            window?.orderOut(nil)
+        }
+        guard !isSelfCheck, let url = prefsURL,
+              let data = try? JSONEncoder().encode(SavedPrefs(showDesktop: show)) else { return }
+        try? data.write(to: url)
+    }
+
+    @objc private func toggleDesktop() { setDesktopVisible(!isDesktopVisible) }
 
     private func initialOrigin(size: NSSize) -> NSPoint {
         if let url = stateURL,
@@ -216,6 +257,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
             menu.addItem(withTitle: "重新整理", action: #selector(refreshNow), keyEquivalent: "").target = self
+            if canToggleDesktop {
+                let item = menu.addItem(withTitle: "顯示桌面浮窗", action: #selector(toggleDesktop), keyEquivalent: "")
+                item.target = self
+                item.state = isDesktopVisible ? .on : .off
+                menu.addItem(.separator())
+            }
             menu.addItem(withTitle: "結束", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
             statusItem?.menu = menu
             sender.performClick(nil)
