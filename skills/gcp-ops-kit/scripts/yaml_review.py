@@ -141,6 +141,9 @@ def main(argv):
             if isinstance(d.get("obj"), dict) and d["obj"].get("kind"):
                 if d["obj"].get("kind") == "List":
                     for i, o in enumerate(d["obj"].get("items") or []):
+                        if not isinstance(o, dict):
+                            undetermined.append({"area": "yaml", "item": f"{f} items[{i}]", "error": "List 的項目不是物件,略過"})
+                            continue
                         pre = f"/items/{i}"
                         sub = {(k[len(pre):] or "/"): v for k, v in d["lines"].items() if k == pre or k.startswith(pre + "/")}
                         docs.append({"obj": o, "file": f, "line": sub.get("/", d["line"]), "lines": sub})

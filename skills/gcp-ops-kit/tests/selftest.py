@@ -335,6 +335,11 @@ def t_misc(e):
     lr = run_dir(r.stdout)
     pf = [f for f in json.load(open(os.path.join(lr, "findings.json")))] if lr else []
     priv = [f for f in pf if f["rule_id"] == "K8S-PRIV-001"]
+    lf2 = os.path.join(e.tmp, "list", "l2.yaml")
+    with open(lf2, "w") as f:
+        f.write("kind: List\nitems:\n- foo\n- kind: Deployment\n  metadata: {name: d}\n  spec: {template: {spec: {containers: [{name: c, image: 'x:1'}]}}}\n")
+    r2 = e.run([os.path.join(S, "yaml-review.sh"), lf2, "--label", "list2"], stub=False)
+    ok("YAML 審查:List 夾非物件項目不當掉(列無法判定)", r2.returncode == 0 and run_dir(r2.stdout), r2.stderr[-300:])
     ok("YAML 審查:kind: List 的 item 也有行號(privileged 在第 9 行)", priv and priv[0]["evidence"].get("line") == 9, priv)
     tmpi = tempfile.mkdtemp(prefix="gg-fw-")
     gglib.write_json(os.path.join(tmpi, "inventory", "firewalls.json"),
@@ -471,6 +476,7 @@ def t_classify():
         ("label 已有值但沒帶 --overwrite", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=restricted"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "baseline"}}}),
         ("停用公開 SSH 規則(不是 IAP 規則)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--disabled"], fw, "ok-disabled"),
+        ("IAM 授權給 domain:gmail.com", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=domain:gmail.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
@@ -563,6 +569,9 @@ def t_classify():
          dict(fw, description="Allow SSH from office"), False),
         ("授予 storage.objectViewer 給 gmail(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:someone@gmail.com", "--role=roles/storage.objectViewer",
                                                    f"--project={P}", "--condition=None"], pol, True),
+        ("授予 principalSet 整個 pool(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P,
+                                           "--member=principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/*",
+                                           "--role=roles/viewer", f"--project={P}", "--condition=None"], pol, True),
         ("授予自訂角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", f"--role=projects/{P}/roles/superuser",
                                  f"--project={P}", "--condition=None"], pol, True),
         ("GKE_METADATA(pool 沒有 workloadMetadataConfig)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
@@ -979,6 +988,7 @@ def t_plan_change(e, review_run):
     pd_ = os.path.join(e.reports, P)
     cruns = sorted((d for d in os.listdir(pd_) if "-change" in d), key=lambda d: os.path.getmtime(os.path.join(pd_, d)))
     cj = gglib.read_json(os.path.join(e.reports, P, cruns[-1], "change.json"), {}) if cruns else {}
+    ok("變更:被中斷時 stdout 仍印 status= 與 run=", "status=ISSUES" in out and "run=" in out, out[-300:])
     ok("變更:執行中收到 SIGTERM → change.json 記「執行中被中斷」+ 還原指令、狀態 ISSUES、憑證快取已清",
        cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "中斷" in r.get("result", "") and r.get("rollback") for r in cj.get("results", []))
        and not os.path.exists(os.path.join(e.reports, P, cruns[-1], "gcloud")), (cj, err[-400:]))

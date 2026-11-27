@@ -616,9 +616,18 @@ def _iam_common(pos, flags, res, cfg, adding):
             reasons.append(f"新增高權角色 {role} 給 {member}")
         elif not low:
             reasons.append(f"新增角色 {role} 給 {member}(可能含寫入或資料讀取權限,請確認內容)")
-        dom = (member or "").split("@")[-1].lower() if "@" in (member or "") else ""
-        if member and member.startswith(("user:", "group:")) and dom in ("gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com"):
+        consumer = ("gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com")
+        mtype_, _, ident_ = (member or "").partition(":")
+        dom = ident_.split("@")[-1].lower() if "@" in ident_ else ""
+        if mtype_ in ("user", "group") and dom in consumer:
             reasons.append(f"授權給外部個人帳號 {member}")
+        if mtype_ == "domain":
+            if ident_.lower() in consumer:
+                res["blocked_reason"] = f"一律禁止:授權給整個公共網域 {ident_}(等於所有該網域使用者)"
+                return None
+            reasons.append(f"授權給整個網域 {ident_} 的所有帳號")
+        if mtype_ in ("principalSet", "principal"):
+            reasons.append(f"授權給 workload identity 主體 {member}" + ("(整個 pool)" if ident_.endswith("/*") else ""))
     return reasons
 
 

@@ -98,6 +98,7 @@ def scan(docs, live=False):
     """docs:[{obj, file, line?, lines?, index?, context?}]。live=True 時略過系統 namespace 與被控制器擁有的 Pod / RS / Job。"""
     c = Ctx(None, live)
     namespaces_with_workloads, namespaces_with_np, ns_objs, first_workload = set(), set(), {}, {}
+    docs = [d for d in docs if isinstance(d, dict) and isinstance(d.get("obj"), dict)]
     for doc in docs:
         obj = _d(doc.get("obj"))
         kind = obj.get("kind")
@@ -151,7 +152,7 @@ def scan(docs, live=False):
         for ns in sorted(namespaces_with_workloads - namespaces_with_np):
             c.add("K8S-NP-001", first_workload[ns], "/metadata/namespace", f"namespace {ns} 有 workload 但沒有 NetworkPolicy")
     elif namespaces_with_workloads and not namespaces_with_np:
-        first = next(d for d in docs if pod_spec(d.get("obj") or {})[0] is not None)
+        first = next(d for d in docs if pod_spec(_d(d.get("obj")))[0] is not None)
         c.add("K8S-NP-001", first, "/", "掃描範圍內有 workload,但沒有任何 NetworkPolicy")
     for name, doc in ns_objs.items():
         if live and SYSTEM_NS.match(name or ""):

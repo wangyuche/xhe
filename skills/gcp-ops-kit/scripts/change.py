@@ -280,6 +280,10 @@ def main(argv):
                 subprocess.run(["node", os.path.join(gglib.KIT, "scripts", "render.mjs"), run], timeout=60)
             except Exception:
                 pass
+            print(f"status={runner.status}")
+            print(f"run={run}")
+            for r in runner.results:
+                print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}", flush=True)
             raise
         except Exception as e:
             runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
