@@ -84,11 +84,19 @@ class Runner:
             for n, it in enumerate(items):
                 try:
                     ok = self.one(s, it, ctx_done)
-                except Exception as e:  # 任何非預期錯誤:記錄後停止,其餘標未執行
-                    self.results.append({"id": it["id"], "result": "錯誤(狀態不明)",
-                                         "reason": f"{type(e).__name__}: {gglib._short(str(e), 300)};請先確認現況",
-                                         "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]})
-                    self.status = "ISSUES"
+                except Exception as e:  # 任何非預期錯誤:依「指令送出了沒」分別記錄,然後停止
+                    msg = f"{type(e).__name__}: {gglib._short(str(e), 300)}"
+                    existing = [x for x in self.results if x.get("id") == it["id"]]
+                    if existing:  # 指令已成功,之後的步驟出錯:更新同一列
+                        existing[0].update({"result": "已執行(後續步驟錯誤)", "reason": msg + ";請先確認現況"})
+                        self.status = "ISSUES"
+                    elif self.inflight:  # 指令送出後出錯:狀態不明
+                        self.inflight.update({"result": "錯誤(狀態不明)", "reason": msg + ";請先確認現況"})
+                        self.results.append(self.inflight)
+                        self.inflight = None
+                        self.status = "ISSUES"
+                    else:  # 指令還沒送出:雲端沒被動到
+                        self.stop("BLOCKED", it["id"], "執行前發生錯誤:" + msg)
                     ok = False
                 if not ok:
                     for rest in items[n + 1:]:

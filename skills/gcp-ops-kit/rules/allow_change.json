@@ -89,7 +89,8 @@
           "format": "join",
           "item_key": "cidrBlock",
           "empty_ok": true,
-          "clear_flag": "--no-enable-master-authorized-networks"
+          "clear_flag": "--no-enable-master-authorized-networks",
+          "skip_if_off": "/masterAuthorizedNetworksConfig/enabled"
         },
         "--enable-shielded-nodes": {
           "inverse": "--no-enable-shielded-nodes",

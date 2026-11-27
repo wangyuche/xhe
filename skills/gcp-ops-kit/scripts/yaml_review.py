@@ -96,7 +96,7 @@ def main(argv):
         return gglib.EXIT_BLOCKED
     label = re.sub(r"[^a-z0-9-]+", "-", (label or os.path.basename(os.path.realpath(paths[0]))).lower()).strip("-")[:50] or "yaml"
     files, kustom = gather(paths)  # 先確認輸入存在,再建立 run 目錄
-    run = gglib.new_run(cfg, f"yaml-{label}"[:60], "yaml")
+    run = gglib.new_run(cfg, os.path.join("_yaml", label), "yaml")  # 與 GCP 專案 ID 分開的命名空間
     meta = gglib.read_json(os.path.join(run, "meta.json"))
     meta.update({"inputs": [os.path.realpath(p) for p in paths], "files": files, "kustomize": kustom})
     gglib.write_json(os.path.join(run, "meta.json"), meta)

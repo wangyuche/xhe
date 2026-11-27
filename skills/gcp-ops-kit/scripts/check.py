@@ -60,8 +60,13 @@ def main(argv):
                     raise gglib.Blocked(f"SA 無法存取專案 {project}:" + gglib._short(r.stderr))
                 r = s.gcloud(["projects", "get-iam-policy", project, f"--project={project}", "--format=json", "--quiet"])
                 roles = []
+                pol = None
                 if r.returncode == 0:
-                    pol = json.loads(r.stdout or "{}")
+                    try:
+                        pol = json.loads(r.stdout or "{}")
+                    except json.JSONDecodeError:
+                        pol = None
+                if pol is not None:
                     me = "serviceAccount:" + cfg["GG_SA"]
                     roles = sorted(b["role"] for b in pol.get("bindings") or [] if me in (b.get("members") or []))
         finally:

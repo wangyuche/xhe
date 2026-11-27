@@ -35,7 +35,7 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 <kit>/scripts/collect.sh [<專案>] [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
 #   → run=<GG_REPORT_DIR>/<專案>/<時間>-<模式>/ :inventory/(遮蔽後)、findings.json、plan.json(空)、report.html
 <kit>/scripts/yaml-review.sh <檔案或目錄>... [--label <名稱>]
-#   → run=<GG_REPORT_DIR>/yaml-<名稱>/<時間>-yaml/
+#   → run=<GG_REPORT_DIR>/_yaml/<名稱>/<時間>-yaml/(與 GCP 專案分開)
 
 <kit>/scripts/plan.py build <run>                   # 讀 <run>/plan.input.json → plan.json + sha256 + 重產報告
 <kit>/scripts/plan.py show <plan.json>

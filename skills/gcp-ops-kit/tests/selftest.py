@@ -271,6 +271,14 @@ def t_hostpath_value_change():
     ok("遮蔽值不附雜湊", "sha256" not in gglib.redact_value("hunter2"), gglib.redact_value("hunter2"))
 
 
+def t_secret_names():
+    yes = [("DB_PASSWORD", "hunter2x"), ("BASIC_AUTH", "user:pw12"), ("AUTH_TOKEN", "abcdef12"), ("API_KEY", "abcdef12")]
+    no = [("AUTHOR", "jane.doe"), ("OAUTH_REDIRECT_URL", "https://app/cb"), ("AUTH_SERVICE_HOST", "auth.svc")]
+    ok("env 名稱判斷:密碼 / token 類判秘密、AUTHOR / OAUTH_REDIRECT_URL / AUTH_SERVICE_HOST 不誤判",
+       all(gglib.looks_secret(n, v) for n, v in yes) and not any(gglib.looks_secret(n, v) for n, v in no),
+       [(n, gglib.looks_secret(n, v)) for n, v in yes + no])
+
+
 def t_check_pre_redact():
     import ggplan
     bad = ggplan.check_pre([{"field": "/data/DB_PASSWORD", "expect": None}], {"data": {"DB_PASSWORD": "hunter2checkpre"}})
@@ -537,6 +545,9 @@ def t_classify():
          {"settings": {"ipConfiguration": {"sslMode": "ENCRYPTED_ONLY"}}}, False),
         ("開 GKE_METADATA:還原回 GCE_METADATA 要警示", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
                                                      f"--project={P}", "--workload-metadata=GKE_METADATA"], dict(FX.NODEPOOLS[0], config={"workloadMetadataConfig": {"mode": "GCE_METADATA"}}), False),
+        ("開授權網路(原本關但留有網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                       "--enable-master-authorized-networks", "--master-authorized-networks=203.0.113.0/24"],
+         dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": False, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
@@ -576,6 +587,8 @@ def t_classify():
             good = good and "--condition=None" in r["rollback"]
         if name.startswith("開控制平面授權網路"):
             good = good and r.get("rollback_warning")
+        if name == "開授權網路(原本關但留有網段)":
+            good = good and "--no-enable-master-authorized-networks" in r["rollback"] and not any(a.startswith("--master-authorized-networks=") for a in r["rollback"])
         if name.startswith("開控制平面授權網路"):
             good = good and r["rollback"].count("--no-enable-master-authorized-networks") == 1
         if name == "收緊防火牆來源":
@@ -1099,6 +1112,7 @@ def main():
         t_misc(e)
         t_sa_change()
         t_check_pre_redact()
+        t_secret_names()
         t_hostpath_value_change()
         t_approve_parse()
         t_classify()

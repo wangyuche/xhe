@@ -401,7 +401,7 @@ def _short(s, n=600):
 
 # ---------------------------------------------------------------- 遮蔽
 
-SECRET_NAME_RE = re.compile(r"(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential|auth|dsn|conn(ection)?[_-]?str)", re.I)
+SECRET_NAME_RE = re.compile(r"(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential|(^|[_-])auth([_-]?(key|token|pass(word)?|secret|header))?$|dsn|conn(ection)?[_-]?str)", re.I)
 KEEP_METADATA_KEYS = {
     "serial-port-enable", "enable-oslogin", "block-project-ssh-keys", "enable-oslogin-2fa",
     "enable-guest-attributes", "disable-legacy-endpoints",

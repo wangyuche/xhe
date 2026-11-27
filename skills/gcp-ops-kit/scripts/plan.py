@@ -34,6 +34,8 @@ def build(run):
     meta = gglib.read_json(os.path.join(run, "meta.json"))
     if not meta:
         raise gglib.Blocked(f"{run} 不是 run 目錄(缺 meta.json)")
+    if meta.get("mode") not in ("review", "plan"):
+        raise gglib.Blocked(f"plan.py build 只接受審查 / 計畫 run(這個是 {meta.get('mode')})")
     cfg = gglib.load_config(require=True)
     if not run.startswith(os.path.realpath(cfg["GG_REPORT_DIR"]) + os.sep):
         raise gglib.Blocked("run 目錄不在 GG_REPORT_DIR 底下")
