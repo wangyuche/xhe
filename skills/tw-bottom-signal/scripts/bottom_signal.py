@@ -27,6 +27,9 @@ def opt(name, default=None):
     return default
 asof = opt("--asof"); days = int(opt("--days", "4")); svg = opt("--svg"); title = opt("--title", "加權指數")
 zone_days = int(opt("--zone-days", "2"))
+keep_days = int(opt("--keep-days", "10"))   # 背離確認後最多往回保留幾個交易日(Gg 2026-11-27 3A:保留到跌破才失效)
+ch_from = opt("--channel-from")             # 通道下緣起點(低點 1)的 K 棒時間 "YYYY-MM-DD HH:MM";
+                                            # 沒給就不畫通道:低點 1 的自動選法待 Gg 確認(用背離前低會讓通道過陡、失真)
 NSTEP = 6
 W = 3
 
@@ -66,6 +69,8 @@ class Series:
         self.MA = [sum(self.C[i-19:i+1])/20 if i >= 19 else None for i in range(n)]
         dates = sorted({b["date"][:10] for b in bars})[-days:]
         self.w0 = next(i for i, b in enumerate(bars) if b["date"][:10] >= dates[0])
+        kdates = sorted({b["date"][:10] for b in bars})[-max(days, keep_days):]
+        self.k0 = next(i for i, b in enumerate(bars) if b["date"][:10] >= kdates[0])
         self.last = n - 1
         self.lows = self._swings(self.L, True); self.highs = self._swings(self.H, False)
 
@@ -88,24 +93,30 @@ class Series:
         L, D, K, C, MA, H = self.L, self.D, self.K, self.C, self.MA, self.H
         w0, last = self.w0, self.last
         st = {}
-        # ① 鈍化
-        dz = [i for i in range(w0, last+1) if D[i] < 20]
+        # ② 背離:從最新的相鄰低點往回找,第一組符合條件的就是這次的背離。
+        #    先看回看範圍(--days);背離確認後保留到「跌破背離低點」才失效,不受回看天數限制,
+        #    最多往回 --keep-days 個交易日(Gg 2026-11-27 3A)
+        div = None
+        for j in range(len(self.lows)-1, 0, -1):
+            a, b = self.lows[j-1], self.lows[j]
+            if a < self.k0: break
+            if D[a] < 20 and L[b] < L[a] and D[b] > D[a] and D[b] < 30:
+                div = {"a": a, "i": b, "confirm": b + W, "kept": a < w0}; break
+        # ① 鈍化:回看範圍內 D<20;背離是保留下來的(前低在回看範圍外)時,鈍化從背離前低算起
+        s0 = min(w0, div["a"]) if div else w0
+        dz = [i for i in range(s0, last+1) if D[i] < 20]
         st[1] = {"i": dz[0], "min": min(D[i] for i in dz)} if dz else None
-        # ② 背離(整組在回看範圍內)
-        st[2] = None
-        if st[1]:
-            for j in range(len(self.lows)-1, 0, -1):
-                a, b = self.lows[j-1], self.lows[j]
-                if a < w0: break
-                if D[a] < 20 and L[b] < L[a] and D[b] > D[a] and D[b] < 30:
-                    st[2] = {"a": a, "i": b, "confirm": b + W}; break
-            # 失效:背離低點之後任何一根跌破背離低點 → 這組訊號作廢(新低點確認前就要判定,不等右邊 3 根)
-            if st[2]:
-                b = st[2]["i"]
-                brk = next((i for i in range(b+1, last+1) if L[i] < L[b]), None)
-                if brk is not None:
-                    self.div_broken = {"a": st[2]["a"], "b": b, "i": brk, "low": min(L[b+1:last+1])}
-                    st[2] = None
+        st[2] = div if st[1] else None
+        # 失效:背離低點之後任何一根跌破背離低點 → 這組訊號作廢(新低點確認前就要判定,不等右邊 3 根)
+        if st[2]:
+            b = st[2]["i"]
+            brk = next((i for i in range(b+1, last+1) if L[i] < L[b]), None)
+            if brk is not None:
+                self.div_broken = {"a": st[2]["a"], "b": b, "i": brk, "low": min(L[b+1:last+1])}
+                st[2] = None
+                if st[1] and st[1]["i"] < w0:     # 保留的背離失效 → ① 回到只看回看範圍
+                    dz = [i for i in range(w0, last+1) if D[i] < 20]
+                    st[1] = {"i": dz[0], "min": min(D[i] for i in dz)} if dz else None
         # ③ 黃金交叉(背離低點那根本身的交叉也算,Gg 2026-11-18)
         st[3] = None
         if st[2]:
@@ -119,19 +130,31 @@ class Series:
             if MA[last] and C[last] > MA[last]:
                 first = next(i for i in range(st[3]["i"], last+1) if MA[i] and C[i] > MA[i])
                 st[4] = {"i": first, "ma": MA[last]}
-            # ⑤ 壓力線:背離低點之前的最近兩個下降波段高點
+            # ⑤ 下降壓力線,兩條任一條當下收盤站上就成立(Gg 2026-11-27 2D)
+            #   線 A:背離低點之前的最近兩個下降波段高點連線
+            #   線 B:下降通道上緣 = 下緣(低點 1 → 背離低點 b)的平行線,通過兩低點之間離下緣最遠的高點
             b = st[2]["i"]
             hs = [h for h in self.highs if h < b]
+            lines = []
             for j in range(len(hs)-1, 0, -1):
                 a2, b2 = hs[j-1], hs[j]
                 if H[b2] < H[a2]:
-                    s = (H[b2]-H[a2])/(b2-a2); ln = lambda x: H[b2] + s*(x-b2)
-                    if C[last] > ln(last):
-                        first = next(i for i in range(st[3]["i"], last+1) if C[i] > ln(i))
-                        st[5] = {"i": first, "a": a2, "b": b2, "line": ln(last)}
-                    else:
-                        self.line_info = {"a": a2, "b": b2, "line": ln(last)}
-                    break
+                    s = (H[b2]-H[a2])/(b2-a2)
+                    lines.append({"kind": "高點連線", "a": a2, "b": b2, "x0": b2, "y0": H[b2], "s": s}); break
+            p1 = next((i for i, bb in enumerate(self.bars) if tstr(bb) == ch_from), None) if ch_from else None
+            if p1 is not None and p1 < b:
+                s = (L[b]-L[p1])/(b-p1)
+                p2 = max(range(p1, b+1), key=lambda i: H[i] - (L[p1] + s*(i-p1)))
+                lines.append({"kind": "通道上緣", "a": p1, "b": b, "p2": p2, "x0": p2, "y0": H[p2], "s": s})
+            for e in lines:
+                ln = lambda x, e=e: e["y0"] + e["s"]*(x-e["x0"])
+                e["line"] = ln(last)
+                hit = [i for i in range(st[3]["i"], last+1) if C[i] > ln(i)]
+                e["i"] = hit[0] if (hit and C[last] > ln(last)) else None
+            self.lines = lines
+            ok = [e for e in lines if e["i"] is not None]
+            if ok:
+                st[5] = min(ok, key=lambda e: e["i"])
             # ⑥ 水平壓力區間:背離低點之前 zone_days 個交易日內的確認波段高點,取最低～最高
             zd = sorted({bb["date"][:10] for bb in self.bars[:b+1]})[-zone_days:]
             zh = [h for h in hs if self.bars[h]["date"][:10] >= zd[0]] if zd else []
@@ -169,7 +192,8 @@ def report(S, r, label):
     if not s1: out.append("② 底部背離: " + skip)
     elif st[2]:
         a, b = st[2]["a"], st[2]["i"]
-        out.append(f"② 底部背離: 有 ✅ 前低 {t(a)} {L[a]:,.0f}(D{D[a]:.1f})→ 後低 {t(b)} {L[b]:,.0f}(D{D[b]:.1f}),{t(st[2]['confirm'])} 確認")
+        kept = f";前低已超出回看 {days} 天,未跌破背離低點 {L[b]:,.0f} 所以保留" if st[2].get("kept") else ""
+        out.append(f"② 底部背離: 有 ✅ 前低 {t(a)} {L[a]:,.0f}(D{D[a]:.1f})→ 後低 {t(b)} {L[b]:,.0f}(D{D[b]:.1f}),{t(st[2]['confirm'])} 確認{kept}")
     elif getattr(S, "div_broken", None):
         e = S.div_broken
         out.append(f"② 底部背離: 失效 ❌ {t(e['i'])} 跌破背離低點 {px(L[e['b']])}(原背離 {t(e['a'])} {px(L[e['a']])} → {t(e['b'])} {px(L[e['b']])};之後最低 {px(e['low'])}),要等新低點確認後重新判斷")
@@ -183,11 +207,17 @@ def report(S, r, label):
     else:
         out.append(f"④ 突破 20MA: 有 ✅ 當下收 {C[last]:,.0f} > MA20 {MA[last]:,.0f}(黃金交叉後 {t(st[4]['i'])} 首次站上)" if st[4]
                    else f"④ 突破 20MA: 沒有 ❌ 當下收 {C[last]:,.0f},MA20 {MA[last]:,.0f}(差 {C[last]-MA[last]:+,.0f})")
-        if st[5]:
-            e = st[5]; out.append(f"⑤ 突破下降壓力線: 有 ✅ 當下收 {C[last]:,.0f} > 線 {e['line']:,.0f}(線:{t(e['a'])} {S.H[e['a']]:,.0f} → {t(e['b'])} {S.H[e['b']]:,.0f})")
-        elif getattr(S, "line_info", None):
-            e = S.line_info; out.append(f"⑤ 突破下降壓力線: 沒有 ❌ 當下收 {C[last]:,.0f},線 {e['line']:,.0f}(差 {C[last]-e['line']:+,.0f})")
-        else: out.append("⑤ 突破下降壓力線: 沒有 ❌(背離前找不到兩個下降的波段高點)")
+        lines = getattr(S, "lines", [])
+        if not lines: out.append("⑤ 突破下降壓力線: 沒有 ❌(找不到壓力線)")
+        else:
+            out.append("⑤ 突破下降壓力線(任一條站上就算): " + ("有 ✅" if st[5] else "沒有 ❌"))
+            for e in lines:
+                if e["kind"] == "高點連線":
+                    how = f"{t(e['a'])} {S.H[e['a']]:,.0f} → {t(e['b'])} {S.H[e['b']]:,.0f}"
+                else:
+                    how = f"下緣 {t(e['a'])} {L[e['a']]:,.0f} → {t(e['b'])} {L[e['b']]:,.0f},平行通過 {t(e['p2'])} {S.H[e['p2']]:,.0f}"
+                mark = f"✅ {t(e['i'])} 首次站上" if e["i"] is not None else f"❌ 差 {C[last]-e['line']:+,.0f}"
+                out.append(f"　{e['kind']}:線 {e['line']:,.0f}({how})當下收 {C[last]:,.0f} {mark}")
         z = getattr(S, "zone", None)
         if st[6]:
             out.append(f"⑥ 突破水平壓力區間: 有 ✅ 當下收 {px(C[last])} > 區間上緣 {px(z['hi'])}(區間 {zstr(z)},{t(st[6]['i'])} 首次站上)")
@@ -300,17 +330,23 @@ if svg and r30["stage"] >= 2:
         o.append(f'<circle cx="{X(i):.1f}" cy="{Y(MA[i]):.1f}" r="9" fill="none" stroke="{ORG}" stroke-width="3"/>')
         badge(X(i) + 30, Y(MA[i]) + 60, 4, ORG)
         legend.append((4, ORG, f"站上 20MA {t(i)}　當下收 {C[last]:,.0f} > {MA[last]:,.0f}"))
-    li = st[5] or getattr(S, "line_info", None)
-    if li:
-        a2, b2 = li["a"], li["b"]; s = (H[b2]-H[a2])/(b2-a2); xa = max(a2, i0)
-        o.append(f'<line x1="{X(xa):.1f}" y1="{Y(H[b2]+s*(xa-b2)):.1f}" x2="{X(last):.1f}" y2="{Y(H[b2]+s*(last-b2)):.1f}" stroke="{PUR}" stroke-width="3"/>')
-        for j in (a2, b2):
-            if j >= i0: o.append(f'<circle cx="{X(j):.1f}" cy="{Y(H[j]):.1f}" r="7" fill="none" stroke="{PUR}" stroke-width="2.5"/>')
-        if st[5]:
-            i = st[5]["i"]
-            o.append(f'<path d="M{X(i):.1f},{Y(H[i])-14:.1f} l-9,-18 h18 z" fill="{PUR}"/>')
-            badge(X(i), Y(H[i]) - 48, 5, PUR)
-            legend.append((5, PUR, f"突破壓力線 {t(i)}　當下收 {C[last]:,.0f} > 線 {st[5]['line']:,.0f}"))
+    for e in getattr(S, "lines", []):
+        ln = lambda x, e=e: e["y0"] + e["s"]*(x-e["x0"])
+        dash = "" if e["kind"] == "高點連線" else ' stroke-dasharray="14 7"'
+        if e["kind"] == "高點連線":
+            xa = max(e["a"], i0)
+            for j in (e["a"], e["b"]):
+                if j >= i0: o.append(f'<circle cx="{X(j):.1f}" cy="{Y(H[j]):.1f}" r="7" fill="none" stroke="{PUR}" stroke-width="2.5"/>')
+        else:   # 通道:上緣＋下緣(下緣用細線),上緣通過的高點畫圈
+            xa = max(e["a"], i0); sl = e["s"]; la = e["a"]
+            o.append(f'<line x1="{X(xa):.1f}" y1="{Y(L[la]+sl*(xa-la)):.1f}" x2="{X(last):.1f}" y2="{Y(L[la]+sl*(last-la)):.1f}" stroke="{PUR}" stroke-width="1.5"{dash}/>')
+            if e["p2"] >= i0: o.append(f'<circle cx="{X(e["p2"]):.1f}" cy="{Y(H[e["p2"]]):.1f}" r="7" fill="none" stroke="{PUR}" stroke-width="2.5"/>')
+        o.append(f'<line x1="{X(xa):.1f}" y1="{Y(ln(xa)):.1f}" x2="{X(last):.1f}" y2="{Y(ln(last)):.1f}" stroke="{PUR}" stroke-width="3"{dash}/>')
+    if st[5]:
+        i = st[5]["i"]
+        o.append(f'<path d="M{X(i):.1f},{Y(H[i])-14:.1f} l-9,-18 h18 z" fill="{PUR}"/>')
+        badge(X(i), Y(H[i]) - 48, 5, PUR)
+        legend.append((5, PUR, f"突破{st[5]['kind']} {t(i)}　當下收 {C[last]:,.0f} > 線 {st[5]['line']:,.0f}"))
     if st[6]:
         TEAL = "#0e7490"; i = st[6]["i"]
         o.append(f'<path d="M{X(i):.1f},{Y(H[i])-14:.1f} l-9,-18 h18 z" fill="{TEAL}"/>')
