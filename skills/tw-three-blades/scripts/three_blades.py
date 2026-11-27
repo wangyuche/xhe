@@ -46,8 +46,16 @@ except Exception as e:
     sys.exit(f"資料錯誤: 讀不到 {args[0]}: {e}")
 if not isinstance(raw, dict) or not raw.get("data"):
     sys.exit(f"資料錯誤: {args[0]} 沒有 K 棒(Fugle 回應: {str(raw)[:200]})")
-bars = sorted({b["date"]: b for b in raw["data"] if isinstance(b, dict) and isinstance(b.get("date"), str)}.values(), key=lambda b: b["date"])
+def _ok_bar(b):
+    return isinstance(b, dict) and isinstance(b.get("date"), str) and all(
+        isinstance(b.get(k), (int, float)) and not isinstance(b.get(k), bool) for k in ("open", "high", "low", "close"))
+bad_bars = [b for b in raw["data"] if not _ok_bar(b)]
+if bad_bars:
+    sys.exit(f"資料錯誤: {len(bad_bars)} 根 K 棒缺日期或價格欄位(例:{str(bad_bars[0])[:120]})")
+bars = sorted({b["date"]: b for b in raw["data"]}.values(), key=lambda b: b["date"])
 if asof:
+    if len(asof) == 10:  # 只給日期:包含當天整天
+        asof += " 23:59"
     bars = [b for b in bars if tstr(b) <= asof]
 n = len(bars)
 need = 240 + slope_n + 1
@@ -100,7 +108,8 @@ def last_cross_price(p):
 
 start = _dt.datetime.strptime(tstr(bars[last]), "%Y-%m-%d %H:%M")
 end = min(start + _dt.timedelta(minutes=60), start.replace(hour=13, minute=30))  # 13:00 那根在 13:30 收盤就結束
-now = _dt.datetime.utcnow() + _dt.timedelta(hours=8)
+now = (_dt.datetime.strptime(__import__("os").environ["TB_NOW"], "%Y-%m-%d %H:%M") if __import__("os").environ.get("TB_NOW")
+       else _dt.datetime.utcnow() + _dt.timedelta(hours=8))  # TB_NOW:測試用,台北時間
 live = not asof and now < end
 out = [f"【60分K 均線三刀流】{t(last)} 收 {px(C[last])}  K {K[last]:.1f} / D {D[last]:.1f}  斜率=比 {slope_n} 根前"
        + ("  ⚠️ 最後一根還沒走完,訊號可能變動" if live else "")]

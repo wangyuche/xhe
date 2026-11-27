@@ -92,11 +92,21 @@ for a_ in (("--slope-n", "0"), ("--svg",)):
     r = run(F60, *a_)
     check(f"參數錯誤 {' '.join(a_)} 給用法訊息", r.returncode != 0 and "用法" in r.stderr and "Traceback" not in r.stderr)
 
-# 10. 13:00 那根在 13:30 收盤就結束:收盤後執行不標「還沒走完」(用 --asof 以外的方式不好控時間,直接檢查計算)
-import datetime as _d
-st = _d.datetime(2026, 11, 27, 13, 0)
-end = min(st + _d.timedelta(minutes=60), st.replace(hour=13, minute=30))
-check("13:00 那根的結束時間是 13:30", end == _d.datetime(2026, 11, 27, 13, 30) and "start.replace(hour=13, minute=30)" in open(SCRIPT).read())
+# 10. 13:00 那根在 13:30 收盤就結束:收盤後不標「還沒走完」,收盤前要標(TB_NOW 指定台北時間)
+def run_at(now, *a):
+    return subprocess.run([sys.executable, "-I", SCRIPT, *a], capture_output=True, text=True, env=dict(os.environ, TB_NOW=now))
+check("13:40 執行:最後一根 13:00 已走完", "還沒走完" not in run_at("2026-11-27 13:40", F60).stdout)
+check("13:20 執行:最後一根 13:00 還沒走完", "還沒走完" in run_at("2026-11-27 13:20", F60).stdout)
+
+# 10b. K 棒缺 close 要報資料錯誤,不是 traceback;--asof 只給日期時包含當天
+bad2 = os.path.join(TMP, "tb_bad2.json")
+try:
+    d = json.load(open(F60)); del d["data"][5]["close"]; json.dump(d, open(bad2, "w"))
+    r = run(bad2)
+    check("K 棒缺 close 報資料錯誤", r.returncode != 0 and "資料錯誤" in r.stderr and "Traceback" not in r.stderr)
+finally:
+    if os.path.exists(bad2): os.remove(bad2)
+check("--asof 只給日期包含當天", "【60分K 均線三刀流】11/13 13:00" in run(F60, "--asof", "2026-11-13").stdout)
 
 # 11. run.sh:交易時間內盤中 K 回空資料要警告(假 fugle.sh)
 work = tempfile.mkdtemp(prefix="tb_run_", dir=TMP)

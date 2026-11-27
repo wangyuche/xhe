@@ -14,7 +14,9 @@ if not isinstance(h, dict) or not h.get("data"):
 try:
     t = json.load(open(intra_p))
     extra = t.get("data", []) if isinstance(t, dict) else []
-    extra = [b for b in extra if isinstance(b, dict) and b.get("date")] if isinstance(extra, list) else []
+    extra = [b for b in extra if isinstance(b, dict) and isinstance(b.get("date"), str)
+             and all(isinstance(b.get(k), (int, float)) and not isinstance(b.get(k), bool) for k in ("open", "high", "low", "close"))
+             ] if isinstance(extra, list) else []  # 盤中不完整的 K 棒(例如缺 close)略過
 except Exception:
     extra = []
 h["data"] = [b for b in h["data"] if isinstance(b, dict) and isinstance(b.get("date"), str)]
