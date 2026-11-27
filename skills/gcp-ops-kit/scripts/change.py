@@ -188,10 +188,16 @@ def main(argv):
         src_meta = gglib.read_json(os.path.join(src_run, "meta.json"), {}) or {}
         if os.path.basename(plan_path) != "plan.json" or src_meta.get("mode") not in ("review", "plan"):
             raise gglib.Blocked("只接受審查 / 計畫 run 目錄裡由 plan.py 產生的 plan.json")
-        actual = gglib.sha256_file(plan_path)
+        import hashlib
+        with open(plan_path, "rb") as f:
+            raw = f.read()  # 只讀一次:雜湊與執行用同一份內容
+        actual = hashlib.sha256(raw).hexdigest()
         if actual != sha:
             raise gglib.Blocked(f"plan.json sha256 不符(簡報 {sha[:12]}…,實際 {actual[:12]}…)")
-        plan = gglib.read_json(plan_path)
+        try:
+            plan = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            raise gglib.Blocked("plan.json 不是有效 JSON")
         if not plan or os.path.realpath(plan.get("source_run") or "") != src_run or plan.get("project") != src_meta.get("project"):
             raise gglib.Blocked("plan.json 的 source_run / project 與所在 run 目錄不符")
         approved = parse_approved(approved_text)

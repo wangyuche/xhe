@@ -25,9 +25,9 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports   # 選填,預設 ~/gcp-guardian
 
 ```bash
 <kit>/scripts/check.sh yaml                         # ruby / python3 / node
-<kit>/scripts/check.sh review|plan|change <專案>    # + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
+<kit>/scripts/check.sh review|plan|change [<專案>]  # 沒給專案用 GG_DEFAULT_PROJECT; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
 
-<kit>/scripts/collect.sh <專案> [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
+<kit>/scripts/collect.sh [<專案>] [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
 #   → run=<GG_REPORT_DIR>/<專案>/<時間>-<模式>/ :inventory/(遮蔽後)、findings.json、plan.json(空)、report.html
 <kit>/scripts/yaml-review.sh <檔案或目錄>... [--label <名稱>]
 #   → run=<GG_REPORT_DIR>/yaml-<名稱>/<時間>-yaml/
@@ -104,7 +104,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 
 ## 隔離與安全
 
-- 每個 run 自己的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/kubeconfig`,結束刪除;`commands.log` 記錄每個指令(金鑰路徑以 `<key>` 代替)。
+- 每個 run 自己的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/kubeconfig`、`HOME=<run>/gcloud/home`(kubectl 與 auth plugin 的快取),結束刪除;`commands.log` 記錄每個指令(金鑰路徑以 `<key>` 代替)。
 - 唯讀:`rules/allow_read.txt`(審查)、`rules/allow_dryrun.txt`(計畫 / 變更前快照與 dry-run),先過 `rules/deny_read.txt`(Secret 值、序列埠、`--raw`、exec、token…)。
 - 遮蔽(寫檔前):Secret `data`、ConfigMap 值、env `value`(另標 `looks_secret`)、VM metadata 值(布林設定保留)、`masterAuth.*`、last-applied annotation、秘密樣式(`rules/secret_patterns.json`)。
 - plan.json 只保留 `kubectl diff` 的「資源 + 新建 / 修改」摘要,不留 diff 內容。

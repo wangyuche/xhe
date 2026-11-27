@@ -122,9 +122,13 @@ def check_bash(cmd, cfg, cwd):
     if first == "find" and any(t in FIND_DENY for t in toks):
         return "find 不允許 -exec / -delete 等動作"
     # 沒寫路徑時遞迴工具會掃 cwd:把 cwd 當成隱含路徑一起檢查
-    recursive = (first in ("grep", "diff") and any(t in ("-r", "-R", "--recursive", "--dereference-recursive")
+    gtoks = toks[1:]
+    d_recurse = any((t == "-d" and i + 1 < len(gtoks) and gtoks[i + 1] == "recurse") or t.startswith("-drecurse")
+                    or (t.startswith("-") and not t.startswith("--") and "d" in t and t.endswith("recurse"))
+                    for i, t in enumerate(gtoks))
+    recursive = (first in ("grep", "diff") and (d_recurse or any(t in ("-r", "-R", "--recursive", "--dereference-recursive")
                                                    or (t.startswith("-") and not t.startswith("--") and ("r" in t or "R" in t))
-                                                   or t.startswith("--directories") for t in toks[1:])) \
+                                                   or t.startswith("--directories") for t in gtoks))) \
         or (first == "find" and (len(toks) == 1 or toks[1].startswith("-"))) \
         or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]) and not any(not x.startswith("-") for x in toks[1:]))
     if recursive and is_protected(cwd, cfg, cwd, ancestor=True):

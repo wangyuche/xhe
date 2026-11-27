@@ -207,7 +207,9 @@ def t_guard(e):
         ok(f"guard hook {tool} {os.path.relpath(tgt, e.tmp) if tgt.startswith('/') else tgt} → {want}", r.returncode == want, r.stderr)
     os.makedirs(os.path.join(e.tmp, "sub"), exist_ok=True)
     for cwd, cmd, want in ((os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
-                           (os.path.dirname(e.tmp), "grep -r private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
+                           (os.path.dirname(e.tmp), "grep -r private_key", 2),
+                           (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
+                           (os.path.dirname(e.tmp), "grep -drecurse private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
                            (os.path.dirname(e.tmp), "find -name sa.json", 2), (os.path.join(e.reports, "p", "other"), "grep -n x", 0)):
         r = subprocess.run(["python3", g], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd}),
                            env=env, capture_output=True, text=True)
@@ -510,8 +512,8 @@ def t_review(e):
     ok("審查:commands.log 每行都符合唯讀白名單", not bad, bad[:3])
     calls = e.stub_calls()
     home_gc = os.path.join(os.environ.get("HOME", ""), ".config", "gcloud")
-    ok("審查:所有呼叫用 run 目錄的隔離 CLOUDSDK_CONFIG / KUBECONFIG",
-       calls and all(c["CLOUDSDK_CONFIG"].startswith(run) and c["KUBECONFIG"].startswith(run) for c in calls)
+    ok("審查:所有呼叫用 run 目錄的隔離 CLOUDSDK_CONFIG / KUBECONFIG / HOME",
+       calls and all(c["CLOUDSDK_CONFIG"].startswith(run) and c["KUBECONFIG"].startswith(run) and c["HOME"].startswith(run) for c in calls)
        and not any(c["CLOUDSDK_CONFIG"].startswith(home_gc) for c in calls))
     ok("審查:結束後 run 目錄沒有 gcloud/ 與 kubeconfig", not os.path.exists(os.path.join(run, "gcloud")) and not os.path.exists(os.path.join(run, "kubeconfig")))
     blob = ""
@@ -537,6 +539,19 @@ def t_activate_fail(e):
     kc = [os.path.join(dp, f) for dp, _, fs in os.walk(e.reports) for f in fs if f == "kubeconfig"]
     ok("SA 啟用失敗 → BLOCKED,run 目錄不殘留 gcloud/ 與 kubeconfig", r.returncode == 3 and not runs and not kc, (r.stderr, runs, kc))
     e.state({})
+
+
+def t_default_project(e):
+    cfg2 = os.path.join(e.tmp, "conf", "config")
+    orig = open(cfg2).read()
+    with open(cfg2, "w") as f:
+        f.write(orig + f"GG_DEFAULT_PROJECT={FX.P}\n")
+    r = e.run([os.path.join(S, "collect.sh"), "--scope", "iam"])
+    ok("沒給專案時用 GG_DEFAULT_PROJECT", r.returncode == 0 and f"/{FX.P}/" in r.stdout, r.stderr[-400:])
+    with open(cfg2, "w") as f:
+        f.write(orig)
+    r = e.run([os.path.join(S, "collect.sh"), "--scope", "iam"])
+    ok("沒給專案也沒有 GG_DEFAULT_PROJECT → BLOCKED", r.returncode == 3, r.stderr[-300:])
 
 
 def t_undetermined(e):
@@ -811,6 +826,7 @@ def main():
         run = t_review(e)
         t_undetermined(e)
         t_activate_fail(e)
+        t_default_project(e)
         if run:
             t_plan_change(e, run)
     finally:

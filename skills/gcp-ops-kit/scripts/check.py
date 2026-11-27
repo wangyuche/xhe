@@ -1,7 +1,7 @@
 """環境檢查(依模式)。由 check.sh 呼叫。
 
 check.sh yaml                 只檢查 ruby / python3 / node(kustomize 另需 kubectl)
-check.sh review|plan|change <專案>   另檢查設定檔 / 金鑰權限、gcloud、gke-gcloud-auth-plugin、kubectl,啟用 SA 並確認能存取專案、列出 SA 角色
+check.sh review|plan|change [<專案>](沒給用 GG_DEFAULT_PROJECT)   另檢查設定檔 / 金鑰權限、gcloud、gke-gcloud-auth-plugin、kubectl,啟用 SA 並確認能存取專案、列出 SA 角色
 結束碼:0 可用、3 BLOCKED、2 用法錯誤
 """
 import json
@@ -28,9 +28,16 @@ def main(argv):
             return gglib.EXIT_BLOCKED
         print("yaml ok" + ("" if shutil.which("kubectl") else "(沒有 kubectl:kustomize 目錄會列為無法判定)"))
         return 0
-    if len(argv) < 2:
-        gglib.die(__doc__, gglib.EXIT_USAGE)
-    project = argv[1]
+    project = argv[1] if len(argv) > 1 else None
+    if not project:
+        try:
+            project = gglib.load_config(require=False).get("GG_DEFAULT_PROJECT")
+        except gglib.Blocked as e:
+            print(f"BLOCKED: {e}", file=sys.stderr)
+            return gglib.EXIT_BLOCKED
+        if not project:
+            print("BLOCKED: 沒給專案,設定檔也沒有 GG_DEFAULT_PROJECT", file=sys.stderr)
+            return gglib.EXIT_BLOCKED
     try:
         gglib.check_project(project)
         missing += [t for t in ("gcloud", "kubectl", "gke-gcloud-auth-plugin") if shutil.which(t) is None]

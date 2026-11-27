@@ -1,6 +1,6 @@
 """唯讀盤點 + 規則 + 報告(審查 / 計畫模式的第一步)。由 collect.sh 呼叫。
 
-collect.sh <專案> [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run 目錄>]
+collect.sh [<專案>] [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run 目錄>]
 stdout 最後一行:run=<run 目錄>
 結束碼:0 完成(可能有無法判定)、3 BLOCKED、4 指令被拒絕(kit 錯誤)
 """
@@ -172,7 +172,15 @@ def render(run):
 
 def main(argv):
     if not argv or argv[0].startswith("-"):
-        gglib.die(__doc__, gglib.EXIT_USAGE)
+        try:
+            default = gglib.load_config(require=False).get("GG_DEFAULT_PROJECT")
+        except gglib.Blocked as e:
+            print(f"BLOCKED: {e}", file=sys.stderr)
+            return gglib.EXIT_BLOCKED
+        if not default:
+            print("BLOCKED: 沒給專案,設定檔也沒有 GG_DEFAULT_PROJECT", file=sys.stderr)
+            return gglib.EXIT_BLOCKED
+        argv = [default] + list(argv)
     project = argv[0]
     opts = {"--mode": "review", "--scope": ",".join(AREAS), "--clusters": "", "--prev": ""}
     it = iter(argv[1:])

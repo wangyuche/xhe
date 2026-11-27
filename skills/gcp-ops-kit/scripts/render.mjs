@@ -50,8 +50,12 @@ function status(d, s) {
 }
 
 function diffPrev(d, all) {
-  const prev = d.meta.prev;
+  let prev = d.meta.prev;
   if (!prev) return null;
+  try {
+    prev = fs.realpathSync(prev);
+    if (!prev.startsWith(reportDir() + path.sep) || !fs.existsSync(path.join(prev, 'meta.json'))) return null;
+  } catch { return null; }
   const pd = load(prev);
   const key = (f) => `${f.rule_id}|${f.resource}`;
   const now = new Set(all.map(key));
@@ -277,7 +281,7 @@ export function check(run) {
 const args = process.argv.slice(2);
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   if (args[0] === '--check' && args[1]) {
-    const errs = check(path.resolve(args[1]));
+    const errs = check(assertRun(path.resolve(args[1])));
     if (errs.length) { console.error(errs.map((e) => 'CHECK FAIL ' + e).join('\n')); process.exit(1); }
     console.log('check ok');
   } else if (args[0] && !args[0].startsWith('-')) {

@@ -15,7 +15,7 @@ d = os.environ.get("GG_STUB_DIR", "")
 text = " ".join(argv)
 with open(os.environ["GG_STUB_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps({"tool": tool, "argv": argv, "CLOUDSDK_CONFIG": os.environ.get("CLOUDSDK_CONFIG"),
-                        "KUBECONFIG": os.environ.get("KUBECONFIG")}, ensure_ascii=False) + "\n")
+                        "KUBECONFIG": os.environ.get("KUBECONFIG"), "HOME": os.environ.get("HOME")}, ensure_ascii=False) + "\n")
 if tool == "gke-gcloud-auth-plugin":
     sys.exit(0)
 sp = os.path.join(d, "state.json")

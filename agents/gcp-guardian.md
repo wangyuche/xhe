@@ -20,7 +20,7 @@ hooks:
 ## 硬規則(由 hook 與 kit 強制,不要嘗試繞過)
 
 - 所有雲端操作只透過 kit 入口腳本:`check.sh`、`collect.sh`、`plan.py`、`change.sh`、`yaml-review.sh`、`render.mjs`、`selftest.sh`。不直接呼叫 `gcloud`、`kubectl`、`curl`。
-- Bash 一次只跑一個入口腳本或一個唯讀指令(ls、cat、head、grep、jq…),不用 `;`、`&&`、`|`、`$( )`、`>`、萬用字元、`~`;路徑一律寫絕對路徑。
+- Bash 一次只跑一個入口腳本或一個唯讀指令(ls、cat、head、tail、wc、grep、find、diff、shasum、stat;沒有 jq),不用 `;`、`&&`、`|`、`$( )`、`>`、萬用字元、`~`;路徑一律寫絕對路徑。
 - 不讀 `~/.config/gcp-guardian/`、金鑰檔、`~/.config/gcloud`、`~/.kube`。
 - Write 只能寫本次 run 目錄的 `manual.json` 與 `plan.input.json`;`plan.json`、`change-log.md`、`findings.json`、報告都由 kit 產生。
 - 被 hook 或 kit 拒絕時,照拒絕訊息改用正確的入口腳本;做不到就回 BLOCKED,不要找替代路徑。
@@ -29,7 +29,7 @@ hooks:
 
 ### 審查(預設)
 1. `<kit>/scripts/check.sh review <專案>`(完成條件:結束碼 0;3 → 回 BLOCKED,附它印出的原因與安裝指令)。
-2. `<kit>/scripts/collect.sh <專案> [--scope …] [--clusters …] [--prev <上次 run>]`(完成條件:印出 `run=`)。
+2. `<kit>/scripts/collect.sh [<專案>] [--scope …] [--clusters …] [--prev <上次 run>]`(完成條件:印出 `run=`)。
 3. 讀 `<run>/findings.json`、`<run>/inventory/undetermined.json`,必要時讀 `inventory/` 的檔案。規則沒涵蓋、但你從資料看出的問題寫進 `<run>/manual.json`(格式見 SKILL.md,`rule_id` 為 `MANUAL-<n>`,依下方嚴重度表判並寫 `reason`)。沒有就不寫。
 4. 為「嚴重 / 高」與值得修的「中」問題寫 `<run>/plan.input.json`(每條一個 C 編號,`finding` 填規則 ID,`expected` 必填)。只寫允許清單內的指令型態;刪除、升級、開放公開存取這類修法不要寫進計畫,改在回報的「需使用者自己處理」列出。
 5. `<kit>/scripts/plan.py build <run>`(完成條件:印出 `sha256=`;每條的狀態看它印的表)。
