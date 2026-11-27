@@ -16,7 +16,9 @@ SCRIPTS = os.path.join(gglib.KIT, "scripts")
 ENTRIES = {"check.sh", "collect.sh", "plan.py", "change.sh", "render.mjs", "yaml-review.sh", "selftest.sh"}
 INTERP = {".sh": {"bash"}, ".py": {"python3"}, ".mjs": {"node"}}
 FORBIDDEN_CHARS = set(";&|`$<>()\n\r\\*?[]{}~!#")
-READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "date", "pwd", "find", "diff"}
+# 只留不會遞迴的唯讀指令。grep / find / diff 的遞迴旗標組合太多(含 ugrep 的 -9、--depth),不放行;
+# 搜尋內容請用 Grep 工具(路徑受 hook 檢查)。
+READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "shasum", "stat", "date", "pwd"}
 FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
                "curl", "wget", "googleapis")
@@ -151,7 +153,10 @@ def check_bash(cmd, cfg, cwd):
     if i == 1:
         return "直譯器只能執行 kit 入口腳本"
     if first not in READONLY_CMDS:
-        return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))})"
+        hint = ";搜尋內容請用 Grep 工具、列檔請用 Glob 工具" if first in ("grep", "egrep", "fgrep", "rg", "ugrep", "find", "diff") else ""
+        return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))}){hint}"
+    if first == "ls" and any(t.startswith("-") and not t.startswith("--") and ("R" in t or "L" in t) or t in ("--recursive", "--dereference") for t in toks[1:]):
+        return "ls 不允許 -R / -L(會遞迴或跟隨 symlink)"
     if first == "find" and any(t in FIND_DENY for t in toks):
         return "find 不允許 -exec / -delete 等動作"
     if (first == "grep" and any(t == "--dereference-recursive" or (t.startswith("-") and not t.startswith("--") and ("R" in t or "S" in t or "O" in t or "p" in t)) for t in toks[1:])) \

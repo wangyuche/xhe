@@ -178,8 +178,13 @@ def t_guard(e):
         (f"grep --file={e.key} x {e.reports}", "deny"),
         (f"grep -f{e.key} x", "deny"),
         (f"cat {e.reports}/p/r/report.html", "allow"),
-        (f"grep cloud-platform.googleapis {e.reports}/p/r/x.json", "allow"),
-        (f"grep -c . {e.reports}/p/r/x.json", "allow"),
+        (f"grep cloud-platform.googleapis {e.reports}/p/r/x.json", "deny"),  # grep 不再放行(改用 Grep 工具)
+        (f"cat {e.reports}/p/r/x.json", "allow"),
+        (f"head -n 5 {e.key}", "deny"),
+        (f"grep -9 private_key {e.tmp}", "deny"),
+        (f"grep --depth=3 SECRET", "deny"),
+        (f"ls -R {e.reports}", "deny"),
+        (f"grep -c . {e.reports}/p/r/x.json", "deny"),
         (f"grep --color . {e.key}", "deny"),
         (f"grep -oFhf{e.key} {e.reports}/p/r/manual.json", "deny"),
         (f"find -x {e.tmp}/conf", "deny"),
@@ -187,8 +192,8 @@ def t_guard(e):
         (f"diff -r {proj2} {e.reports}", "deny"),
         (f"grep -C 2 x {e.key}", "deny"),
         ("python3 -c 'print(1)'", "deny"),
-        (f"find {e.reports}/p/r -name ..", "allow"),
-        (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "allow"),
+        (f"find {e.reports}/p/r -name ..", "deny"),
+        (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "deny"),
         (f"ls {e.tmp}", "allow"),
         (f"ls -laR {e.reports}", "deny-live"),
         (f"file {e.reports}", "deny"),
@@ -238,14 +243,14 @@ def t_guard(e):
         ok(f"guard symlink:{cmd[-60:]!r} → {want}", r.stdout.split("\t")[0].strip() == want, r.stdout)
     safe = os.path.join(e.tmp, "safe-dir")
     os.makedirs(safe, exist_ok=True)
-    for cwd, cmd, want in ((os.path.dirname(e.tmp), f"grep -r foo {safe}", 0), (proj, "grep -r server", 2), (proj, "grep -rS server", 2), (proj, "grep -r -e private_key -e client_email", 2),
+    for cwd, cmd, want in ((os.path.dirname(e.tmp), f"grep -r foo {safe}", 2), (proj, "grep -r server", 2), (proj, "grep -rS server", 2), (proj, "grep -r -e private_key -e client_email", 2),
                            (os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
                            (os.path.dirname(e.tmp), "grep -r private_key", 2),
                            (os.path.dirname(e.tmp), "grep -rA 3 private_key", 2),
                            (os.path.dirname(e.tmp), "grep -rm1 private_key", 2),
                            (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
                            (os.path.dirname(e.tmp), "grep -drecurse private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
-                           (os.path.dirname(e.tmp), "find -name sa.json", 2), (os.path.join(e.reports, "p", "other"), "grep -n x", 0)):
+                           (os.path.dirname(e.tmp), "find -name sa.json", 2), (os.path.join(e.reports, "p", "other"), "grep -n x", 2), (os.path.join(e.reports, "p", "other"), "grep -rv Library", 2)):
         r = subprocess.run(["python3", g], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd}),
                            env=env, capture_output=True, text=True)
         ok(f"guard cwd 隱含路徑:{cmd!r} → {want}", r.returncode == want, r.stderr)

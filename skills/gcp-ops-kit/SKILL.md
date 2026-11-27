@@ -126,7 +126,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - plan.json 只保留 `kubectl diff` 的「資源 + 新建 / 修改」摘要,不留 diff 內容。
 - `before/C<n>.rollback.json` 是 kubectl 還原用的**原始物件**(還原指令就指向它)(ConfigMap 可能含原值),權限 600,`--check` 不掃它;報告與回報不印它的內容。
 - 專案鎖:`<GG_REPORT_DIR>/<專案>/.lock` 的 `fcntl.flock`(plan build、change 期間;程序結束或當掉即釋放);被佔用 → BLOCKED。
-- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或唯讀指令(ls、cat、head、tail、wc、grep、shasum、stat、date、pwd、find(無 -exec)、diff),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接出現 gcloud / kubectl / curl…;參數(含 `--opt=值`、`-f/路徑`,大小寫不分)不可指向受保護路徑或其上層目錄(`ls`、`stat` 例外);報告目錄裡有執行中 run 的憑證快取或 `*.rollback.json` 時,遞迴讀取報告目錄也會被擋;`*.rollback.json` 本身不可讀;沒寫路徑的遞迴 grep / find 以 cwd 檢查;Read 不可碰、Grep / Glob 的搜尋範圍不可包含 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證;Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
+- `guard.py`:gcp-guardian agent 的 PreToolUse hook。Bash 只准「單一入口腳本 + 參數」或不遞迴的唯讀指令(ls(不帶 -R / -L)、cat、head、tail、wc、shasum、stat、date、pwd;grep / find / diff 一律不放行,搜尋用 Grep / Glob 工具)、diff),禁止 `; & | $ ` < > ( ) * ? [ ] { } ~ ! #` 與換行;不可直接出現 gcloud / kubectl / curl…;參數(含 `--opt=值`、`-f/路徑`,大小寫不分)不可指向受保護路徑或其上層目錄(`ls`、`stat` 例外);報告目錄裡有執行中 run 的憑證快取或 `*.rollback.json` 時,遞迴讀取報告目錄也會被擋;`*.rollback.json` 本身不可讀;沒寫路徑的遞迴 grep / find 以 cwd 檢查;Read 不可碰、Grep / Glob 的搜尋範圍不可包含 `~/.config/gcp-guardian`、金鑰、`~/.config/gcloud`、`~/.kube`、run 內憑證;Write / Edit 只准 run 目錄的 `manual.json`、`plan.input.json`。測試:`python3 <kit>/scripts/guard.py --test '<指令>'`。
 
 ## 已知限制
 

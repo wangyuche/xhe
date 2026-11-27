@@ -152,7 +152,7 @@ def build_item(s, cfg, run, project, raw, ctx_done):
     item["target"]["project"] = project
     if item["rollback"]:
         item["rollback"] = [a.replace("<before/C?.json>", f"<變更 run>/before/{item['id']}.rollback.json") for a in item["rollback"]]
-    item["precondition_failed_at_plan"] = ggplan.check_pre(item["precondition"] + item["auto_pre"], snap)
+    item["precondition_failed_at_plan"] = ggplan.check_pre(item["precondition"], snap) + ggplan.check_pre(item["auto_pre"], snap, redacted=False)
     if item["precondition_failed_at_plan"] and not item["blocked_reason"]:
         item["blocked_reason"] = "precondition 在計畫當下就不成立"
     snap_path = os.path.join(run, "snapshots", f"{item['id']}.json")

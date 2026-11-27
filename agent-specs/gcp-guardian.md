@@ -153,7 +153,8 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 |---|---|
 | Read | 讀 YAML、盤點 JSON、plan.json、kit 文件 |
 | Write | 只寫本次 run 目錄的 `manual.json` 與給 `plan.py` 的計畫草稿 `plan.input.json`(不得寫 plan.json、change-log.md;這兩個由 kit 產生) |
-| Bash | 跑 kit 腳本 |
+| Bash | 跑 kit 腳本與不遞迴的唯讀指令 |
+| Grep / Glob | 在報告與 YAML 裡搜尋內容、找檔案(取代 Bash 的 grep / find;路徑受 hook 檢查) |
 
 ## 停止並回 BLOCKED 的情況
 - 非 YAML 模式:設定檔或金鑰不存在、權限不是 600、SA 啟用失敗、缺必要工具(附安裝指令給使用者自己執行:`brew install --cask google-cloud-sdk`、`gcloud components install gke-gcloud-auth-plugin`)、SA 無法存取簡報的專案。
@@ -180,3 +181,4 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 - 測試資料放在 `skills/gcp-ops-kit/tests/`(`testdata/`、`fixtures.py`、`stub/`),入口 `scripts/selftest.sh`。
 - code-review(PR #40)後的調整:允許清單移除沒有可靠還原的旗標(logging / monitoring / security-posture / workload-vulnerability-scanning / maintenance-window);專案鎖改 `fcntl.flock`;核准旗標固定格式;change.sh 只接受 plan.py 產生的 plan.json;kubectl 還原改 `kubectl replace`;防火牆只改 INGRESS allow 規則;kubectl 不可 apply / patch Secret、RBAC、webhook、CRD、Namespace。
 - 第十六輪 review 後縮小 kubectl 變更範圍:apply / patch 只限 workload 類與 configmap;NetworkPolicy、Ingress、Service、ServiceAccount 的變更不由 agent 執行(審查仍會列出並給修法),因為語意上的放寬(開放來源、換身分)無法用固定規則可靠判斷。
+- 第三十七輪 review 後:Bash 不再放行 grep / find / diff(遞迴旗標組合太多,含 ugrep 的 -9、--depth),agent 改用 Grep / Glob 工具搜尋;ls 不允許 -R / -L。

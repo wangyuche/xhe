@@ -120,7 +120,7 @@ class Runner:
             return self.stop("BLOCKED", cid, "讀不到叢集 endpoint,不能確認是同一個叢集")
         if needs_ep and endpoint != it["target"].get("endpoint"):
             return self.stop("BLOCKED", cid, f"叢集 endpoint 不符(計畫 {it['target'].get('endpoint')},現在 {endpoint})")
-        bad = ggplan.check_pre((it.get("precondition") or []) + (it.get("auto_pre") or []), snap)
+        bad = ggplan.check_pre(it.get("precondition") or [], snap) + ggplan.check_pre(it.get("auto_pre") or [], snap, redacted=False)
         if bad:
             return self.stop("BLOCKED", cid, "precondition 不符(環境已變):" + json.dumps(bad, ensure_ascii=False)[:500])
         dry = {}

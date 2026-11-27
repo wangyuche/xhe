@@ -292,9 +292,12 @@ def _safe_actual(v):
     return gglib.redact_value(v)
 
 
-def check_pre(pre_list, snap):
-    """回傳不成立的條件清單(actual 已遮蔽)。比對的是遮蔽後的快照:不能拿 precondition / expected 猜秘密值。"""
-    snap = gglib.redact(snap) if isinstance(snap, (dict, list)) else snap
+def check_pre(pre_list, snap, redacted=True):
+    """回傳不成立的條件清單(actual 已遮蔽)。
+    redacted=True(agent 寫的 precondition / expected):比對遮蔽後的快照,不能拿來猜秘密值。
+    redacted=False(kit 產生的 auto_pre):比對原始快照。"""
+    if redacted and isinstance(snap, (dict, list)):
+        snap = gglib.redact(snap)
     bad = []
     for p in pre_list or []:
         if "field" in p:
