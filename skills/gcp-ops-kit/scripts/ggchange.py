@@ -498,8 +498,6 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     if pos[0] != flags.get("--project"):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
         return None, [], None
-    if _binding_has_condition(snap, flags["--member"], flags["--role"]):
-        return None, [], "綁定帶 IAM condition,還原範本不支援"
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN
     rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
@@ -517,10 +515,9 @@ def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
         return None, [], None
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN
-    if _binding_has_condition(snap, flags["--member"], flags["--role"]):
-        return None, [], "綁定帶 IAM condition,還原範本不支援"
+    # --condition=None 只移除無條件綁定;帶條件的同名綁定不受影響,還原也只加回無條件那條
     rb = ["gcloud", "storage", "buckets", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
-          f"--role={flags['--role']}", f"--project={flags['--project']}", "--quiet"]
+          f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
     return rb, [], None
 
@@ -529,13 +526,6 @@ def _has_binding(policy, member, role):
     """只看無條件的綁定(--condition=None 的增減對象)。"""
     for b in (policy or {}).get("bindings") or []:
         if b.get("role") == role and member in (b.get("members") or []) and not b.get("condition"):
-            return True
-    return False
-
-
-def _binding_has_condition(policy, member, role):
-    for b in (policy or {}).get("bindings") or []:
-        if b.get("role") == role and member in (b.get("members") or []) and b.get("condition"):
             return True
     return False
 

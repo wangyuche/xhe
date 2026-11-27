@@ -4,7 +4,7 @@ get-serial-port-output
 secrets versions access
 print-access-token
 print-identity-token
-^kubectl .* (exec|cp|port-forward|proxy|attach|debug|auth can-i --as)( |$)
+^kubectl --context=\S+ (exec|cp|port-forward|proxy|attach|debug|auth|run|create|edit|replace|delete)( |$)
 (?i)^kubectl .* get (secret|secrets)(\.[a-z0-9.]*)?(/[^ ]*)?([ ,]|$)(?!-A -o=go-template=\{\{range \.items\}\}\{\{\.metadata\.namespace\}\})
 (?i)^kubectl .* get [^ ]*,(secret|secrets)(\.[a-z0-9.]+)?([, /]|$)
 (?i)^kubectl --context=\S+ patch (secret|secrets)(\.[a-z0-9.]*)?( |/|$)

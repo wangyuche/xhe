@@ -343,11 +343,18 @@
       "required_flags": [
         "--member",
         "--role",
-        "--project"
+        "--project",
+        "--condition"
       ],
       "snapshot": "bucket-iam",
       "dry_run": null,
-      "flags": {}
+      "flags": {
+        "--condition": {
+          "only_values": [
+            "None"
+          ]
+        }
+      }
     },
     "project-iam-add": {
       "prefix": [
@@ -359,7 +366,8 @@
       "required_flags": [
         "--member",
         "--role",
-        "--project"
+        "--project",
+        "--condition"
       ],
       "snapshot": "project-iam",
       "dry_run": null,
@@ -381,7 +389,8 @@
       "required_flags": [
         "--member",
         "--role",
-        "--project"
+        "--project",
+        "--condition"
       ],
       "snapshot": "project-iam",
       "dry_run": null,

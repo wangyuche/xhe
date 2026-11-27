@@ -132,9 +132,9 @@ def check_bash(cmd, cfg, cwd):
                         return f"參數指向受保護路徑(或其上層目錄):{t}"
             return None
         return f"只允許 gcp-ops-kit 的入口腳本({', '.join(sorted(ENTRIES))}),不允許 {first}"
-    low = cmd.lower()
+    prog = os.path.basename(first).lower()
     for w in CLOUD_WORDS:
-        if w in low:
+        if prog == w.strip() or prog.startswith(w.strip()):
             return f"不可直接呼叫 {w.strip()};所有雲端操作都要透過 kit 入口腳本"
     if i == 1:
         return "直譯器只能執行 kit 入口腳本"

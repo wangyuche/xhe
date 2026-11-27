@@ -151,10 +151,19 @@ function reportDir() {
   try {
     for (const line of fs.readFileSync(cfgPath, 'utf8').split('\n')) {
       const m = line.match(/^\s*GG_REPORT_DIR\s*=\s*(.*?)\s*$/);
-      if (m) dir = m[1].replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, process.env.HOME || '');
+      if (m) {
+        dir = m[1].replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
+        // 與 Python os.path.expanduser 一致:~ 與 ~user
+        dir = dir.replace(/^~([^/]*)(?=\/|$)/, (_, u) => (u ? path.join(path.dirname(process.env.HOME || '/'), u) : (process.env.HOME || '')));
+      }
     }
   } catch { /* 沒有設定檔用預設 */ }
-  return fs.realpathSync(dir);
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    console.error(`拒絕:報告目錄 ${dir} 不存在`);
+    process.exit(2);
+  }
 }
 
 function assertRun(run) {

@@ -19,6 +19,29 @@ import k8s_rules  # noqa: E402
 SKIP_DIRS = {".git", "node_modules", "vendor", ".terraform"}
 
 
+REMOTE_RE = re.compile(r"(?m)^\s*-?\s*(?:\w+:\s*)?['\"]?((?:https?|git|ssh)://\S+|git@\S+|github\.com/\S+|gitlab\.com/\S+|bitbucket\.org/\S+)")
+
+
+def _remote_refs(kdir):
+    """kustomization(含它引用的本機 base)裡的遠端資源;有的話不展開(YAML 審查不連網)。"""
+    refs, seen, todo = [], set(), [kdir]
+    while todo:
+        d = os.path.realpath(todo.pop())
+        if d in seen:
+            continue
+        seen.add(d)
+        for fn in ("kustomization.yaml", "kustomization.yml", "Kustomization"):
+            p = os.path.join(d, fn)
+            if os.path.isfile(p):
+                text = open(p, encoding="utf-8", errors="ignore").read()
+                refs += REMOTE_RE.findall(text)
+                for m in re.findall(r"(?m)^\s*-\s*['\"]?([./\w-]+)['\"]?\s*$", text):
+                    sub = os.path.join(d, m)
+                    if os.path.isdir(sub):
+                        todo.append(sub)
+    return refs
+
+
 def gather(paths):
     files, kustom = [], []
     for p in paths:
@@ -56,14 +79,18 @@ def main(argv):
             return gglib.EXIT_BLOCKED
     cfg = gglib.load_config(require=False)
     label = re.sub(r"[^a-z0-9-]+", "-", (label or os.path.basename(os.path.realpath(paths[0]))).lower()).strip("-")[:50] or "yaml"
+    files, kustom = gather(paths)  # 先確認輸入存在,再建立 run 目錄
     run = gglib.new_run(cfg, f"yaml-{label}"[:60], "yaml")
-    files, kustom = gather(paths)
     meta = gglib.read_json(os.path.join(run, "meta.json"))
     meta.update({"inputs": [os.path.realpath(p) for p in paths], "files": files, "kustomize": kustom})
     gglib.write_json(os.path.join(run, "meta.json"), meta)
     undetermined = []
     rendered_docs = []
     for k in kustom:
+        remote = _remote_refs(k)
+        if remote:
+            undetermined.append({"area": "yaml", "item": k, "error": f"引用遠端資源,不連網展開:{', '.join(remote[:3])}"})
+            continue
         if shutil.which("kubectl") is None:
             undetermined.append({"area": "yaml", "item": k, "error": "kustomize 目錄需要 kubectl"})
             continue

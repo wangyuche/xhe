@@ -62,7 +62,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 ```json
 {"items": [{"id": "C1", "summary": "移除 bucket 公開讀取", "finding": "GCS-PUB-001",
   "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://b", "--member=allUsers",
-              "--role=roles/storage.objectViewer", "--project=p"],
+              "--role=roles/storage.objectViewer", "--project=p", "--condition=None"],
   "precondition": [{"binding_present": ["allUsers", "roles/storage.objectViewer"]}],
   "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}],
   "impact": "無"}]}
@@ -107,7 +107,8 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - guard 拒絕跟隨 symlink 的遞迴(grep -R、find -L、ls -L);目錄樹裡有指向受保護路徑的 symlink 時,遞迴工具也會被擋。
 - 變更指令成功但之後的快照 / 驗證失敗:結果記「已執行(驗證失敗)」並附還原指令。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
-- IAM 增減只接受 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定。
+- IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。
+- YAML 審查:kustomization 引用遠端 base(https / git / github.com…)時不展開(不連網),列無法判定。
 - kubectl apply / patch 只允許 `k8s_patch_kinds` 列的資源種類(deployment、statefulset、daemonset、service、ingress、networkpolicy、configmap、serviceaccount、cronjob、HPA、PDB);Secret、RBAC、webhook、CRD、Namespace 等在快照之前就擋;patch 的資源種類一律小寫。
 - `0.0.0.0/0` / `::/0` 以 ipaddress 解析判斷(`0::/0`、多段合起來涵蓋全部也擋)。
 - **沒有還原範本的旗標**(例 `--security-posture`、`--maintenance-window-*`)一律判「不可還原」→ BLOCKED,請使用者自己做。

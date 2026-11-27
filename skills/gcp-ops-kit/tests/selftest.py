@@ -119,7 +119,7 @@ def t_allowlists():
         ["kubectl", f"--context={CTX}", "get", "secret,configmap", "db", "-n", "shop", "-o", "json", "--request-timeout=60s"],
         ["kubectl", f"--context={CTX}", "patch", "Secret", "db", "-n", "shop", "--type=merge", "--patch-file=/r/patches/C1.json", "--dry-run=server", "-o", "json", "--request-timeout=60s"],
     ]
-    allow_dry = [["kubectl", f"--context={CTX}", "patch", "deployment", "app-secret", "-n", "shop", "--type=merge",
+    allow_dry = [["kubectl", f"--context={CTX}", "get", "deployment", "proxy", "-n", "debug", "-o", "json", "--request-timeout=60s"],["kubectl", f"--context={CTX}", "patch", "deployment", "app-secret", "-n", "shop", "--type=merge",
                   "--patch-file=/r/my-secret/patches/C1.json", "--dry-run=server", "-o", "json", "--request-timeout=60s"]]
     for a in allow_dry:
         try:
@@ -170,6 +170,8 @@ def t_guard(e):
         (f"grep --file={e.key} x {e.reports}", "deny"),
         (f"grep -f{e.key} x", "deny"),
         (f"cat {e.reports}/p/r/report.html", "allow"),
+        (f"grep cloud-platform.googleapis {e.reports}/p/r/x.json", "allow"),
+        (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "allow"),
         (f"ls {e.tmp}", "allow"),
         (f"ls -laR {e.reports}", "deny-live"),
         (f"file {e.reports}", "deny"),
@@ -306,6 +308,17 @@ def t_misc(e):
     env2["GG_CONFIG"] = spaced
     r = e.run([os.path.join(S, "yaml-review.sh"), lf, "--label", "spaced"], env=env2)
     ok("設定檔 `GG_REPORT_DIR = 路徑`(等號旁有空白)Python 與 render.mjs 解析一致", r.returncode == 0 and run_dir(r.stdout), r.stderr[-300:])
+    rk = os.path.join(e.tmp, "remote-kust")
+    os.makedirs(rk, exist_ok=True)
+    with open(os.path.join(rk, "kustomization.yaml"), "w") as f:
+        f.write("resources:\n- https://github.com/example/repo//base?ref=v1\n")
+    r = e.run([os.path.join(S, "yaml-review.sh"), rk, "--label", "remote"], env=env2)
+    rr = run_dir(r.stdout)
+    und = json.load(open(os.path.join(rr, "inventory", "undetermined.json"))) if rr else []
+    ok("YAML 審查:kustomize 引用遠端 base 不連網展開(列無法判定)", any("遠端" in u["error"] for u in und), und)
+    before = set(os.listdir(e.reports))
+    r = e.run([os.path.join(S, "yaml-review.sh"), os.path.join(e.tmp, "no-such-dir"), "--label", "typo"], env=env2)
+    ok("YAML 審查:輸入路徑不存在 → 用法錯誤且不留空 run 目錄", r.returncode == 2 and "yaml-typo" not in os.listdir(e.reports), (r.returncode, os.listdir(e.reports)))
     other = os.path.join(e.tmp, "not-a-run")
     os.makedirs(other, exist_ok=True)
     r = e.run(["node", os.path.join(S, "render.mjs"), other])
@@ -403,12 +416,13 @@ def t_classify():
     ok("分類:apply 套用後產生高風險(privileged)→ BLOCKED", r["blocked_reason"] and "K8S-PRIV-001" in r["blocked_reason"], r)
     okcases = [
         ("移除 bucket allUsers", ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
-                                 "--role=roles/storage.objectViewer", f"--project={P}"],
-         {"bindings": [{"role": "roles/storage.objectViewer", "members": ["allUsers"]}]}, False),
+                                 "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
+         {"bindings": [{"role": "roles/storage.objectViewer", "members": ["allUsers"]},
+                       {"role": "roles/storage.objectViewer", "members": ["allUsers"], "condition": {"title": "t"}}]}, False),
         ("收緊防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges=35.235.240.0/20"], fw, True),
         ("node pool 2→3", ["gcloud", "container", "clusters", "resize", "prod", "--node-pool=default-pool", "--num-nodes=3",
                           "--location=asia-east1", f"--project={P}"], np_snap, False),
-        ("新增高權角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/editor", f"--project={P}"], pol, True),
+        ("新增高權角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/editor", f"--project={P}", "--condition=None"], pol, True),
         ("開 shielded nodes(原本關)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--enable-shielded-nodes"],
          dict(FX.CLUSTER, shieldedNodes={}), False),
         ("開控制平面授權網路(原本關、清單空)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
@@ -420,7 +434,8 @@ def t_classify():
          dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), False),
         ("Cloud SQL 原本沒有授權網路", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--authorized-networks=203.0.113.0/24"],
          {"settings": {"ipConfiguration": {"ipv4Enabled": True}}}, True),
-        ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, False),
+        ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol, False),
+        ("IAM 沒帶 --condition", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, None),
         ("清空防火牆 target-tags(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags="],
          dict(fw, targetTags=["bastion"]), True),
         ("快照協定是數字 6:收緊到 tcp:443 不算放寬", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:443"],
@@ -431,7 +446,7 @@ def t_classify():
         ("SQL 取消用戶端憑證(放寬)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--ssl-mode=ENCRYPTED_ONLY"],
          {"settings": {"ipConfiguration": {"sslMode": "TRUSTED_CLIENT_CERTIFICATE_REQUIRED"}}}, True),
         ("移除 SA 的 editor(serviceAccount: 前綴)", ["gcloud", "projects", "remove-iam-policy-binding", P, f"--member=serviceAccount:{FX.DEF_SA}",
-                                               "--role=roles/editor", f"--project={P}"], pol, False),
+                                               "--role=roles/editor", f"--project={P}", "--condition=None"], pol, False),
         ("防火牆從全部 VM 收窄到 tag", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags=bastion"], fw, False),
         ("關閉授權網路(還原帶回原網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
                                        "--no-enable-master-authorized-networks"],
@@ -445,7 +460,7 @@ def t_classify():
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}, True),
         ("移除 WIF principalSet 綁定(保留大小寫)", ["gcloud", "projects", "remove-iam-policy-binding", P,
                                                     "--member=principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/attribute.repository/o/r",
-                                                    "--role=roles/viewer", f"--project={P}"], pol, False),
+                                                    "--role=roles/viewer", f"--project={P}", "--condition=None"], pol, False),
         ("改防火牆描述(還原值含空白)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=new"],
          dict(fw, description="Allow SSH from office"), False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
@@ -453,6 +468,9 @@ def t_classify():
     ]
     for name, argv, snap, loosens in okcases:
         r = ggchange.classify(argv, cfg, snap)
+        if loosens is None:  # 預期被擋
+            ok(f"分類 BLOCKED:{name}", r["blocked_reason"], r)
+            continue
         good = not r["blocked_reason"] and r["reversible"] and (r["rollback"] or r.get("rollback_note"))
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
@@ -716,7 +734,7 @@ def t_plan_change(e, review_run):
     write_input(run, [
         {"id": "C1", "summary": "移除 bucket 公開讀取", "finding": "GCS-PUB-001",
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
-                     "--role=roles/storage.objectViewer", f"--project={P}"],
+                     "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
          "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
         {"id": "C6", "summary": "precondition 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
          "precondition": {"field": "/x"}, "expected": [{"field": "/versioning_enabled", "expect": True}]},

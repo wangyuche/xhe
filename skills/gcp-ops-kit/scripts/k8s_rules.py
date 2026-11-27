@@ -33,7 +33,9 @@ RULES = {
     "K8S-PSA-001": ("低", "Namespace 缺 Pod Security enforce 標籤", "加 pod-security.kubernetes.io/enforce: restricted(或 baseline)"),
 }
 
-SYSTEM_NS = re.compile(r"^(kube-system|kube-public|kube-node-lease|gke-.*|gmp-.*|config-management-.*|istio-system|asm-.*)$")
+import os as _os
+with open(_os.path.join(gglib.RULES_DIR, "allow_change.json"), encoding="utf-8") as _f:
+    SYSTEM_NS = re.compile(json.load(_f)["system_namespaces"])  # 與變更規則共用同一份系統 namespace 清單
 DANGEROUS_CAPS = {"ALL", "SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH", "NET_RAW", "BPF", "SYS_RAWIO"}
 WORKLOAD_KINDS = {"Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob", "ReplicationController"}
 LONG_RUNNING = {"Deployment", "StatefulSet", "DaemonSet", "ReplicationController"}
