@@ -106,7 +106,7 @@ bash <kit>/tests/run.sh --live                         # 實機:check + 1 張 51
 node <kit>/scripts/actions.mjs prompt --config <actions.json> --action happy
 node <kit>/scripts/actions.mjs gen    --config <actions.json> --action happy --out-dir art/out/<日期>-actions-<id> --budget <tmp>/<派工 id>/budget.json --limit <M> --run <派工 id> [--timeout 540]
 #   一次一張(約 1–3 分鐘)→ <out-dir>/<動作>-<n>.png(n 往上編號)、追加 manifest.json;結束碼:3 沒出圖("quota":true = 額度上限,停止)、4 逾時(殺程序群組)、
-#   6 超過 M 張(沒送出)、7 Codex 用了白名單以外的工具(item 只允許 agent_message / reasoning;不採用、停止剩下的動作)
+#   6 超過 M 張(沒送出)、7 Codex 用了白名單以外的工具(item 只允許 agent_message / reasoning / todo_list / error 與 image_gen* 開頭的出圖工具;不採用、停止剩下的動作)
 node <kit>/scripts/actions.mjs masks  --config <actions.json> --image <選定的 idle1> --out art/out/<日期>-actions-<id>/masks.png   # anchor 預覽
 node <kit>/scripts/actions.mjs sheet  --out art/characters/<id>/actions/sheet.png <底圖> <候選>...
 node <kit>/scripts/sprite.mjs clean <選定候選> --out art/characters/<id>/actions/<動作>.png
@@ -132,7 +132,7 @@ node <kit>/scripts/voice.mjs status --voice <voice.json> --lines <lines.json> --
 node <kit>/scripts/voice.mjs scan   --art art          # 金鑰完全比對(只印有 / 無與檔名)
 ```
 
-- 字元在**每次 HTTP 嘗試**前都記(逾時重試的請求服務端可能已計費);錄音先放過程目錄的 `stage/`,check 通過才換掉 `art/voice/` 的成品(失敗不蓋掉原本好的);超過 15 秒不重錄(請拆句)。
+- 字元在**每次 HTTP 嘗試**前都記(逾時 / 5xx 重試的請求服務端可能已計費;429 限流退回);`plan` 的 `max_chars` 含重錄、不含網路重試,上限 N 宜留一點餘裕;試聽候選的長度上限是 60 秒;錄音先放過程目錄的 `stage/`,check 通過才換掉 `art/voice/` 的成品(失敗不蓋掉原本好的);超過 15 秒不重錄(請拆句)。
 - 台詞 key 要符合 `^[a-z0-9][a-z0-9._-]*$`(不合 → 整批結束碼 2)。雜湊 = sha256(JSON([原文, voice_id, tts 模型, stability, output_format, seed]));只重錄雜湊不同或缺檔的;check 不過換 seed 重錄,每句最多 2 次;每句完成就存。
 - 結束碼:1 有句子不合格;3 HTTP 錯誤(429 / 409 / 5xx 已退避重試 5 次);4 額度用完(402 / 401 quota);5 金鑰錯誤或找不到;6 超過字元上限(沒送出);8 帳號 voice 名額已滿。
 - 測試:`ELEVENLABS_API_URL` 只接受 `http://127.0.0.1:<埠>`,有設時用假金鑰、不讀真的。尚未以真實帳號實測(使用者買了 ElevenLabs 之後補)。

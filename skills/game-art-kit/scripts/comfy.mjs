@@ -573,7 +573,7 @@ function scrub() {
   }
   // --paths:本機絕對路徑($HOME 實際值、/Users/<名>、/home/<名>、Codex 的 generated_images)
   const home = homedir(), esc2 = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pathPats = flags.paths ? [...(home && home.length > 1 ? [new RegExp(esc2(home))] : []), /\/Users\/[^/\s"']+/, /\/home\/[^/\s"']+/, /generated_images/] : [];
+  const pathPats = flags.paths ? [...(home && home.length > 1 ? [new RegExp(esc2(home))] : []), /(?:^|[\s"'=(:])\/Users\/[^/\s"']+/, /(?:^|[\s"'=(:])\/home\/[^/\s"']+/, /(?:^|[\s"'=(:])\/[^\s"']*generated_images/] : [];
   const pats = [...pathPats, /\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/, /\b169\.254\.\d{1,3}\.\d{1,3}\b/, /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /\b192\.168\.\d{1,3}\.\d{1,3}\b/, /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/, /:8188\b/];
   const hits = [];
   const walk = (p) => {

@@ -7,7 +7,7 @@
 //        出一張候選 → <過程目錄>/<動作>-<n>.png(n 自動往上編號,不覆蓋);追加 <過程目錄>/manifest.json。
 //        codex exec --skip-git-repo-check --ephemeral -s read-only -C <空暫存目錄> --json -o <回覆檔> - -i <底圖>(子程序環境拿掉 OPENAI_API_KEY / CODEX_API_KEY);
 //        先確認 `codex login status` 是 ChatGPT 登入(否則結束碼 2,不送出);每張先在累計檔記 1 張(超過 --limit → 結束碼 6,不送出)。
-//        --json 事件白名單:item 只允許 agent_message、reasoning;出現其他類型(指令執行、檔案讀寫、web_search、mcp_tool_call…)→ 不採用、結束碼 7(要停止剩下的動作)。
+//        --json 事件白名單:item 只允許 agent_message、reasoning、todo_list、error 與 image_gen* 開頭的出圖工具;出現其他類型(指令執行、檔案讀寫、web_search、mcp_tool_call…)→ 不採用、結束碼 7(要停止剩下的動作)。
 //        圖從 $CODEX_HOME/generated_images/<thread id>/(預設 ~/.codex)抄出,核對雜湊後刪掉該 thread 目錄(thread id 要是 UUID 樣式、realpath 在 generated_images 底下)。
 //        manifest 不記本機絕對路徑($HOME、/Users/<名>、/home/<名> 換成 ~,generated_images 路徑換成 <codex>)。
 //   node actions.mjs masks  --config <actions.json> --out <masks.png> [--image <png>]   anchor 預覽:黃十字 = 頭中心、橘框 = 頭像範圍(--image 預設底圖)
@@ -87,10 +87,11 @@ function runCodex(text, ref, timeoutSec) {
       { env: cleanEnv(), detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '', timedOut = false;
     p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
-    const timer = setTimeout(() => { timedOut = true; try { process.kill(-p.pid, 'SIGTERM'); } catch { /* */ } setTimeout(() => { try { process.kill(-p.pid, 'SIGKILL'); } catch { /* */ } }, 5000); }, timeoutSec * 1000);
+    let killer = null;
+    const timer = setTimeout(() => { timedOut = true; try { process.kill(-p.pid, 'SIGTERM'); } catch { /* */ } killer = setTimeout(() => { try { process.kill(-p.pid, 'SIGKILL'); } catch { /* */ } }, 5000); killer.unref(); }, timeoutSec * 1000);
     p.on('error', (e) => { clearTimeout(timer); rmSync(work, { recursive: true, force: true }); done({ spawnError: e }); });
     p.on('close', (code) => {
-      clearTimeout(timer);
+      clearTimeout(timer); if (killer) clearTimeout(killer);
       const reply = existsSync(last) ? readFileSync(last, 'utf8').trim() : '';
       rmSync(work, { recursive: true, force: true });
       done({ code, out, err, reply, timedOut });
@@ -155,7 +156,7 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
     // 不論成敗,只要 thread id 合法就刪掉 Codex 留下的圖(不留副本)
     if (dir) { rmSync(dir, { recursive: true, force: true }); cleaned = true; }
     entry.status = status ?? '失敗'; entry.thread_cleaned = cleaned;
-    if (status !== 'ok') rmSync(join(outDir, file), { force: true }); // 佔位檔
+    if (status !== 'ok') { rmSync(join(outDir, file), { force: true }); entry.file = null; entry.n = null; } // 佔位檔;失敗的不佔編號,manifest 不會出現同一個檔名兩筆
     if (code === 3) entry.errors = ev.errors.map(e => scrubPaths(e, codexHome).slice(0, 300));
     appendManifest(outDir, entry);
   }

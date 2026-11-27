@@ -53,7 +53,7 @@ function api() {
   return { base: 'https://api.elevenlabs.io', key };
 }
 const scrubKey = (s, key) => String(s ?? '').split(key).join('<key>');
-async function post(A, path, body, { binary = false, before } = {}) {
+async function post(A, path, body, { binary = false, before, rejected } = {}) {
   for (let attempt = 1; ; attempt++) {
     before?.(attempt); // 每次 HTTP 嘗試都先記用量(逾時的請求服務端可能已計費)
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), REQ_TIMEOUT);
@@ -68,6 +68,7 @@ async function post(A, path, body, { binary = false, before } = {}) {
     if (/voice_limit|voice limit|maximum number of voices/i.test(text)) die(`ElevenLabs 帳號 voice 名額已滿:請使用者自己到 ElevenLabs 刪舊 voice(HTTP ${res.status})`, 8);
     const retryable = res.status === 429 || res.status === 409 || res.status >= 500;
     if (!retryable || attempt >= MAX_ATTEMPTS) die(`ElevenLabs HTTP ${res.status}:${text}`, 3);
+    if (res.status === 429) rejected?.(attempt); // 限流:服務端沒處理,不計費 → 退回這次的用量
     const after = Number(res.headers.get('retry-after'));
     await new Promise(r => setTimeout(r, after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1)));
   }
@@ -90,12 +91,12 @@ function loadLines(f) {
   return l;
 }
 const artOf = (voiceFile) => resolve(dirname(voiceFile), '..', '..');
-function audio(input, outDir, name) {
-  const a = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'process', input, '--type', 'voice', '--out', outDir, '--name', name], { encoding: 'utf8' });
+function audio(input, outDir, name, dur = 15) {
+  const a = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'process', input, '--type', 'voice', '--duration', String(dur), '--out', outDir, '--name', name], { encoding: 'utf8' });
   if (a.status === 2) die(`audio.mjs process 失敗:${(a.stderr || '').trim().split('\n').pop()}`);
   if (a.status !== 0) { const err = (a.stderr || '').trim().split('\n').pop(); return { ok: false, error: err, noRetry: /超過 \d+ 秒|請拆句/.test(err) }; }
   let j = {}; try { j = JSON.parse(a.stdout.trim().split('\n').pop()); } catch { /* */ }
-  const c = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'check', join(outDir, `${name}.ogg`), join(outDir, `${name}.m4a`), '--type', 'voice', ...(j.normalized === 'peak' ? ['--peak'] : [])], { encoding: 'utf8' });
+  const c = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'check', join(outDir, `${name}.ogg`), join(outDir, `${name}.m4a`), '--type', 'voice', '--duration', String(dur), ...(j.normalized === 'peak' ? ['--peak'] : [])], { encoding: 'utf8' });
   let cj = {}; try { cj = JSON.parse(c.stdout.trim().split('\n').pop()); } catch { /* */ }
   return { ok: c.status === 0, error: c.status === 0 ? null : (cj.errors ?? [c.stderr]).join(';'), durationSec: j.durationSec };
 }
@@ -119,24 +120,28 @@ export async function design(voiceFile, { outDir, budget, limit, run, redesign =
   if (!run) die('缺 --run <派工 id>');
   const A = api(), b = openBudget(budget, limit, '字元'), art = artOf(voiceFile);
   let used = b.used;
-  const res = await postLogged(A, `/v1/text-to-voice/design?output_format=${encodeURIComponent(v.models.output_format)}`, { voice_description: v.design, text: v.preview_text, model_id: v.models.design, ...(v.seed != null ? { seed: v.seed } : {}) }, { before: (n) => { used = b.reserve(len, `voice design(第 ${n} 次嘗試)`); } }, (st) => appendManifest(outDir, { kind: 'design', chars: len, status: st }, used, run));
+  const res = await postLogged(A, `/v1/text-to-voice/design?output_format=${encodeURIComponent(v.models.output_format)}`, { voice_description: v.design, text: v.preview_text, model_id: v.models.design, ...(v.seed != null ? { seed: v.seed } : {}) }, { before: (n) => { used = b.reserve(len, `voice design(第 ${n} 次嘗試)`); }, rejected: (n) => { used = b.refund(len, `voice design 第 ${n} 次 429`); } }, (st) => appendManifest(outDir, { kind: 'design', chars: len, status: st }, used, run));
   const dh = createHash('sha256').update(JSON.stringify([v.design, v.preview_text, v.models.design])).digest('hex').slice(0, 12);
   if (v.candidates_for !== dh) v.candidates = [];
   let n = v.next_n ?? 1; const made = [];
   mkdirSync(outDir, { recursive: true });
+  // 每個候選存好就寫回 voice.json(已付費的候選不會因為後面一筆壞資料全部遺失);試聽句可能比一句台詞長,上限放寬到 60 秒
   for (const p of res.previews ?? []) {
+    if (!p || typeof p.generated_voice_id !== 'string' || typeof p.audio_base_64 !== 'string' || !p.audio_base_64) {
+      appendManifest(outDir, { kind: 'candidate', n: null, chars: len, status: 'ElevenLabs 回傳的 preview 缺欄位,略過' }, used, run); continue;
+    }
     const name = `candidate-${n}`, mp3 = join(outDir, `${name}.mp3`);
     writeFileSync(mp3, Buffer.from(p.audio_base_64, 'base64'));
-    const a = audio(mp3, outDir, name);
+    let a; try { a = audio(mp3, outDir, name, 60); } catch (e) { a = { ok: false, error: e.message }; }
     const c = { n, generated_voice_id: p.generated_voice_id, path: relative(art, mp3), check: a.ok ? 'ok' : a.error };
     v.candidates.push(c); made.push(c);
     appendManifest(outDir, { kind: 'candidate', n, chars: len, status: a.ok ? 'ok' : `check 不過:${a.error}` }, used, run);
     n++;
+    v.next_n = n; v.candidates_for = dh;
+    if (v.voice_id) { v.prev_voice_id = v.voice_id; delete v.voice_id; } // 重新設計:新候選有了才取消舊選定
+    writeJson(voiceFile, v);
   }
-  if (!made.length) die('ElevenLabs 沒有回傳任何 preview', 3);
-  v.next_n = n; v.candidates_for = dh;
-  if (v.voice_id) { v.prev_voice_id = v.voice_id; delete v.voice_id; } // 重新設計:新候選有了才取消舊選定
-  writeJson(voiceFile, v);
+  if (!made.length) die('ElevenLabs 沒有回傳任何可用的 preview', 3);
   return { ok: true, chars: len, budget: { used, limit }, candidates: made.map(c => ({ n: c.n, check: c.check, listen: join(art, c.path) })), prev_voice_id: v.prev_voice_id ?? null, key_scan: scan(art, A.key) };
 }
 
@@ -158,7 +163,7 @@ export function plan(voiceFile, { linesFile, all = false, out, max }) {
   const pending = v.voice_id ? keys.filter(k => all || v.lines?.[k] !== lineHash(v, k, L[k]) || (out && !has(k))) : keys;
   const todo = max != null ? pending.slice(0, max) : pending; // 「本次最多 K 句」:依 key 排序的前 K 句,其餘下次照雜湊補
   const first = todo.reduce((s, k) => s + [...L[k]].length, 0);
-  return { ok: true, total: keys.length, todo, deferred: pending.length - todo.length, first_chars: first, max_chars: first * TRIES, note: v.voice_id ? null : '還沒選定音色:全部都要錄' };
+  return { ok: true, total: keys.length, todo, deferred: pending.length - todo.length, first_chars: first, max_chars: first * TRIES, max_chars_note: '含每句重錄 2 次;不含網路逾時 / 5xx 重試(那些可能計費,會照實累計;429 限流會退回)', note: v.voice_id ? null : '還沒選定音色:全部都要錄' };
 }
 
 export async function lines(voiceFile, { linesFile, out, procDir, budget, limit, run, all = false, maxSeconds = 480, max }) {
@@ -172,10 +177,11 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
   const t0 = Date.now(), done = [], failed = []; let used = b.used, stoppedAt = null;
   for (const k of todo) {
     if ((Date.now() - t0) / 1000 > maxSeconds) { stoppedAt = k; break; }
-    const text = L[k], len = [...text].length; let seed = lineSeed(v, k), res = null, tries = 0;
+    const text = L[k], len = [...text].length; let seed = lineSeed(v, k), res = null, tries = 0, lastSeed = seed;
     for (; tries < TRIES; tries++) {
+      lastSeed = seed;
       // 每次 HTTP 嘗試都先記用量;超過上限 → BudgetError(結束碼 6),已完成的都已寫回
-      const buf = await postLogged(A, `/v1/text-to-speech/${encodeURIComponent(v.voice_id)}?output_format=${encodeURIComponent(v.models.output_format)}`, { text, model_id: v.models.tts, voice_settings: { stability: v.stability }, seed }, { binary: true, before: (n) => { used = b.reserve(len, `line ${k}(第 ${n} 次嘗試)`); } }, (st) => appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: st }, used, run));
+      const buf = await postLogged(A, `/v1/text-to-speech/${encodeURIComponent(v.voice_id)}?output_format=${encodeURIComponent(v.models.output_format)}`, { text, model_id: v.models.tts, voice_settings: { stability: v.stability }, seed }, { binary: true, before: (n) => { used = b.reserve(len, `line ${k}(第 ${n} 次嘗試)`); }, rejected: (n) => { used = b.refund(len, `line ${k} 第 ${n} 次 429`); } }, (st) => appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: st }, used, run));
       const mp3 = join(raw, `${k}.mp3`); writeFileSync(mp3, buf);
       res = audio(mp3, stage, k); // 先放過程目錄,check 通過才換掉成品(失敗不會蓋掉原本好的錄音)
       if (res.ok) for (const ext of ['ogg', 'm4a']) renameSync(join(stage, `${k}.${ext}`), join(out, `${k}.${ext}`));
@@ -183,7 +189,7 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
       if (res.ok || res.noRetry) break; // 超過 15 秒換 seed 也不會變短:不重錄,請拆句
       seed = (seed + 1000003) % SEED_MAX;
     }
-    if (seed !== lineSeed(v, k)) v.line_seeds[k] = seed;
+    if (lastSeed !== lineSeed(v, k)) v.line_seeds[k] = lastSeed; // 記實際送出的最後一個 seed
     if (res.ok) { v.lines[k] = lineHash(v, k, text); done.push(k); } else { delete v.lines[k]; failed.push({ key: k, error: res.error }); }
     writeJson(voiceFile, v); // 每句存一次:中途停下來,再跑會略過已完成的
   }
