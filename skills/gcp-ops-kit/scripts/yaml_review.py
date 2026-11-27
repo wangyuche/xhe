@@ -55,7 +55,7 @@ def main(argv):
             print(f"BLOCKED: 缺工具 {t}", file=sys.stderr)
             return gglib.EXIT_BLOCKED
     cfg = gglib.load_config(require=False)
-    label = label or re.sub(r"[^a-z0-9-]+", "-", os.path.basename(os.path.realpath(paths[0])).lower()).strip("-") or "yaml"
+    label = re.sub(r"[^a-z0-9-]+", "-", (label or os.path.basename(os.path.realpath(paths[0]))).lower()).strip("-")[:50] or "yaml"
     run = gglib.new_run(cfg, f"yaml-{label}"[:60], "yaml")
     files, kustom = gather(paths)
     meta = gglib.read_json(os.path.join(run, "meta.json"))

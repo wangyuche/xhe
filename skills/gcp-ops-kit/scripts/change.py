@@ -20,13 +20,15 @@ APPROVE_PREFIX = "使用者已核准變更"
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
 
 
+APPROVE_RE = re.compile(r"^使用者已核准變更\s*(C[1-9][0-9]{0,2}(?:\s*[,,、]\s*C[1-9][0-9]{0,2})*)\s*$")
+
+
 def parse_approved(text):
-    text = (text or "").strip()
-    if not text.startswith(APPROVE_PREFIX):
-        raise gglib.Blocked(f"缺核准旗標(要以「{APPROVE_PREFIX}」開頭)")
-    ids = re.findall(r"\bC[1-9][0-9]{0,2}\b", text[len(APPROVE_PREFIX):])
-    if not ids:
-        raise gglib.Blocked("核准旗標沒有任何 C 編號")
+    """固定格式:「使用者已核准變更 C1, C3」(逗號或頓號分隔,不可有其他文字)。"""
+    m = APPROVE_RE.match((text or "").strip())
+    if not m:
+        raise gglib.Blocked("核准旗標格式不對:要完全是「使用者已核准變更 C1, C3」(只有編號與逗號,不可夾其他文字)")
+    ids = re.findall(r"C[1-9][0-9]{0,2}", m.group(1))
     return sorted(set(ids), key=lambda x: int(x[1:]))
 
 
@@ -177,10 +179,16 @@ def main(argv):
         cfg = gglib.load_config(require=True)
         if not plan_path.startswith(os.path.realpath(cfg["GG_REPORT_DIR"]) + os.sep):
             raise gglib.Blocked("plan.json 不在 GG_REPORT_DIR 底下")
+        src_run = os.path.dirname(plan_path)
+        src_meta = gglib.read_json(os.path.join(src_run, "meta.json"), {}) or {}
+        if os.path.basename(plan_path) != "plan.json" or src_meta.get("mode") not in ("review", "plan"):
+            raise gglib.Blocked("只接受審查 / 計畫 run 目錄裡由 plan.py 產生的 plan.json")
         actual = gglib.sha256_file(plan_path)
         if actual != sha:
             raise gglib.Blocked(f"plan.json sha256 不符(簡報 {sha[:12]}…,實際 {actual[:12]}…)")
         plan = gglib.read_json(plan_path)
+        if not plan or os.path.realpath(plan.get("source_run") or "") != src_run or plan.get("project") != src_meta.get("project"):
+            raise gglib.Blocked("plan.json 的 source_run / project 與所在 run 目錄不符")
         approved = parse_approved(approved_text)
         project = gglib.check_project(plan["project"])
         run = gglib.new_run(cfg, project, "change")

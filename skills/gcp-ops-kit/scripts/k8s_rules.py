@@ -120,10 +120,8 @@ def scan(docs, live=False):
             if (obj.get("roleRef") or {}).get("name") == "cluster-admin":
                 for i, s in enumerate(obj.get("subjects") or []):
                     nm = s.get("name", "")
-                    if nm.startswith("system:") or (s.get("kind") == "Group" and nm == "system:masters"):
-                        continue
-                    if live and md.get("name", "").startswith(("system:", "gke-", "cluster-admin")):
-                        continue
+                    if nm.startswith("system:"):
+                        continue  # 只依主體排除系統帳號 / 群組;不看 binding 名稱(名稱可以任意取)
                     c.add("K8S-RBAC-002", doc, f"/subjects/{i}", f"{s.get('kind')} {nm}")
         if kind == "Service" and (obj.get("spec") or {}).get("type") == "LoadBalancer":
             sp = obj["spec"]

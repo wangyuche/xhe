@@ -165,6 +165,7 @@ def t_guard(e):
         (f"cat {e.cfg.replace('/conf/', '/CONF/')}", "deny"),
         (f"cat {e.key.replace('sa.json', 'SA.JSON')}", "deny"),
         (f"grep -r private_key {e.reports}", "deny-live"),
+        (f"cat {e.reports}/p/20261127-000000-change/before/C1.rollback.json", "deny"),
     ]
     env = e.env()
     live = os.path.join(e.reports, "p", "20261127-000000-review", "gcloud")
@@ -188,6 +189,11 @@ def t_guard(e):
                            env=env, capture_output=True, text=True)
         tgt = inp.get("file_path") or inp.get("path") or inp.get("pattern")
         ok(f"guard hook {tool} {os.path.relpath(tgt, e.tmp) if tgt.startswith('/') else tgt} → {want}", r.returncode == want, r.stderr)
+    for cwd, cmd, want in ((os.path.dirname(e.tmp), "grep -r private_key", 2), (os.path.dirname(e.tmp), "grep -rl x", 2),
+                           (os.path.dirname(e.tmp), "find -name sa.json", 2), (os.path.join(e.reports, "p", "other"), "grep -n x", 0)):
+        r = subprocess.run(["python3", g], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd}),
+                           env=env, capture_output=True, text=True)
+        ok(f"guard cwd 隱含路徑:{cmd!r} → {want}", r.returncode == want, r.stderr)
     shutil.rmtree(os.path.dirname(live))
 
 
@@ -210,6 +216,22 @@ def t_yaml_bool():
                        capture_output=True, text=True)
     obj = json.loads(r.stdout)[0]["obj"]
     ok("YAML 1.1 布林:yes / on → true、off / n → false、引號字串不變", obj == {"a": True, "b": True, "c": "yes", "d": False, "e": False}, obj)
+
+
+def t_approve_parse():
+    import change
+    good = {"使用者已核准變更 C1, C3": ["C1", "C3"], "使用者已核准變更C1、C3": ["C1", "C3"], "使用者已核准變更 C2": ["C2"]}
+    for t, want in good.items():
+        try:
+            ok(f"核准旗標解析:{t}", change.parse_approved(t) == want, change.parse_approved(t))
+        except gglib.Blocked as ex:
+            ok(f"核准旗標解析:{t}", False, str(ex))
+    for t in ("使用者已核准變更 C1、C3,C2 先不要", "請做 C1", "使用者已核准變更 全部", "使用者已核准變更 C1 和 C2"):
+        try:
+            change.parse_approved(t)
+            ok(f"核准旗標拒絕:{t}", False)
+        except gglib.Blocked:
+            ok(f"核准旗標拒絕:{t}", True)
 
 
 def t_rule_tables():
@@ -254,6 +276,8 @@ def t_classify():
         ("--logging 沒有可靠還原", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--logging=SYSTEM,WORKLOAD"], FX.CLUSTER),
         ("deny 防火牆規則", ["gcloud", "compute", "firewall-rules", "update", "deny-ssh", f"--project={P}", "--rules=tcp:23"],
          {"name": "deny-ssh", "direction": "INGRESS", "denied": [{"IPProtocol": "tcp", "ports": ["22"]}], "sourceRanges": ["10.0.0.0/8"]}),
+        ("授權網路已啟用且清單空(還原會變寬)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                          "--master-authorized-networks=10.0.0.0/8"], dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True})),
         ("bucket 狀態欄位不存在", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}),
     ]
     for name, argv, snap in blocked:
@@ -277,6 +301,8 @@ def t_classify():
          dict(FX.CLUSTER, shieldedNodes={}), False),
         ("開控制平面授權網路(原本關、清單空)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
                                         "--enable-master-authorized-networks", "--master-authorized-networks=203.0.113.0/24"], FX.CLUSTER, False),
+        ("防火牆 tcp:443,icmp(icmp 不算全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:8080,icmp"],
+         dict(FX.FIREWALLS[1], allowed=[{"IPProtocol": "tcp", "ports": ["8080"]}, {"IPProtocol": "icmp"}]), False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -531,26 +557,34 @@ def t_plan_change(e, review_run):
     for it in edited["items"]:
         if it["id"] == "C4":
             it["reversible"], it["blocked_reason"], it["rollback"] = True, None, ["gcloud", "echo"]
-    ep = os.path.join(run, "plan-edited.json")
+            it["kind"], it["target"] = "gke-cluster-update", {"project": P}
+    erun = run + "-edited"
+    os.makedirs(erun)
+    shutil.copy(os.path.join(run, "meta.json"), os.path.join(erun, "meta.json"))
+    edited["source_run"] = erun
+    ep = os.path.join(erun, "plan.json")
     with open(ep, "w") as f:
         f.write(json.dumps(edited, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     e.clear_log()
     r = e.run([ch, ep, "--sha", gglib.sha256_file(ep), "--approved", "使用者已核准變更 C4"])
-    ok("變更:手改 plan.json 的 reversible 並重算雜湊 → change.sh 重算後 BLOCKED", r.returncode == 3 and not execs(), r.stdout + r.stderr)
-    # 專案鎖被佔用
-    lock = os.path.join(e.reports, P, ".lock")
-    os.makedirs(lock)
-    gglib.write_json(os.path.join(lock, "owner.json"), {"pid": os.getpid(), "mode": "change", "run": "/other", "created": __import__("time").time()})
+    ok("變更:手改 plan.json 的 reversible 並重算雜湊 → change.sh 重算後 BLOCKED",
+       r.returncode == 3 and not execs() and ("重新" in r.stdout or "不可還原" in r.stdout), r.stdout + r.stderr)
+    # 專案鎖被佔用(另一個程序持有 flock)
+    import fcntl
+    os.makedirs(os.path.join(e.reports, P), exist_ok=True)
+    lf = os.open(os.path.join(e.reports, P, ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(lf, fcntl.LOCK_EX)
+    os.pwrite(lf, json.dumps({"mode": "change", "run": "/other"}).encode(), 0)
     e.clear_log()
     e.state({})
     r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
     ok("變更:專案鎖被佔用 → BLOCKED", r.returncode == 3 and "鎖" in (r.stdout + r.stderr) and not execs(), r.stdout + r.stderr)
-    shutil.rmtree(lock, ignore_errors=True)
-    os.makedirs(lock)  # 剛 mkdir、還沒寫 owner.json 的鎖:視為佔用,不能被當成過期清掉
+    os.close(lf)
+    # 偽造計畫:拿 agent 可寫的 plan.input.json 當計畫
+    fake = os.path.join(run, "plan.input.json")
     e.clear_log()
-    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
-    ok("變更:鎖目錄存在但 owner.json 還沒寫 → 視為佔用(BLOCKED)", r.returncode == 3 and os.path.isdir(lock) and not execs(), r.stdout + r.stderr)
-    shutil.rmtree(lock, ignore_errors=True)
+    r = e.run([ch, fake, "--sha", gglib.sha256_file(fake), "--approved", "使用者已核准變更 C1"])
+    ok("變更:非 plan.py 產生的 plan.json(plan.input.json)→ BLOCKED", r.returncode == 3 and not execs(), r.stdout + r.stderr)
     # k8s:endpoint 不符、apply 新建、apply privileged
     CTX = f"gke_{P}_asia-east1_prod"
     r = e.run([os.path.join(S, "collect.sh"), P, "--mode", "plan", "--scope", "gke"])
@@ -642,6 +676,7 @@ def main():
         t_redact()
         t_rule_tables()
         t_yaml_bool()
+        t_approve_parse()
         t_classify()
         t_wrapper(e)
         t_gcp_clean()

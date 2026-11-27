@@ -69,9 +69,14 @@ def _fw_rules_from_snapshot(snap):
     return out
 
 
+PORTLESS = {"icmp", "esp", "ah", "ipip", "gre", "icmpv6", "58", "1", "50", "51", "4", "47"}
+
+
 def _port_all(rule):
     if rule in ("all",):
         return True
+    if rule.lower() in PORTLESS:
+        return False
     m = re.fullmatch(r"(tcp|udp|sctp|all|\d+)(?::(\d+)(?:-(\d+))?)?", rule)
     if not m:
         return True  # 看不懂的一律當成全開
@@ -323,6 +328,12 @@ def _loosen_by_table(flags, k):
 
 def _k_gke_cluster_update(pos, flags, snap, res, k, cfg, *_):
     reasons = _loosen_by_table(flags, k)
+    if "--master-authorized-networks" in flags:
+        man = snap.get("masterAuthorizedNetworksConfig") or {}
+        if not man.get("cidrBlocks") and man.get("enabled"):
+            return None, reasons, "授權網路原本已啟用且清單為空,沒有不放寬的還原寫法"
+        if not man.get("cidrBlocks") and "--enable-master-authorized-networks" not in flags:
+            return None, reasons, "授權網路原本未啟用:請同時加 --enable-master-authorized-networks"
     if "--master-authorized-networks" in flags:
         old = [c.get("cidrBlock") for c in (gglib.ptr_get(snap, "/masterAuthorizedNetworksConfig/cidrBlocks") or [])]
         if not _subset_cidrs(_ranges(flags["--master-authorized-networks"]), old):

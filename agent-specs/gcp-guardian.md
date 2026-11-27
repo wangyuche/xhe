@@ -178,3 +178,4 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 - `kubectl label namespace` 的寫法是 `label namespace <ns> key=value [--overwrite]`;不允許移除 label。
 - kubectl 旗標一律 `--長旗標=值`(namespace 用 `--namespace=`,apply 用 `--filename=<manifest>`、patch 用 `--patch-file=<patch>`),由 kit 換成 run 目錄的實際檔案。
 - 測試資料放在 `skills/gcp-ops-kit/tests/`(`testdata/`、`fixtures.py`、`stub/`),入口 `scripts/selftest.sh`。
+- code-review(PR #40)後的調整:允許清單移除沒有可靠還原的旗標(logging / monitoring / security-posture / workload-vulnerability-scanning / maintenance-window);專案鎖改 `fcntl.flock`;核准旗標固定格式;change.sh 只接受 plan.py 產生的 plan.json;kubectl 還原改 `kubectl replace`;防火牆只改 INGRESS allow 規則;kubectl 不可 apply / patch Secret、RBAC、webhook、CRD、Namespace。

@@ -107,52 +107,40 @@ def new_run(cfg, project, mode):
     return run
 
 
-LOCK_STALE_SECONDS = 2 * 3600
+_LOCKS = {}
 
 
 def acquire_lock(cfg, project, mode, run):
-    """原子取鎖:先在旁邊建好含 owner.json 的暫存目錄,再 rename 成 .lock(目標存在時 rename 失敗)。
-    owner.json 讀不到時視為「被佔用」(只有目錄 mtime 超過期限才清掉)。"""
+    """專案鎖:fcntl.flock(程序結束或當掉時由系統自動釋放,沒有「過期」判斷)。"""
+    import fcntl
     base = os.path.join(cfg["GG_REPORT_DIR"], project)
     os.makedirs(base, mode=0o700, exist_ok=True)
-    lock = os.path.join(base, ".lock")
-    for _ in range(2):
-        tmp = os.path.join(base, f".lock-tmp-{os.getpid()}-{time.time_ns()}")
-        os.mkdir(tmp, 0o700)
-        write_json(os.path.join(tmp, "owner.json"),
-                   {"pid": os.getpid(), "mode": mode, "run": run, "created": time.time()})
+    path = os.path.join(base, ".lock")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
         try:
-            if os.path.exists(lock):
-                raise FileExistsError(lock)
-            os.rename(tmp, lock)
-            return lock
-        except OSError:
-            shutil.rmtree(tmp, ignore_errors=True)
-            info = read_json(os.path.join(lock, "owner.json"), None)
-            try:
-                mtime = os.stat(lock).st_mtime
-            except FileNotFoundError:
-                continue
-            if info is None:
-                stale = time.time() - mtime > LOCK_STALE_SECONDS
-            else:
-                age = time.time() - float(info.get("created", mtime))
-                alive = _pid_alive(info.get("pid")) if info.get("mode") == "change" else True
-                stale = age > LOCK_STALE_SECONDS or not alive
-            if stale:
-                shutil.rmtree(lock, ignore_errors=True)
-                append_log(run, "lock", {"cleared_stale": info})
-                continue
-            raise Blocked(f"專案 {project} 的鎖被佔用({(info or {}).get('mode', '?')} run={(info or {}).get('run', '?')});"
-                          "同專案的計畫 / 變更不可並行")
-    raise Blocked("無法取得專案鎖")
+            info = json.loads(os.pread(fd, 4096, 0).decode("utf-8") or "{}")
+        except Exception:
+            info = {}
+        os.close(fd)
+        raise Blocked(f"專案 {project} 的鎖被佔用({info.get('mode', '?')} run={info.get('run', '?')});"
+                      "同專案的計畫 / 變更不可並行")
+    os.ftruncate(fd, 0)
+    os.pwrite(fd, json.dumps({"pid": os.getpid(), "mode": mode, "run": run, "created": time.time()}).encode(), 0)
+    _LOCKS[(base, run)] = fd
+    return path
 
 
 def release_lock(cfg, project, run=None):
-    lock = os.path.join(cfg["GG_REPORT_DIR"], project, ".lock")
-    info = read_json(os.path.join(lock, "owner.json"), {})
-    if run is None or info.get("run") == run:
-        shutil.rmtree(lock, ignore_errors=True)
+    base = os.path.join(cfg["GG_REPORT_DIR"], project)
+    for key in [k for k in _LOCKS if k[0] == base and (run is None or k[1] == run)]:
+        fd = _LOCKS.pop(key)
+        try:
+            os.close(fd)  # 關檔即釋放 flock
+        except OSError:
+            pass
 
 
 def _pid_alive(pid):

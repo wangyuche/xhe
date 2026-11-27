@@ -47,7 +47,7 @@ def is_protected(path, cfg, cwd, ancestor=True):
             return True
     parts = p.split(os.sep)
     rd = os.path.realpath(cfg["GG_REPORT_DIR"]).lower()
-    if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig"):
+    if p.startswith(rd + os.sep) and ("gcloud" in parts or parts[-1] == "kubeconfig" or parts[-1].endswith(".rollback.json")):
         return True
     if ancestor and (p == rd or p.startswith(rd + os.sep) or rd.startswith(p.rstrip(os.sep) + os.sep)):
         # 報告目錄(或其上層):執行中的 run 會有 gcloud/ 憑證快取與 kubeconfig,遞迴工具不可碰
@@ -60,7 +60,7 @@ def _live_creds_under(top):
     try:
         for root, dirs, files in os.walk(top):
             low = [d.lower() for d in dirs] + [f.lower() for f in files]
-            if "gcloud" in low or "kubeconfig" in low:
+            if "gcloud" in low or "kubeconfig" in low or any(x.endswith(".rollback.json") for x in low):
                 return True
             dirs[:] = [d for d in dirs if not d.startswith(".lock")]
     except OSError:
@@ -119,6 +119,13 @@ def check_bash(cmd, cfg, cwd):
         return f"只允許 kit 入口腳本與唯讀指令({', '.join(sorted(READONLY_CMDS))})"
     if first == "find" and any(t in FIND_DENY for t in toks):
         return "find 不允許 -exec / -delete 等動作"
+    # 沒寫路徑時遞迴工具會掃 cwd:把 cwd 當成隱含路徑一起檢查
+    recursive = (first in ("grep", "diff") and any(t in ("-r", "-R", "--recursive", "--dereference-recursive")
+                                                   or (t.startswith("-") and not t.startswith("--") and ("r" in t or "R" in t))
+                                                   or t.startswith("--directories") for t in toks[1:])) \
+        or (first == "find" and (len(toks) == 1 or toks[1].startswith("-")))
+    if recursive and is_protected(cwd, cfg, cwd, ancestor=True):
+        return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
     for t in toks[1:]:
         for pth in arg_paths(t):
             if pth and is_protected(pth, cfg, cwd, ancestor=first not in ("ls", "stat", "pwd", "date")):
