@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""底部訊號(依 Gg 2026-11-17 確認的規則,照順序判斷,前一步成立才看下一步)。
-用法: python3 -I bottom_signal.py <30分K.json> [<60分K.json>] [--asof "YYYY-MM-DD HH:MM"] [--days 4] [--svg out.svg] [--title T]
+"""底部訊號(依 Gg 2026-11-17 確認的規則,2026-11-27 修訂;照順序判斷,前一步成立才看下一步)。
+用法: python3 -I bottom_signal.py <30分K.json> [<60分K.json>] [--asof "YYYY-MM-DD HH:MM"] [--days 4] [--keep-days 10]
+                                  [--zone-days 2] [--channel-from "YYYY-MM-DD HH:MM"] [--svg out.svg] [--title T]
 資料: Fugle candles JSON({"data":[{date,open,high,low,close,volume}...]}),歷史 + 今天盤中已由 run.sh 合併。
 
-流程(以 30 分 K 為主,只看最近 --days 個交易日,預設 4 天):
- ① 低檔鈍化  : D 值碰到 20 以下(碰一次就算)
+流程(以 30 分 K 為主,回看最近 --days 個交易日,預設 4 天):
+ ① 低檔鈍化  : D 值碰到 20 以下(碰一次就算);背離是保留下來的時候,從背離前低算起
  ② 底部背離  : 兩個相鄰的確認波段低點 a → b,前低 a 的 D < 20(在鈍化區),
-                後低 b 價格更低、D 沒有創低(D[b] > D[a]),且 D[b] < 30
- ③ 黃金交叉  : 背離低點 b 之後,K 由下往上穿越 D,交叉那根 D < 50
+                後低 b 價格更低、D 沒有創低(D[b] > D[a]),且 D[b] < 30。
+                背離確認後保留到跌破背離低點才失效,不受 --days 限制,最多往回 --keep-days 個交易日(Gg 2026-11-27 3A);
+                回看範圍開始前就被跌破的舊背離當作沒有,繼續往回找更早、仍有效的背離
+ ③ 黃金交叉  : 背離低點 b(含)之後,K 由下往上穿越 D,交叉那根 D < 50(Gg 2026-11-27 1C 維持)
  ④ 突破 20MA : 黃金交叉之後,看「當下這根」收盤是否在 MA20 上方(跌回就不算)
- ⑤ 突破下降壓力線: 黃金交叉之後,看當下這根收盤是否在壓力線上方;
-                壓力線 = 背離低點 b 之前,最近兩個「後高 < 前高」的確認波段高點連線
+ ⑤ 突破下降壓力線: 黃金交叉之後,當下這根收盤站上任一條就算(Gg 2026-11-27 2D):
+                高點連線 = 背離低點 b 之前,最近兩個「後高 < 前高」的確認波段高點連線;
+                通道上緣 = 給 --channel-from(30 分 K)時,下緣 低點 1 → b,平行通過兩點間離下緣最遠的高點
  ⑥ 突破水平壓力區間: 黃金交叉之後,看當下這根收盤是否站上區間上緣(Gg 2026-11-19);
                 區間 = 背離低點 b 之前 --zone-days 個交易日(預設 2)內確認波段高點的最低～最高
- ⑦ 60 分 K 確認: 30 分 K 走到 ③ 之後,用同一套流程看 60 分 K 走到第幾步
+ ⑦ 60 分 K 確認: 30 分 K 走到 ③ 之後,用同一套流程看 60 分 K 走到第幾步(不畫通道)
+「首次站上」= 當下這次連續站上的第一根(中間跌回過就從最後一次重新站上算)。
 
 KD(9,3,3): RSV 9 根;K = 2/3 前K + 1/3 RSV;D = 2/3 前D + 1/3 K;初值 50。
 波段點: 前後各 3 根中的最低/最高,右邊 3 根走完才算確認(不偷看未來)。
@@ -23,7 +28,10 @@ import datetime as _dt, json, sys
 args = sys.argv[1:]
 def opt(name, default=None):
     if name in args:
-        i = args.index(name); v = args[i+1]; del args[i:i+2]; return v
+        i = args.index(name)
+        if i + 1 >= len(args) or args[i+1].startswith("--"):
+            sys.exit(f"用法錯誤: {name} 後面要接值")
+        v = args[i+1]; del args[i:i+2]; return v
     return default
 import re
 def posint(name, default):
@@ -114,27 +122,22 @@ class Series:
             a, b = self.lows[j-1], self.lows[j]
             if a < self.k0: break
             if D[a] < 20 and L[b] < L[a] and D[b] > D[a] and D[b] < 30:
-                div = {"a": a, "i": b, "confirm": b + W, "kept": a < w0}
-                # 回看範圍外的舊背離,如果在回看範圍開始前就已經被跌破,是早就失效的訊號:當作沒有,不報「失效」
                 brk = next((i for i in range(b+1, last+1) if L[i] < L[b]), None)
-                if div["kept"] and brk is not None and brk < w0:
-                    div = None
-                break
+                # 回看範圍外的舊背離,如果在回看範圍開始前就已經被跌破,是早就失效的訊號:不報「失效」,
+                # 繼續往回找更早、仍沒被跌破的背離(到 --keep-days 為止)
+                if a < w0 and brk is not None and brk < w0:
+                    continue
+                div = {"a": a, "i": b, "confirm": b + W, "kept": a < w0, "brk": brk}; break
+        # 失效:背離低點之後任何一根跌破背離低點 → 這組訊號作廢(新低點確認前就要判定,不等右邊 3 根);
+        # 跌破發生在回看範圍內,不管 ① 是否成立都要報「失效」
+        if div and div["brk"] is not None:
+            self.div_broken = {"a": div["a"], "b": div["i"], "i": div["brk"], "low": min(L[div["i"]+1:last+1])}
+            div = None
         # ① 鈍化:回看範圍內 D<20;背離是保留下來的(前低在回看範圍外)時,鈍化從背離前低算起
         s0 = min(w0, div["a"]) if div else w0
         dz = [i for i in range(s0, last+1) if D[i] < 20]
         st[1] = {"i": dz[0], "min": min(D[i] for i in dz)} if dz else None
         st[2] = div if st[1] else None
-        # 失效:背離低點之後任何一根跌破背離低點 → 這組訊號作廢(新低點確認前就要判定,不等右邊 3 根)
-        if st[2]:
-            b = st[2]["i"]
-            brk = next((i for i in range(b+1, last+1) if L[i] < L[b]), None)
-            if brk is not None:
-                self.div_broken = {"a": st[2]["a"], "b": b, "i": brk, "low": min(L[b+1:last+1])}
-                st[2] = None
-                if st[1] and st[1]["i"] < w0:     # 保留的背離失效 → ① 回到只看回看範圍
-                    dz = [i for i in range(w0, last+1) if D[i] < 20]
-                    st[1] = {"i": dz[0], "min": min(D[i] for i in dz)} if dz else None
         # ③ 黃金交叉(背離低點那根本身的交叉也算,Gg 2026-11-18)
         st[3] = None
         if st[2]:
@@ -144,9 +147,14 @@ class Series:
                     st[3] = {"i": i}; break
         # ④ 20MA(當下這根)
         st[4] = st[5] = st[6] = None
+        def run_start(ok, lo):
+            """當下這次連續成立的第一根(中間跌回過就從最後一次重新站上算),不早於 lo"""
+            i = last
+            while i > lo and ok(i-1): i -= 1
+            return i
         if st[3]:
             if MA[last] and C[last] > MA[last]:
-                first = next(i for i in range(st[3]["i"], last+1) if MA[i] and C[i] > MA[i])
+                first = run_start(lambda i: MA[i] and C[i] > MA[i], st[3]["i"])
                 st[4] = {"i": first, "ma": MA[last]}
             # ⑤ 下降壓力線,兩條任一條當下收盤站上就成立(Gg 2026-11-27 2D)
             #   線 A:背離低點之前的最近兩個下降波段高點連線
@@ -168,14 +176,15 @@ class Series:
                 elif L[p1] <= L[b]:
                     self.notes.append(f"通道:低點 1 {px(L[p1])} 不高於背離低點 {px(L[b])},通道不是往下,不算下降壓力線")
                 else:
+                    if p1 not in self.lows:
+                        self.notes.append(f"通道:低點 1 {self.ch} 不是確認的波段低點,下緣可能切過中間的低點,通道參考性較低")
                     s = (L[b]-L[p1])/(b-p1)
                     p2 = max(range(p1, b+1), key=lambda i: H[i] - (L[p1] + s*(i-p1)))
                     lines.append({"kind": "通道上緣", "a": p1, "b": b, "p2": p2, "x0": p2, "y0": H[p2], "s": s})
             for e in lines:
                 ln = lambda x, e=e: e["y0"] + e["s"]*(x-e["x0"])
                 e["line"] = ln(last)
-                hit = [i for i in range(st[3]["i"], last+1) if C[i] > ln(i)]
-                e["i"] = hit[0] if (hit and C[last] > ln(last)) else None
+                e["i"] = run_start(lambda i, ln=ln: C[i] > ln(i), st[3]["i"]) if C[last] > ln(last) else None
             self.lines = lines
             ok = [e for e in lines if e["i"] is not None]
             if ok:
@@ -188,8 +197,7 @@ class Series:
                 zlo, zhi = min(H[h] for h in zh), max(H[h] for h in zh)
                 self.zone = {"lo": zlo, "hi": zhi, "idx": zh}
                 if C[last] > zhi:
-                    first = next(i for i in range(st[3]["i"], last+1) if C[i] > zhi)
-                    st[6] = {"i": first, "lo": zlo, "hi": zhi}
+                    st[6] = {"i": run_start(lambda i: C[i] > zhi, st[3]["i"]), "lo": zlo, "hi": zhi}
             # 參考價位(只畫線、不算步驟):前波高點 = 背離低點之前 10 個交易日內的最高價
             dts = sorted({bb["date"][:10] for bb in self.bars[:b]})[-10:]
             if dts:
@@ -215,7 +223,7 @@ def report(S, r, label):
     skip = "⏸ 前一步未成立,不判斷"
     s1 = st[1]
     out.append(f"① 低檔鈍化 D<20: " + (f"有 ✅ {t(s1['i'])} 起,最低 D {s1['min']:.1f}" if s1 else f"沒有 ❌(回看期間 D 最低 {min(D[S.w0:]):.1f})"))
-    if not s1: out.append("② 底部背離: " + skip)
+    if not s1 and not getattr(S, "div_broken", None): out.append("② 底部背離: " + skip)
     elif st[2]:
         a, b = st[2]["a"], st[2]["i"]
         kept = f";前低已超出回看 {days} 天,未跌破背離低點 {L[b]:,.0f} 所以保留" if st[2].get("kept") else ""

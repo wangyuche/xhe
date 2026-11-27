@@ -142,8 +142,23 @@ try:
     check("舊背離早就跌破 → 不報失效", "失效" not in o and ("② 底部背離: 沒有 ❌" in o or "② 底部背離: ⏸" in o))
     o = run(old, "--days", "3")
     check("跌破在回看範圍內 → 照樣報失效", "② 底部背離: 失效 ❌ 11/19 09:30" in o)
+    # 第二輪 review:較新的背離(11/17→11/18)在回看前就被跌破時,要繼續往回找;11/04→11/06(37,837 沒破)仍保留
+    o = run(old, "--days", "1", "--keep-days", "15")
+    check("跳過早就跌破的新背離,找到更早仍有效的背離",
+          "② 底部背離: 有 ✅ 前低 11/04 12:00 41,856(D9.5)→ 後低 11/06 09:00 37,837(D15.3)" in o and "背離保留自 11/04 12:00" in o)
 finally:
     if os.path.exists(old): os.remove(old)
+
+# 6f. 第二輪 review:保留的背離在回看範圍內被跌破、但回看範圍內 D 沒有 <20 → ① 沒有,② 仍要報「失效」(不是 ⏸)
+o = run(F30c, "--asof", "2026-11-19 09:30", "--days", "1")
+check("① 不成立時仍報 ② 失效", "① 低檔鈍化 D<20: 沒有 ❌" in o
+      and "② 底部背離: 失效 ❌ 11/19 09:30 跌破背離低點 39,260.99" in o)
+
+# 6g. 「首次站上」是當下這次連續站上的第一根;旗標沒帶值要報用法錯誤
+r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--channel-from"], capture_output=True, text=True)
+check("旗標沒帶值 → 用法錯誤", r.returncode != 0 and "後面要接值" in r.stderr and "Traceback" not in r.stderr)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 10:00")
+check("低點 1 不是波段低點 → 警告", "⚠️ 通道:低點 1 2026-11-13 10:00 不是確認的波段低點" in o and "通道上緣:" in o)
 
 # 7. 抓不到資料時要明確報錯
 bad = os.path.join(TMP, "bad_fugle.json")
