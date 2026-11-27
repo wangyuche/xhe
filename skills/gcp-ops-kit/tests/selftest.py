@@ -118,6 +118,14 @@ def t_allowlists():
         ["kubectl", f"--context={CTX}", "get", "secret/db", "-n", "shop", "-o", "json", "--request-timeout=60s"],
         ["kubectl", f"--context={CTX}", "patch", "Secret", "db", "-n", "shop", "--type=merge", "--patch-file=/r/patches/C1.json", "--dry-run=server", "-o", "json", "--request-timeout=60s"],
     ]
+    allow_dry = [["kubectl", f"--context={CTX}", "patch", "deployment", "app-secret", "-n", "shop", "--type=merge",
+                  "--patch-file=/r/my-secret/patches/C1.json", "--dry-run=server", "-o", "json", "--request-timeout=60s"]]
+    for a in allow_dry:
+        try:
+            gglib.check_read(a, "dryrun")
+            ok("dry-run 允許:名稱 / 路徑含 secret 字樣的 deployment patch", True)
+        except gglib.Denied as ex:
+            ok("dry-run 允許:名稱 / 路徑含 secret 字樣的 deployment patch", False, str(ex))
     for a in allow:
         try:
             gglib.check_read(a, "read")
@@ -164,6 +172,8 @@ def t_guard(e):
         (f"ls {e.tmp}", "allow"),
         (f"ls -laR {e.reports}", "deny-live"),
         (f"file {e.reports}", "deny"),
+        ("jq -n env", "deny"),
+        (f"node {S}/render.mjs --check {e.reports}/p/20261127-000001-change", "allow"),
         (f"cat {e.cfg.replace('/conf/', '/CONF/')}", "deny"),
         (f"cat {e.key.replace('sa.json', 'SA.JSON')}", "deny"),
         (f"grep -r private_key {e.reports}", "deny-live"),
@@ -172,6 +182,9 @@ def t_guard(e):
     env = e.env()
     live = os.path.join(e.reports, "p", "20261127-000000-review", "gcloud")
     os.makedirs(live)
+    rb = os.path.join(e.reports, "p", "20261127-000001-change", "before")
+    os.makedirs(rb)
+    open(os.path.join(rb, "C1.rollback.json"), "w").write("{}")
     for cmd, want in cases:
         want = "deny" if want == "deny-live" else want
         r = subprocess.run(["python3", g, "--test", cmd], env=env, capture_output=True, text=True)
@@ -211,6 +224,11 @@ def t_redact():
     ok("遮蔽:ConfigMap / Secret / env / masterAuth 值不留原文",
        all(x not in s for x in (FX.FAKE_AIZA, "c2VjcmV0", "plain", "hunter2", "x=1", '"abc"')), s)
     ok("遮蔽:metadata 布林設定保留明文", '"value": "TRUE"' in s)
+    a = gglib.redact({"spec": {"containers": [{"args": ["--db-password=hunter2xyz", "--token", "abc123token", "--port=80"]}]},
+                      "config": {"metadata": {"disable-legacy-endpoints": "true", "startup": "secret=1"}}})
+    sa = json.dumps(a)
+    ok("遮蔽:容器 args 的密碼 / token 值、node pool config.metadata 值",
+       "hunter2xyz" not in sa and "abc123token" not in sa and "--port=80" in sa and '"disable-legacy-endpoints": "true"' in sa and "secret=1" not in sa, sa)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
 
@@ -330,6 +348,12 @@ def t_classify():
         ("移除 SA 的 editor(serviceAccount: 前綴)", ["gcloud", "projects", "remove-iam-policy-binding", P, f"--member=serviceAccount:{FX.DEF_SA}",
                                                "--role=roles/editor", f"--project={P}"], pol, False),
         ("防火牆從全部 VM 收窄到 tag", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags=bastion"], fw, False),
+        ("關閉授權網路(還原帶回原網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                       "--no-enable-master-authorized-networks"],
+         dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), True),
+        ("關閉 autoscaling(還原帶回 min / max)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                            f"--project={P}", "--no-enable-autoscaling"],
+         {"autoscaling": {"enabled": True, "minNodeCount": 1, "maxNodeCount": 5}}, False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -337,6 +361,10 @@ def t_classify():
         good = not r["blocked_reason"] and r["reversible"] and r["rollback"]
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
+        if name.startswith("關閉授權網路"):
+            good = good and "--master-authorized-networks=10.0.0.0/8" in r["rollback"]
+        if name.startswith("關閉 autoscaling"):
+            good = good and "--min-nodes=1" in r["rollback"] and "--max-nodes=5" in r["rollback"]
         if name == "收窄已啟用的授權網路":
             good = good and "--enable-master-authorized-networks" in r["rollback"] and "--master-authorized-networks=10.0.0.0/8" in r["rollback"] \
                 and "--no-enable-master-authorized-networks" not in r["rollback"]
@@ -572,6 +600,8 @@ def t_plan_change(e, review_run):
         {"id": "C3", "summary": "default-pool 每區 2→3 台", "command": ["gcloud", "container", "clusters", "resize", "prod",
                                                                     "--node-pool=default-pool", "--num-nodes=3", "--location=asia-east1", f"--project={P}"],
          "expected": [{"field": "/node_count_per_zone", "expect": 3}], "impact": "無"},
+        {"id": "C5", "summary": "別的專案的 bucket", "command": ["gcloud", "storage", "buckets", "update", "gs://other-proj-data", f"--project={P}", "--versioning"],
+         "expected": [{"field": "/versioning_enabled", "expect": True}]},
         {"id": "C4", "summary": "開 security posture(agent 謊報可還原)", "reversible": True, "rollback": ["echo"],
          "loosens_security": False,
          "command": ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--security-posture=enterprise"],
@@ -585,6 +615,7 @@ def t_plan_change(e, review_run):
     ok("計畫:C1–C3 可執行、C4 被判不可還原(忽略 agent 給的 reversible=true)",
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
+    ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
        by and "--source-ranges=0.0.0.0/0" in by["C2"]["rollback"] and "--num-nodes=2" in by["C3"]["rollback"])
     r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run])
@@ -677,6 +708,12 @@ def t_plan_change(e, review_run):
     ok("計畫 k8s:scale 可執行(記錄 endpoint)、apply 新建資源 → 不可還原 BLOCKED",
        not kb["C1"]["blocked_reason"] and kb["C1"]["target"].get("endpoint") == "https://10.0.0.1"
        and kb["C2"]["reversible"] is False and kb["C2"]["blocked_reason"], json.dumps(kb, ensure_ascii=False)[:1500])
+    e.state({"diff": "create", "endpoint": ""})
+    r, _ = plan_build(e, krun)
+    kb0 = {i["id"]: i for i in json.load(open(os.path.join(krun, "plan.json")))["items"]}
+    ok("計畫 k8s:讀不到叢集 endpoint → BLOCKED", kb0["C1"]["blocked_reason"] and "endpoint" in kb0["C1"]["blocked_reason"], kb0["C1"])
+    e.state({"diff": "create"})
+    r, ksha = plan_build(e, krun)
     e.state({"endpoint": "https://10.9.9.9"})
     e.clear_log()
     r = e.run([ch, os.path.join(krun, "plan.json"), "--sha", ksha, "--approved", "使用者已核准變更 C1"])

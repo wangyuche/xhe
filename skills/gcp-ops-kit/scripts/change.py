@@ -94,7 +94,10 @@ class Runner:
             return self.stop("BLOCKED", cid, str(e))
         if err:
             return self.stop("BLOCKED", cid, "變更前快照失敗:" + err)
-        if (argv[0] == "kubectl" or it["target"].get("endpoint")) and endpoint != it["target"].get("endpoint"):
+        needs_ep = argv[0] == "kubectl" or kind == "gke-resize"
+        if needs_ep and (not endpoint or not it["target"].get("endpoint")):
+            return self.stop("BLOCKED", cid, "讀不到叢集 endpoint,不能確認是同一個叢集")
+        if needs_ep and endpoint != it["target"].get("endpoint"):
             return self.stop("BLOCKED", cid, f"叢集 endpoint 不符(計畫 {it['target'].get('endpoint')},現在 {endpoint})")
         bad = ggplan.check_pre((it.get("precondition") or []) + (it.get("auto_pre") or []), snap)
         if bad:

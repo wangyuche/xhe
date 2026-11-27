@@ -16,7 +16,7 @@ SCRIPTS = os.path.join(gglib.KIT, "scripts")
 ENTRIES = {"check.sh", "collect.sh", "plan.py", "change.sh", "render.mjs", "yaml-review.sh", "selftest.sh"}
 INTERP = {".sh": {"bash"}, ".py": {"python3"}, ".mjs": {"node"}}
 FORBIDDEN_CHARS = set(";&|`$<>()\n\r\\*?[]{}~!#")
-READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "date", "pwd", "find", "jq", "diff"}
+READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "date", "pwd", "find", "diff"}
 FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
                "curl", "wget", "googleapis")
@@ -36,7 +36,7 @@ def _norm(path, cwd):
     return os.path.realpath(os.path.join(cwd, os.path.expanduser(path))).lower()
 
 
-def is_protected(path, cfg, cwd, ancestor=True):
+def is_protected(path, cfg, cwd, ancestor=True, rollback_ancestor=True):
     """path 本身或其下層是受保護路徑;ancestor=True 時,path 是受保護路徑的上層目錄也算(遞迴工具可讀到)。"""
     p = _norm(path, cwd)
     prot = protected_paths(cfg)
@@ -51,16 +51,16 @@ def is_protected(path, cfg, cwd, ancestor=True):
         return True
     if ancestor and (p == rd or p.startswith(rd + os.sep) or rd.startswith(p.rstrip(os.sep) + os.sep)):
         # 報告目錄(或其上層):執行中的 run 會有 gcloud/ 憑證快取與 kubeconfig,遞迴工具不可碰
-        if _live_creds_under(rd if rd.startswith(p.rstrip(os.sep) + os.sep) else p):
+        if _live_creds_under(rd if rd.startswith(p.rstrip(os.sep) + os.sep) else p, rollback_ancestor):
             return True
     return False
 
 
-def _live_creds_under(top):
+def _live_creds_under(top, rollback=True):
     try:
         for root, dirs, files in os.walk(top):
             low = [d.lower() for d in dirs] + [f.lower() for f in files]
-            if "gcloud" in low or "kubeconfig" in low or any(x.endswith(".rollback.json") for x in low):
+            if "gcloud" in low or "kubeconfig" in low or (rollback and any(x.endswith(".rollback.json") for x in low)):
                 return True
             dirs[:] = [d for d in dirs if not d.startswith(".lock")]
     except OSError:
@@ -106,7 +106,8 @@ def check_bash(cmd, cfg, cwd):
                 return "不允許直譯器旗標"
             for t in toks[i + 1:]:
                 for pth in arg_paths(t):
-                    if pth and is_protected(pth, cfg, cwd):
+                    # 入口腳本自己讀 run 目錄(不會印出 rollback.json 內容),只擋憑證快取
+                    if pth and is_protected(pth, cfg, cwd, rollback_ancestor=False):
                         return f"參數指向受保護路徑(或其上層目錄):{t}"
             return None
         return f"只允許 gcp-ops-kit 的入口腳本({', '.join(sorted(ENTRIES))}),不允許 {first}"

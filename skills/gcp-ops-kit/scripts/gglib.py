@@ -385,6 +385,11 @@ def redact(obj, path=""):
             out[k] = {kk: redact_value(vv) for kk, vv in v.items()}
         elif k == "masterAuth" and isinstance(v, dict):
             out[k] = {kk: (redact_value(vv) if vv not in (None, "", {}) else vv) for kk, vv in v.items()}
+        elif k in ("command", "args") and isinstance(v, list) and all(isinstance(x, str) for x in v):
+            out[k] = _redact_argv(v)
+        elif k == "metadata" and isinstance(v, dict) and p.endswith("/config/metadata"):
+            # GKE node pool config.metadata(dict):保留布林設定,其他值遮蔽
+            out[k] = {kk: (vv if kk in KEEP_METADATA_KEYS else redact_value(vv)) for kk, vv in v.items()}
         elif k == "env" and isinstance(v, list):
             out[k] = [_redact_env(e) for e in v]
         elif k in ("metadata", "commonInstanceMetadata") and isinstance(v, dict) and isinstance(v.get("items"), list):
@@ -397,6 +402,29 @@ def redact(obj, path=""):
                            or looks_secret(kk, vv) else vv) for kk, vv in v.items()}
         else:
             out[k] = redact(v, p)
+    return out
+
+
+ARG_SECRET_RE = re.compile(r"^(--?[A-Za-z0-9_.-]*(?:pass(?:word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential|auth)[A-Za-z0-9_.-]*[=:])(.+)$", re.I)
+
+
+def _redact_argv(items):
+    out, hide_next = [], False
+    for x in items:
+        if hide_next:
+            out.append(redact_value(x))
+            hide_next = False
+            continue
+        m = ARG_SECRET_RE.match(x)
+        if m:
+            out.append(m.group(1) + redact_value(m.group(2)))
+        elif re.fullmatch(r"--?[A-Za-z0-9_.-]*(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential)", x, re.I):
+            out.append(x)
+            hide_next = True
+        elif any(pt.search(x) for pt in SECRET_VALUE_PATTERNS):
+            out.append(redact_value(x))
+        else:
+            out.append(x)
     return out
 
 

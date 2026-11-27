@@ -77,7 +77,16 @@
           "inverse": "--enable-master-authorized-networks",
           "loosens": "關閉控制平面授權網路",
           "state": "/masterAuthorizedNetworksConfig/enabled",
-          "target": false
+          "target": false,
+          "restore_with": [
+            {
+              "flag": "--master-authorized-networks",
+              "from": "/masterAuthorizedNetworksConfig/cidrBlocks",
+              "item_key": "cidrBlock",
+              "format": "join",
+              "optional": true
+            }
+          ]
         },
         "--master-authorized-networks": {
           "restore": "/masterAuthorizedNetworksConfig/cidrBlocks",
@@ -171,7 +180,17 @@
         "--no-enable-autoscaling": {
           "inverse": "--enable-autoscaling",
           "state": "/autoscaling/enabled",
-          "target": false
+          "target": false,
+          "restore_with": [
+            {
+              "flag": "--min-nodes",
+              "from": "/autoscaling/minNodeCount"
+            },
+            {
+              "flag": "--max-nodes",
+              "from": "/autoscaling/maxNodeCount"
+            }
+          ]
         },
         "--min-nodes": {
           "restore": "/autoscaling/minNodeCount"

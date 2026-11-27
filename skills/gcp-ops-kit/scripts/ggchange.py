@@ -275,6 +275,19 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 return None, f"{fl}:變更前已是目標狀態({rule['state']}={cur!r}),不需變更;還原會反向改掉原設定"
             res["auto_pre"].append({"field": rule["state"], "expect": cur})
             out.append(rule["inverse"])
+            for rw in rule.get("restore_with", []):
+                v = gglib.ptr_get(snap, rw["from"])
+                if rw.get("format") == "join":
+                    vals = [str(i.get(rw["item_key"]) if rw.get("item_key") else i) for i in (v or [])]
+                    if vals:
+                        out.append(f"{rw['flag']}={','.join(vals)}")
+                    elif not rw.get("optional"):
+                        return None, f"{fl}:快照沒有 {rw['from']},還原無法帶回原值"
+                elif v is None:
+                    return None, f"{fl}:快照沒有 {rw['from']},還原無法帶回原值"
+                else:
+                    out.append(f"{rw['flag']}={v}")
+                res["auto_pre"].append({"field": rw["from"], "expect": v})
             changed = True
         elif "restore" in rule:
             cur = gglib.ptr_get(snap, rule["restore"])

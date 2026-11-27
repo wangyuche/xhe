@@ -89,6 +89,8 @@ def snapshot(s, kind, argv, project, ctx_done):
             if snap is not None:
                 ctx = f"gke_{project}_{f.get('--location')}_{name}"
                 endpoint = ensure_context(s, ctx, project, ctx_done)
+                if not endpoint:
+                    return None, None, "讀不到叢集 endpoint(kubeconfig 解析失敗),不能確認是同一個叢集"
                 r = s.kubectl(ctx, ["get", "nodes", "-l", f"cloud.google.com/gke-nodepool={f.get('--node-pool')}",
                                     "-o", "json", "--request-timeout=60s"], mode="dryrun")
                 nodes = (_json(r) or {}).get("items") if r.returncode == 0 else None
@@ -100,10 +102,15 @@ def snapshot(s, kind, argv, project, ctx_done):
                             "node_count_per_zone": len(nodes) // zones if len(nodes) % zones == 0 else None}
         elif typ == "firewall":
             snap, err = g(["compute", "firewall-rules", "describe", name])
-        elif typ == "bucket":
-            snap, err = g(["storage", "buckets", "describe", name])
-        elif typ == "bucket-iam":
-            snap, err = g(["storage", "buckets", "get-iam-policy", name])
+        elif typ in ("bucket", "bucket-iam"):
+            owned, err = g(["storage", "buckets", "list"])
+            names = {"gs://" + (b.get("name") or "") for b in (owned or [])} | {(b.get("storage_url") or "").rstrip("/") for b in (owned or [])}
+            if err is None and name not in names:
+                return None, None, f"{name} 不屬於專案 {project}(不在 buckets list 裡)"
+            if err is None:
+                snap, err = g(["storage", "buckets", "describe" if typ == "bucket" else "get-iam-policy", name])
+            else:
+                snap = None
         elif typ == "project-iam":
             snap, err = g(["projects", "get-iam-policy", project])
         elif typ == "sql":
@@ -114,6 +121,8 @@ def snapshot(s, kind, argv, project, ctx_done):
     # kubectl
     ctx = argv[1][len("--context="):]
     endpoint = ensure_context(s, ctx, project, ctx_done)
+    if not endpoint:
+        return None, None, "讀不到叢集 endpoint(kubeconfig 解析失敗),不能確認是同一個叢集"
     ns = f.get("--namespace")
     rest = [a for a in argv[2 + len(k["prefix"]) - 1:] if not a.startswith("--")]
 
