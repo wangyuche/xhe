@@ -448,8 +448,8 @@ def _k_bucket_update(pos, flags, snap, res, k, cfg, *_):
 
 def _iam_common(pos, flags, res, cfg, adding):
     member, role = flags.get("--member"), flags.get("--role")
-    ident = (member or "").split(":", 1)[1] if ":" in (member or "") else ""
-    if ident and ident != ident.lower():
+    mtype, _, ident = (member or "").partition(":")
+    if mtype in ("user", "serviceAccount", "group", "domain") and ident != ident.lower():
         res["blocked_reason"] = "--member 請用小寫(GCP 會把 email 轉成小寫,大小寫不同會讓還原比對錯誤)"
         return None
     if role == "roles/owner":

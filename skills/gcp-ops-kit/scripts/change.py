@@ -7,6 +7,7 @@ stdout:status=PASS|ISSUES|BLOCKED、run=<變更 run 目錄>、每條結果
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -166,7 +167,7 @@ def write_log(run, plan_path, sha, approved, runner):
              f"- 狀態:**{runner.status}**", f"- 時間:{gglib.now_iso()}", "",
              "| C | 結果 | 原因 / 驗證 | 結束碼 | 還原指令 |", "|---|---|---|---|---|"]
     for r in runner.results:
-        rb = " ".join(r.get("rollback") or []) or "-"
+        rb = shlex.join(r.get("rollback") or []) or "-"
         lines.append(f"| {r['id']} | {r['result']} | {r.get('reason', '')} | {r.get('rc', '-')} | `{rb}` |")
     lines += ["", "實際執行的指令見 `inventory/commands.log`(由 kit 記錄,agent 不寫此檔)。", ""]
     with open(os.path.join(run, "change-log.md"), "w", encoding="utf-8") as f:
@@ -224,7 +225,7 @@ def main(argv):
         print(f"status={status}")
         print(f"run={run}")
         for r in runner.results:
-            print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{' '.join(r.get('rollback') or [])}")
+            print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}")
         return {"PASS": 0, "ISSUES": 1, "BLOCKED": 3}[status]
     except gglib.Blocked as e:
         print("status=BLOCKED")

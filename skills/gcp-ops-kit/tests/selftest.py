@@ -200,7 +200,10 @@ def t_guard(e):
                             ("Grep", {"pattern": "private_key", "path": e.tmp}, 2),
                             ("Glob", {"pattern": e.tmp + "/**/*.json"}, 2),
                             ("Grep", {"pattern": "x", "path": e.reports}, 2),
-                            ("Grep", {"pattern": "x", "path": os.path.join(e.reports, "p", "other-run")}, 0)):
+                            ("Grep", {"pattern": "x", "path": os.path.join(e.reports, "p", "other-run")}, 0),
+                            ("Glob", {"pattern": "../conf/*", "path": os.path.join(e.tmp, "sub")}, 2),
+                            ("Glob", {"pattern": os.path.join(e.tmp, "con*", "*")}, 2),
+                            ("Glob", {"pattern": "*.json", "path": os.path.join(e.reports, "p", "other-run")}, 0)):
         r = subprocess.run(["python3", g], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": "/"}),
                            env=env, capture_output=True, text=True)
         tgt = inp.get("file_path") or inp.get("path") or inp.get("pattern")
@@ -229,11 +232,12 @@ def t_redact():
     ok("遮蔽:metadata 布林設定保留明文", '"value": "TRUE"' in s)
     a = gglib.redact({"spec": {"containers": [{"args": ["--db-password=hunter2xyz", "--token", "abc123token", "--port=80"]}]},
                       "config": {"metadata": {"disable-legacy-endpoints": "true", "startup": "secret=1"}},
-                      "nodeConfig": {"metadata": {"my-api-token": "nodeconfigsecret"}}})
+                      "nodeConfig": {"metadata": {"my-api-token": "nodeconfigsecret"}},
+                      "kind": "Pod", "x": {"command": ["sh", "-c", "DB_PASSWORD=hunter2inline ./run"], "args": ["--db-url=postgres://u:SuperSecretPw@h/db"]}})
     sa = json.dumps(a)
     ok("遮蔽:容器 args 的密碼 / token 值、node pool config.metadata 值",
        "hunter2xyz" not in sa and "abc123token" not in sa and "--port=80" in sa and '"disable-legacy-endpoints": "true"' in sa and "secret=1" not in sa
-       and "nodeconfigsecret" not in sa, sa)
+       and "nodeconfigsecret" not in sa and "hunter2inline" not in sa and "SuperSecretPw" not in sa and "./run" in sa, sa)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
 
@@ -264,6 +268,14 @@ def t_misc(e):
     priv = [f for f in pf if f["rule_id"] == "K8S-PRIV-001"]
     ok("YAML 審查:kind: List 的 item 也有行號(privileged 在第 9 行)", priv and priv[0]["evidence"].get("line") == 9, priv)
     ok("GCP 規則:0.0.0.0/1 + 128.0.0.0/1 也算對全網開放", gcp_rules._covers_all(["0.0.0.0/1", "128.0.0.0/1"]) and not gcp_rules._covers_all(["10.0.0.0/8"]))
+    spaced = os.path.join(e.tmp, "conf", "config-spaced")
+    with open(spaced, "w") as f:
+        f.write(f"GG_REPORT_DIR = {e.reports}\n")
+    os.chmod(spaced, 0o600)
+    env2 = e.env(stub=False)
+    env2["GG_CONFIG"] = spaced
+    r = e.run([os.path.join(S, "yaml-review.sh"), lf, "--label", "spaced"], env=env2)
+    ok("設定檔 `GG_REPORT_DIR = 路徑`(等號旁有空白)Python 與 render.mjs 解析一致", r.returncode == 0 and run_dir(r.stdout), r.stderr[-300:])
     other = os.path.join(e.tmp, "not-a-run")
     os.makedirs(other, exist_ok=True)
     r = e.run(["node", os.path.join(S, "render.mjs"), other])
@@ -397,6 +409,11 @@ def t_classify():
                                      f"--project={P}", "--enable-autoscaling", "--min-nodes=1", "--max-nodes=3"], {"autoscaling": {}}, False),
         ("Pod Security 版本變更(放寬)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce-version=v1.0", "--overwrite"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}, True),
+        ("移除 WIF principalSet 綁定(保留大小寫)", ["gcloud", "projects", "remove-iam-policy-binding", P,
+                                                    "--member=principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/attribute.repository/o/r",
+                                                    "--role=roles/viewer", f"--project={P}"], pol, False),
+        ("改防火牆描述(還原值含空白)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=new"],
+         dict(fw, description="Allow SSH from office"), False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
@@ -405,6 +422,9 @@ def t_classify():
         good = not r["blocked_reason"] and r["reversible"] and r["rollback"]
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
+        if name.startswith("改防火牆描述"):
+            import shlex
+            good = good and shlex.split(shlex.join(r["rollback"])) == r["rollback"] and "--description=Allow SSH from office" in r["rollback"]
         if name.startswith("開啟 autoscaling"):
             good = good and "--no-enable-autoscaling" in r["rollback"] and not any(a.startswith("--min-nodes") for a in r["rollback"])
         if name.startswith("關閉授權網路"):

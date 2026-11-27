@@ -410,9 +410,21 @@ def redact(obj, path=""):
 ARG_SECRET_RE = re.compile(r"^(--?[A-Za-z0-9_.-]*(?:pass(?:word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential|auth)[A-Za-z0-9_.-]*[=:])(.+)$", re.I)
 
 
+ENV_ASSIGN_RE = re.compile(r"(\b[A-Za-z_][A-Za-z0-9_]*(?:pass(?:word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential|auth|dsn)[A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)", re.I)
+URL_CRED_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)")
+
+
+def _redact_inline(x):
+    """字串內嵌的 NAME=value(名稱像秘密)與 URL 帳密。"""
+    x = ENV_ASSIGN_RE.sub(lambda m: m.group(1) + "=" + redact_value(m.group(2)), x)
+    x = URL_CRED_RE.sub(lambda m: m.group(1) + redact_value(m.group(2)) + m.group(3), x)
+    return x
+
+
 def _redact_argv(items):
     out, hide_next = [], False
     for x in items:
+        x = _redact_inline(x)
         if hide_next:
             out.append(redact_value(x))
             hide_next = False
@@ -423,7 +435,7 @@ def _redact_argv(items):
         elif re.fullmatch(r"--?[A-Za-z0-9_.-]*(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key|credential)", x, re.I):
             out.append(x)
             hide_next = True
-        elif any(pt.search(x) for pt in SECRET_VALUE_PATTERNS):
+        elif any(pt.search(x) for pt in SECRET_VALUE_PATTERNS) or (len(x) >= 24 and entropy(x) >= 4.5 and " " not in x):
             out.append(redact_value(x))
         else:
             out.append(x)

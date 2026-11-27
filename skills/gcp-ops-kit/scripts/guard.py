@@ -144,8 +144,19 @@ def check_bash(cmd, cfg, cwd):
 def check_path_tool(tool, inp, cfg, cwd):
     if tool in ("Grep", "Glob"):
         base = inp.get("path") or cwd
-        pats = [inp.get("pattern") if tool == "Glob" else None, inp.get("glob")]
-        roots = [base] + [x.split("*")[0].split("{")[0] for x in pats if x and x.startswith(("/", "~"))]
+        pats = [x for x in (inp.get("pattern") if tool == "Glob" else None, inp.get("glob")) if x]
+        roots = [base]
+        for x in pats:
+            if ".." in x.split("/"):
+                return f"萬用字元樣式不可含 ..:{x}"
+            full = os.path.normpath(os.path.join(base, os.path.expanduser(x)))
+            cut = min([i for i in (full.find(c) for c in "*?[{") if i >= 0] or [len(full)])
+            prefix = full[:cut]
+            roots.append(prefix if prefix.endswith("/") else os.path.dirname(prefix))
+            low = prefix.lower()
+            for q in protected_paths(cfg):  # 部分前綴(例 .../gclou*)也算
+                if q.startswith(low) or low.startswith(q):
+                    return f"搜尋範圍包含受保護路徑:{x}"
         for r in roots:
             if r and is_protected(r, cfg, cwd, ancestor=True):
                 return f"搜尋範圍包含受保護路徑:{r}"

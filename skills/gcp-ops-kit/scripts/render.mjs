@@ -14,6 +14,9 @@ const COUNTED = ['嚴重', '高', '中', '低'];
 
 const readJSON = (p, d = null) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return d; } };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// 與 Python shlex.join 相同的引號規則,讓還原指令可以直接複製執行
+const shq = (a) => (/^[A-Za-z0-9@%+=:,./_-]+$/.test(a) ? a : `'${String(a).replace(/'/g, `'"'"'`)}'`);
+const shjoin = (argv) => (argv || []).map(shq).join(' ');
 const sha256 = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 
 function load(run) {
@@ -121,12 +124,12 @@ function planSection(d) {
 ${i.blocked_reason ? `<div class="sub">${esc(i.blocked_reason)}</div>` : ''}
 ${(i.loosens_reasons || []).map((r) => `<div class="sub">⚠ ${esc(r)}</div>`).join('')}</td>
 <td><b>${esc(i.summary)}</b><div class="sub">${esc(i.kind || '-')}${i.finding ? ` · ${esc(i.finding)}` : ''} · 影響:${esc(i.impact || '-')}</div>
-<pre class="mono">${esc((i.command || []).join(' '))}</pre>
+<pre class="mono">${esc(shjoin(i.command))}</pre>
 ${i.manifest ? `<details><summary>manifest</summary><pre class="mono">${esc(i.manifest)}</pre></details>` : ''}
 ${i.patch ? `<details><summary>patch</summary><pre class="mono">${esc(i.patch)}</pre></details>` : ''}</td>
 <td><div class="sub">dry-run:${esc(i.dry_run || '無法 dry-run')}</div>
 ${(i.dry_run_log || []).map((l) => `<details><summary>${esc(l.step)}(rc=${esc(l.rc)})</summary><pre class="mono">${esc(l.out || '')}</pre></details>`).join('')}
-<div class="sub">還原:</div><pre class="mono">${esc((i.rollback || ['（無)']).join(' '))}</pre>
+<div class="sub">還原:</div><pre class="mono">${esc(i.rollback ? shjoin(i.rollback) : '（無)')}</pre>
 <details><summary>precondition / expected</summary><pre class="mono">${esc(JSON.stringify({ precondition: i.precondition, auto: i.auto_pre, expected: i.expected }, null, 1))}</pre></details></td></tr>`;
   }).join('\n');
   return `<p class="sub">plan.json sha256:<span class="mono">${esc(d.planSha)}</span>。每條都要使用者逐條核准才會執行;標「放寬安全」的條目請特別確認。</p>
@@ -137,7 +140,7 @@ function changeSection(d) {
   const c = d.change;
   if (!c) return '';
   const rows = (c.results || []).map((r) => `<tr><td class="mono"><b>${esc(r.id)}</b></td><td>${esc(r.result)}</td><td>${esc(r.reason || '')}</td>
-<td class="mono">${esc(r.rc ?? '-')}</td><td><pre class="mono">${esc((r.rollback || []).join(' ') || '-')}</pre></td></tr>`).join('\n');
+<td class="mono">${esc(r.rc ?? '-')}</td><td><pre class="mono">${esc(shjoin(r.rollback) || '-')}</pre></td></tr>`).join('\n');
   return `<h2>變更結果</h2><p class="sub">計畫 <span class="mono">${esc(c.plan)}</span>(sha256 ${esc(String(c.sha256).slice(0, 16))}…),核准 ${esc((c.approved || []).join(', '))}。不自動還原;需要時由使用者依還原指令執行。</p>
 <table><thead><tr><th>編號</th><th>結果</th><th>原因 / 驗證</th><th>結束碼</th><th>還原指令</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -147,8 +150,8 @@ function reportDir() {
   let dir = path.join(process.env.HOME || '', 'gcp-guardian-reports');
   try {
     for (const line of fs.readFileSync(cfgPath, 'utf8').split('\n')) {
-      const m = line.trim().match(/^GG_REPORT_DIR=(.*)$/);
-      if (m) dir = m[1].trim().replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, process.env.HOME || '');
+      const m = line.match(/^\s*GG_REPORT_DIR\s*=\s*(.*?)\s*$/);
+      if (m) dir = m[1].replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, process.env.HOME || '');
     }
   } catch { /* 沒有設定檔用預設 */ }
   return fs.realpathSync(dir);
