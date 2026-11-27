@@ -56,6 +56,10 @@ bars = sorted({b["date"]: b for b in raw["data"]}.values(), key=lambda b: b["dat
 if asof:
     if len(asof) == 10:  # 只給日期:包含當天整天
         asof += " 23:59"
+    try:
+        _dt.datetime.strptime(asof, "%Y-%m-%d %H:%M")
+    except ValueError:
+        sys.exit(f"{USAGE}\n--asof 格式要是 YYYY-MM-DD 或 YYYY-MM-DD HH:MM")
     bars = [b for b in bars if tstr(b) <= asof]
 n = len(bars)
 need = 240 + slope_n + 1
@@ -81,21 +85,31 @@ def px(v):   # 指數、高價股取整數;低價股保留小數(65.8 不要變 
     s = f"{v:,.2f}".rstrip("0").rstrip("."); return s
 
 # 藍綠交叉(全部列出,最後一次是目前訊號)
+# 只在「小藍 − 小綠」的正負號真的翻轉時才算交叉;剛好相等(碰到又彈回)不算
 crosses = []
-for i in range(1, n):
-    a0, b0, a1, b1 = MA[20][i-1], MA[60][i-1], MA[20][i], MA[60][i]
-    if None in (a0, b0, a1, b1): continue
-    if a0 <= b0 and a1 > b1: crosses.append(("黃金交叉", i))
-    elif a0 >= b0 and a1 < b1: crosses.append(("死亡交叉", i))
+side = 0
+for i in range(n):
+    a1, b1 = MA[20][i], MA[60][i]
+    if a1 is None or b1 is None: continue
+    cur = (a1 > b1) - (a1 < b1)
+    if cur == 0: continue
+    if side and cur != side:
+        crosses.append(("黃金交叉" if cur > 0 else "死亡交叉", i))
+    side = cur
 # 小橘斜率、小藍斜率最近一次翻轉
+def sgn3(v):   # 1 = 正、-1 = 負、0 = 走平
+    return (v > 0) - (v < 0)
 def last_flip(p):
-    prev = None
+    """最近一次斜率由負轉正 / 由正轉負(走平的根略過)。回傳 (翻轉那根, 目前方向 1 / -1)。"""
+    prev = None; prev_i = None
     for i in range(last, 0, -1):
         s = slope(p, i)
         if s is None: break
-        sg = s > 0
-        if prev is None: prev = sg; continue
-        if sg != prev: return i + 1, prev
+        sg_ = sgn3(s)
+        if sg_ == 0: continue
+        if prev is None: prev, prev_i = sg_, i; continue
+        if sg_ != prev: return prev_i, prev
+        prev_i = i
     return None, prev
 # 價格最近一次穿越某條均線(收盤由下往上 = 站上;由上往下 = 跌破)
 def last_cross_price(p):
@@ -109,33 +123,34 @@ def last_cross_price(p):
 start = _dt.datetime.strptime(tstr(bars[last]), "%Y-%m-%d %H:%M")
 end = min(start + _dt.timedelta(minutes=60), start.replace(hour=13, minute=30))  # 13:00 那根在 13:30 收盤就結束
 now = (_dt.datetime.strptime(__import__("os").environ["TB_NOW"], "%Y-%m-%d %H:%M") if __import__("os").environ.get("TB_NOW")
-       else _dt.datetime.utcnow() + _dt.timedelta(hours=8))  # TB_NOW:測試用,台北時間
+       else _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8))).replace(tzinfo=None))  # TB_NOW:測試用,台北時間
 live = not asof and now < end
 out = [f"【60分K 均線三刀流】{t(last)} 收 {px(C[last])}  K {K[last]:.1f} / D {D[last]:.1f}  斜率=比 {slope_n} 根前"
        + ("  ⚠️ 最後一根還沒走完,訊號可能變動" if live else "")]
 sg = {}
 for p in PER:
-    m = MA[p][last]; s = slope(p, last); sg[p] = s > 0
+    m = MA[p][last]; s = slope(p, last); sg[p] = sgn3(s)
     ci, kind = last_cross_price(p)
     since = f",{t(ci)} {kind}" if ci else ""
-    sgn = lambda v: ("+" if v >= 0 else "-") + px(abs(v))
-    out.append(f"{NAME[p]} {px(m)}:價格在{'上' if C[last] > m else '下'}方 {sgn(C[last]-m)}、斜率{'正 ↗' if s > 0 else '負 ↘'}({sgn(s)}){since}")
+    sgn = lambda v: ("+" if v > 0 else "-" if v < 0 else "±") + px(abs(v))
+    word = {1: "正 ↗", -1: "負 ↘", 0: "走平 →"}[sg[p]]
+    out.append(f"{NAME[p]} {px(m)}:價格在{'上' if C[last] > m else '下'}方 {sgn(C[last]-m)}、斜率{word}({sgn(s)}){since}")
 m20, m60, m240 = MA[20][last], MA[60][last], MA[240][last]
 order = "多頭排列(小藍>小綠>小橘)" if m20 > m60 > m240 else "空頭排列(小藍<小綠<小橘)" if m20 < m60 < m240 else "糾結(非多空排列)"
 out.append(f"排列:{order}")
 fi, before = last_flip(240)
-env = "多方環境" if sg[240] else "空方環境"
-flip = f"(小橘斜率 {t(fi)} 由{'負轉正' if before else '正轉負'})" if fi else ""   # before = 目前的斜率方向
+env = {1: "多方環境", -1: "空方環境", 0: "小橘走平(方向不明)"}[sg[240]]
+flip = f"(小橘斜率 {t(fi)} 由{'負轉正' if before == 1 else '正轉負'})" if fi and sg[240] else ""   # before = 目前的斜率方向
 pos240 = "價格在小橘之上" if C[last] > m240 else "價格在小橘之下"
-out.append(f"① 方向(小橘斜率):{env}{flip};{pos240}" + ("" if sg[240] or C[last] < m240 else " → 斜率仍負,切忌積極做多")
-           + (" → 斜率為正但價格已跌破小橘,多方結構受損" if sg[240] and C[last] < m240 else ""))
+out.append(f"① 方向(小橘斜率):{env}{flip};{pos240}" + (" → 斜率仍負,切忌積極做多" if sg[240] < 0 and C[last] >= m240 else "")
+           + (" → 斜率為正但價格已跌破小橘,多方結構受損" if sg[240] > 0 and C[last] < m240 else ""))
 if crosses:
     kind, ci = crosses[-1]
     kd_now = "K>D 轉強" if K[last] > D[last] else "K<D 轉弱"
     out.append(f"② 藍綠交叉:最近一次 {t(ci)} {kind}(交叉那根收 {px(C[ci])},K{K[ci]:.0f}/D{D[ci]:.0f});目前 KD {kd_now}")
 else:
     out.append("② 藍綠交叉:資料期間內沒有交叉")
-dbl = [NAME[p].split()[0] for p in (20, 60) if sg[p] == sg[240]]
+dbl = [NAME[p].split()[0] for p in (20, 60) if sg[240] and sg[p] == sg[240]]
 out.append(f"③ 雙斜率:" + (f"{'、'.join(dbl)}與小橘同方向" if dbl else "小藍、小綠都與小橘反方向"))
 above_all = all(C[last] > MA[p][last] for p in PER)
 below_all = all(C[last] < MA[p][last] for p in PER)
@@ -143,11 +158,13 @@ out.append("④ 不逆勢:" + ("價格站上三條線" if above_all else "價格
            else "價格還沒全部站上(" + "、".join(NAME[p].split()[0] for p in PER if C[last] <= MA[p][last]) + " 在上方壓著)"))
 # 綜合:書中的順勢條件
 gold = crosses and crosses[-1][0] == "黃金交叉"
-if sg[240] and gold and K[last] > D[last] and above_all:
+if sg[240] > 0 and gold and K[last] > D[last] and above_all:
     verdict = "偏多:小橘向上＋藍綠黃金交叉＋KD 轉強＋價格站上三線,符合書中做多條件"
-elif (not sg[240]) and crosses and not gold and below_all:
+elif sg[240] < 0 and crosses and not gold and below_all:
     verdict = "偏空:小橘向下＋藍綠死亡交叉＋價格在三線之下"
-elif sg[240]:
+elif sg[240] == 0:
+    verdict = "小橘走平,方向不明,等斜率出現方向再判斷"
+elif sg[240] > 0:
     verdict = "多方環境但條件未齊(" + ("藍綠未金叉" if not gold else "KD 未轉強" if K[last] <= D[last] else "價格未站上三線") + "),等條件到齊"
 else:
     verdict = "空方環境" + ("但出現藍綠黃金交叉,屬逆勢反彈,書中建議不積極做多" if gold else ",條件未齊")
@@ -188,9 +205,10 @@ if svg:
     prev, lastx = None, -999
     for i in range(i0, n):
         day = tstr(bars[i])[5:10]
-        if day != prev and X(i) - lastx > 60:
+        if day != prev:
             o.append(f'<line x1="{X(i)-6:.1f}" x2="{X(i)-6:.1f}" y1="{T}" y2="{P2b}" stroke="#f1f0ec"/>')
-            o.append(f'<text x="{X(i):.1f}" y="{P2b+34}" {f} font-size="20" fill="#52514e">{day.replace("-", "/")}</text>'); lastx = X(i)
+            if X(i) - lastx > 60:  # 標籤太擠才省略文字,分隔線照畫
+                o.append(f'<text x="{X(i):.1f}" y="{P2b+34}" {f} font-size="20" fill="#52514e">{day.replace("-", "/")}</text>'); lastx = X(i)
         prev = day
     cw = (Wd-Lm-Rm)/N*0.6
     for i in range(i0, n):

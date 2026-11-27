@@ -108,6 +108,21 @@ finally:
     if os.path.exists(bad2): os.remove(bad2)
 check("--asof 只給日期包含當天", "【60分K 均線三刀流】11/13 13:00" in run(F60, "--asof", "2026-11-13").stdout)
 
+# 10c. 價格完全不動:小橘走平不判空方、沒有藍綠交叉(相等不算交叉);--asof 格式錯要報錯
+flat = os.path.join(TMP, "tb_flat.json")
+try:
+    d = json.load(open(F60))
+    for b in d["data"]:
+        for k in ("open", "high", "low", "close"): b[k] = 100
+    json.dump(d, open(flat, "w"))
+    o = run(flat).stdout
+    check("小橘走平 → 方向不明,不判空方", "小橘走平(方向不明)" in o and "空方環境" not in o and "斜率走平 →" in o)
+    check("均線相等不算交叉", "資料期間內沒有交叉" in o)
+finally:
+    if os.path.exists(flat): os.remove(flat)
+r = run(F60, "--asof", "2026-11-13T13:00")
+check("--asof 格式錯報用法", r.returncode != 0 and "用法" in r.stderr)
+
 # 11. run.sh:交易時間內盤中 K 回空資料要警告(假 fugle.sh)
 work = tempfile.mkdtemp(prefix="tb_run_", dir=TMP)
 try:

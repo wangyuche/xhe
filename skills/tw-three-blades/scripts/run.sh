@@ -40,7 +40,7 @@ if ! ERR=$(fetch "intraday/candles/$SYM?timeframe=60" "$I" 2>&1); then
   rm -f "$I"
   [ "$IN_SESSION" = 1 ] && echo "$ERR"$'\n'"警告: 60 分 K 盤中資料抓不到,只用歷史 K,結果可能缺今天盤中" >&2
 elif [ "$IN_SESSION" = 1 ] && ! python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("data") else 1)' "$I"; then
-  echo "警告: 60 分 K 盤中資料是空的(延遲或暫停交易),只用歷史 K,結果可能缺今天盤中" >&2
+  echo "警告: 60 分 K 盤中資料是空的(今天休市、資料延遲或暫停交易),只用歷史 K;若今天有開盤,結果可能缺今天盤中" >&2
 fi
 python3 -I "$DIR/combine.py" "$H" "$I" "$J" || fail "資料錯誤: 60 分 K 合併失敗"
 python3 -I "$DIR/three_blades.py" "$J" --title "$NAME" --svg "$OUT/blades_${SYM}_60m.svg"
