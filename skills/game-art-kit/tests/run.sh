@@ -533,8 +533,11 @@ if [ -z "$(node "$K/scripts/audio.mjs" tools 2>/dev/null | grep '"ok":true')" ];
   node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.voice_name="LIMIT";delete j.voice_id;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/vlimit.json"
   o="$(VO pick --voice "$W/act/vlimit.json" --n 1 2>&1)"; [ $? -eq 8 ] && ok "voice pick:帳號 voice 名額已滿 → 結束碼 8" || bad "voice limit" "$o"
   echo '{"d1":"deadline one"}' > "$W/act/ld.json"
-  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/ld.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vd/b.json" --limit 500 --run v-d --max-seconds 60)"; rc=$?
-  [ $rc -eq 0 ] && echo "$o" | grep -q '"remaining":\["d1"\]' && [ ! -e "$W/act/budget/vd/b.json" ] && ok "voice lines:時限不夠一次最壞的請求 → 不送、整句留到下次(remaining)、結束碼 0" || bad "voice 時限" "rc=$rc $o"
+  o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/ld.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vd/b.json" --limit 500 --run v-d --max-seconds 60 2>&1)"; rc=$?
+  [ $rc -eq 2 ] && echo "$o" | grep -q '至少 120' && [ ! -e "$W/act/budget/vd/b.json" ] && ok "voice lines:--max-seconds < 120 → 結束碼 2(不會一句都錄不到又叫人一直重跑)" || bad "voice 時限下限" "rc=$rc $o"
+  node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));j.voice_name="FIVEXX";delete j.voice_id;require("fs").writeFileSync(process.argv[2],JSON.stringify(j))' "$VD/voice.json" "$W/act/v5xx.json"
+  n0=$(grep -c '"/v1/text-to-voice"' "$W/el.log"); o="$(VO pick --voice "$W/act/v5xx.json" --n 1 2>&1)"; rc=$?
+  [ $rc -eq 3 ] && [ $(( $(grep -c '"/v1/text-to-voice"' "$W/el.log") - n0 )) -eq 1 ] && ok "voice pick:5xx 不重送(建立 voice 不是冪等,避免重複建立付費 voice)" || bad "voice pick 不重送" "rc=$rc $o"
   echo '{"m1":"one","m2":"two","m3":"three"}' > "$W/act/lm.json"
   o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/lm.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/art/out/v" --budget "$W/act/budget/vm/b.json" --limit 500 --run v-m --max 2)" && echo "$o" | grep -q '"recorded":2' && echo "$o" | grep -q '"deferred":1' && ok "voice lines --max 2:只錄前 2 句、其餘 deferred" || bad "voice --max" "$o"
   echo '{"../x":"hi"}' > "$W/act/bad.json"; o="$(VO lines --voice "$VD/voice.json" --lines "$W/act/bad.json" --out "$W/act/art/voice/fox" --raw-dir "$W/act/out/vbad" --budget "$W/act/budget/v6/b.json" --limit 99 --run v-6 2>&1)"; [ $? -eq 2 ] && [ ! -e "$W/act/out/vbad" ] && ok "voice lines:key 不合規 → 整批結束碼 2,不送任何一句" || bad "voice key 檢查" "$o"

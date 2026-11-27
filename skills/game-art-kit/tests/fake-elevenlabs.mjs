@@ -14,6 +14,7 @@ createServer((req, res) => {
     const send = (code, obj, type = 'application/json', h = {}) => { res.writeHead(code, { 'content-type': type, ...h }); res.end(type === 'application/json' ? JSON.stringify(obj) : obj); };
     const p = req.url.split('?')[0];
     if (p === '/v1/text-to-voice/design') { const d = body.voice_description ?? ''; return send(200, { previews: [1, 2, 3].map(i => (/BADPREVIEW/.test(d) && i === 2) ? { generated_voice_id: 'gen-bad' } : ({ audio_base_64: wav(false, /LONGPREVIEW/.test(d) ? 20 : 1).toString('base64'), generated_voice_id: `gen-${i}`, duration_secs: 1 })) }); }
+    if (p === '/v1/text-to-voice' && /FIVEXX/.test(body.voice_name ?? '')) return send(503, { detail: 'busy' });
     if (p === '/v1/text-to-voice') return /LIMIT/.test(body.voice_name ?? '') ? send(400, { detail: { status: 'voice_limit_reached', message: 'maximum number of voices' } }) : send(200, { voice_id: `voice-${body.generated_voice_id}` });
     if (p.startsWith('/v1/text-to-speech/')) {
       const t = body.text ?? '';

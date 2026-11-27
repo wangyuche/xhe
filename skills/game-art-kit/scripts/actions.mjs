@@ -80,7 +80,7 @@ export function loginMode() {
   return /Logged in using ChatGPT/i.test(out) ? 'chatgpt' : /api key/i.test(out) ? 'apikey' : /not logged in/i.test(out) ? 'none' : 'unknown';
 }
 // codex 子程序只拿白名單內的環境變數(Codex 的 shell 工具關不掉:不讓它從環境讀到任何金鑰 / token);FAKE_CODEX_* 只給離線測試的假 codex
-const ENV_KEEP = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|TMPDIR|LANG|LC_[A-Z]+|TZ|CODEX_HOME|FAKE_CODEX_[A-Z]+)$/;
+const ENV_KEEP = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|TMPDIR|LANG|LC_[A-Z]+|TZ|CODEX_HOME|FAKE_CODEX_[A-Z]+|HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy|ALL_PROXY|all_proxy|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS)$/; // 含 proxy / CA(公司網路),不含任何金鑰
 function cleanEnv() { return Object.fromEntries(Object.entries(process.env).filter(([k]) => ENV_KEEP.test(k))); }
 
 function runCodex(text, ref, timeoutSec, onAbort) {
@@ -141,6 +141,8 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   let n = nextN(outDir, action);
   for (;; n++) { try { writeFileSync(join(outDir, `${action}-${n}.png`), '', { flag: 'wx' }); break; } catch (e) { if (e.code !== 'EEXIST') throw e; } }
   // 被中止(Ctrl-C / Bash 逾時)時刪掉佔位檔,不留 0 位元組的圖
+  const genRoot = join(codexHome, 'generated_images');
+  const before = new Set(existsSync(genRoot) ? readdirSync(genRoot) : []);
   const r = await runCodex(text, basePath, timeout, (thread) => {
     rmSync(join(outDir, `${action}-${n}.png`), { force: true });
     const d = threadDir(codexHome, thread); if (d) rmSync(d, { recursive: true, force: true });
@@ -148,14 +150,16 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   });
   if (r.spawnError) { rmSync(join(outDir, `${action}-${n}.png`), { force: true }); appendManifest(outDir, { run, action, status: `跑不了 codex:${r.spawnError.code ?? ''}`, budget_used: used, budget_limit: limit }); die(`跑不了 codex:${r.spawnError.message}`, 3); }
   const ev = parseEvents(r.out), file = `${action}-${n}.png`;
+  // 事件裡沒有合法 thread id 時,用執行前後 generated_images 新增的 UUID 目錄(只有一個時)當作這次的
+  if (!ev.thread && existsSync(genRoot)) { const added = readdirSync(genRoot).filter(x => !before.has(x) && UUID.test(x)); if (added.length === 1) ev.thread = added[0]; }
   const dir = threadDir(codexHome, ev.thread);
   let made = [];
   try { made = dir ? readdirSync(dir).filter(f => f.endsWith('.png')).map(f => join(dir, f)).sort((a, b2) => statSync(a).mtimeMs - statSync(b2).mtimeMs) : []; } catch { made = []; }
   const entry = { run, action, n, file, prompt: text, thread: ev.thread, reply: redactSecrets(scrubPaths(r.reply, codexHome)).slice(0, 500), usage: ev.usage, violations: ev.violations.map(v => ({ type: v.type, detail: scrubPaths(v.detail, codexHome) })), budget_used: used, budget_limit: limit };
   let status, code = 0, cleaned = false;
   try {
-    if (r.timedOut) { status = '逾時'; code = 4; }
-    else if (ev.violations.length) { status = '不符合(Codex 用了白名單以外的工具)'; code = 7; }
+    if (ev.violations.length) { status = '不符合(Codex 用了白名單以外的工具)'; code = 7; } // 違規優先於逾時:一定要停
+    else if (r.timedOut) { status = '逾時'; code = 4; }
     else if (!made.length) { status = '沒出圖'; code = 3; }
     else {
       mkdirSync(outDir, { recursive: true });
@@ -225,7 +229,7 @@ if (isMain) {
     console.log(JSON.stringify(r));
   } catch (e) {
     if (e instanceof Fail && e.extra) console.log(JSON.stringify(e.extra));
-    console.error(`錯誤:${e instanceof Fail || e instanceof BudgetError ? e.message : e?.stack || e}`);
-    process.exit(e instanceof Fail || e instanceof BudgetError ? e.code : 2);
+    console.error(`錯誤:${e instanceof Fail || e instanceof BudgetError || e?.usage ? e.message : e?.stack || e}`);
+    process.exit(e instanceof Fail || e instanceof BudgetError ? e.code : e?.usage ? 2 : 2);
   }
 }

@@ -28,8 +28,10 @@ function withLock(file, fn) {
 }
 
 export function openBudget(file, limit, unit) {
-  if (!file) throw new BudgetError('缺 --budget <累計檔>(付費服務一定要記用量)');
-  if (!(Number.isInteger(limit) && limit > 0)) throw new BudgetError('缺 --limit <上限>(正整數,照簡報的同意旗標)');
+  // 參數缺漏是用法錯誤(結束碼 2),不是「用完」
+  const usage = (m) => Object.assign(new Error(m), { code: 2, usage: true });
+  if (!file) throw usage('缺 --budget <累計檔>(付費服務一定要記用量)');
+  if (!(Number.isInteger(limit) && limit > 0)) throw usage('缺 --limit <上限>(正整數,照簡報的同意旗標)');
   const read = () => {
     if (!existsSync(file)) return { unit, used: 0, limit, history: [] };
     let b; try { b = JSON.parse(readFileSync(file, 'utf8')); } catch { throw new BudgetError(`累計檔 ${file} 壞了(不是 JSON);不要猜,請檢查`); }

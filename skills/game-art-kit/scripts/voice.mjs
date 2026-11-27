@@ -54,7 +54,7 @@ function api() {
 }
 const scrubKey = (s, key) => String(s ?? '').split(key).join('<key>');
 class Deadline extends Error {}
-async function post(A, path, body, { binary = false, before, rejected, deadline } = {}) {
+async function post(A, path, body, { binary = false, before, rejected, deadline, idempotent = true } = {}) {
   for (let attempt = 1; ; attempt++) {
     // 每次 HTTP 嘗試前檢查時限(最壞一次 60 秒 + 退避):到時間就不送,交給呼叫端停下來
     if (deadline && Date.now() + 75_000 > deadline) throw new Deadline();
@@ -62,7 +62,7 @@ async function post(A, path, body, { binary = false, before, rejected, deadline 
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), REQ_TIMEOUT);
     let res;
     try { res = await fetch(A.base + path, { method: 'POST', headers: { 'xi-api-key': A.key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal }); }
-    catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS) die(`ElevenLabs 連線失敗:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
+    catch (e) { clearTimeout(t); if (attempt >= MAX_ATTEMPTS || !idempotent) die(`ElevenLabs 連線失敗:${e.name === 'AbortError' ? '逾時 60 秒' : e.message}`, 3); await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1))); continue; }
     // 計時器要等內容讀完才清掉(伺服器送了標頭、內容卻卡住時也會逾時)
     let bodyBuf, text;
     try { if (res.ok) bodyBuf = Buffer.from(await res.arrayBuffer()); else text = scrubKey(await res.text(), A.key).slice(0, 400); }
@@ -73,7 +73,8 @@ async function post(A, path, body, { binary = false, before, rejected, deadline 
     if (res.status === 402 || (res.status === 401 && /quota|insufficient_credits|credits/i.test(text))) die(`ElevenLabs 額度用完(HTTP ${res.status}):${text}`, 4);
     if (res.status === 401 || res.status === 403) die(`ElevenLabs 金鑰錯誤(HTTP ${res.status}):${text}`, 5);
     if (/voice_limit|voice limit|maximum number of voices/i.test(text)) die(`ElevenLabs 帳號 voice 名額已滿:請使用者自己到 ElevenLabs 刪舊 voice(HTTP ${res.status})`, 8);
-    const retryable = res.status === 429 || res.status === 409 || res.status >= 500;
+    // 建立 voice 不是冪等的:只在 429(服務端沒處理)重試,逾時 / 409 / 5xx 不重送,避免重複建立付費 voice
+    const retryable = res.status === 429 || (idempotent && (res.status === 409 || res.status >= 500));
     if (!retryable || attempt >= MAX_ATTEMPTS) die(`ElevenLabs HTTP ${res.status}:${text}`, 3);
     const after = Number(res.headers.get('retry-after'));
     const wait = Math.min(after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1), 30_000); // 最多等 30 秒
@@ -101,7 +102,7 @@ function loadLines(f) {
 const artOf = (voiceFile) => resolve(dirname(voiceFile), '..', '..');
 function audio(input, outDir, name, dur = 15) {
   const a = spawnSync(process.execPath, [join(KIT, 'scripts', 'audio.mjs'), 'process', input, '--type', 'voice', '--duration', String(dur), '--out', outDir, '--name', name], { encoding: 'utf8' });
-  if (a.status === 2) die(`audio.mjs process 失敗:${(a.stderr || '').trim().split('\n').pop()}`);
+  if (a.status === 2) { const err = (a.stderr || '').trim().split('\n').pop(); if (/找不到 ffmpeg|找不到 ffprobe|缺 ff|libopus|aac 編碼器/.test(err)) die(`audio.mjs:${err}`); return { ok: false, error: `音訊讀不了:${err}` }; } // 這句的音訊壞了:記失敗 / 換 seed,不中止整批
   if (a.status !== 0) { const err = (a.stderr || '').trim().split('\n').pop(); return { ok: false, error: err, noRetry: /超過 \d+ 秒|請拆句/.test(err) }; }
   let j = {}; try { j = JSON.parse(a.stdout.trim().split('\n').pop()); } catch { /* */ }
   const c = spawnSync(process.execPath, [join(KIT, 'scripts', 'audio.mjs'), 'check', join(outDir, `${name}.ogg`), join(outDir, `${name}.m4a`), '--type', 'voice', '--duration', String(dur), ...(j.normalized === 'peak' ? ['--peak'] : [])], { encoding: 'utf8' });
@@ -157,7 +158,7 @@ export async function pick(voiceFile, n, { repick = false, force = false } = {})
   const c = (v.candidates ?? []).find(x => x.n === n) ?? die(`voice.json 的 candidates 沒有 n = ${n}(先跑 design;描述改過的話舊候選已作廢)`);
   if (c.check && c.check !== 'ok' && !force) die(`候選 ${n} 的音訊檢查沒過(${String(c.check).slice(0, 100)});確定要用加 --force(會建立付費 voice)`);
   const A = api();
-  const r = await post(A, '/v1/text-to-voice', { voice_name: v.voice_name ?? v.id ?? 'character', voice_description: v.design, generated_voice_id: c.generated_voice_id, labels: { character: v.id ?? '' } });
+  const r = await post(A, '/v1/text-to-voice', { voice_name: v.voice_name ?? v.id ?? 'character', voice_description: v.design, generated_voice_id: c.generated_voice_id, labels: { character: v.id ?? '' } }, { idempotent: false });
   if (v.voice_id) v.prev_voice_id = v.voice_id;
   v.voice_id = r.voice_id ?? die('ElevenLabs 沒有回傳 voice_id', 3);
   writeJson(voiceFile, v);
@@ -193,7 +194,7 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
       // 每次 HTTP 嘗試都先記用量;超過上限 → BudgetError(結束碼 6),已完成的都已寫回
       let buf;
       try { buf = await postLogged(A, `/v1/text-to-speech/${encodeURIComponent(v.voice_id)}?output_format=${encodeURIComponent(v.models.output_format)}`, { text, model_id: v.models.tts, voice_settings: { stability: v.stability }, seed }, { binary: true, deadline: t0 + maxSeconds * 1000, before: (n) => { used = b.reserve(len, `line ${k}(第 ${n} 次嘗試)`); }, rejected: (n) => { used = b.refund(len, `line ${k} 第 ${n} 次 429`); } }, (st) => appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: st }, used, run)); }
-      catch (e) { if (e instanceof Deadline) { hitDeadline = true; break; } throw e; }
+      catch (e) { if (e instanceof Deadline) { hitDeadline = true; if (tries > 0) v.line_seeds[k] = seed; break; } throw e; } // 已失敗過:下次從新 seed 開始
       const mp3 = join(raw, `${k}.mp3`); writeFileSync(mp3, buf);
       res = audio(mp3, stage, k); // 先放過程目錄,check 通過才換掉成品(失敗不會蓋掉原本好的錄音)
       if (res.ok) for (const ext of ['ogg', 'm4a']) renameSync(join(stage, `${k}.${ext}`), join(out, `${k}.${ext}`));
@@ -239,14 +240,14 @@ if (isMain) {
     if (cmd === 'design') r = await design(vf(), { outDir: f['out-dir'] ?? die('缺 --out-dir'), budget: f.budget, limit: f.limit != null ? int('limit') : undefined, run: f.run, redesign: !!f.redesign });
     else if (cmd === 'pick') r = await pick(vf(), int('n'), { repick: !!f.repick, force: !!f.force });
     else if (cmd === 'plan') r = plan(vf(), { linesFile: f.lines ?? die('缺 --lines'), all: !!f.all, out: f.out, max: f.max != null ? int('max') : undefined });
-    else if (cmd === 'lines') r = await lines(vf(), { linesFile: f.lines ?? die('缺 --lines'), out: f.out ?? die('缺 --out'), procDir: f['raw-dir'] ?? die('缺 --raw-dir'), budget: f.budget, limit: f.limit != null ? int('limit') : undefined, run: f.run, all: !!f.all, maxSeconds: f['max-seconds'] != null ? int('max-seconds') : 480, max: f.max != null ? int('max') : undefined });
+    else if (cmd === 'lines') r = await lines(vf(), { linesFile: f.lines ?? die('缺 --lines'), out: f.out ?? die('缺 --out'), procDir: f['raw-dir'] ?? die('缺 --raw-dir'), budget: f.budget, limit: f.limit != null ? int('limit') : undefined, run: f.run, all: !!f.all, maxSeconds: f['max-seconds'] != null ? (int('max-seconds') >= 120 ? int('max-seconds') : die('--max-seconds 至少 120(一次請求最壞約 75 秒)')) : 480, max: f.max != null ? int('max') : undefined });
     else if (cmd === 'status') r = status(vf(), { linesFile: f.lines ?? die('缺 --lines'), out: f.out ?? die('缺 --out') });
     else if (cmd === 'scan') { let key = null; try { key = api().key; } catch (e) { if (!(e instanceof Fail && e.code === 5)) throw e; } r = key ? scan(resolve(f.art ?? die('缺 --art')), key) : { found: false, files: [], note: '這台沒有 ElevenLabs 金鑰,不用掃' }; }
     else die('用法:voice.mjs design | pick | plan | lines | status | scan(見檔頭)');
     console.log(JSON.stringify(r));
     process.exit(r.ok === false || r.found || r.key_scan?.found ? 1 : 0);
   } catch (e) {
-    console.error(`錯誤:${e instanceof Fail || e instanceof BudgetError ? e.message : e?.stack || e}`);
-    process.exit(e instanceof Fail || e instanceof BudgetError ? e.code : 2);
+    console.error(`錯誤:${e instanceof Fail || e instanceof BudgetError || e?.usage ? e.message : e?.stack || e}`);
+    process.exit(e instanceof Fail || e instanceof BudgetError ? e.code : e?.usage ? 2 : 2);
   }
 }
