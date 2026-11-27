@@ -39,6 +39,8 @@ CLUSTER = {
     "monitoringService": "monitoring.googleapis.com/kubernetes", "endpoint": "34.80.0.10",
 }
 NODEPOOLS = [{"name": "default-pool", "locations": ["asia-east1-a", "asia-east1-b"],
+              "instanceGroupUrls": ["https://www.googleapis.com/compute/v1/projects/demo-proj-123/zones/asia-east1-a/instanceGroupManagers/gke-prod-default-a",
+                                    "https://www.googleapis.com/compute/v1/projects/demo-proj-123/zones/asia-east1-b/instanceGroupManagers/gke-prod-default-b"],
               "config": {"serviceAccount": "default", "shieldedInstanceConfig": {"enableSecureBoot": False}},
               "management": {"autoUpgrade": True, "autoRepair": True},
               "autoscaling": {"enabled": False}}]

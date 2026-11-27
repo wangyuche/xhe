@@ -80,13 +80,9 @@ class Runner:
     def execute(self, run):
         self.run = run
         items = self.precheck_static()
-        # 核准檔用過即作廢:改名(原子),之後同一份核准不能再執行一次
-        src = os.path.join(os.path.dirname(self.plan_path), "approval.json")
-        used = os.path.join(os.path.dirname(self.plan_path), f"approval.used-{os.path.basename(run)}.json")
-        try:
-            os.rename(src, used)
-        except OSError:
+        if not os.path.exists(os.path.join(os.path.dirname(self.plan_path), "approval.json")):
             raise gglib.Blocked("核准檔已被使用或不存在(每份核准只能執行一次,請使用者重新核准)")
+        self.consumed = False
         ctx_done = set()
         with gglib.Session(self.cfg, run, self.project, "change") as s:
             for n, it in enumerate(items):
@@ -155,6 +151,14 @@ class Runner:
             rb = {"apiVersion": "v1", "kind": "List", "items": [rollback_object(o) for o in objs if not o.get("_absent")]}
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
+        if not self.consumed:
+            # 第一條指令真正送出前才作廢核准檔(改名,原子):之前的檢查失敗不會浪費核准
+            src = os.path.join(os.path.dirname(self.plan_path), "approval.json")
+            try:
+                os.rename(src, os.path.join(os.path.dirname(self.plan_path), f"approval.used-{os.path.basename(self.run)}.json"))
+            except OSError:
+                return self.stop("BLOCKED", cid, "核准檔已被使用或不存在(每份核准只能執行一次)")
+            self.consumed = True
         # 先記「執行中」:若在執行途中被中斷,紀錄仍會有這條與還原指令
         self.inflight = {"id": cid, "kind": kind, "argv": it["command"], "result": "執行中被中斷(狀態不明)",
                          "reason": "指令已送出但沒有等到結果;請先確認現況",

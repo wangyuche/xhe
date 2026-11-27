@@ -83,6 +83,8 @@ PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 
 
 def check_project(p):
+    if p in ("gcloud", "kubeconfig", "_yaml"):
+        raise Blocked(f"專案 ID {p} 與 kit 保留名稱相同,無法使用")
     if not p or not PROJECT_RE.match(p):
         raise Blocked(f"專案 ID 格式不對:{p!r}")
     return p

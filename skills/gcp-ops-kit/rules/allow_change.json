@@ -310,7 +310,8 @@
           "inverse": "--no-uniform-bucket-level-access",
           "state": "/uniform_bucket_level_access",
           "target": true,
-          "state_required": true
+          "state_required": true,
+          "rollback_warning": "統一存取啟用超過 90 天後就不能關閉,這條還原只在 90 天內有效"
         },
         "--no-uniform-bucket-level-access": {
           "inverse": "--uniform-bucket-level-access",

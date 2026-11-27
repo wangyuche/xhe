@@ -295,6 +295,10 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
                     new_nets += [x for x in _ranges(a.split("=", 1)[1]) if "/" in x]
             if new_nets and not _subset_cidrs([str(n) for n in rb_nets], new_nets):
                 res["rollback_warning"] = "這條還原會把網段放寬回變更前的範圍,執行前請確認"
+    for fl in flags:
+        rw = k.get("flags", {}).get(fl, {}).get("rollback_warning")
+        if rw and not res.get("rollback_warning"):
+            res["rollback_warning"] = rw
     if rollback_args and not res.get("rollback_warning") and kind == "firewall-update":
         rbf = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in rollback_args if isinstance(a, str) and a.startswith("--") and "=" in a}
         if "--rules" in rbf and "--rules" in flags:

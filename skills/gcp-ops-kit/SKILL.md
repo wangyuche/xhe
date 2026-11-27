@@ -86,7 +86,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 |---|---|---|---|
 | gke-cluster-update | `gcloud container clusters update` 只限:master authorized networks、shielded nodes、workload pool、network policy(授權網路原本已啟用且清單為空時判不可還原) | clusters describe | 反向旗標 / 原值 |
 | gke-nodepool-update | `gcloud container node-pools update`:auto-upgrade / repair、workload-metadata、autoscaling | node-pools describe | 同上 |
-| gke-resize | `gcloud container clusters resize --node-pool --num-nodes`(>0) | node pool + 目前每區節點數 | 原節點數 |
+| gke-resize | `gcloud container clusters resize --node-pool --num-nodes`(>0;已開 autoscaling 不可) | node pool + 各區 MIG targetSize(不一致判不可還原) | 原節點數 |
 | firewall-update | `gcloud compute firewall-rules update`(只限 INGRESS allow 規則):source-ranges、rules、target-tags、disabled、logging、priority、description | describe | 原值 |
 | bucket-update | `gcloud storage buckets update`:public access prevention、uniform access、versioning | describe | 反向旗標 |
 | bucket-iam-remove | `gcloud storage buckets remove-iam-policy-binding` | get-iam-policy | add 回去 |

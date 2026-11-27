@@ -94,15 +94,18 @@ def snapshot(s, kind, argv, project, ctx_done):
                 endpoint = ensure_context(s, ctx, project, ctx_done)
                 if not endpoint:
                     return None, None, "讀不到叢集 endpoint(kubeconfig 解析失敗),不能確認是同一個叢集"
-                r = s.kubectl(ctx, ["get", "nodes", "-l", f"cloud.google.com/gke-nodepool={f.get('--node-pool')}",
-                                    "-o", "json", "--request-timeout=60s"], mode="dryrun")
-                nodes = (_json(r) or {}).get("items") if r.returncode == 0 else None
-                zones = len(snap.get("locations") or []) or 1
-                if nodes is None:
-                    err = "讀不到節點數:" + gglib._short(r.stderr)
-                else:
-                    snap = {"nodepool": snap, "node_count": len(nodes), "zones": zones,
-                            "node_count_per_zone": len(nodes) // zones if len(nodes) % zones == 0 else None}
+                # 每區節點數以 MIG 的 targetSize 為準(Kubernetes Node 數在 surge / 刪除中會不準)
+                sizes = []
+                for url in snap.get("instanceGroupUrls") or []:
+                    m = re.search(r"/zones/([a-z0-9-]+)/instanceGroup(?:Manager)?s/([A-Za-z0-9._-]+)$", url)
+                    if not m:
+                        return None, None, f"看不懂 instance group 網址:{url}"
+                    mig, err2 = g(["compute", "instance-groups", "managed", "describe", m.group(2), f"--zone={m.group(1)}"])
+                    if err2:
+                        return None, None, "讀不到 MIG:" + err2
+                    sizes.append((mig or {}).get("targetSize"))
+                per_zone = sizes[0] if sizes and all(x == sizes[0] for x in sizes) and isinstance(sizes[0], int) else None
+                snap = {"nodepool": snap, "mig_target_sizes": sizes, "zones": len(sizes), "node_count_per_zone": per_zone}
         elif typ == "firewall":
             snap, err = g(["compute", "firewall-rules", "describe", name])
         elif typ in ("bucket", "bucket-iam"):

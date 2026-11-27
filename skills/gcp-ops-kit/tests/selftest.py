@@ -367,6 +367,14 @@ def t_guard_import_fail(e):
     shutil.rmtree(bad, ignore_errors=True)
 
 
+def t_reserved_project():
+    try:
+        gglib.check_project("gcloud")
+        ok("專案 ID 不可用保留名稱 gcloud", False)
+    except gglib.Blocked:
+        ok("專案 ID 不可用保留名稱 gcloud", True)
+
+
 def t_dead_creds(e):
     d = os.path.join(e.reports, "pk", "20261127-000000-review", "gcloud")
     os.makedirs(d)
@@ -674,6 +682,8 @@ def t_classify():
         ("node pool 名稱叫 upgrade", ["gcloud", "container", "node-pools", "update", "upgrade", "--cluster=prod", "--location=asia-east1",
                                      f"--project={P}", "--no-enable-autorepair"], dict(FX.NODEPOOLS[0], management={"autoRepair": True}), True),
         ("公開 SSH 規則收窄到公司網段", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges=203.0.113.0/24"], fw, False),
+        ("開 UBLA(還原有 90 天限制警示)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--uniform-bucket-level-access"],
+         {"uniform_bucket_level_access": False}, False),
         ("協定寫大寫 TCP:443", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=TCP:443"], FX.FIREWALLS[2], False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
@@ -691,6 +701,8 @@ def t_classify():
             good = good and shlex.split(shlex.join(r["rollback"])) == r["rollback"] and "--description=Allow SSH from office" in r["rollback"]
         if name == "防火牆從全部 VM 收窄到 tag":
             good = good and r.get("rollback_warning") and "target-tags" in r["rollback_warning"]
+        if name.startswith("開 UBLA"):
+            good = good and "90 天" in (r.get("rollback_warning") or "")
         if name.startswith("開 GKE_METADATA"):
             good = good and r.get("rollback_warning")
         if name.startswith("從 all 收緊"):
@@ -959,6 +971,8 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "out": FX.NODEPOOLS[0]},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": None}, "out": nodes(4)},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
+        {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True}, "out": {"targetSize": 3}},
+        {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "out": {"targetSize": 2}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
@@ -1223,6 +1237,7 @@ def t_plan_change(e, review_run):
     e.state({"endpoint": "https://10.9.9.9"})
     e.clear_log()
     r = run_change(e, ch, os.path.join(krun, "plan.json"), ksha, "使用者已核准變更 C1")
+    ok("變更 k8s:執行前檢查失敗時不作廢核准檔", os.path.exists(os.path.join(krun, "approval.json")), os.listdir(krun))
     ok("變更 k8s:叢集 endpoint 與計畫不符 → BLOCKED,沒有 scale 呼叫",
        r.returncode == 3 and "endpoint" in r.stdout and not any(" scale " in " ".join(c["argv"]) for c in e.stub_calls()), r.stdout + r.stderr)
     write_input(krun, [
@@ -1321,6 +1336,7 @@ def main():
         t_yaml_bool()
         t_misc(e)
         t_dead_creds(e)
+        t_reserved_project()
         t_guard_import_fail(e)
         t_sa_change()
         t_check_pre_redact()
