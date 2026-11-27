@@ -66,4 +66,48 @@ try:
 finally:
     if os.path.exists(low): os.remove(low)
 
+# 8. 低價股的圖要有價格刻度;名稱含 & 的 SVG 要是合法 XML
+import xml.dom.minidom
+low = os.path.join(TMP, "tb_low2.json"); svg = os.path.join(TMP, "tb_low2.svg")
+try:
+    d = json.load(open(F60))
+    for b in d["data"]:
+        for k in ("open", "high", "low", "close"): b[k] = round(b[k] / 600, 2)
+    json.dump(d, open(low, "w"))
+    run(low, "--svg", svg, "--title", "00646 元大S&P500")
+    s = open(svg).read() if os.path.exists(svg) else ""
+    grid = s.count('stroke="#ecebe6"')
+    check("低價股的圖有價格刻度", grid >= 3)
+    try:
+        xml.dom.minidom.parseString(s); ok_xml = True
+    except Exception:
+        ok_xml = False
+    check("名稱含 & 時 SVG 仍是合法 XML", ok_xml and "S&amp;P500" in s)
+finally:
+    for f_ in (low, svg):
+        if os.path.exists(f_): os.remove(f_)
+
+# 9. 參數錯誤給用法訊息,不是 traceback
+for a_ in (("--slope-n", "0"), ("--svg",)):
+    r = run(F60, *a_)
+    check(f"參數錯誤 {' '.join(a_)} 給用法訊息", r.returncode != 0 and "用法" in r.stderr and "Traceback" not in r.stderr)
+
+# 10. 13:00 那根在 13:30 收盤就結束:收盤後執行不標「還沒走完」(用 --asof 以外的方式不好控時間,直接檢查計算)
+import datetime as _d
+st = _d.datetime(2026, 11, 27, 13, 0)
+end = min(st + _d.timedelta(minutes=60), st.replace(hour=13, minute=30))
+check("13:00 那根的結束時間是 13:30", end == _d.datetime(2026, 11, 27, 13, 30) and "start.replace(hour=13, minute=30)" in open(SCRIPT).read())
+
+# 11. run.sh:交易時間內盤中 K 回空資料要警告(假 fugle.sh)
+work = tempfile.mkdtemp(prefix="tb_run_", dir=TMP)
+try:
+    fake = os.path.join(work, "fugle.sh")
+    open(fake, "w").write('#!/bin/bash\ncase "$1" in historical*) cp "%s" "$2";; intraday*) printf \'{"data":[]}\' > "$2";; esac\necho \'{"http":200}\'\n' % F60)
+    os.chmod(fake, 0o755)
+    env = dict(os.environ, FUGLE_SH=fake, TW_IN_SESSION="1")
+    r = subprocess.run(["bash", os.path.join(HERE, "..", "scripts", "run.sh"), "IX0001", os.path.join(work, "out")], capture_output=True, text=True, env=env)
+    check("run.sh 盤中空資料要警告", r.returncode == 0 and "盤中資料是空的" in r.stderr)
+finally:
+    import shutil; shutil.rmtree(work, ignore_errors=True)
+
 sys.exit(1 if fails else 0)

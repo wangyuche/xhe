@@ -17,6 +17,9 @@ try:
     extra = [b for b in extra if isinstance(b, dict) and b.get("date")] if isinstance(extra, list) else []
 except Exception:
     extra = []
+h["data"] = [b for b in h["data"] if isinstance(b, dict) and isinstance(b.get("date"), str)]
+if not h["data"]:
+    sys.exit("資料錯誤: 歷史 K 沒有有效的 K 棒")
 seen = {b["date"] for b in h["data"]}
 h["data"] = h["data"] + [b for b in extra if b["date"] not in seen]
 json.dump(h, open(out_p, "w"))

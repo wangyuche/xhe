@@ -14,14 +14,24 @@
 斜率 = 這根的 MA 減 --slope-n 根前的 MA(預設 5 根 ≈ 1 個交易日),只看正負。
 KD(9,3,3):RSV 9 根;K = 2/3 前K + 1/3 RSV;D = 2/3 前D + 1/3 K;初值 50。
 """
-import datetime as _dt, json, sys
+import datetime as _dt, html, json, math, sys
 
 args = sys.argv[1:]
+USAGE = "用法: python3 -I three_blades.py <60分K.json> [--asof ...] [--slope-n 5] [--svg out.svg] [--title T]"
 def opt(name, default=None):
     if name in args:
-        i = args.index(name); v = args[i+1]; del args[i:i+2]; return v
+        i = args.index(name)
+        if i + 1 >= len(args):
+            sys.exit(f"{USAGE}\n{name} 要帶值")
+        v = args[i+1]; del args[i:i+2]; return v
     return default
-asof = opt("--asof"); slope_n = int(opt("--slope-n", "5")); svg = opt("--svg"); title = opt("--title", "加權指數")
+asof = opt("--asof"); svg = opt("--svg"); title = opt("--title", "加權指數")
+try:
+    slope_n = int(opt("--slope-n", "5"))
+except ValueError:
+    sys.exit(f"{USAGE}\n--slope-n 要是正整數")
+if slope_n < 1:
+    sys.exit(f"{USAGE}\n--slope-n 要是正整數")
 PER = (20, 60, 240)
 NAME = {20: "小藍 20MA", 60: "小綠 60MA", 240: "小橘 240MA"}
 COL = {20: "#2b6cb0", 60: "#1e8449", 240: "#e08a1e"}
@@ -29,14 +39,14 @@ COL = {20: "#2b6cb0", 60: "#1e8449", 240: "#e08a1e"}
 def tstr(b): return b["date"][:16].replace("T", " ")
 
 if not args:
-    sys.exit("用法: python3 -I three_blades.py <60分K.json> [--asof ...] [--slope-n 5] [--svg out.svg] [--title T]")
+    sys.exit(USAGE)
 try:
     raw = json.load(open(args[0]))
 except Exception as e:
     sys.exit(f"資料錯誤: 讀不到 {args[0]}: {e}")
 if not isinstance(raw, dict) or not raw.get("data"):
     sys.exit(f"資料錯誤: {args[0]} 沒有 K 棒(Fugle 回應: {str(raw)[:200]})")
-bars = sorted({b["date"]: b for b in raw["data"]}.values(), key=lambda b: b["date"])
+bars = sorted({b["date"]: b for b in raw["data"] if isinstance(b, dict) and isinstance(b.get("date"), str)}.values(), key=lambda b: b["date"])
 if asof:
     bars = [b for b in bars if tstr(b) <= asof]
 n = len(bars)
@@ -88,7 +98,8 @@ def last_cross_price(p):
         if C[i-1] >= m0 and C[i] < m1: return i, "跌破"
     return None, None
 
-end = _dt.datetime.strptime(tstr(bars[last]), "%Y-%m-%d %H:%M") + _dt.timedelta(minutes=60)
+start = _dt.datetime.strptime(tstr(bars[last]), "%Y-%m-%d %H:%M")
+end = min(start + _dt.timedelta(minutes=60), start.replace(hour=13, minute=30))  # 13:00 那根在 13:30 收盤就結束
 now = _dt.datetime.utcnow() + _dt.timedelta(hours=8)
 live = not asof and now < end
 out = [f"【60分K 均線三刀流】{t(last)} 收 {px(C[last])}  K {K[last]:.1f} / D {D[last]:.1f}  斜率=比 {slope_n} 根前"
@@ -139,22 +150,28 @@ if svg:
     i0 = max(0, n - 75); N = n - i0 + 2
     Wd, Ht, Lm, Rm, T, P1b, P2t, P2b = 1200, 1200, 110, 40, 160, 820, 900, 1110
     vals = [v for i in range(i0, n) for v in (L[i], H[i]) + tuple(MA[p][i] for p in PER if MA[p][i])]
-    lo, hi = min(vals), max(vals); pad = (hi-lo)*0.05; lo -= pad; hi += pad
+    lo, hi = min(vals), max(vals)
+    if hi == lo:  # 停牌等價格完全不動:給最小區間,避免除以零
+        hi, lo = hi + max(abs(hi) * 0.01, 0.01), lo - max(abs(lo) * 0.01, 0.01)
+    pad = (hi-lo)*0.05; lo -= pad; hi += pad
     X = lambda i: Lm + (Wd-Lm-Rm)*(i-i0+0.5)/N
     Y = lambda v: T + (P1b-T)*(1-(v-lo)/(hi-lo))
     YK = lambda v: P2t + (P2b-P2t)*(1-v/100)
     f = 'font-family="PingFang TC, Heiti TC, sans-serif"'
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 {Wd} {Ht}">',
          f'<rect width="{Wd}" height="{Ht}" fill="#fcfcfb"/>',
-         f'<text x="{Lm}" y="60" {f} font-size="38" font-weight="600" fill="#0b0b0b">{title}　60分K 均線三刀流</text>',
+         f'<text x="{Lm}" y="60" {f} font-size="38" font-weight="600" fill="#0b0b0b">{html.escape(title)}　60分K 均線三刀流</text>',
          f'<text x="{Lm}" y="104" {f} font-size="24" fill="#52514e">{t(i0)} – {t(last)}　收 {px(C[last])}　{env}　{order.split("(")[0]}　Fugle</text>']
     lg = "　".join(f'<tspan fill="{COL[p]}">— {NAME[p]} {px(MA[p][last])}</tspan>' for p in PER)
     o.append(f'<text x="{Lm}" y="{T-20}" {f} font-size="22">{lg}</text>')
-    step = next(s for s in [50, 100, 200, 250, 500, 1000, 2000] if (hi-lo)/s <= 9)
-    v = (int(lo/step)+1)*step
+    # 刻度間距依價格區間的數量級取 1 / 2 / 5 × 10^k(低價股、高價指數都有刻度)
+    raw_step = (hi - lo) / 8; mag = 10 ** math.floor(math.log10(raw_step))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw_step)
+    dec = max(0, -math.floor(math.log10(step)))
+    v = math.floor(lo / step + 1) * step
     while v < hi:
         o.append(f'<line x1="{Lm}" x2="{Wd-Rm}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" stroke="#ecebe6"/>')
-        o.append(f'<text x="{Lm-10}" y="{Y(v)+8:.1f}" {f} font-size="20" fill="#52514e" text-anchor="end">{v:,.0f}</text>'); v += step
+        o.append(f'<text x="{Lm-10}" y="{Y(v)+8:.1f}" {f} font-size="20" fill="#52514e" text-anchor="end">{v:,.{dec}f}</text>'); v += step
     for lv in (20, 50, 80):
         o.append(f'<line x1="{Lm}" x2="{Wd-Rm}" y1="{YK(lv):.1f}" y2="{YK(lv):.1f}" stroke="#e2e1dc" stroke-dasharray="6 4"/>')
         o.append(f'<text x="{Lm-10}" y="{YK(lv)+7:.1f}" {f} font-size="20" fill="#52514e" text-anchor="end">{lv}</text>')
