@@ -62,6 +62,7 @@ def load_config(require=True):
     elif require:
         raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,權限 600)")
     cfg.setdefault("GG_REPORT_DIR", os.path.expanduser("~/gcp-guardian-reports"))
+    cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
     if require:
@@ -408,8 +409,7 @@ with open(os.path.join(RULES_DIR, "secret_patterns.json"), encoding="utf-8") as 
 
 def redact_value(v):
     s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-    h = hashlib.sha256(s.encode("utf-8")).hexdigest()[:8]
-    return f"<redacted len={len(s)} sha256={h}>"
+    return f"<redacted len={len(s)}>"  # 不附雜湊:避免離線猜密碼
 
 
 def entropy(s):

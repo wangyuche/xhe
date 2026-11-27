@@ -89,6 +89,32 @@ def _port_all(rule):
     return hi - lo + 1 > 1000  # 一次開超過 1000 個埠視同全開(例 tcp:2-65535)
 
 
+def _port_total(rules):
+    """每個協定把埠範圍合併後的總埠數(取最大的協定)。"""
+    per = {}
+    for r in rules:
+        m = re.fullmatch(r"(\w+):(\d+)(?:-(\d+))?", r)
+        if not m:
+            continue
+        p, a, b = m.groups()
+        per.setdefault(PROTO_NUM.get(p, p), []).append((int(a), int(b or a)))
+    best = 0
+    for iv in per.values():
+        iv.sort()
+        tot, cur = 0, None
+        for lo, hi in iv:
+            if cur and lo <= cur[1] + 1:
+                cur = (cur[0], max(cur[1], hi))
+            else:
+                if cur:
+                    tot += cur[1] - cur[0] + 1
+                cur = (lo, hi)
+        if cur:
+            tot += cur[1] - cur[0] + 1
+        best = max(best, tot)
+    return best
+
+
 def _rules_subset(new, old):
     def expand(r):
         m = re.fullmatch(r"(\w+)(?::(\d+)(?:-(\d+))?)?", r)
@@ -107,6 +133,7 @@ def _rules_subset(new, old):
     return True
 
 
+NET_FLAGS = {"--source-ranges", "--master-authorized-networks", "--authorized-networks", "--destination-ranges"}
 PROTO_NUM = {"6": "tcp", "17": "udp", "132": "sctp", "1": "icmp", "50": "esp", "51": "ah"}
 
 POD_SECURITY_ORDER = {"privileged": 0, "baseline": 1, "restricted": 2}
@@ -224,7 +251,7 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     if rollback_args and not res.get("rollback_warning"):
         rb_nets = []
         for a in rollback_args:
-            if isinstance(a, str) and a.startswith("--") and "=" in a:
+            if isinstance(a, str) and a.split("=")[0] in NET_FLAGS and "=" in a:
                 for part in re.split(r"[,;]", a.split("=", 1)[1]):
                     try:
                         rb_nets.append(ipaddress.ip_network(part.strip(), strict=False))
@@ -236,7 +263,7 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
         elif rb_nets:
             new_nets = []
             for a in argv:
-                if a.startswith("--") and "=" in a:
+                if a.split("=")[0] in NET_FLAGS and "=" in a:
                     new_nets += [x for x in _ranges(a.split("=", 1)[1]) if "/" in x]
             if new_nets and not _subset_cidrs([str(n) for n in rb_nets], new_nets):
                 res["rollback_warning"] = "這條還原會把網段放寬回變更前的範圍,執行前請確認"
@@ -434,6 +461,10 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
                 if _port_all(r):
                     res["blocked_reason"] = f"一律禁止:防火牆 {key} 含全部協定 / 全部埠({r})"
                     return None, [], None
+            total = _port_total(_ranges(flags[key]))
+            if total > 1000:
+                res["blocked_reason"] = f"一律禁止:防火牆 {key} 合計開放 {total} 個埠(超過 1000 視同全開)"
+                return None, [], None
             if not _rules_subset(_ranges(flags[key]), _fw_rules_from_snapshot(snap)):
                 reasons.append("放寬防火牆協定 / 埠")
     if "--source-ranges" in flags and not _ranges(flags["--source-ranges"]) and flags["--source-ranges"] is not True:

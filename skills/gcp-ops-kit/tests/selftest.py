@@ -219,7 +219,7 @@ def t_guard(e):
                       (f"diff -r {proj} {e.reports}", "deny"), (f"find -L {e.reports}", "deny")):
         r = subprocess.run(["python3", g, "--test", cmd], env=env, capture_output=True, text=True)
         ok(f"guard symlink:{cmd[-60:]!r} → {want}", r.stdout.split("\t")[0].strip() == want, r.stdout)
-    for cwd, cmd, want in ((proj, "grep -r server", 2), (proj, "grep -rS server", 2),
+    for cwd, cmd, want in ((proj, "grep -r server", 2), (proj, "grep -rS server", 2), (proj, "grep -r -e private_key -e client_email", 2),
                            (os.path.join(e.tmp, "sub"), "grep -o -f../conf/sa.json . /tmp/dict", 2),
                            (os.path.dirname(e.tmp), "grep -r private_key", 2),
                            (os.path.dirname(e.tmp), "grep -d recurse private_key", 2),
@@ -251,6 +251,24 @@ def t_redact():
        and "nodeconfigsecret" not in sa and "hunter2inline" not in sa and "SuperSecretPw" not in sa and "./run" in sa, sa)
     env = r["items"][3]["spec"]["containers"][0]["env"]
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
+
+
+def t_hostpath_value_change():
+    import ggplan
+
+    def dep(path):
+        d = copy.deepcopy(FX.DEPLOY)
+        d["spec"]["template"]["spec"]["volumes"] = [{"name": "h", "hostPath": {"path": path}}]
+        return d
+
+    class FakeS:
+        def kubectl(self, ctx, args, mode="read", **kw):
+            return subprocess.CompletedProcess(args, 0, json.dumps(dep("/")), "")
+    _, new, _, _ = ggplan.k8s_dryrun(FakeS(), "kubectl-patch",
+                                     ["kubectl", "--context=gke_demo-proj-123_asia-east1_prod", "patch", "deployment", "web",
+                                      "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], dep("/var/log"))
+    ok("dry-run:同欄位改成更危險的值(hostPath /var/log → /)算新問題", any(f["rule_id"] == "K8S-HOST-002" for f in new), new)
+    ok("遮蔽值不附雜湊", "sha256" not in gglib.redact_value("hunter2"), gglib.redact_value("hunter2"))
 
 
 def t_check_pre_redact():
@@ -429,6 +447,8 @@ def t_classify():
         ("防火牆 tcp:2-65535(幾乎全開)", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:2-65535"], FX.FIREWALLS[1]),
         ("patch networkpolicy(網路類資源請使用者自己改)", ["kubectl", f"--context={CTX}", "patch", "networkpolicy", "default-deny", "--namespace=shop", "--type=merge", "--patch-file=/x/patches/C1.json"], None),
         ("namespace 一般 label(可能影響 NetworkPolicy)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "team=x", "--overwrite"], {"metadata": {"labels": {}}}),
+        ("防火牆拆成多段合計全開", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}",
+                                  "--rules=" + ",".join(f"tcp:{i * 1000 + 1}-{min(i * 1000 + 1000, 65535)}" for i in range(66))], FX.FIREWALLS[1]),
         ("清空防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges="], fw),
         ("bucket 狀態欄位不存在(統一存取)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--uniform-bucket-level-access"], {}),
         ("系統 namespace scale", ["kubectl", f"--context={CTX}", "scale", "deployment/kube-dns", "--namespace=kube-system", "--replicas=3"], None),
@@ -774,6 +794,8 @@ def t_plan_change(e, review_run):
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
                      "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
          "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
+        {"id": "C8", "summary": "expected 比對 ConfigMap data", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
+         "expected": [{"field": "/data/DB_PASSWORD", "expect": "guess"}]},
         {"id": "C7", "summary": "binding 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
          "precondition": [{"binding_present": "allUsers"}], "expected": [{"field": "/versioning_enabled", "expect": True}]},
         {"id": "C6", "summary": "precondition 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
@@ -800,7 +822,7 @@ def t_plan_change(e, review_run):
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
     ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"]
-       and by.get("C7", {}).get("blocked_reason"), (by.get("C6"), by.get("C7")))
+       and by.get("C7", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
     ok("計畫:移除 allUsers 的還原附「會重新公開」警示", by["C1"].get("rollback_warning") and "重新公開" in by["C1"]["rollback_warning"], by["C1"].get("rollback_warning"))
     ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
@@ -1029,6 +1051,7 @@ def main():
         t_misc(e)
         t_sa_change()
         t_check_pre_redact()
+        t_hostpath_value_change()
         t_approve_parse()
         t_classify()
         t_wrapper(e)

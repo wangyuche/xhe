@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.realpath(__file__)))
 
@@ -18,6 +19,7 @@ import ggchange
 import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
+VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
 
 
@@ -142,7 +144,11 @@ class Runner:
                          "reason": "指令已送出但沒有等到結果;請先確認現況",
                          "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
                          "rollback_warning": it.get("rollback_warning")}
-        r = s._exec(argv, "change", timeout=1800)
+        try:
+            r = s._exec(argv, "change", timeout=1800)
+        except gglib.Denied as e:  # 第二道防線在執行前拒絕:雲端沒被動到
+            self.inflight = None
+            return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
         self.inflight = None
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
@@ -157,17 +163,23 @@ class Runner:
             rec["rollback_warning"] = it["rollback_warning"]
         if it.get("rollback_note"):
             rec["rollback_note"] = it["rollback_note"]
-        try:
-            after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
-        except (gglib.Blocked, gglib.Denied) as e:
-            after, err = None, str(e)
+        exp = it.get("expected") or []
+        deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
+        while True:
+            try:
+                after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
+            except (gglib.Blocked, gglib.Denied) as e:
+                after, err = None, str(e)
+            # resize:新節點要一段時間才加入叢集,驗證不符時等一下再看
+            if err or not exp or not ggplan.check_pre(exp, after) or time.time() >= deadline:
+                break
+            time.sleep(15)
         if err:
             rec.update({"result": "已執行(驗證失敗)", "reason": "指令已成功執行,但變更後快照失敗:" + err})
             self.results.append(rec)
             self.status = "ISSUES"
             return False
         gglib.write_json(os.path.join(self.run, "after", f"{cid}.json"), gglib.redact(after))
-        exp = it.get("expected") or []
         if kind == "kubectl-rollout-restart" and not exp:
             ptr = "/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
             okv = gglib.ptr_get(after, ptr) not in (None, gglib.ptr_get(snap, ptr))

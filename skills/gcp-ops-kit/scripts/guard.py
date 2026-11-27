@@ -159,7 +159,22 @@ def check_bash(cmd, cfg, cwd):
     if recursive and is_protected(cwd, cfg, cwd, ancestor=True):
         return f"遞迴搜尋目前目錄({cwd})會碰到受保護路徑;請寫明不含受保護路徑的絕對路徑"
     nonflags = [t for t in toks[1:] if not t.startswith("-")]
-    no_path = (first == "grep" and len(nonflags) <= 1) or (first == "find" and not nonflags[:1]) or (first in ("diff", "ls") and not nonflags)
+    if first == "grep":
+        # -e / -f / --regexp / --file 給了樣式時,其餘非旗標參數全都是路徑
+        pat_vals, has_pat_flag, skip = set(), False, False
+        for i, t in enumerate(toks[1:], 1):
+            if skip:
+                pat_vals.add(i)
+                skip = False
+                continue
+            if t in ("-e", "-f", "--regexp", "--file"):
+                has_pat_flag, skip = True, True
+            elif t.startswith(("--regexp=", "--file=")) or (t.startswith(("-e", "-f")) and len(t) > 2):
+                has_pat_flag = True
+        gpaths = [t for i, t in enumerate(toks[1:], 1) if not t.startswith("-") and i not in pat_vals]
+        if not has_pat_flag:
+            gpaths = gpaths[1:]
+    no_path = (first == "grep" and not gpaths) or (first == "find" and not nonflags[:1]) or (first in ("diff", "ls") and not nonflags)
     if recursive and no_path and os.path.isdir(cwd):
         bad = _protected_symlink_under(cwd, cfg, cwd)
         if bad:

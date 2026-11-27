@@ -98,6 +98,10 @@ def build_item(s, cfg, run, project, raw, ctx_done):
                        for k in ("binding_absent", "binding_present"))
         if not isinstance(v, list) or not all(isinstance(x, dict) and (("field" in x and isinstance(x["field"], str)) or _okb(x)) for x in v):
             return blocked(f"{fld} 要是 [{{\"field\": \"/JSON pointer\", \"expect\": 值}}] 陣列")
+    for fld in ("precondition", "expected"):
+        for x in item[fld]:
+            if "field" in x and re.search(r"/(data|binaryData|stringData)(/|$)|/env/\d+/value|/(command|args)(/|$)|/metadata/annotations(/|$)", x["field"]):
+                return blocked(f"{fld} 不可比對可能含秘密的欄位({x['field']}),改用其他欄位驗證")
     for fld in ("manifest", "patch"):
         if item[fld] is not None and not isinstance(item[fld], str):
             return blocked(f"{fld} 要是字串")

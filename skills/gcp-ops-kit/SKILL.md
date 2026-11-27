@@ -73,6 +73,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - 移除 allUsers / allAuthenticatedUsers 的還原指令會重新公開資料,計畫與變更紀錄會加 ⚠ 警示。
 - 叢集的盤點檔以 `<位置>_<名稱>` 命名(`nodepools/asia-east1_prod.json`、`k8s/asia-east1_prod/`)。
 - `kubectl apply`:`command` 寫 `["kubectl", "--context=…", "apply", "--filename=<manifest>"]`,YAML 全文放 `manifest`;`kubectl patch`:`--patch-file=<patch>`,內容放 `patch`。
+- `precondition` / `expected` 不可指向可能含秘密的欄位(`/data`、`/stringData`、`/binaryData`、env `value`、`command` / `args`、annotations)。
 - `precondition` / `expected`:`{"field": "/JSON pointer", "expect": 值}`,或 IAM 用 `{"binding_present"|"binding_absent": [成員, 角色]}`(只比對無條件綁定);JSON pointer 指向該 kind 的快照(下表);apply 的快照是 `{"objects": [每份文件的線上物件]}`,所以寫 `/objects/0/...`;resize 的快照是 `{"nodepool": …, "node_count_per_zone": n}`。`expected` 必填(rollout restart 除外,kit 自動驗 restartedAt)。
 - plan.py 會自動加 `auto_pre`(還原指令依賴的原值),變更時一起比對。
 
@@ -109,7 +110,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。
 - YAML 審查:kustomization 引用遠端 base(https / git / github.com…)時不展開(不連網),列無法判定。
-- kubectl apply / patch 只允許 workload 類(deployment、statefulset、daemonset、cronjob、HPA、PDB、configmap);NetworkPolicy、Ingress、Service、ServiceAccount 等網路與身分資源的語意放寬無法可靠判斷,請使用者自己改;workload 改 `serviceAccountName` 視同高風險 → BLOCKED;namespace label 只允許 `pod-security.kubernetes.io/*`;防火牆單一範圍超過 1000 個埠視同全開;Secret、RBAC、webhook、CRD、Namespace 等在快照之前就擋;patch 的資源種類一律小寫。
+- kubectl apply / patch 只允許 workload 類(deployment、statefulset、daemonset、cronjob、HPA、PDB、configmap);NetworkPolicy、Ingress、Service、ServiceAccount 等網路與身分資源的語意放寬無法可靠判斷,請使用者自己改;workload 改 `serviceAccountName` 視同高風險 → BLOCKED;namespace label 只允許 `pod-security.kubernetes.io/*`;防火牆單一範圍或同協定合計超過 1000 個埠視同全開;Secret、RBAC、webhook、CRD、Namespace 等在快照之前就擋;patch 的資源種類一律小寫。
 - `0.0.0.0/0` / `::/0` 以 ipaddress 解析判斷(`0::/0`、多段合起來涵蓋全部也擋)。
 - **沒有還原範本的旗標**(例 `--security-posture`、`--maintenance-window-*`)一律判「不可還原」→ BLOCKED,請使用者自己做。
 - **放寬安全**(`loosens_security`)由固定規則判斷:新增高權角色、關閉公開存取防護 / 統一存取 / 版本、放寬授權網路或防火牆、Pod Security 降級、apply 後出現新的「中」問題。apply / patch 後出現新的「嚴重 / 高」問題 → BLOCKED。
@@ -118,6 +119,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 
 - 每個 run 自己的 `CLOUDSDK_CONFIG=<run>/gcloud`、`KUBECONFIG=<run>/kubeconfig`、`HOME=<run>/gcloud/home`(kubectl 與 auth plugin 的快取),結束刪除;`commands.log` 記錄每個指令(金鑰路徑以 `<key>` 代替)。
 - 唯讀:`rules/allow_read.txt`(審查)、`rules/allow_dryrun.txt`(計畫 / 變更前快照與 dry-run),先過 `rules/deny_read.txt`(Secret 值、序列埠、`--raw`、exec、token…)。
+- 遮蔽值寫成 `<redacted len=N>`(不附雜湊,避免離線猜密碼)。resize 的驗證會等新節點加入(最多 `GG_VERIFY_WAIT` 秒,預設 600)。
 - 遮蔽(寫檔前):Secret `data`、ConfigMap 值、env `value`(另標 `looks_secret`)、VM metadata 值(布林設定保留)、`masterAuth.*`、last-applied annotation、秘密樣式(`rules/secret_patterns.json`)。
 - plan.json 只保留 `kubectl diff` 的「資源 + 新建 / 修改」摘要,不留 diff 內容。
 - `before/C<n>.rollback.json` 是 kubectl 還原用的**原始物件**(還原指令就指向它)(ConfigMap 可能含原值),權限 600,`--check` 不掃它;報告與回報不印它的內容。
