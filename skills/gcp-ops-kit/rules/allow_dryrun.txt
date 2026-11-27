@@ -1,0 +1,17 @@
+# 計畫 / 變更模式額外允許的唯讀快照與 dry-run(仍先過 deny_read.txt)。
+# 快照
+gcloud container clusters describe {N} --location={L} --project={P} --format=json --quiet
+gcloud container node-pools describe {N} --cluster={N} --location={L} --project={P} --format=json --quiet
+gcloud compute firewall-rules describe {N} --project={P} --format=json --quiet
+gcloud storage buckets describe {B} --project={P} --format=json --quiet
+gcloud sql instances describe {N} --project={P} --format=json --quiet
+gcloud compute instance-groups managed describe {N} --zone={L} --project={P} --format=json --quiet
+kubectl --context={CTX} get {ANY} {N} -n {N} -o json --request-timeout=60s
+kubectl --context={CTX} get {ANY} {N} -o json --request-timeout=60s
+kubectl --context={CTX} get nodes -l {LABEL} -o json --request-timeout=60s
+kubectl --context={CTX} get horizontalpodautoscalers -n {N} -o json --request-timeout=60s
+# dry-run(檔案只能是 run 目錄內 kit 寫出的 manifests/ 或 patches/)
+kubectl --context={CTX} diff -f {RUNFILE} --request-timeout=60s
+kubectl --context={CTX} apply --dry-run=server -o json -f {RUNFILE} --request-timeout=60s
+kubectl --context={CTX} patch {ANY} {N} -n {N} --type={ANY} --patch-file={RUNFILE} --dry-run=server -o json --request-timeout=60s
+kubectl --context={CTX} patch {ANY} {N} --type={ANY} --patch-file={RUNFILE} --dry-run=server -o json --request-timeout=60s

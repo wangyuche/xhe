@@ -1,0 +1,620 @@
+{
+  "_doc": "變更允許清單。不在 kinds 裡的指令一律 BLOCKED。flags:每個允許的旗標要有 inverse(反向旗標)或 restore(從變更前快照取還原值的 JSON pointer);兩者都沒有 → 不可還原 → BLOCKED。loosens:這個旗標屬於放寬安全(計畫頁醒目標示)。 inverse 旗標必須有 state(變更前狀態的 JSON pointer)與 target(這個旗標要達成的狀態:true / false / nonempty);變更前已是 target → 不可還原(其實不需變更);state 記入 auto_pre。 kubectl apply / patch 只允許 workload 類;NetworkPolicy、Ingress、Service、ServiceAccount、RBAC 等網路與身分相關資源請使用者自己改(語意上的放寬無法可靠判斷)。",
+  "forbidden_tokens": [
+    "(^| )delete( |$)",
+    "(^| )set-iam-policy( |$)",
+    "(^| )services disable( |$)",
+    "(^| )upgrade( |$)",
+    "--cluster-version",
+    "--release-channel",
+    "--node-version",
+    "--image-type",
+    "--prune",
+    "--force( |=|$)",
+    "--force-conflicts",
+    "--grace-period",
+    "--impersonate-service-account",
+    "keys create",
+    "secrets versions access",
+    "--retention-period",
+    "--lock-retention-period",
+    "(^| )-k( |$)",
+    "--kustomize"
+  ],
+  "high_privilege_roles": [
+    "roles/editor",
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.serviceAccountUser",
+    "roles/iam.serviceAccountKeyAdmin",
+    "roles/iam.securityAdmin",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/container.admin",
+    "roles/container.clusterAdmin",
+    "roles/compute.admin",
+    "roles/storage.admin",
+    "roles/cloudsql.admin",
+    "roles/secretmanager.secretAccessor",
+    "roles/iam.workloadIdentityUser"
+  ],
+  "k8s_patch_kinds": [
+    "deployment",
+    "statefulset",
+    "daemonset",
+    "cronjob",
+    "horizontalpodautoscaler",
+    "poddisruptionbudget",
+    "configmap"
+  ],
+  "kinds": {
+    "gke-cluster-update": {
+      "prefix": [
+        "gcloud",
+        "container",
+        "clusters",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--location",
+        "--project"
+      ],
+      "snapshot": "cluster",
+      "dry_run": null,
+      "flags": {
+        "--enable-master-authorized-networks": {
+          "inverse": "--no-enable-master-authorized-networks",
+          "state": "/masterAuthorizedNetworksConfig/enabled",
+          "target": true,
+          "companion_for": [
+            "--master-authorized-networks"
+          ]
+        },
+        "--no-enable-master-authorized-networks": {
+          "inverse": "--enable-master-authorized-networks",
+          "loosens": "關閉控制平面授權網路",
+          "state": "/masterAuthorizedNetworksConfig/enabled",
+          "target": false,
+          "restore_with": [
+            {
+              "flag": "--master-authorized-networks",
+              "from": "/masterAuthorizedNetworksConfig/cidrBlocks",
+              "item_key": "cidrBlock",
+              "format": "join",
+              "optional": true
+            }
+          ]
+        },
+        "--master-authorized-networks": {
+          "restore": "/masterAuthorizedNetworksConfig/cidrBlocks",
+          "format": "join",
+          "item_key": "cidrBlock",
+          "empty_ok": true,
+          "clear_flag": "--no-enable-master-authorized-networks",
+          "skip_if_off": "/masterAuthorizedNetworksConfig/enabled"
+        },
+        "--enable-shielded-nodes": {
+          "inverse": "--no-enable-shielded-nodes",
+          "state": "/shieldedNodes/enabled",
+          "target": true
+        },
+        "--no-enable-shielded-nodes": {
+          "inverse": "--enable-shielded-nodes",
+          "loosens": "關閉 Shielded GKE Nodes",
+          "state": "/shieldedNodes/enabled",
+          "target": false
+        },
+        "--workload-pool": {
+          "inverse": "--disable-workload-identity",
+          "state": "/workloadIdentityConfig/workloadPool",
+          "target": "nonempty"
+        },
+        "--enable-network-policy": {
+          "inverse": "--no-enable-network-policy",
+          "state": "/networkPolicy/enabled",
+          "target": true
+        },
+        "--no-enable-network-policy": {
+          "inverse": "--enable-network-policy",
+          "loosens": "關閉 NetworkPolicy 執行",
+          "state": "/networkPolicy/enabled",
+          "target": false
+        }
+      }
+    },
+    "gke-nodepool-update": {
+      "prefix": [
+        "gcloud",
+        "container",
+        "node-pools",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--cluster",
+        "--location",
+        "--project"
+      ],
+      "snapshot": "nodepool",
+      "dry_run": null,
+      "flags": {
+        "--enable-autoupgrade": {
+          "inverse": "--no-enable-autoupgrade",
+          "state": "/management/autoUpgrade",
+          "target": true
+        },
+        "--no-enable-autoupgrade": {
+          "inverse": "--enable-autoupgrade",
+          "loosens": "關閉節點自動升級",
+          "state": "/management/autoUpgrade",
+          "target": false
+        },
+        "--enable-autorepair": {
+          "inverse": "--no-enable-autorepair",
+          "state": "/management/autoRepair",
+          "target": true
+        },
+        "--no-enable-autorepair": {
+          "inverse": "--enable-autorepair",
+          "loosens": "關閉節點自動修復",
+          "state": "/management/autoRepair",
+          "target": false
+        },
+        "--workload-metadata": {
+          "restore": "/config/workloadMetadataConfig/mode",
+          "loosens_values": {
+            "GCE_METADATA": "節點 metadata 改回 GCE_METADATA(Pod 可取得節點 SA 憑證)"
+          },
+          "default": "GCE_METADATA"
+        },
+        "--enable-autoscaling": {
+          "inverse": "--no-enable-autoscaling",
+          "state": "/autoscaling/enabled",
+          "target": true,
+          "companion_for": [
+            "--min-nodes",
+            "--max-nodes"
+          ]
+        },
+        "--no-enable-autoscaling": {
+          "inverse": "--enable-autoscaling",
+          "state": "/autoscaling/enabled",
+          "target": false,
+          "restore_with": [
+            {
+              "flag": "--min-nodes",
+              "from": "/autoscaling/minNodeCount",
+              "default": 0
+            },
+            {
+              "flag": "--max-nodes",
+              "from": "/autoscaling/maxNodeCount"
+            }
+          ]
+        },
+        "--min-nodes": {
+          "restore": "/autoscaling/minNodeCount",
+          "skip_if_off": "/autoscaling/enabled",
+          "default": 0
+        },
+        "--max-nodes": {
+          "restore": "/autoscaling/maxNodeCount",
+          "skip_if_off": "/autoscaling/enabled"
+        }
+      }
+    },
+    "gke-resize": {
+      "prefix": [
+        "gcloud",
+        "container",
+        "clusters",
+        "resize"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--node-pool",
+        "--num-nodes",
+        "--location",
+        "--project"
+      ],
+      "snapshot": "resize",
+      "dry_run": null,
+      "flags": {}
+    },
+    "firewall-update": {
+      "prefix": [
+        "gcloud",
+        "compute",
+        "firewall-rules",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--project"
+      ],
+      "snapshot": "firewall",
+      "dry_run": null,
+      "flags": {
+        "--source-ranges": {
+          "restore": "/sourceRanges",
+          "format": "join"
+        },
+        "--rules": {
+          "restore": "/allowed",
+          "format": "fw_rules"
+        },
+        "--target-tags": {
+          "restore": "/targetTags",
+          "format": "join",
+          "clear_flag": "--target-tags=",
+          "empty_ok": true
+        },
+        "--disabled": {
+          "inverse": "--no-disabled",
+          "state": "/disabled",
+          "target": true
+        },
+        "--no-disabled": {
+          "inverse": "--disabled",
+          "loosens": "啟用防火牆規則",
+          "state": "/disabled",
+          "target": false
+        },
+        "--enable-logging": {
+          "inverse": "--no-enable-logging",
+          "state": "/logConfig/enable",
+          "target": true
+        },
+        "--no-enable-logging": {
+          "inverse": "--enable-logging",
+          "loosens": "關閉防火牆記錄",
+          "state": "/logConfig/enable",
+          "target": false
+        },
+        "--priority": {
+          "restore": "/priority"
+        },
+        "--description": {
+          "restore": "/description",
+          "empty_ok": true
+        }
+      }
+    },
+    "bucket-update": {
+      "prefix": [
+        "gcloud",
+        "storage",
+        "buckets",
+        "update"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--project"
+      ],
+      "snapshot": "bucket",
+      "dry_run": null,
+      "flags": {
+        "--public-access-prevention": {
+          "inverse": "--no-public-access-prevention",
+          "state": "/public_access_prevention",
+          "target": true,
+          "state_required": true
+        },
+        "--no-public-access-prevention": {
+          "inverse": "--public-access-prevention",
+          "loosens": "關閉公開存取防護",
+          "state": "/public_access_prevention",
+          "target": false,
+          "state_required": true
+        },
+        "--uniform-bucket-level-access": {
+          "inverse": "--no-uniform-bucket-level-access",
+          "state": "/uniform_bucket_level_access",
+          "target": true,
+          "state_required": true,
+          "rollback_warning": "統一存取啟用超過 90 天後就不能關閉,這條還原只在 90 天內有效"
+        },
+        "--no-uniform-bucket-level-access": {
+          "inverse": "--uniform-bucket-level-access",
+          "loosens": "關閉統一 bucket 層級存取(改回 ACL)",
+          "state": "/uniform_bucket_level_access",
+          "target": false,
+          "state_required": true
+        },
+        "--versioning": {
+          "inverse": "--no-versioning",
+          "state": "/versioning_enabled",
+          "target": true
+        },
+        "--no-versioning": {
+          "inverse": "--versioning",
+          "loosens": "關閉物件版本",
+          "state": "/versioning_enabled",
+          "target": false
+        }
+      }
+    },
+    "bucket-iam-remove": {
+      "prefix": [
+        "gcloud",
+        "storage",
+        "buckets",
+        "remove-iam-policy-binding"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--member",
+        "--role",
+        "--project",
+        "--condition"
+      ],
+      "snapshot": "bucket-iam",
+      "dry_run": null,
+      "flags": {
+        "--condition": {
+          "only_values": [
+            "None"
+          ]
+        }
+      }
+    },
+    "project-iam-add": {
+      "prefix": [
+        "gcloud",
+        "projects",
+        "add-iam-policy-binding"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--member",
+        "--role",
+        "--project",
+        "--condition"
+      ],
+      "snapshot": "project-iam",
+      "dry_run": null,
+      "flags": {
+        "--condition": {
+          "only_values": [
+            "None"
+          ]
+        }
+      }
+    },
+    "project-iam-remove": {
+      "prefix": [
+        "gcloud",
+        "projects",
+        "remove-iam-policy-binding"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--member",
+        "--role",
+        "--project",
+        "--condition"
+      ],
+      "snapshot": "project-iam",
+      "dry_run": null,
+      "flags": {
+        "--condition": {
+          "only_values": [
+            "None"
+          ]
+        }
+      }
+    },
+    "sql-patch": {
+      "prefix": [
+        "gcloud",
+        "sql",
+        "instances",
+        "patch"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--project"
+      ],
+      "snapshot": "sql",
+      "dry_run": null,
+      "flags": {
+        "--ssl-mode": {
+          "restore": "/settings/ipConfiguration/sslMode",
+          "loosens_values": {
+            "ALLOW_UNENCRYPTED_AND_ENCRYPTED": "允許未加密連線"
+          },
+          "state_required_restore": true
+        },
+        "--authorized-networks": {
+          "restore": "/settings/ipConfiguration/authorizedNetworks",
+          "format": "join",
+          "item_key": "value",
+          "clear_flag": "--clear-authorized-networks"
+        },
+        "--backup-start-time": {
+          "restore": "/settings/backupConfiguration/startTime"
+        },
+        "--enable-point-in-time-recovery": {
+          "inverse": "--no-enable-point-in-time-recovery",
+          "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
+          "target": true
+        },
+        "--no-enable-point-in-time-recovery": {
+          "inverse": "--enable-point-in-time-recovery",
+          "loosens": "關閉時間點復原",
+          "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
+          "target": false
+        }
+      }
+    },
+    "kubectl-apply": {
+      "prefix": [
+        "kubectl",
+        "apply"
+      ],
+      "positional": 0,
+      "required_flags": [
+        "--filename"
+      ],
+      "snapshot": "k8s-manifest",
+      "dry_run": "kubectl diff + apply --dry-run=server",
+      "flags": {}
+    },
+    "kubectl-patch": {
+      "prefix": [
+        "kubectl",
+        "patch"
+      ],
+      "positional": 2,
+      "required_flags": [
+        "--type",
+        "--patch-file"
+      ],
+      "snapshot": "k8s-object",
+      "dry_run": "kubectl patch --dry-run=server",
+      "flags": {
+        "--namespace": {}
+      }
+    },
+    "kubectl-scale": {
+      "prefix": [
+        "kubectl",
+        "scale"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--namespace",
+        "--replicas"
+      ],
+      "snapshot": "k8s-object",
+      "dry_run": null,
+      "flags": {}
+    },
+    "kubectl-rollout-restart": {
+      "prefix": [
+        "kubectl",
+        "rollout",
+        "restart"
+      ],
+      "positional": 1,
+      "required_flags": [
+        "--namespace"
+      ],
+      "snapshot": "k8s-object",
+      "dry_run": null,
+      "flags": {}
+    },
+    "kubectl-label-namespace": {
+      "prefix": [
+        "kubectl",
+        "label",
+        "namespace"
+      ],
+      "positional": 2,
+      "required_flags": [],
+      "snapshot": "k8s-namespace",
+      "dry_run": null,
+      "flags": {
+        "--overwrite": {}
+      }
+    }
+  },
+  "k8s_forbidden_kinds": [
+    "secret",
+    "secrets",
+    "serviceaccounttoken",
+    "certificatesigningrequest",
+    "clusterrole",
+    "clusterrolebinding",
+    "role",
+    "rolebinding",
+    "mutatingwebhookconfiguration",
+    "validatingwebhookconfiguration",
+    "customresourcedefinition",
+    "namespace"
+  ],
+  "requires": {
+    "--master-authorized-networks": "--enable-master-authorized-networks",
+    "--min-nodes": "--enable-autoscaling",
+    "--max-nodes": "--enable-autoscaling"
+  },
+  "system_namespaces": "^(kube-system|kube-public|kube-node-lease|gke-.*|gmp-.*|config-management-.*|istio-system|asm-.*|cnrm-system|anthos-.*)$",
+  "rollback_loosening_flags": {
+    "--disable-workload-identity": "還原會關閉 Workload Identity",
+    "--no-enable-master-authorized-networks": "還原會關閉控制平面授權網路",
+    "--no-enable-shielded-nodes": "還原會關閉 Shielded Nodes",
+    "--no-enable-network-policy": "還原會關閉 NetworkPolicy",
+    "--no-public-access-prevention": "還原會關閉公開存取防護",
+    "--no-uniform-bucket-level-access": "還原會改回 ACL",
+    "--no-enable-autoupgrade": "還原會關閉自動升級",
+    "--no-enable-autorepair": "還原會關閉自動修復",
+    "--no-enable-logging": "還原會關閉防火牆記錄",
+    "--no-disabled": "還原會重新啟用這條防火牆規則"
+  },
+  "bool_flags": [
+    "--disabled",
+    "--enable-autorepair",
+    "--enable-autoscaling",
+    "--enable-autoupgrade",
+    "--enable-logging",
+    "--enable-master-authorized-networks",
+    "--enable-network-policy",
+    "--enable-point-in-time-recovery",
+    "--enable-shielded-nodes",
+    "--no-disabled",
+    "--no-enable-autorepair",
+    "--no-enable-autoscaling",
+    "--no-enable-autoupgrade",
+    "--no-enable-logging",
+    "--no-enable-master-authorized-networks",
+    "--no-enable-network-policy",
+    "--no-enable-point-in-time-recovery",
+    "--no-enable-shielded-nodes",
+    "--no-public-access-prevention",
+    "--no-uniform-bucket-level-access",
+    "--no-versioning",
+    "--overwrite",
+    "--public-access-prevention",
+    "--quiet",
+    "--uniform-bucket-level-access",
+    "--versioning"
+  ],
+  "exclusive_groups": {
+    "gke-cluster-update": [
+      [
+        "--enable-master-authorized-networks",
+        "--no-enable-master-authorized-networks",
+        "--master-authorized-networks"
+      ],
+      [
+        "--enable-shielded-nodes",
+        "--no-enable-shielded-nodes"
+      ],
+      [
+        "--workload-pool"
+      ],
+      [
+        "--enable-network-policy",
+        "--no-enable-network-policy"
+      ]
+    ],
+    "gke-nodepool-update": [
+      [
+        "--enable-autoupgrade",
+        "--no-enable-autoupgrade"
+      ],
+      [
+        "--enable-autorepair",
+        "--no-enable-autorepair"
+      ],
+      [
+        "--workload-metadata"
+      ],
+      [
+        "--enable-autoscaling",
+        "--no-enable-autoscaling",
+        "--min-nodes",
+        "--max-nodes"
+      ]
+    ]
+  }
+}

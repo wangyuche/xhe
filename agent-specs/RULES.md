@@ -122,6 +122,15 @@
 | 非角色參考圖(現有素材、先前生成的圖)只能上傳簡報旗標「使用者授權上傳參考圖」列出的檔案;沒旗標時回報列出建議路徑 | 旗標 + 測試(tests 情境 9,2026-11-22 實跑:9A / 9B / 9C 的旗標行為都符合預期;9B 另發現重出覆寫交付檔,已改流程,見下一條)+ 限制條文 | 2026-11-22 MahjongParty ticketpack-t5、vippack-gold 兩次停下等主 agent 轉問 |
 | 遊戲素材的交付檔(圖、背景、音訊)一律先產生在這次產出目錄的暫存區(`art/out/<本次產出目錄名>/stage/<group>/`),通過後用 kit `deliver.mjs` 全有或全無交付;沒通過的項目 assets.json 不動(不讓失敗的產出覆寫已交付的檔) | 結構(kit `deliver.mjs`:複製 / 換檔 / 驗證任一步失敗全部還原)+ 測試(kit tests deliver ×21)+ 文字(工作流程「遊戲素材」第 1 點);只發生 1 次;例外直接加入:會遺失已交付素材;使用者 2026-11-22 看過改動清單(含這條修正)後指示「全部補完」 | 2026-11-22 情境 9B 實跑:失敗圖覆寫 shop.chest.png,agent 自行還原 |
 
+## gcp-guardian
+
+| 規則 | 強制方式 | 來源(哪次錯誤) |
+|---|---|---|
+| 雲端操作只透過 kit 入口腳本;Bash 只准單一入口腳本或唯讀指令,不准串接 / 轉向 / 展開;不讀設定檔、金鑰、使用者的 gcloud / kube 設定;Write 只准 run 目錄的 manual.json、plan.input.json | 結構(agent frontmatter PreToolUse hook `guard.py`)+ 測試(selftest guard 案例)。**其他工具(沒掛 hook 的 agent、Codex)直接用金鑰呼叫 gcloud 擋不到** | 建立時就有(使用者 2026-11-27:可讀寫 SA、每次變更先問) |
+| 審查 / 計畫只跑唯讀白名單指令(逐條完整 regex,先過拒絕樣式) | 結構(`gglib.check_read`)+ 測試(白名單允許 / 拒絕案例、commands.log 全部符合) | 建立時就有 |
+| 變更只執行逐條核准、sha256 一致、允許清單內、可還原、precondition 與 endpoint 一致的條目;kind / 可否還原 / 放寬安全由 kit 計算,change.sh 重算 | 結構(`plan.py`、`change.py`、包裝的第二道防線)+ 測試(selftest 變更案例 ×15) | 建立時就有 |
+| 盤點寫檔前遮蔽秘密;Secret 只取 metadata 與 key 名稱 | 結構(`redact`、固定 go-template)+ 檢查(`render.mjs --check` 掃整個 run 目錄)+ 測試 | 建立時就有 |
+
 ## 協調者(agent-forge multi-agent)
 
 | 規則 | 強制方式 | 來源(哪次錯誤) |
