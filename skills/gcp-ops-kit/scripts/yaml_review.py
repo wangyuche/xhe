@@ -2,7 +2,7 @@
 
 yaml-review.sh <檔案或目錄>... [--label <名稱>]
 - 目錄:遞迴收 *.yaml / *.yml;目錄含 kustomization.yaml 時改用 kubectl kustomize 展開(證據行號指向展開結果)
-- 產出 <GG_REPORT_DIR>/yaml-<名稱>/<時間>-yaml/{findings.json, report.html, inventory/rendered/*}
+- 產出 <GG_REPORT_DIR>/_yaml/<名稱>/<時間>-yaml/{findings.json, report.html, inventory/rendered/*}
 stdout 最後一行:run=<run 目錄>
 """
 import json

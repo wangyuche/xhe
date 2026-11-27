@@ -52,7 +52,7 @@ class Runner:
         self.status = "PASS"
         self.inflight = None
 
-    def stop(self, status, cid, msg, executed=False):
+    def stop(self, status, cid, msg):
         self.results.append({"id": cid, "result": "BLOCKED" if status == "BLOCKED" else "失敗", "reason": msg})
         executed = any(str(r.get("result", "")).startswith("已執行") or r.get("rc") == 0 for r in self.results)
         # 已經有條目改了雲端:整體不能回 BLOCKED(那代表「事前檢查不過、什麼都沒改」)

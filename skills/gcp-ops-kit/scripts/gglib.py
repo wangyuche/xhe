@@ -342,10 +342,11 @@ class Session:
         real = [("--key-file=" + self.cfg["GG_SA_KEY_FILE"]) if a == "<key>" else a for a in argv]
         if check_mode == "change":
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": None, "state": "started"})
-        try:
-            os.utime(self.gdir)  # 心跳:讓其他 run 的殘留清理知道這個憑證快取還在用
-        except OSError:
-            pass
+        for hb in (self.gdir, self.kube):  # 心跳:讓其他 run 的殘留清理知道這些憑證還在用
+            try:
+                os.utime(hb)
+            except OSError:
+                pass
         t0 = time.time()
         try:
             r = subprocess.run(real, env=self.env, capture_output=True, text=True,
@@ -587,7 +588,7 @@ def sha256_file(path):
 
 def ptr_get(obj, pointer, default=None):
     """JSON pointer(/a/0/b,~1 = /)。"""
-    if pointer in ("", "/"):
+    if pointer == "":
         return obj
     cur = obj
     for part in pointer.lstrip("/").split("/"):

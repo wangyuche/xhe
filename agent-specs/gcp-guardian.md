@@ -37,9 +37,9 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 
 ### 審查模式
 1. `collect.sh`:只跑 kit 內建的**逐條完整 regex 白名單**(`allow_read.txt`:每條是一個完整指令形狀,例如 `gcloud projects get-iam-policy <p> --format=json`;另明列 `auth activate-service-account` 與 `container clusters get-credentials`,這兩個只寫 run 目錄的隔離設定)。另有**明確拒絕樣式**(`deny_read.txt`,先於白名單判定):`kubectl get secret(s)` 不帶 `-o jsonpath=` 只取 metadata / type / key 名稱、`get-serial-port-output`、`--raw`、`secrets versions access`、`kubectl exec` / `cp` / `port-forward` / `proxy`、`print-access-token`。盤點:專案 IAM、SA 與使用者管理金鑰、啟用的 API、VPC / 子網 / 防火牆 / 外部 IP / Cloud NAT、GCS bucket(IAM、公開存取防護、統一存取、版本、保存)、Cloud SQL(公開 IP、授權網路、SSL、備份)、Compute instance(外部 IP、預設 SA + cloud-platform scope、Shielded VM、序列埠、OS Login)、GKE 叢集與 node pool,以及每個叢集內 workload、RBAC、NetworkPolicy、Namespace 標籤、Service、Ingress。每個指令記到 `inventory/commands.log`。
-   - Secret 只用 `-o go-template` 輸出 namespace / name / type / key 名稱(模板固定在 kit);不允許其他 Secret 輸出格式。
+   - Secret 只用固定的 `-o go-template` 輸出 namespace / name / type / key 名稱(模板固定在 kit);不允許其他 Secret 輸出格式。
    - **規則需要的判斷在遮蔽時先做**:`redact.py` 對 env 依變數名稱樣式與熵值加 `looks_secret: true/false`;instance / 專案 metadata 的布林設定(`serial-port-enable`、`enable-oslogin`、`block-project-ssh-keys`、`enable-oslogin-2fa`)列在「明文保留 key」白名單,保留原值。
-   - **寫入前遮蔽**(`redact.py`,在記憶體處理後才寫檔,第二道防線,即使指令出錯也生效):Secret 的 `data` / `stringData`、容器 env 的 `value`、ConfigMap `data` / `binaryData` 的值、instance metadata 的值、`masterAuth.*`、`kubectl.kubernetes.io/last-applied-configuration` annotation、任何疑似私鑰 / token 的字串,一律改成 `<redacted len=N sha256=xxxxxxxx>`。Secret 只用 `-o jsonpath` 取 metadata、type 與 key 名稱。
+   - **寫入前遮蔽**(`gglib.redact`,在記憶體處理後才寫檔,第二道防線,即使指令出錯也生效):Secret 的 `data` / `stringData`、容器 env 的 `value`、ConfigMap `data` / `binaryData` 的值、instance metadata 的值、`masterAuth.*`、`kubectl.kubernetes.io/last-applied-configuration` annotation、任何疑似私鑰 / token 的字串,一律改成 `<redacted len=N>`(不附雜湊,避免離線猜密碼)。Secret 只用 `-o jsonpath` 取 metadata、type 與 key 名稱。
    - API 未啟用或權限不足:該項記成「無法判定」並附原始錯誤,繼續其他項。
 2. `gcp_rules.py`、`k8s_rules.py`(python3 標準庫):固定規則對盤點產生 findings。每條規則固定一個嚴重度與 CIS 對照編號(有時)。agent 不改規則;規則沒涵蓋、但 agent 從資料看出的問題寫進 `manual.json`(同 schema,`rule_id` 為 `MANUAL-<n>`,依下表判嚴重度並附判定理由)。
    - `GG_SA` 自己的使用者管理金鑰標「資訊(已知)」,不計入嚴重度統計,只提醒金鑰年齡。
@@ -56,7 +56,7 @@ GCP 專案與 GKE 的維運 / 安全管家(owner):主 agent 把一個 GCP 專案
 | 資訊 | 不計入統計 |
 
 ### YAML 審查
-輸入檔案 / 目錄 / kustomize 目錄(用 `kubectl kustomize` 展開,不需叢集)。`yaml2json.rb` 用 `YAML.safe_load_stream` 轉 JSON 並記錄每份文件的起始行。檢查:privileged、hostPath / hostNetwork / hostPID / hostIPC、以 root 執行、allowPrivilegeEscalation、capabilities 加權、readOnlyRootFilesystem、缺 resources requests/limits、缺 liveness/readiness probe、映像 `:latest` 或無 tag 且無 digest、Secret 明文(`kind: Secret` 的 data/stringData、env 中疑似秘密的 value)、`automountServiceAccountToken`、RBAC 萬用字元 / cluster-admin 綁定、整個範圍沒有 NetworkPolicy、LoadBalancer 沒設 `loadBalancerSourceRanges`、Namespace 缺 Pod Security 標籤。證據寫 `檔:行` + 欄位路徑,秘密值遮蔽。修正只寫成報告裡的 patch 建議,不改原檔。
+輸入檔案 / 目錄 / kustomize 目錄(用 `kubectl kustomize` 展開,不需叢集)。`yaml2json.rb` 只從 Psych 節點樹建構純量 / map / 陣列(不實例化物件,拒絕別名與合併鍵 `<<`),並記錄每個欄位的行號。檢查:privileged、hostPath / hostNetwork / hostPID / hostIPC、以 root 執行、allowPrivilegeEscalation、capabilities 加權、readOnlyRootFilesystem、缺 resources requests/limits、缺 liveness/readiness probe、映像 `:latest` 或無 tag 且無 digest、Secret 明文(`kind: Secret` 的 data/stringData、env 中疑似秘密的 value)、`automountServiceAccountToken`、RBAC 萬用字元 / cluster-admin 綁定、整個範圍沒有 NetworkPolicy、LoadBalancer 沒設 `loadBalancerSourceRanges`、Namespace 缺 Pod Security 標籤。證據寫 `檔:行` + 欄位路徑,秘密值遮蔽。修正只寫成報告裡的 patch 建議,不改原檔。
 
 ### 計畫模式(管理 GKE / 環境)
 輸入:使用者的管理需求原文(例「prod 的 default-pool 調成 3 台」「叢集升級到 1.34」)或要處理的 finding 編號。agent 用 `collect.sh --scope <資源>` 唯讀盤點相關資源,產出 `plan.json`,每條:

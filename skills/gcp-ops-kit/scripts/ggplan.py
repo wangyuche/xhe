@@ -153,9 +153,9 @@ def snapshot(s, kind, argv, project, ctx_done):
         objs = []
         for d in yaml_docs(path):
             o = d["obj"]
-            if not isinstance(o, dict):
-                return None, endpoint, "manifest 每份文件都要是 mapping(物件)"
-            md = o.get("metadata") or {}
+            if not isinstance(o, dict) or not isinstance(o.get("metadata"), dict):
+                return None, endpoint, "manifest 每份文件都要是 mapping,且 metadata 要是物件"
+            md = o["metadata"]
             if not o.get("kind") or not md.get("name"):
                 return None, endpoint, "manifest 每份文件都要有 kind 與 metadata.name"
             rules_ = ggchange.change_rules()
@@ -224,9 +224,12 @@ def k8s_dryrun(s, kind, argv, snap):
     WI = "iam.gke.io/gcp-service-account"
 
     def wi(objs):
-        return {((o.get("metadata") or {}).get("namespace"), (o.get("metadata") or {}).get("name")):
-                ((o.get("metadata") or {}).get("annotations") or {}).get(WI)
-                for o in objs if isinstance(o, dict) and o.get("kind") == "ServiceAccount"}
+        res_ = {}
+        for o in objs:
+            if isinstance(o, dict) and o.get("kind") == "ServiceAccount":
+                md_ = k8s_rules._d(o.get("metadata"))
+                res_[(md_.get("namespace"), md_.get("name"))] = k8s_rules._d(md_.get("annotations")).get(WI)
+        return res_
     b_wi = wi(before)
 
     def sa_names(objs):
@@ -236,7 +239,7 @@ def k8s_dryrun(s, kind, argv, snap):
                 continue
             spec, _ = k8s_rules.pod_spec(o)
             if spec is not None:
-                md = o.get("metadata") or {}
+                md = k8s_rules._d(o.get("metadata"))
                 out[(o.get("kind"), md.get("namespace"), md.get("name"))] = spec.get("serviceAccountName") or spec.get("serviceAccount") or "default"
         return out
     b_sa = sa_names(before)

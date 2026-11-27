@@ -221,7 +221,7 @@ def check_path_tool(tool, inp, cfg, cwd):
         real = os.path.realpath(os.path.join(cwd, p))
         rd = os.path.realpath(cfg["GG_REPORT_DIR"])
         run = os.path.dirname(real)
-        if not (real.startswith(rd + os.sep) and os.path.basename(real) in WRITABLE_NAMES
+        if not (real.lower().startswith(rd.lower() + os.sep) and os.path.basename(real) in WRITABLE_NAMES
                 and os.path.exists(os.path.join(run, "meta.json"))):
             return "只能寫 run 目錄裡的 manual.json 或 plan.input.json"
     return None

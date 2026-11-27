@@ -528,11 +528,22 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
             res["blocked_reason"] = "--priority 要是整數"
             return None, [], None
     name = pos[0]
-    iap = "35.235.240.0/20" in (snap.get("sourceRanges") or [])
+    IAP = ipaddress.ip_network("35.235.240.0/20")
+
+    def _covers_iap(ranges):
+        for x in ranges or []:
+            try:
+                n = ipaddress.ip_network(x, strict=False)
+                if n.version == 4 and IAP.subnet_of(n):
+                    return True
+            except ValueError:
+                pass
+        return False
+    iap = _covers_iap(snap.get("sourceRanges"))
     if "--disabled" in flags and (name.startswith("gke-") or iap):
         res["blocked_reason"] = "一律禁止:停用 GKE 控制平面 / IAP 的防火牆規則"
         return None, [], None
-    if "--source-ranges" in flags and iap and "35.235.240.0/20" not in _ranges(flags["--source-ranges"]):
+    if "--source-ranges" in flags and iap and not _covers_iap(_ranges(flags["--source-ranges"])):
         res["blocked_reason"] = "一律禁止:移除 IAP 來源 35.235.240.0/20"
         return None, [], None
     rb, why = _flag_rollback(k["prefix"], pos, flags, snap, res, k)

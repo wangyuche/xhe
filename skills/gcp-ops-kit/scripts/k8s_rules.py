@@ -41,15 +41,19 @@ WORKLOAD_KINDS = {"Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet",
 LONG_RUNNING = {"Deployment", "StatefulSet", "DaemonSet", "ReplicationController"}
 
 
+def _d(x):
+    return x if isinstance(x, dict) else {}
+
+
 def pod_spec(obj):
     k = obj.get("kind")
-    s = obj.get("spec") or {}
+    s = _d(obj.get("spec"))
     if k == "Pod":
         return s, "/spec"
     if k == "CronJob":
-        return ((((s.get("jobTemplate") or {}).get("spec") or {}).get("template") or {}).get("spec") or {}), "/spec/jobTemplate/spec/template/spec"
+        return _d(_d(_d(_d(s.get("jobTemplate")).get("spec")).get("template")).get("spec")), "/spec/jobTemplate/spec/template/spec"
     if k in WORKLOAD_KINDS:
-        return ((s.get("template") or {}).get("spec") or {}), "/spec/template/spec"
+        return _d(_d(s.get("template")).get("spec")), "/spec/template/spec"
     return None, None
 
 
@@ -61,7 +65,7 @@ class Ctx:
     def add(self, rule, doc, path, detail="", value=None):
         sev, title, fix = RULES[rule]
         obj = doc["obj"]
-        md = obj.get("metadata") or {}
+        md = _d(obj.get("metadata"))
         res = f"{obj.get('kind')}/{md.get('namespace', '-') if obj.get('kind') not in ('Namespace', 'ClusterRole', 'ClusterRoleBinding') else '-'}/{md.get('name')}"
         ev = {"file": doc.get("file"), "path": path}
         if doc.get("lines"):
@@ -87,7 +91,7 @@ def nearest_line(lines, path):
 
 
 def owned(obj):
-    return bool((obj.get("metadata") or {}).get("ownerReferences"))
+    return bool(_d(obj.get("metadata")).get("ownerReferences"))
 
 
 def scan(docs, live=False):
@@ -95,9 +99,9 @@ def scan(docs, live=False):
     c = Ctx(None, live)
     namespaces_with_workloads, namespaces_with_np, ns_objs, first_workload = set(), set(), {}, {}
     for doc in docs:
-        obj = doc.get("obj") or {}
+        obj = _d(doc.get("obj"))
         kind = obj.get("kind")
-        md = obj.get("metadata") or {}
+        md = _d(obj.get("metadata"))
         ns = md.get("namespace") or "default"
         if kind == "Namespace":
             ns_objs[md.get("name")] = doc
@@ -151,7 +155,7 @@ def scan(docs, live=False):
     for name, doc in ns_objs.items():
         if live and SYSTEM_NS.match(name or ""):
             continue
-        labels = ((doc["obj"].get("metadata") or {}).get("labels") or {})
+        labels = _d(_d(doc["obj"].get("metadata")).get("labels"))
         if "pod-security.kubernetes.io/enforce" not in labels:
             c.add("K8S-PSA-001", doc, "/metadata/labels" if labels else "/metadata")
     return c.out

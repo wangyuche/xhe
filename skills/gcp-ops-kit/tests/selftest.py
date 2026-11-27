@@ -279,6 +279,16 @@ def t_secret_names():
        [(n, gglib.looks_secret(n, v)) for n, v in yes + no])
 
 
+def t_bad_metadata():
+    fs = k8s_rules.scan([{"obj": {"kind": "Deployment", "metadata": "web", "spec": "x"}, "file": "f"},
+                         {"obj": {"kind": "CronJob", "metadata": {"name": "c"}, "spec": {"jobTemplate": "x"}}, "file": "f"}])
+    ok("k8s 規則:metadata / spec 不是物件時不當掉", isinstance(fs, list))
+    ok("ptr_get:/ 指空字串 key(RFC 6901)", gglib.ptr_get({"": 1, "a": 2}, "/") == 1 and gglib.ptr_get({"a": 2}, "") == {"a": 2})
+    r = ggchange.classify(["gcloud", "compute", "firewall-rules", "update", "allow-iap2", f"--project={FX.P}", "--disabled"], {"GG_SA": FX.GG_SA},
+                          {"name": "allow-iap2", "direction": "INGRESS", "sourceRanges": ["35.235.0.0/16"], "allowed": [{"IPProtocol": "tcp", "ports": ["22"]}]})
+    ok("防火牆:涵蓋 IAP 的大網段規則也不可停用", r["blocked_reason"] and "IAP" in r["blocked_reason"], r["blocked_reason"])
+
+
 def t_check_pre_redact():
     import ggplan
     bad = ggplan.check_pre([{"field": "/data/DB_PASSWORD", "expect": None}], {"data": {"DB_PASSWORD": "hunter2checkpre"}})
@@ -1067,6 +1077,12 @@ def t_plan_change(e, review_run):
        (r.stderr[-600:], {k: v["blocked_reason"] for k, v in kb.items()}, secret_calls))
     ok("計畫 k8s:apply 的還原指令是 kubectl replace before/C1.rollback.json",
        "replace" in kb["C1"]["rollback"] and any(a.endswith("/before/C1.rollback.json") for a in kb["C1"]["rollback"]), kb["C1"]["rollback"])
+    write_input(krun, [{"id": "C9", "summary": "metadata 不是物件", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=<manifest>"],
+                        "manifest": "apiVersion: apps/v1\nkind: Deployment\nmetadata: web\n", "expected": [{"field": "/objects/0/kind", "expect": "Deployment"}]}])
+    e.state({"diff": "modify"})
+    r, _ = plan_build(e, krun)
+    it9 = json.load(open(os.path.join(krun, "plan.json")))["items"][0]
+    ok("計畫 k8s:manifest 的 metadata 不是物件 → 只這條 BLOCKED,計畫照常產出", r.returncode in (0, 1) and it9["blocked_reason"] and "metadata" in it9["blocked_reason"], (r.stderr[-300:], it9.get("blocked_reason")))
     write_input(krun, [{"id": "C1", "summary": "KSA 綁定 admin GSA", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=<manifest>"],
                         "manifest": "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: shop\n",
                         "expected": [{"field": "/objects/0/kind", "expect": "ServiceAccount"}]}])
@@ -1112,6 +1128,7 @@ def main():
         t_misc(e)
         t_sa_change()
         t_check_pre_redact()
+        t_bad_metadata()
         t_secret_names()
         t_hostpath_value_change()
         t_approve_parse()
