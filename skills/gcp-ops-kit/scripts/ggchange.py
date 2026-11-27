@@ -471,6 +471,12 @@ def _loosen_by_table(flags, k):
 
 def _k_gke_cluster_update(pos, flags, snap, res, k, cfg, *_):
     reasons = _loosen_by_table(flags, k)
+    pcc = snap.get("privateClusterConfig") or {}
+    cpe = ((snap.get("controlPlaneEndpointsConfig") or {}).get("ipEndpointsConfig") or {})
+    public_ep = not pcc.get("enablePrivateEndpoint") and cpe.get("enablePublicEndpoint") is not False
+    if "--no-enable-master-authorized-networks" in flags and public_ep:
+        res["blocked_reason"] = "一律禁止:公開端點的叢集關閉授權網路,等於控制平面對 0.0.0.0/0 開放"
+        return None, [], None
     if "--master-authorized-networks" in flags:
         man = snap.get("masterAuthorizedNetworksConfig") or {}
         if not man.get("cidrBlocks") and man.get("enabled"):

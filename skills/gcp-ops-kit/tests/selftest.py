@@ -383,6 +383,12 @@ def t_misc(e):
     r = e.run([os.path.join(S, "yaml-review.sh"), rk, "--label", "remote"], env=env2)
     rr = run_dir(r.stdout)
     und = json.load(open(os.path.join(rr, "inventory", "undetermined.json"))) if rr else []
+    with open(os.path.join(rk, "kustomization.yaml"), "w") as f:
+        f.write("resources:\n- git.corp.example/infra/base\n")
+    r = e.run([os.path.join(S, "yaml-review.sh"), rk, "--label", "remote2"], env=env2)
+    rr2 = run_dir(r.stdout)
+    und2 = json.load(open(os.path.join(rr2, "inventory", "undetermined.json"))) if rr2 else []
+    ok("YAML 審查:本機不存在的資源(沒 scheme 的自架主機)也不展開", any("遠端" in u["error"] for u in und2), und2)
     ok("YAML 審查:kustomize 引用遠端 base 不連網展開(列無法判定)", any("遠端" in u["error"] for u in und), und)
     before = set(os.listdir(e.reports))
     r = e.run([os.path.join(S, "yaml-review.sh"), os.path.join(e.tmp, "no-such-dir"), "--label", "typo"], env=env2)
@@ -476,6 +482,8 @@ def t_classify():
         ("label 已有值但沒帶 --overwrite", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=restricted"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "baseline"}}}),
         ("停用公開 SSH 規則(不是 IAP 規則)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--disabled"], fw, "ok-disabled"),
+        ("公開端點關閉授權網路", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}", "--no-enable-master-authorized-networks"],
+         dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]})),
         ("IAM 授權給 domain:gmail.com", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=domain:gmail.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
@@ -552,9 +560,9 @@ def t_classify():
         ("移除 SA 的 editor(serviceAccount: 前綴)", ["gcloud", "projects", "remove-iam-policy-binding", P, f"--member=serviceAccount:{FX.DEF_SA}",
                                                "--role=roles/editor", f"--project={P}", "--condition=None"], pol, False),
         ("防火牆從全部 VM 收窄到 tag", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags=bastion"], fw, False),
-        ("關閉授權網路(還原帶回原網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
-                                       "--no-enable-master-authorized-networks"],
-         dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), True),
+        ("關閉授權網路(私有端點;還原帶回原網段)", ["gcloud", "container", "clusters", "update", "prod", "--location=asia-east1", f"--project={P}",
+                                                "--no-enable-master-authorized-networks"],
+         dict(FX.CLUSTER, privateClusterConfig={"enablePrivateEndpoint": True}, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), True),
         ("關閉 autoscaling(還原帶回 min / max)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
                                             f"--project={P}", "--no-enable-autoscaling"],
          {"autoscaling": {"enabled": True, "minNodeCount": 1, "maxNodeCount": 5}}, False),

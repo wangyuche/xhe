@@ -41,6 +41,8 @@ def _norm(path, cwd):
 def is_protected(path, cfg, cwd, ancestor=True, rollback_ancestor=True):
     """path 本身或其下層是受保護路徑;ancestor=True 時,path 是受保護路徑的上層目錄也算(遞迴工具可讀到)。"""
     p = _norm(path, cwd)
+    p_raw = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))  # 實際走訪用原始大小寫
+    rd_raw = os.path.realpath(cfg["GG_REPORT_DIR"])
     prot = protected_paths(cfg)
     for q in prot:
         if p == q or p.startswith(q + os.sep):
@@ -53,14 +55,19 @@ def is_protected(path, cfg, cwd, ancestor=True, rollback_ancestor=True):
         return True
     if ancestor and (p == rd or p.startswith(rd + os.sep) or rd.startswith(p.rstrip(os.sep) + os.sep)):
         # 報告目錄(或其上層):執行中的 run 會有 gcloud/ 憑證快取與 kubeconfig,遞迴工具不可碰
-        if _live_creds_under(rd if rd.startswith(p.rstrip(os.sep) + os.sep) else p, rollback_ancestor):
+        if _live_creds_under(rd_raw if rd.startswith(p.rstrip(os.sep) + os.sep) else p_raw, rollback_ancestor):
             return True
     return False
 
 
 def _live_creds_under(top, rollback=True):
+    if not os.path.isdir(top):
+        return False
+
+    def _err(e):
+        raise e
     try:
-        for root, dirs, files in os.walk(top):
+        for root, dirs, files in os.walk(top, onerror=_err):  # 讀不到的子目錄 → 例外 → 拒絕
             low = [d.lower() for d in dirs] + [f.lower() for f in files]
             if "gcloud" in low or "kubeconfig" in low or (rollback and any(x.endswith(".rollback.json") for x in low)):
                 return True

@@ -230,7 +230,7 @@ def main(argv):
     gglib.install_signal_handlers()
     if len(argv) != 5 or argv[1] != "--sha" or argv[3] != "--approved":
         gglib.die(__doc__, gglib.EXIT_USAGE)
-    plan_path, sha, approved_text = os.path.realpath(argv[0]), argv[2], argv[4]
+    plan_path, sha, approved_text = os.path.realpath(argv[0]), argv[2].strip().lower(), argv[4]
     run = None
     cfg = None
     project = None

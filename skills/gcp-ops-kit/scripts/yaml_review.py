@@ -47,10 +47,11 @@ def _remote_refs(kdir):
                         for v in k.get(fld) or []:
                             if not isinstance(v, str):
                                 continue
-                            if "://" in v or v.startswith(("git@", "github.com/", "gitlab.com/", "bitbucket.org/")) or "?ref=" in v:
-                                refs.append(v)
-                            elif os.path.isdir(os.path.join(d, v)):
-                                todo.append(os.path.join(d, v))
+                            local = os.path.join(d, v)
+                            if os.path.isdir(local):
+                                todo.append(local)
+                            elif not os.path.isfile(local):
+                                refs.append(v)  # 白名單:只有本機存在的檔案 / 目錄才展開,其餘視為遠端
     return refs
 
 
