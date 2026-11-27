@@ -566,7 +566,8 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
         for x in ranges or []:
             try:
                 n = ipaddress.ip_network(x, strict=False)
-                if n.version == 4 and n.overlaps(IAP):
+                # IAP 規則:來源落在 IAP 網段內,或與 IAP 重疊的窄網段(/16 以上);全網 / 超寬網段不算
+                if n.version == 4 and (n.subnet_of(IAP) or (n.overlaps(IAP) and n.prefixlen >= 16)):
                     return True
             except ValueError:
                 pass
@@ -610,11 +611,14 @@ def _iam_common(pos, flags, res, cfg, adding):
     reasons = []
     if adding:
         hi = change_rules()["high_privilege_roles"]
-        low = role in ("roles/viewer", "roles/browser") or re.fullmatch(r"roles/[A-Za-z0-9]+\.(viewer|reader|[A-Za-z]*Viewer|[A-Za-z]*Reader)", role)
+        low = role in ("roles/viewer", "roles/browser")  # 其他 Viewer / Reader 可能讀到資料(objectViewer、dataViewer…)
         if role in hi or re.search(r"(?i)admin$", role):
             reasons.append(f"新增高權角色 {role} 給 {member}")
         elif not low:
-            reasons.append(f"新增非唯讀角色 {role} 給 {member}(自訂角色或寫入權限,請確認內容)")
+            reasons.append(f"新增角色 {role} 給 {member}(可能含寫入或資料讀取權限,請確認內容)")
+        dom = (member or "").split("@")[-1].lower() if "@" in (member or "") else ""
+        if member and member.startswith(("user:", "group:")) and dom in ("gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com"):
+            reasons.append(f"授權給外部個人帳號 {member}")
     return reasons
 
 

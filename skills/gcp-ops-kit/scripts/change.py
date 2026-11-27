@@ -260,9 +260,9 @@ def main(argv):
         meta = gglib.read_json(os.path.join(run, "meta.json"))
         meta.update({"plan": plan_path, "plan_sha256": sha, "approved": approved, "source_run": plan.get("source_run")})
         gglib.write_json(os.path.join(run, "meta.json"), meta)
-        gglib.acquire_lock(cfg, project, "change", run)
         runner = Runner(cfg, plan, plan_path, approved)
         try:
+            gglib.acquire_lock(cfg, project, "change", run)
             status = runner.execute(run)
         except (gglib.Blocked, gglib.Denied) as e:
             runner.status = "BLOCKED"

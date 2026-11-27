@@ -470,6 +470,7 @@ def t_classify():
         ("kubectl 帶 --quiet", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=3", "--quiet"], FX.DEPLOY),
         ("label 已有值但沒帶 --overwrite", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=restricted"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "baseline"}}}),
+        ("停用公開 SSH 規則(不是 IAP 規則)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--disabled"], fw, "ok-disabled"),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),
@@ -495,7 +496,11 @@ def t_classify():
         ("Pod Security 等級打錯(原本有標籤)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=Restricted", "--overwrite"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}),
     ]
-    for name, argv, snap in blocked:
+    for name, argv, snap, *extra in blocked:
+        if extra:  # 預期「不被 IAP 規則擋」
+            r = ggchange.classify(argv, cfg, snap)
+            ok(f"分類:{name} 不被 IAP 規則擋", not r["blocked_reason"] or "IAP" not in r["blocked_reason"], r["blocked_reason"])
+            continue
         r = ggchange.classify(argv, cfg, snap, shape_only=snap is None)
         ok(f"分類 BLOCKED:{name}", r["blocked_reason"], r)
         if name.startswith("動 GG_SA"):
@@ -556,6 +561,8 @@ def t_classify():
                                                     "--role=roles/viewer", f"--project={P}", "--condition=None"], pol, False),
         ("改防火牆描述(還原值含空白)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=new"],
          dict(fw, description="Allow SSH from office"), False),
+        ("授予 storage.objectViewer 給 gmail(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:someone@gmail.com", "--role=roles/storage.objectViewer",
+                                                   f"--project={P}", "--condition=None"], pol, True),
         ("授予自訂角色(放寬)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", f"--role=projects/{P}/roles/superuser",
                                  f"--project={P}", "--condition=None"], pol, True),
         ("GKE_METADATA(pool 沒有 workloadMetadataConfig)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
@@ -572,6 +579,7 @@ def t_classify():
          dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": False, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]}), False),
         ("node pool 名稱叫 upgrade", ["gcloud", "container", "node-pools", "update", "upgrade", "--cluster=prod", "--location=asia-east1",
                                      f"--project={P}", "--no-enable-autorepair"], dict(FX.NODEPOOLS[0], management={"autoRepair": True}), True),
+        ("公開 SSH 規則收窄到公司網段", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges=203.0.113.0/24"], fw, False),
         ("協定寫大寫 TCP:443", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--rules=TCP:443"], FX.FIREWALLS[2], False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
@@ -795,6 +803,13 @@ def t_check_scope(e):
     r1 = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam,gcs"], env=env)
     r2 = e.run([os.path.join(S, "check.sh"), "review", FX.P], env=env)
     ok("check.sh:scope 不含 gke / k8s 時不要求 kubectl;預設範圍仍要求", r1.returncode == 0 and r2.returncode == 3 and "kubectl" in r2.stderr, (r1.stderr[-300:], r2.stderr[-300:]))
+
+
+def t_rbac_broad():
+    doc = {"obj": {"kind": "ClusterRoleBinding", "metadata": {"name": "oops"}, "roleRef": {"name": "cluster-admin"},
+                   "subjects": [{"kind": "Group", "name": "system:authenticated"}, {"kind": "Group", "name": "system:masters"}]}, "file": "f"}
+    fs = [f for f in k8s_rules.scan([doc], live=True) if f["rule_id"] == "K8S-RBAC-002"]
+    ok("RBAC:cluster-admin 綁 system:authenticated 要報、system:masters 不報", len(fs) == 1 and "system:authenticated" in fs[0]["detail"], fs)
 
 
 def t_missing_cluster(e):
@@ -1187,6 +1202,7 @@ def main():
         t_default_project(e)
         t_check_scope(e)
         t_missing_cluster(e)
+        t_rbac_broad()
         if run:
             t_plan_change(e, run)
     finally:

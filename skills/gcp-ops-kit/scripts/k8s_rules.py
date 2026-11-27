@@ -126,8 +126,9 @@ def scan(docs, live=False):
             if (obj.get("roleRef") or {}).get("name") == "cluster-admin":
                 for i, s in enumerate(obj.get("subjects") or []):
                     nm = s.get("name", "")
-                    if nm.startswith("system:"):
-                        continue  # 只依主體排除系統帳號 / 群組;不看 binding 名稱(名稱可以任意取)
+                    if nm in ("system:masters", "system:kube-controller-manager", "system:kube-scheduler") or \
+                            nm.startswith(("system:kube-", "system:serviceaccount:kube-system:")) or nm in ("system:nodes",):
+                        continue  # 只排除控制平面身分;system:authenticated / unauthenticated / anonymous / serviceaccounts 照報
                     c.add("K8S-RBAC-002", doc, f"/subjects/{i}", f"{s.get('kind')} {nm}")
         if kind == "Service" and (obj.get("spec") or {}).get("type") == "LoadBalancer":
             sp = obj["spec"]
