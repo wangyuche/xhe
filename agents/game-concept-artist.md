@@ -114,7 +114,7 @@ skills:
 ### 角色語音(完成條件:設計 → BLOCKED 請使用者試聽;錄台詞 → status 一致或列為失敗)
 `<V>` = `art/characters/<cid>/voice.json`;`<P>` = `art/out/<日期>-voice-<cid>/`(沿用,manifest 追加)。所有付費指令都帶 `--budget <budget> --limit <N> --run <run>`。
 1. 設計(第 0 步已確認沒有未授權的重新設計):把原話轉成英文 `design`(年齡、音域、口音、個性、錄音品質;**只放英文描述、不寫任何人名或作品角色名**;自行補的記在 `design_notes`),寫 `<V>`:`id`、`design`、`design_notes`、`design_source`(原話)、`preview_text`(100–1000 字元,可含 `[playfully]` 這類標記)、`voice_name`(`<專案名> <角色名>`)。`<V>` 已有 `voice_id`、簡報沒寫「重新設計音色 <cid>」→ BLOCKED(說明:重新設計會讓所有台詞重錄);有寫就加 `--redesign`。`node <kit>/scripts/voice.mjs design --voice <V> --out-dir <P> …`(一次 3 個候選)→ 回 BLOCKED:附試聽路徑(`candidates[].listen`)與每個候選的 `check`(不過的照實列出,交給使用者試聽,不自動重新設計)、原話、英文 design 與 design_notes,問「請試聽後選第幾個(選定音色 <cid>=<n>)」。design 結束碼:4 / 6 / 3 → 停止回 ISSUES;5 → BLOCKED(金鑰);2 → 讀錯誤訊息修正 voice.json(不重複送出)。
-2. 選定(簡報有「選定音色 <cid>=<n>」):`node <kit>/scripts/voice.mjs pick --voice <V> --n <n>`;結束碼 8(voice 名額滿)→ BLOCKED。同一份簡報同時有選定與台詞時,先選定再錄。
+2. 選定(簡報有「選定音色 <cid>=<n>」):`node <kit>/scripts/voice.mjs pick --voice <V> --n <n>`(已選定過、要換選時簡報須寫「重新選定音色 <cid>」才加 `--repick`,否則 BLOCKED,說明會建立新 voice、全部重錄);結束碼 8(voice 名額滿)→ BLOCKED。同一份簡報同時有選定與台詞時,先選定再錄。
 3. 錄台詞:`node <kit>/scripts/voice.mjs lines --voice <V> --lines <台詞清單> --out art/voice/<cid> --raw-dir <P> … [--all] [--max K]`(簡報有「本次最多 K 句」才加)(Bash 逾時 600000;輸出有 `remaining` 就再呼叫一次)。結束碼:1 有句子重錄 2 次仍不合格(列出);4 額度用完 / 6 字元上限 / 3 重試用完 → 停止回 ISSUES(已完成的保留);5 → BLOCKED(金鑰)。
 4. `node <kit>/scripts/voice.mjs status --voice <V> --lines <台詞清單> --out art/voice/<cid>` 附在回報;回報列錄 / 略過 / 留到下次 / 失敗數、累計字元 / N(**結束前先讀 `<budget>` 的 `used` 寫進回報**,manifest 只當事後證據)、`key_scan`(必須 found:false)、`prev_voice_id`(有的話,本 agent 不刪帳號裡的 voice),寫明「未人耳試聽」。語音不寫 assets.json。
 
