@@ -78,7 +78,14 @@ class Runner:
         ctx_done = set()
         with gglib.Session(self.cfg, run, self.project, "change") as s:
             for n, it in enumerate(items):
-                ok = self.one(s, it, ctx_done)
+                try:
+                    ok = self.one(s, it, ctx_done)
+                except Exception as e:  # 任何非預期錯誤:記錄後停止,其餘標未執行
+                    self.results.append({"id": it["id"], "result": "錯誤(狀態不明)",
+                                         "reason": f"{type(e).__name__}: {gglib._short(str(e), 300)};請先確認現況",
+                                         "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]})
+                    self.status = "ISSUES"
+                    ok = False
                 if not ok:
                     for rest in items[n + 1:]:
                         self.results.append({"id": rest["id"], "result": "未執行", "reason": f"{it['id']} 未成功,之後停止"})
@@ -91,7 +98,7 @@ class Runner:
         kind = it["kind"]
         try:
             snap, endpoint, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
-        except gglib.Blocked as e:
+        except (gglib.Blocked, gglib.Denied) as e:
             return self.stop("BLOCKED", cid, str(e))
         if err:
             return self.stop("BLOCKED", cid, "變更前快照失敗:" + err)
@@ -135,6 +142,8 @@ class Runner:
             self.status = "ISSUES"
             return False
         rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
+        if it.get("rollback_warning"):
+            rec["rollback_warning"] = it["rollback_warning"]
         try:
             after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
         except (gglib.Blocked, gglib.Denied) as e:
@@ -168,7 +177,8 @@ def write_log(run, plan_path, sha, approved, runner):
              "| C | 結果 | 原因 / 驗證 | 結束碼 | 還原指令 |", "|---|---|---|---|---|"]
     for r in runner.results:
         rb = shlex.join(r.get("rollback") or []) or "-"
-        lines.append(f"| {r['id']} | {r['result']} | {r.get('reason', '')} | {r.get('rc', '-')} | `{rb}` |")
+        warn = f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""
+        lines.append(f"| {r['id']} | {r['result']} | {r.get('reason', '')} | {r.get('rc', '-')} | `{rb}`{warn} |")
     lines += ["", "實際執行的指令見 `inventory/commands.log`(由 kit 記錄,agent 不寫此檔)。", ""]
     with open(os.path.join(run, "change-log.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -218,6 +228,10 @@ def main(argv):
             runner.status = "BLOCKED"
             runner.results.append({"id": "-", "result": "BLOCKED", "reason": str(e)})
             status = "BLOCKED"
+        except Exception as e:
+            runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
+            runner.results.append({"id": "-", "result": "錯誤", "reason": f"{type(e).__name__}: {gglib._short(str(e), 300)}"})
+            status = runner.status
         finally:
             gglib.release_lock(cfg, project, run)
         write_log(run, plan_path, sha, approved, runner)
@@ -225,7 +239,8 @@ def main(argv):
         print(f"status={status}")
         print(f"run={run}")
         for r in runner.results:
-            print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}")
+            print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}"
+                  + (f"\t⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""))
         return {"PASS": 0, "ISSUES": 1, "BLOCKED": 3}[status]
     except gglib.Blocked as e:
         print("status=BLOCKED")

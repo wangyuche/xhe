@@ -12,10 +12,15 @@ description: GCP 專案 / GKE 審查與受控變更的固定腳本(gcp-guardian 
 `~/.config/gcp-guardian/config`(權限 600,使用者建立):
 
 ```
-GG_SA_KEY_FILE=/絕對路徑/sa-key.json      # 權限 600
-GG_DEFAULT_PROJECT=my-project              # 選填
-GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports   # 選填,預設 ~/gcp-guardian-reports
+# SA 金鑰(權限 600)
+GG_SA_KEY_FILE=/絕對路徑/sa-key.json
+# 選填:簡報沒給專案時用
+GG_DEFAULT_PROJECT=my-project
+# 選填:報告目錄,預設 ~/gcp-guardian-reports(不可含空白)
+GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 ```
+
+值後面的 `  # 註解` 會被忽略。
 
 使用者自己要裝:`brew install --cask google-cloud-sdk`、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
 
@@ -58,15 +63,17 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 {"items": [{"id": "C1", "summary": "移除 bucket 公開讀取", "finding": "GCS-PUB-001",
   "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://b", "--member=allUsers",
               "--role=roles/storage.objectViewer", "--project=p"],
-  "precondition": [{"field": "/bindings/0/role", "expect": "roles/storage.objectViewer"}],
-  "expected": [{"field": "/bindings", "expect": []}],
+  "precondition": [{"binding_present": ["allUsers", "roles/storage.objectViewer"]}],
+  "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}],
   "impact": "無"}]}
 ```
 
 - `command`:argv 陣列;旗標一律 `--長旗標=值`(不接受 `-n`、`-f` 這種短旗標)。gcloud 必帶 `--project=`;kubectl 第二個參數必須是 `--context=gke_<專案>_<位置>_<叢集>`,namespace 用 `--namespace=`。
 - `--filename` / `--patch-file` 只能寫占位(內容放 `manifest` / `patch` 欄位,才會被 plan sha256 涵蓋);寫實際路徑 → BLOCKED。
+- 移除 allUsers / allAuthenticatedUsers 的還原指令會重新公開資料,計畫與變更紀錄會加 ⚠ 警示。
+- 叢集的盤點檔以 `<位置>_<名稱>` 命名(`nodepools/asia-east1_prod.json`、`k8s/asia-east1_prod/`)。
 - `kubectl apply`:`command` 寫 `["kubectl", "--context=…", "apply", "--filename=<manifest>"]`,YAML 全文放 `manifest`;`kubectl patch`:`--patch-file=<patch>`,內容放 `patch`。
-- `precondition` / `expected`:JSON pointer 指向該 kind 的快照(下表);apply 的快照是 `{"objects": [每份文件的線上物件]}`,所以寫 `/objects/0/...`;resize 的快照是 `{"nodepool": …, "node_count_per_zone": n}`。`expected` 必填(rollout restart 除外,kit 自動驗 restartedAt)。
+- `precondition` / `expected`:`{"field": "/JSON pointer", "expect": 值}`,或 IAM 用 `{"binding_present"|"binding_absent": [成員, 角色]}`(只比對無條件綁定);JSON pointer 指向該 kind 的快照(下表);apply 的快照是 `{"objects": [每份文件的線上物件]}`,所以寫 `/objects/0/...`;resize 的快照是 `{"nodepool": …, "node_count_per_zone": n}`。`expected` 必填(rollout restart 除外,kit 自動驗 restartedAt)。
 - plan.py 會自動加 `auto_pre`(還原指令依賴的原值),變更時一起比對。
 
 ## 變更允許清單(`rules/allow_change.json`)

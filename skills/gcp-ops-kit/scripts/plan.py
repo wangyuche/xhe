@@ -82,7 +82,7 @@ def build_item(s, cfg, run, project, raw, ctx_done):
     item["expected"] = item["expected"] or []
     item.update({"kind": None, "target": {}, "reversible": False, "rollback": None, "loosens_security": False,
                  "loosens_reasons": [], "blocked_reason": None, "auto_pre": [], "dry_run": None,
-                 "dry_run_log": [], "precondition_failed_at_plan": []})
+                 "dry_run_log": [], "precondition_failed_at_plan": [], "rollback_warning": None})
 
     def blocked(msg):
         item["blocked_reason"] = item["blocked_reason"] or msg
@@ -90,6 +90,14 @@ def build_item(s, cfg, run, project, raw, ctx_done):
 
     if not item["summary"] or not isinstance(item["command"], list):
         return blocked("缺 summary 或 command")
+    for fld in ("precondition", "expected"):
+        v = item[fld]
+        if not isinstance(v, list) or not all(isinstance(x, dict) and (("field" in x and isinstance(x["field"], str))
+                                                                     or "binding_absent" in x or "binding_present" in x) for x in v):
+            return blocked(f"{fld} 要是 [{{\"field\": \"/JSON pointer\", \"expect\": 值}}] 陣列")
+    for fld in ("manifest", "patch"):
+        if item[fld] is not None and not isinstance(item[fld], str):
+            return blocked(f"{fld} 要是字串")
     try:
         argv = ggplan.materialize(item, run)
     except gglib.Blocked as e:
@@ -125,7 +133,7 @@ def build_item(s, cfg, run, project, raw, ctx_done):
     else:
         res = ggchange.classify(argv, cfg, snap)
     for k in ("kind", "target", "reversible", "rollback", "loosens_security", "loosens_reasons",
-              "blocked_reason", "auto_pre", "dry_run"):
+              "blocked_reason", "auto_pre", "dry_run", "rollback_warning"):
         item[k] = res[k]
     if endpoint:
         item["target"]["endpoint"] = endpoint

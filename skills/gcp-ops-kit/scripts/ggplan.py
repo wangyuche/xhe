@@ -153,6 +153,8 @@ def snapshot(s, kind, argv, project, ctx_done):
         objs = []
         for d in yaml_docs(path):
             o = d["obj"]
+            if not isinstance(o, dict):
+                return None, endpoint, "manifest 每份文件都要是 mapping(物件)"
             md = o.get("metadata") or {}
             if not o.get("kind") or not md.get("name"):
                 return None, endpoint, "manifest 每份文件都要有 kind 與 metadata.name"

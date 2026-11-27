@@ -142,7 +142,7 @@ def common_forbidden(argv, cfg):
 def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None, shape_only=False):
     """snapshot:變更前快照(dict,依 kind 不同)。manifest_findings:apply / patch dry-run 結果跑 k8s_rules 的 findings。
     diff_created:kubectl diff 是否出現新建資源。"""
-    res = {"kind": None, "target": {}, "reversible": False, "rollback": None,
+    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None,
            "loosens_security": False, "loosens_reasons": [], "blocked_reason": None,
            "auto_pre": [], "dry_run": None}
 
@@ -187,7 +187,7 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     for req in k.get("required_flags", []):
         if req not in flags:
             return block(f"{kind} 缺必要旗標 {req}")
-    allowed = set(k.get("required_flags", [])) | set(k.get("flags", {}).keys()) | {"--quiet"}
+    allowed = set(k.get("required_flags", [])) | set(k.get("flags", {}).keys()) | ({"--quiet"} if argv[0] == "gcloud" else set())
     for fl in flags:
         if fl not in allowed:
             return block(f"{kind} 不允許旗標 {fl}")
@@ -497,16 +497,23 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
         return None, [], None
     if _binding_has_condition(snap, flags["--member"], flags["--role"]):
         return None, [], "綁定帶 IAM condition,還原範本不支援"
+    if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
+        res["rollback_warning"] = PUBLIC_WARN
     rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
           f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
     return rb, [], None
 
 
+PUBLIC_WARN = "這條還原會重新公開資料(加回 allUsers / allAuthenticatedUsers);除非確定要回復公開,否則不要執行"
+
+
 def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
+    if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
+        res["rollback_warning"] = PUBLIC_WARN
     if _binding_has_condition(snap, flags["--member"], flags["--role"]):
         return None, [], "綁定帶 IAM condition,還原範本不支援"
     rb = ["gcloud", "storage", "buckets", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",

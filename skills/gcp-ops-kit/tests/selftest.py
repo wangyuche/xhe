@@ -267,6 +267,28 @@ def t_misc(e):
     pf = [f for f in json.load(open(os.path.join(lr, "findings.json")))] if lr else []
     priv = [f for f in pf if f["rule_id"] == "K8S-PRIV-001"]
     ok("YAML 審查:kind: List 的 item 也有行號(privileged 在第 9 行)", priv and priv[0]["evidence"].get("line") == 9, priv)
+    tmpi = tempfile.mkdtemp(prefix="gg-fw-")
+    gglib.write_json(os.path.join(tmpi, "inventory", "firewalls.json"),
+                     [{"name": "n", "direction": "INGRESS", "sourceRanges": ["0.0.0.0/0"], "allowed": [{"IPProtocol": "6", "ports": ["22"]}]}])
+    ids = [f["rule_id"] for f in gcp_rules.scan(os.path.join(tmpi, "inventory"))]
+    ok("GCP 規則:IPProtocol 用數字 6 的 SSH 也判 GCP-NET-001", ids == ["GCP-NET-001"], ids)
+    shutil.rmtree(tmpi, ignore_errors=True)
+    cf = os.path.join(e.tmp, "conf", "config-comment")
+    with open(cf, "w") as f:
+        f.write(f"GG_SA_KEY_FILE={e.key}      # 權限 600\nGG_REPORT_DIR={e.reports}   # 報告\n")
+    os.chmod(cf, 0o600)
+    old = os.environ.get("GG_CONFIG")
+    os.environ["GG_CONFIG"] = cf
+    try:
+        c = gglib.load_config(require=True)
+        ok("設定檔值後面的行內註解會被忽略", c["GG_SA_KEY_FILE"] == e.key and c["GG_REPORT_DIR"] == e.reports, c)
+    except gglib.Blocked as ex:
+        ok("設定檔值後面的行內註解會被忽略", False, str(ex))
+    finally:
+        if old is None:
+            os.environ.pop("GG_CONFIG", None)
+        else:
+            os.environ["GG_CONFIG"] = old
     ok("GCP 規則:0.0.0.0/1 + 128.0.0.0/1 也算對全網開放", gcp_rules._covers_all(["0.0.0.0/1", "128.0.0.0/1"]) and not gcp_rules._covers_all(["10.0.0.0/8"]))
     spaced = os.path.join(e.tmp, "conf", "config-spaced")
     with open(spaced, "w") as f:
@@ -354,6 +376,7 @@ def t_classify():
                                        "--master-authorized-networks=10.1.0.0/16"], dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]})),
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
+        ("kubectl 帶 --quiet", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=3", "--quiet"], FX.DEPLOY),
         ("清空防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges="], fw),
         ("bucket 狀態欄位不存在(統一存取)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--uniform-bucket-level-access"], {}),
         ("系統 namespace scale", ["kubectl", f"--context={CTX}", "scale", "deployment/kube-dns", "--namespace=kube-system", "--replicas=3"], None),
@@ -572,7 +595,7 @@ def t_review(e):
     leaks = [x for x in (FX.FAKE_AKIA, FX.FAKE_AIZA, "hunter2", FX.FAKE_CERT, e.key) if x in blob]
     ok("審查:run 目錄沒有任何秘密原文與金鑰路徑", not leaks, leaks)
     ok("審查:metadata 布林值保留(serial-port-enable=TRUE)", '"serial-port-enable",\n          "value": "TRUE"' in blob or '"value": "TRUE"' in blob)
-    sec = json.load(open(os.path.join(run, "inventory", "k8s", "prod", "secrets.json")))
+    sec = json.load(open(os.path.join(run, "inventory", "k8s", "asia-east1_prod", "secrets.json")))
     ok("審查:Secret 只有 metadata 與 key 名稱", sec["items"] == [{"namespace": "shop", "name": "db", "type": "Opaque", "keys": ["password"]}], sec)
     r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run])
     ok("審查:render --check 通過", r2.returncode == 0, r2.stderr)
@@ -677,7 +700,9 @@ def t_plan_change(e, review_run):
         {"id": "C1", "summary": "移除 bucket 公開讀取", "finding": "GCS-PUB-001",
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
                      "--role=roles/storage.objectViewer", f"--project={P}"],
-         "expected": [{"field": "/bindings", "expect": []}], "impact": "無"},
+         "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
+        {"id": "C6", "summary": "precondition 格式錯", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
+         "precondition": {"field": "/x"}, "expected": [{"field": "/versioning_enabled", "expect": True}]},
         {"id": "C2", "summary": "SSH 只允許 IAP", "command": ["gcloud", "compute", "firewall-rules", "update", "allow-ssh",
                                                            f"--project={P}", "--source-ranges=35.235.240.0/20"],
          "expected": [{"field": "/sourceRanges", "expect": ["35.235.240.0/20"]}], "impact": "非 IAP 的 SSH 會斷"},
@@ -699,6 +724,8 @@ def t_plan_change(e, review_run):
     ok("計畫:C1–C3 可執行、C4 被判不可還原(忽略 agent 給的 reversible=true)",
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
+    ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"], by.get("C6"))
+    ok("計畫:移除 allUsers 的還原附「會重新公開」警示", by["C1"].get("rollback_warning") and "重新公開" in by["C1"]["rollback_warning"], by["C1"].get("rollback_warning"))
     ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
        by and "--source-ranges=0.0.0.0/0" in by["C2"]["rollback"] and "--num-nodes=2" in by["C3"]["rollback"])

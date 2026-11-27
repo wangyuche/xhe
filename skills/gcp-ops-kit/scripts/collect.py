@@ -98,7 +98,7 @@ class Collector:
             if self.clusters:
                 clusters = [c for c in clusters if c.get("name") in self.clusters]
             for c in clusters:
-                self.g("gke", os.path.join("nodepools", f"{c['name']}.json"),
+                self.g("gke", os.path.join("nodepools", f"{c['location']}_{c['name']}.json"),
                        ["container", "node-pools", "list", f"--cluster={c['name']}", f"--location={c['location']}"])
         if "k8s" in a:
             for c in clusters:
@@ -110,7 +110,7 @@ class Collector:
         if r.returncode != 0:
             self.undetermined.append({"area": "k8s", "item": c["name"], "error": gglib._short(r.stderr, 400)})
             return
-        d = os.path.join("k8s", c["name"])
+        d = os.path.join("k8s", f"{c['location']}_{c['name']}")  # 叢集名稱只在同一位置內唯一
         for kind in K8S_KINDS:
             r = self.s.kubectl(ctx, ["get", kind, "-A", "-o", "json", "--request-timeout=60s"])
             if r.returncode != 0:

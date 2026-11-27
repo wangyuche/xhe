@@ -57,7 +57,7 @@ def load_config(require=True):
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                v = v.strip().strip('"').strip("'")
+                v = re.sub(r"\s+#.*$", "", v).strip().strip('"').strip("'")  # 去掉行內註解
                 cfg[k.strip()] = os.path.expanduser(v)
     elif require:
         raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,權限 600)")

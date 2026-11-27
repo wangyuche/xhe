@@ -173,7 +173,7 @@ def scan(inv, gg_sa=None, now=None):
         name = fw.get("name")
         admin, other = [], []
         for a in fw.get("allowed") or []:
-            proto = a.get("IPProtocol")
+            proto = {"6": "tcp", "17": "udp", "132": "sctp"}.get(str(a.get("IPProtocol")), a.get("IPProtocol"))
             ports = a.get("ports") or []
             if proto in ("all",) or (proto in ("tcp",) and not ports):
                 admin.append(f"{proto}:全部")
@@ -302,7 +302,7 @@ def scan(inv, gg_sa=None, now=None):
         if c.get("loggingService") == "none" or c.get("monitoringService") == "none":
             o.add("GKE-LOG-001", f"gke:{name}", cf, f"{base}/loggingService")
         # node pools:優先用 nodepools/<cluster>.json,沒有就用叢集內嵌的 nodePools
-        nps, npf = load(inv, os.path.join("nodepools", f"{c.get('name')}.json"))
+        nps, npf = load(inv, os.path.join("nodepools", f"{c.get('location')}_{c.get('name')}.json"))
         if nps is None:
             nps, npf, prefix = c.get("nodePools") or [], cf, f"{base}/nodePools"
         else:
