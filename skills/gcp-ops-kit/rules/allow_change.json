@@ -322,15 +322,13 @@
         "--versioning": {
           "inverse": "--no-versioning",
           "state": "/versioning_enabled",
-          "target": true,
-          "state_required": true
+          "target": true
         },
         "--no-versioning": {
           "inverse": "--versioning",
           "loosens": "關閉物件版本",
           "state": "/versioning_enabled",
-          "target": false,
-          "state_required": true
+          "target": false
         }
       }
     },
@@ -440,15 +438,13 @@
         "--enable-point-in-time-recovery": {
           "inverse": "--no-enable-point-in-time-recovery",
           "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
-          "target": true,
-          "state_required": true
+          "target": true
         },
         "--no-enable-point-in-time-recovery": {
           "inverse": "--enable-point-in-time-recovery",
           "loosens": "關閉時間點復原",
           "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
-          "target": false,
-          "state_required": true
+          "target": false
         }
       }
     },
@@ -542,5 +538,6 @@
     "--master-authorized-networks": "--enable-master-authorized-networks",
     "--min-nodes": "--enable-autoscaling",
     "--max-nodes": "--enable-autoscaling"
-  }
+  },
+  "system_namespaces": "^(kube-system|kube-public|kube-node-lease|gke-.*|gmp-.*|config-management-.*|istio-system|asm-.*|cnrm-system|anthos-.*)$"
 }

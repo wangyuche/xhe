@@ -19,6 +19,9 @@ def materialize(item, run):
     for a in argv:
         if (a.startswith("--filename") and a != MANIFEST_TOKEN) or (a.startswith("--patch-file") and a != PATCH_TOKEN):
             raise gglib.Blocked(f"{a.split('=')[0]} 只能寫占位 {MANIFEST_TOKEN} / {PATCH_TOKEN}(內容放 manifest / patch 欄位,才會被 sha256 涵蓋)")
+    for fld in ("manifest", "patch"):
+        if "<redacted" in (item.get(fld) or ""):
+            raise gglib.Blocked(f"{fld} 含遮蔽占位 <redacted …>(從盤點複製來的),套用會把真實值蓋掉;只寫要改的欄位")
     if MANIFEST_TOKEN in argv:
         p = os.path.join(run, "manifests", f"{item['id']}.yaml")
         _write_text(p, item.get("manifest") or "")
@@ -154,6 +157,8 @@ def snapshot(s, kind, argv, project, ctx_done):
             if not o.get("kind") or not md.get("name"):
                 return None, endpoint, "manifest 每份文件都要有 kind 與 metadata.name"
             rules_ = ggchange.change_rules()
+            if re.match(rules_["system_namespaces"], md.get("namespace") or ""):
+                return None, endpoint, f"不允許改系統 namespace {md.get('namespace')} 的資源"
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", str(o["kind"])) or o["kind"].lower() in rules_["k8s_forbidden_kinds"] \
                     or o["kind"].lower() not in rules_["k8s_patch_kinds"]:
                 return None, endpoint, f"manifest 不允許這種資源:{o['kind']}"
@@ -214,6 +219,17 @@ def k8s_dryrun(s, kind, argv, snap):
     key = lambda x: (x["rule_id"], x["resource"], x["evidence"].get("path"))
     old = {key(x) for x in _obj_findings(before)}
     new = [x for x in _obj_findings(after) if key(x) not in old]
+    WI = "iam.gke.io/gcp-service-account"
+
+    def wi(objs):
+        return {((o.get("metadata") or {}).get("namespace"), (o.get("metadata") or {}).get("name")):
+                ((o.get("metadata") or {}).get("annotations") or {}).get(WI)
+                for o in objs if isinstance(o, dict) and o.get("kind") == "ServiceAccount"}
+    b_wi = wi(before)
+    for k_, v in wi(after).items():
+        if v and v != b_wi.get(k_):
+            new.append({"rule_id": "K8S-WI-002", "severity": "高", "title": f"變更 KSA {k_[0]}/{k_[1]} 綁定的 GSA({v}),等於讓 Pod 取得該 GSA 權限",
+                        "resource": f"ServiceAccount/{k_[0]}/{k_[1]}", "evidence": {"path": f"/metadata/annotations/{WI}"}})
     return created, new, log, None
 
 

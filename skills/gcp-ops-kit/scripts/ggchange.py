@@ -198,7 +198,7 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
         only = (k.get("flags", {}).get(fl) or {}).get("only_values")
         if only is not None and str(val) not in only:
             return block(f"{fl} 只允許 {only}")
-    pre = _resource_precheck(kind, pos)
+    pre = _resource_precheck(kind, pos, flags)
     if pre:
         return block(pre)
     if argv[0] == "gcloud":
@@ -227,9 +227,14 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     return res
 
 
-def _resource_precheck(kind, pos):
-    """快照之前就要檢查的資源種類(避免對 Secret 等資源做快照 / dry-run)。"""
+def _resource_precheck(kind, pos, flags=None):
+    """快照之前就要檢查的資源種類(避免對 Secret 等資源做快照 / dry-run)與系統 namespace。"""
     rules = change_rules()
+    ns = (flags or {}).get("--namespace")
+    if kind == "kubectl-label-namespace":
+        ns = pos[0]
+    if isinstance(ns, str) and re.match(rules["system_namespaces"], ns):
+        return f"不允許改系統 namespace {ns}"
     if kind == "kubectl-patch":
         if pos[0] in rules["k8s_forbidden_kinds"] or pos[0] not in rules["k8s_patch_kinds"]:
             return f"不允許 patch 這種資源:{pos[0]}(只接受小寫:{', '.join(rules['k8s_patch_kinds'])})"
@@ -617,6 +622,9 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
     old = (gglib.ptr_get(snap, "/metadata/labels") or {}).get(key)
     reasons = []
     if key.startswith("pod-security.kubernetes.io/"):
+        if not key.endswith("-version") and val not in POD_SECURITY_ORDER:
+            res["blocked_reason"] = f"Pod Security 等級不認得:{val}(只接受 privileged / baseline / restricted)"
+            return None, [], None
         if key.endswith("-version"):
             reasons.append(f"變更 Pod Security 版本({key}: {old} → {val})")
         elif old is not None and POD_SECURITY_ORDER.get(val, -1) < POD_SECURITY_ORDER.get(old, -1):

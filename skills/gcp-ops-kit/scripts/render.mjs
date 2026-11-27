@@ -185,7 +185,7 @@ export function render(run) {
 <h1>gcp-guardian ${esc(modeName)}報告</h1>
 <div class="sub">${esc(m.project || '')} · ${esc(m.started || '')} · SA ${esc(m.sa || '（未使用)')}</div>
 <p><span class="status ${st}">狀態:${st}</span></p>
-${m.sa ? `<div class="note">這個 SA 有寫入權限(使用者已知)。審查、計畫模式只執行唯讀白名單內的指令;變更只執行使用者逐條核准的條目。</div>` : ''}
+${(m.sa_roles || []).some((r) => /^roles\/(owner|editor)$|admin$/i.test(r)) ? `<div class="note">這個 SA 有寫入權限(${esc(m.sa_roles.join(', '))})。審查、計畫模式只執行唯讀白名單內的指令;變更只執行使用者逐條核准的條目。</div>` : ''}
 <div class="tiles">${tiles}</div>
 ${changeSection(d)}
 <h2>變更計畫</h2>${planSection(d)}

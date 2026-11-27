@@ -132,9 +132,13 @@ class Runner:
             self.results.append(rec)
             self.status = "ISSUES"
             return False
-        after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
+        rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
+        try:
+            after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
+        except (gglib.Blocked, gglib.Denied) as e:
+            after, err = None, str(e)
         if err:
-            rec.update({"result": "失敗", "reason": "變更後快照失敗:" + err})
+            rec.update({"result": "已執行(驗證失敗)", "reason": "指令已成功執行,但變更後快照失敗:" + err})
             self.results.append(rec)
             self.status = "ISSUES"
             return False
@@ -146,10 +150,8 @@ class Runner:
             badexp = [] if okv else [{"cond": {"field": ptr}, "actual": "未更新"}]
         else:
             badexp = ggplan.check_pre(exp, after)
-        rb = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
-        rec["rollback"] = rb
         if badexp:
-            rec.update({"result": "失敗", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
+            rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
             self.results.append(rec)
             self.status = "ISSUES"
             return False

@@ -320,7 +320,11 @@ def t_classify():
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
         ("清空防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges="], fw),
-        ("bucket 狀態欄位不存在", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}),
+        ("bucket 狀態欄位不存在(統一存取)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--uniform-bucket-level-access"], {}),
+        ("系統 namespace scale", ["kubectl", f"--context={CTX}", "scale", "deployment/kube-dns", "--namespace=kube-system", "--replicas=3"], None),
+        ("系統 namespace label", ["kubectl", f"--context={CTX}", "label", "namespace", "kube-system", "pod-security.kubernetes.io/enforce=privileged", "--overwrite"], None),
+        ("Pod Security 等級打錯(原本有標籤)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce=Restricted", "--overwrite"],
+         {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}),
     ]
     for name, argv, snap in blocked:
         r = ggchange.classify(argv, cfg, snap, shape_only=snap is None)
@@ -370,6 +374,7 @@ def t_classify():
         ("Pod Security 版本變更(放寬)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce-version=v1.0", "--overwrite"],
          {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}, True),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
+        ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
     for name, argv, snap, loosens in okcases:
         r = ggchange.classify(argv, cfg, snap)
@@ -574,6 +579,8 @@ def plan_fixtures():
     fx = [
         {"tool": "gcloud", "re": "^storage buckets remove-iam-policy-binding gs://public-assets --member=allUsers", "out": {},
          "set": {"bucket_public": False}},
+        {"tool": "gcloud", "re": "^storage buckets get-iam-policy gs://public-assets ", "when": {"bucket_public": False, "after_fail": True},
+         "rc": 1, "err": "ERROR: simulated describe failure"},
         {"tool": "gcloud", "re": "^compute firewall-rules describe allow-ssh ", "out": FX.FIREWALLS[0]},
         {"tool": "gcloud", "re": "^compute firewall-rules update allow-ssh ", "rc": 1, "err": "ERROR: simulated failure"},
         {"tool": "gcloud", "re": "^container clusters describe prod ", "out": FX.CLUSTER},
@@ -587,6 +594,9 @@ def plan_fixtures():
          "out": "diff -u -N /tmp/LIVE-1/apps.v1.Deployment.shop.web /tmp/MERGED-1/apps.v1.Deployment.shop.web\n--- /tmp/LIVE-1/x\n+++ /tmp/MERGED-1/x\n@@ -10,7 +10,7 @@\n-  replicas: 2\n+  replicas: 3\n"},
         {"tool": "kubectl", "re": " diff -f ", "when": {"diff": "create"}, "rc": 1,
          "out": "diff -u -N /tmp/LIVE-1/v1.ConfigMap.shop.new-cm /tmp/MERGED-1/v1.ConfigMap.shop.new-cm\n--- /tmp/LIVE-1/x\n+++ /tmp/MERGED-1/x\n@@ -0,0 +1,6 @@\n+kind: ConfigMap\n"},
+        {"tool": "kubectl", "re": " get serviceaccount default -n shop -o json", "out": {"kind": "ServiceAccount", "metadata": {"name": "default", "namespace": "shop"}}},
+        {"tool": "kubectl", "re": " apply --dry-run=server -o json -f ", "when": {"dry": "wi"},
+         "out": {"kind": "ServiceAccount", "metadata": {"name": "default", "namespace": "shop", "annotations": {"iam.gke.io/gcp-service-account": f"admin@{FX.P}.iam.gserviceaccount.com"}}}},
         {"tool": "kubectl", "re": " apply --dry-run=server -o json -f ", "when": {"dry": "privileged"},
          "out": _priv_deploy()},
         {"tool": "kubectl", "re": " apply --dry-run=server -o json -f ", "out": {"kind": "ConfigMap", "metadata": {"name": "new-cm", "namespace": "shop"}}},
@@ -671,6 +681,12 @@ def t_plan_change(e, review_run):
     crun = run_dir(r.stdout)
     ok("變更:change-log.md 由 kit 產生,before/ 有紀錄", crun and os.path.exists(os.path.join(crun, "change-log.md"))
        and os.path.exists(os.path.join(crun, "before", "C2.json")))
+    e.state({"after_fail": True})
+    e.clear_log()
+    r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
+    ok("變更:指令成功但變更後快照失敗 → ISSUES,仍記錄「已執行」與還原指令",
+       r.returncode == 1 and "已執行(驗證失敗)" in r.stdout and "add-iam-policy-binding" in r.stdout, r.stdout + r.stderr)
+    e.state({})
     e.clear_log()
     r = e.run([ch, plan_path, "--sha", sha, "--approved", "使用者已核准變更 C1"])
     ex = execs()
@@ -773,16 +789,36 @@ def t_plan_change(e, review_run):
         {"id": "C3", "summary": "patch 大寫 Secret", "command": ["kubectl", f"--context={CTX}", "patch", "Secret", "db", "--namespace=shop", "--type=merge", "--patch-file=<patch>"],
          "patch": "{\"data\": {}}", "expected": [{"field": "/type", "expect": "Opaque"}]},
     ])
+    write_input_extra = [
+        {"id": "C4", "summary": "manifest 含遮蔽占位", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=<manifest>"],
+         "manifest": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: shop\nspec:\n  template:\n    spec:\n      containers:\n      - name: web\n        env:\n        - name: DB_PASSWORD\n          value: <redacted len=19 sha256=c4ca2439>\n",
+         "expected": [{"field": "/objects/0/spec/replicas", "expect": 2}]},
+        {"id": "C5", "summary": "改 kube-system", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=<manifest>"],
+         "manifest": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: kube-dns\n  namespace: kube-system\n",
+         "expected": [{"field": "/objects/0/kind", "expect": "ConfigMap"}]},
+    ]
+    inp = json.load(open(os.path.join(krun, "plan.input.json")))
+    write_input(krun, inp["items"] + write_input_extra)
     e.state({"diff": "modify"})
     e.clear_log()
     r, _ = plan_build(e, krun)
     kb = {i["id"]: i for i in json.load(open(os.path.join(krun, "plan.json")))["items"]}
+    ok("計畫 k8s:manifest 含 <redacted 占位 → BLOCKED", kb["C4"]["blocked_reason"] and "redacted" in kb["C4"]["blocked_reason"], kb["C4"]["blocked_reason"])
+    ok("計畫 k8s:系統 namespace(kube-system)→ BLOCKED", kb["C5"]["blocked_reason"] and "系統 namespace" in kb["C5"]["blocked_reason"], kb["C5"]["blocked_reason"])
     secret_calls = [c for c in e.stub_calls() if c["tool"] == "kubectl" and any("secret" in a.lower() for a in c["argv"])]
     ok("計畫 k8s:Secret 相關條目 BLOCKED、整份計畫照常產出、沒有任何讀 Secret 的 kubectl 呼叫",
        r.returncode in (0, 1) and kb["C2"]["blocked_reason"] and kb["C3"]["blocked_reason"] and not kb["C1"]["blocked_reason"] and not secret_calls,
        (r.stderr[-600:], {k: v["blocked_reason"] for k, v in kb.items()}, secret_calls))
     ok("計畫 k8s:apply 的還原指令是 kubectl replace before/C1.rollback.json",
        "replace" in kb["C1"]["rollback"] and any(a.endswith("/before/C1.rollback.json") for a in kb["C1"]["rollback"]), kb["C1"]["rollback"])
+    write_input(krun, [{"id": "C1", "summary": "KSA 綁定 admin GSA", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=<manifest>"],
+                        "manifest": "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: shop\n",
+                        "expected": [{"field": "/objects/0/kind", "expect": "ServiceAccount"}]}])
+    e.state({"diff": "modify", "dry": "wi"})
+    r, _ = plan_build(e, krun)
+    it = json.load(open(os.path.join(krun, "plan.json")))["items"][0]
+    ok("計畫 k8s:改 KSA 的 iam.gke.io/gcp-service-account → BLOCKED", it["blocked_reason"] and "K8S-WI-002" in it["blocked_reason"], it["blocked_reason"])
+    e.state({"diff": "modify"})
     write_input(krun, [{"id": "C1", "summary": "manifest 指到外部檔", "command": ["kubectl", f"--context={CTX}", "apply", "--filename=/tmp/x/manifests/C1.yaml"],
                         "expected": [{"field": "/objects/0/spec/replicas", "expect": 2}]}])
     r, _ = plan_build(e, krun)

@@ -157,6 +157,11 @@ def k8s_docs(inv):
 
 def analyze(run, cfg):
     inv = os.path.join(run, "inventory")
+    pol = gglib.read_json(os.path.join(inv, "iam-policy.json"), {}) or {}
+    me = "serviceAccount:" + (cfg.get("GG_SA") or "")
+    meta = gglib.read_json(os.path.join(run, "meta.json"), {})
+    meta["sa_roles"] = sorted(b.get("role") for b in pol.get("bindings") or [] if me in (b.get("members") or []))
+    gglib.write_json(os.path.join(run, "meta.json"), meta)
     findings = gcp_rules.scan(inv, cfg.get("GG_SA"))
     findings += k8s_rules.scan(k8s_docs(inv), live=True)
     gglib.write_json(os.path.join(run, "findings.json"), findings)
