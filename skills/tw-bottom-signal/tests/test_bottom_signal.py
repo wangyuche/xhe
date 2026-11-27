@@ -25,8 +25,12 @@ def check(name, cond):
 o = run(F30, F60)
 check("13:30 併入 13:00", o.startswith("【30分K】11/16 13:00 收 41,040.08") and "K 4.6 / D 9.0" in o)
 
-# 1. 11/16 收盤:只到 ① 鈍化,② 沒有,後面不判斷;60 分 K 不做確認
-check("11/16 STAGE 1/6", "① 低檔鈍化 D<20: 有" in o and "② 底部背離: 沒有" in o
+# 1. 11/16 收盤:11/04→11/06 背離前低已超出 4 天,但 37,837 沒被跌破 → 保留(Gg 2026-11-27 3A),
+#    ③ 11/06 交叉、⑤ 高點連線已站上 → 4/6;--keep-days 4 等於舊規則(只看 4 天)→ 只到 ① 1/6
+check("11/16 背離保留 STAGE 4/6", "前低已超出回看 4 天,未跌破背離低點 37,837 所以保留" in o
+      and o.split("⑦")[0].strip().endswith("STAGE 4/6"))
+o = run(F30, F60, "--keep-days", "4")
+check("11/16 keep-days 4 → STAGE 1/6", "① 低檔鈍化 D<20: 有" in o and "② 底部背離: 沒有" in o
       and "③ 黃金交叉 D<50: ⏸" in o and "STAGE 1/6" in o and "⑦ 60 分 K 確認: ⏸" in o)
 
 # 2. 11/06 收盤:背離 11/04→11/06、GC 11/06 10:00 D18.3;20MA 與壓力線當下未站上 → 3/6,60 分 K 也 3/6
@@ -40,13 +44,16 @@ check("11/06 60分確認 3/6", "⑦ 60 分 K 確認(30 分 K 已到黃金交叉)
 o = run(F30, F60, "--asof", "2026-11-09 13:30")
 p30, p60 = o.split("⑦")
 check("11/09 20MA 當下站上", "④ 突破 20MA: 有 ✅ 當下收 41,662 > MA20 40,821" in p30)
-check("11/09 壓力線當下站上", "⑤ 突破下降壓力線: 有 ✅ 當下收 41,662 > 線 41,089" in p30)
+check("11/09 壓力線當下站上", "⑤ 突破下降壓力線(任一條站上就算): 有 ✅" in p30
+      and "高點連線:線 41,089(11/04 09:00 43,742 → 11/04 13:00 43,135)當下收 41,662 ✅ 11/09 09:30 首次站上" in p30
+      and "通道上緣" not in p30)
 check("11/09 30分 5/6、60分 4/6", "STAGE 5/6" in p30 and p60.strip().endswith("STAGE 4/6"))
 
-# 4. 跌回就不算:11/13 09:00 曾站上 MA20、收盤跌回 → 在這之前的流程本來就沒到 ③,改測 ④ 的「當下」語意:
-#    11/09 13:00 之後 11/10 13:00 背離前低已出 4 天範圍 → 回到 1/5(整組型態要在回看範圍內)
+# 4. 11/10 13:00 背離前低已出 4 天範圍:新規則保留(沒跌破 37,837);--keep-days 4 時回到舊規則 1/6
 o = run(F30, F60, "--asof", "2026-11-10 13:30")
-check("超出 4 天回看範圍就不算", "STAGE 1/6" in o.split("⑦")[0])
+check("超出 4 天回看仍保留背離", "所以保留" in o.split("⑦")[0] and "② 底部背離: 有 ✅" in o.split("⑦")[0])
+o = run(F30, F60, "--asof", "2026-11-10 13:30", "--keep-days", "4")
+check("keep-days 4 超出回看就不算", "STAGE 1/6" in o.split("⑦")[0])
 
 # 5. 不偷看未來:截到 11/06 10:00,11/06 09:00 低點還沒有右邊 3 根,背離不能成立
 o = run(F30, F60, "--asof", "2026-11-06 10:00")
@@ -54,7 +61,7 @@ check("背離需等右邊 3 根確認", "② 底部背離: 沒有" in o)
 
 # 6. 有到 ② 才畫圖,只有 ① 不畫
 svg = os.path.join(TMP, "bs_test.svg")
-o = run(F30, F60, "--svg", svg)
+o = run(F30, F60, "--svg", svg, "--keep-days", "4")
 check("STAGE 1 不畫圖", "SVG" not in o and not os.path.exists(svg))
 o = run(F30, F60, "--asof", "2026-11-09 13:30", "--svg", svg)
 check("STAGE 5 畫圖", "SVG" in o and os.path.exists(svg) and "60分K STAGE 4/6" in open(svg).read())
@@ -75,6 +82,37 @@ s = open(svg2).read() if os.path.exists(svg2) else ""
 check("11/18 圖有前波高點＋水平壓力區間", "前波高點 44,525" in s and "水平壓力區間 40,938.2～40,945.04" in s)
 if os.path.exists(svg2): os.remove(svg2)
 
+# 6b2. ⑤ 下降通道(Gg 2026-11-27 2D):給 --channel-from 才畫;下緣 低點1→背離低點,上緣平行通過兩低點間離下緣最遠的高點
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:30")
+check("通道上緣站上 → ⑤ 成立(高點連線未站上)",
+      "高點連線:線 40,930" in o and "❌ 差 -788" in o
+      and "通道上緣:線 40,056(下緣 11/13 09:30 44,203 → 11/18 10:00 39,261,平行通過 11/18 09:00 40,938)當下收 40,141 ✅ 11/18 11:30 首次站上" in o
+      and "STAGE 4/6" in o)
+svg4 = os.path.join(TMP, "bs_test4.svg")
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:30", "--svg", svg4)
+check("通道圖", "SVG" in o and os.path.exists(svg4) and "突破通道上緣" in open(svg4).read())
+if os.path.exists(svg4): os.remove(svg4)
+
+# 6b3. PR #41 review:--channel-from 只用在 30 分 K;往上斜的通道不算;對不到 K 棒要提示;格式寬鬆但錯的要報錯
+o = run(F30b, F60b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:30")
+p30, p60 = o.split("⑦")
+check("通道只畫在 30 分 K", "通道上緣" in p30 and "通道" not in p60)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13T9:30")
+check("--channel-from 少前導 0、用 T 也對得到", "通道上緣:線 40,056" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:15")
+check("對不到 K 棒要提示", "⚠️ 通道:找不到 --channel-from 指定的 K 棒 2026-11-13 09:15" in o and "通道上緣:" not in o
+      and "STAGE 3/6" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-06 09:00")
+check("低點 1 比背離低點低 → 通道往上,不算", "通道不是往下,不算下降壓力線" in o and "通道上緣:" not in o
+      and "STAGE 3/6" in o)
+r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--channel-from", "11-13 09:30"], capture_output=True, text=True)
+check("--channel-from 格式錯 → 用法錯誤", r.returncode != 0 and "用法錯誤" in r.stderr and "Traceback" not in r.stderr)
+for bad_v in ("0", "abc"):
+    r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--keep-days", bad_v], capture_output=True, text=True)
+    check(f"--keep-days {bad_v} → 用法錯誤", r.returncode != 0 and "正整數" in r.stderr and "Traceback" not in r.stderr)
+o = run(F30, F60)
+check("背離保留時標題註明", "(回看 4 天:11/11 09:00 起;背離保留自 11/04 12:00)" in o)
+
 # 6c. --zone-days 改區間範圍:只看 1 天 → 只剩 11/18 09:00 一個高點,區間退化成單一價位
 o = run(F30b, "--asof", "2026-11-18 11:30", "--zone-days", "1")
 check("zone-days 1 天", "區間 40,938.2(在區間下方" in o)
@@ -88,6 +126,52 @@ o = run(F30c, "--asof", "2026-11-19 09:30", "--svg", svg3)
 check("失效後不畫圖", "SVG" not in o and not os.path.exists(svg3))
 o = run(F30c, "--asof", "2026-11-19 09:00")
 check("跌破前仍有效", "② 底部背離: 有 ✅" in o and "STAGE 3/6" in o)
+
+# 6e. PR #41 review:回看範圍開始前就被跌破的舊背離是早就失效的,不報「失效」(看起來像剛失效),當作沒有背離
+#     在 F30c 後面接兩天平盤 K 棒(11/20、11/21),--days 1 → 回看只剩 11/21,跌破發生在 11/19 → 舊背離不列
+old = os.path.join(TMP, "bs_old.json")
+try:
+    d = json.load(open(F30c))
+    lastc = sorted(d["data"], key=lambda b: b["date"])[-1]["close"]
+    for day in ("2026-11-20", "2026-11-21"):
+        for hm in ("09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00"):
+            d["data"].append({"date": f"{day}T{hm}:00.000+08:00", "open": lastc, "high": lastc, "low": lastc,
+                              "close": lastc, "volume": 1})
+    json.dump(d, open(old, "w"))
+    o = run(old, "--days", "1")
+    check("舊背離早就跌破 → 不報失效", "失效" not in o and ("② 底部背離: 沒有 ❌" in o or "② 底部背離: ⏸" in o))
+    o = run(old, "--days", "3")
+    check("跌破在回看範圍內 → 照樣報失效", "② 底部背離: 失效 ❌ 11/19 09:30" in o)
+    # 第三輪 review:較新的背離在「回看範圍內」被跌破,也要往回找仍有效的舊背離,並附註較新那組已失效
+    #               → --days 1 與 --days 3 結論一致(都是 11/04→11/06)
+    o = run(old, "--days", "3", "--keep-days", "15")
+    check("跌破在回看範圍內也往回找舊背離＋附註",
+          "② 底部背離: 有 ✅ 前低 11/04 12:00 41,856" in o and "附註:較新的背離 11/17 09:00 39,786.45 → 11/18 10:00 39,260.99 已在 11/19 09:30 跌破失效" in o
+          and "失效 ❌" not in o)
+    # 第二輪 review:較新的背離(11/17→11/18)在回看前就被跌破時,要繼續往回找;11/04→11/06(37,837 沒破)仍保留
+    o = run(old, "--days", "1", "--keep-days", "15")
+    check("跳過早就跌破的新背離,找到更早仍有效的背離",
+          "② 底部背離: 有 ✅ 前低 11/04 12:00 41,856(D9.5)→ 後低 11/06 09:00 37,837(D15.3)" in o and "背離保留自 11/04 12:00" in o)
+finally:
+    if os.path.exists(old): os.remove(old)
+
+# 6f. 第二輪 review:保留的背離在回看範圍內被跌破、但回看範圍內 D 沒有 <20 → ① 沒有,② 仍要報「失效」(不是 ⏸)
+o = run(F30c, "--asof", "2026-11-19 09:30", "--days", "1")
+check("① 不成立時仍報 ② 失效", "① 低檔鈍化 D<20: 沒有 ❌" in o
+      and "② 底部背離: 失效 ❌ 11/19 09:30 跌破背離低點 39,260.99" in o)
+
+# 6g. 「首次站上」是當下這次連續站上的第一根;旗標沒帶值要報用法錯誤
+r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--channel-from"], capture_output=True, text=True)
+check("旗標沒帶值 → 用法錯誤", r.returncode != 0 and "後面要接值" in r.stderr and "Traceback" not in r.stderr)
+o = run(F30c, "--asof", "2026-11-19 09:30", "--channel-from", "2026-11-13 09:15")
+check("沒走到 ③ 也印通道提示", "STAGE 1/6" in o and "⚠️ 通道:找不到 --channel-from 指定的 K 棒 2026-11-13 09:15" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-18 12:00")
+check("低點 1 晚於 --asof → 另外說明", "⚠️ 通道:低點 1 2026-11-18 12:00 晚於資料最後一根 K 棒" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--title", "--測試", "--svg", os.path.join(TMP, "bs_t5.svg"))
+check("--title 值以 -- 開頭照收", "SVG" in o and "--測試" in open(os.path.join(TMP, "bs_t5.svg")).read())
+if os.path.exists(os.path.join(TMP, "bs_t5.svg")): os.remove(os.path.join(TMP, "bs_t5.svg"))
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 10:00")
+check("低點 1 不是波段低點 → 警告", "⚠️ 通道:低點 1 2026-11-13 10:00 不是確認的波段低點" in o and "通道上緣:" in o)
 
 # 7. 抓不到資料時要明確報錯
 bad = os.path.join(TMP, "bad_fugle.json")
@@ -140,24 +224,24 @@ def runsh(mode, session="0"):
     return subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
 try:
     r = runsh("ok")
-    check("run.sh 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
+    check("run.sh 正常", r.returncode == 0 and "STAGE 4/6" in r.stdout)
     r = runsh("quiet")
-    check("run.sh fugle.sh 不印狀態碼但有寫檔 → 正常", r.returncode == 0 and "STAGE 1/6" in r.stdout)
+    check("run.sh fugle.sh 不印狀態碼但有寫檔 → 正常", r.returncode == 0 and "STAGE 4/6" in r.stdout)
     r = runsh("histfail")
     check("run.sh 歷史抓不到 → 報錯、不沿用舊檔", r.returncode != 0 and "資料錯誤" in r.stderr and "STAGE" not in r.stdout
           and not any(os.path.exists(os.path.join(work, f"bottom_IX0001_{tf}m.json")) for tf in (30, 60)))
     r = runsh("intrafail", "1")
-    check("run.sh 交易時間盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+    check("run.sh 交易時間盤中抓不到 → 警告、只用歷史", r.returncode == 0 and "警告" in r.stderr and "STAGE 4/6" in r.stdout)
     for mode in ("intratrunc", "intraerr"):
         r = runsh(mode, "1")
-        check(f"run.sh 盤中 {mode} → 警告", r.returncode == 0 and "警告" in r.stderr and "STAGE 1/6" in r.stdout)
+        check(f"run.sh 盤中 {mode} → 警告", r.returncode == 0 and "警告" in r.stderr and "STAGE 4/6" in r.stdout)
     r = runsh("ok", "1")
-    check("run.sh 交易日盤中 K 是空的 → 警告", r.returncode == 0 and "盤中資料是空的" in r.stderr and "STAGE 1/6" in r.stdout)
+    check("run.sh 交易日盤中 K 是空的 → 警告", r.returncode == 0 and "盤中資料是空的" in r.stderr and "STAGE 4/6" in r.stdout)
     r = runsh("hist60fail")
     check("run.sh 只有 60 分歷史失敗 → 不留 30 分檔", r.returncode != 0
           and not any(n.startswith("bottom_") and n.endswith(".json") for n in os.listdir(work)))
     r = runsh("intrafail", "0")
-    check("run.sh 非交易時間盤中抓不到 → 不警告", r.returncode == 0 and "警告" not in r.stderr and "STAGE 1/6" in r.stdout)
+    check("run.sh 非交易時間盤中抓不到 → 不警告", r.returncode == 0 and "警告" not in r.stderr and "STAGE 4/6" in r.stdout)
     env = dict(os.environ, FUGLE_SH=os.path.join(work, "no_such.sh"))
     r = subprocess.run(["bash", RUN, "IX0001", work], capture_output=True, text=True, env=env)
     check("run.sh 沒有 fugle.sh → 報錯", r.returncode != 0 and "找不到" in r.stderr)
