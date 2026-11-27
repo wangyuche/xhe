@@ -125,13 +125,14 @@ node <kit>/scripts/sprite.mjs headshot art/characters/<id>/actions/idle1.png --a
 
 ```bash
 node <kit>/scripts/voice.mjs design --voice <voice.json> --out-dir art/out/<日期>-voice-<id> --budget … --limit <N> --run <派工 id> [--redesign]   # 3 個候選 → 請使用者試聽
-node <kit>/scripts/voice.mjs pick   --voice <voice.json> --n 2                      # 建成正式 voice
+node <kit>/scripts/voice.mjs pick   --voice <voice.json> --n 2 [--repick]           # 建成正式 voice(已選定要換選加 --repick,舊的留 prev_voice_id)
 node <kit>/scripts/voice.mjs plan   --voice <voice.json> --lines <lines.json> [--out art/voice/<id>]   # 首次字元、含重錄最多字元
 node <kit>/scripts/voice.mjs lines  --voice <voice.json> --lines <lines.json> --out art/voice/<id> --raw-dir art/out/<日期>-voice-<id> --budget … --limit <N> --run <派工 id> [--all] [--max-seconds 480]
 node <kit>/scripts/voice.mjs status --voice <voice.json> --lines <lines.json> --out art/voice/<id>
 node <kit>/scripts/voice.mjs scan   --art art          # 金鑰完全比對(只印有 / 無與檔名)
 ```
 
+- 字元在**每次 HTTP 嘗試**前都記(逾時重試的請求服務端可能已計費);錄音先放過程目錄的 `stage/`,check 通過才換掉 `art/voice/` 的成品(失敗不蓋掉原本好的);超過 15 秒不重錄(請拆句)。
 - 台詞 key 要符合 `^[a-z0-9][a-z0-9._-]*$`(不合 → 整批結束碼 2)。雜湊 = sha256(JSON([原文, voice_id, tts 模型, stability, output_format, seed]));只重錄雜湊不同或缺檔的;check 不過換 seed 重錄,每句最多 2 次;每句完成就存。
 - 結束碼:1 有句子不合格;3 HTTP 錯誤(429 / 409 / 5xx 已退避重試 5 次);4 額度用完(402 / 401 quota);5 金鑰錯誤或找不到;6 超過字元上限(沒送出);8 帳號 voice 名額已滿。
 - 測試:`ELEVENLABS_API_URL` 只接受 `http://127.0.0.1:<埠>`,有設時用假金鑰、不讀真的。尚未以真實帳號實測(使用者買了 ElevenLabs 之後補)。

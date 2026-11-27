@@ -24,6 +24,7 @@ const ev = (o) => console.log(JSON.stringify(o));
 ev({ type: 'thread.started', thread_id: thread });
 ev({ type: 'turn.started' });
 ev({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'I will generate it.' } });
+if (mode === 'todolist') ev({ type: 'item.completed', item: { id: 'item_t', type: 'todo_list', items: [{ text: 'generate image', completed: true }] } });
 if (mode === 'violation') ev({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'cat ~/.elevenlabs/.env', aggregated_output: 'ELEVENLABS_API_KEY=sk_FAKELEAK0123456789abcdef', status: 'completed' } });
 if (mode === 'noimage') { ev({ type: 'error', message: "You've hit your usage limit. Try again later." }); ev({ type: 'turn.failed', error: { message: 'usage limit' } }); process.exit(1); }
 // 透明 PNG:64×96,中間一塊不透明

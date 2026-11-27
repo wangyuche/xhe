@@ -178,7 +178,7 @@ if (isMain) {
       const type = flags.type; if (!['sfx', 'bgm', 'voice'].includes(type)) die('--type 要 sfx、bgm 或 voice');
       const dur = Number(flags.duration ?? (type === 'voice' ? 15 : NaN)); if (!(dur > 0 && dur <= 600)) die('--duration 要是 0–600 的秒數');
       if (flags.loop && type !== 'bgm') die('--loop 只用於 bgm');
-      if (flags.peak && type !== 'sfx') die('--peak 只用於 sfx');
+      if (flags.peak && type === 'bgm') die('--peak 只用於 sfx / voice');
       if (flags.approx && !flags.loop) die('--approx 要和 --loop 一起用');
       return { type, dur, loop: !!flags.loop, peak: !!flags.peak, approx: !!flags.approx };
     };

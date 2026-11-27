@@ -5,7 +5,7 @@
 import { createServer } from 'node:http';
 import { appendFileSync } from 'node:fs';
 const [port, logFile] = process.argv.slice(2);
-const wav = (silent) => { const sr = 8000, n = sr, b = Buffer.alloc(44 + n * 2); b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40); for (let i = 0; i < n; i++) b.writeInt16LE(silent ? 0 : Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 8000), 44 + i * 2); return b; };
+const wav = (silent, secs = 1) => { const sr = 8000, n = Math.round(sr * secs), b = Buffer.alloc(44 + n * 2); b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40); for (let i = 0; i < n; i++) b.writeInt16LE(silent ? 0 : Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 8000), 44 + i * 2); return b; };
 let busy = 0;
 createServer((req, res) => {
   const c = []; req.on('data', d => c.push(d)); req.on('end', () => {
@@ -20,7 +20,7 @@ createServer((req, res) => {
       if (/QUOTA/.test(t)) return send(402, { detail: { status: 'insufficient_credits' } });
       if (/AUTH/.test(t)) return send(401, { detail: { status: 'invalid_api_key' } });
       if (/BUSY/.test(t) && busy++ === 0) return send(429, { detail: 'busy' }, 'application/json', { 'retry-after': '1' });
-      return send(200, wav(/SILENT/.test(t)), 'audio/wav');
+      return send(200, wav(/SILENT/.test(t), /SHORT/.test(t) ? 0.25 : /LONG/.test(t) ? 16 : 1), 'audio/wav');
     }
     send(404, {});
   });

@@ -9,7 +9,7 @@
 // 用法(付費的指令都要 --budget <累計檔> --limit <N 字元> --run <派工 id>;字元 = 送出文字的長度,含 [sweetly] 這類標記):
 //   node voice.mjs design --voice <voice.json> --out-dir <過程目錄> --budget … --limit … --run … [--redesign]
 //        /v1/text-to-voice/design(一次 3 個 preview)→ <過程目錄>/candidate-<n>.{mp3,ogg,m4a}(n 接續編號);寫回 candidates
-//   node voice.mjs pick   --voice <voice.json> --n <n>             /v1/text-to-voice:把候選建成正式 voice,voice_id 寫回(不算字元)
+//   node voice.mjs pick   --voice <voice.json> --n <n> [--repick]  /v1/text-to-voice:把候選建成正式 voice,voice_id 寫回(不算字元;已選定要換選加 --repick)
 //   node voice.mjs plan   --voice <voice.json> --lines <lines.json> [--all]      要錄的 key、首次字元、含重錄最多字元(不連網)
 //   node voice.mjs lines  --voice <voice.json> --lines <lines.json> --out <art/voice/<id>> --raw-dir <過程目錄> --budget … --limit … --run … [--all] [--max K] [--max-seconds 480]
 //        --max K:本次最多 K 句(依 key 排序的前 K 句,其餘 deferred,下次照雜湊補)
@@ -20,7 +20,7 @@
 // 雜湊 = sha256(JSON.stringify([原文, voice_id, tts 模型, stability, output_format, seed]))。
 // 結束碼:0 成功;1 有句子 / 候選不合格;2 用法 / 設定錯誤;3 HTTP 錯誤(重試用完或不可重試);4 額度用完(402 / 401 quota);
 //        5 金鑰錯誤(401 / 403 非額度)或找不到金鑰;6 超過字元上限(沒送出);8 帳號 voice 名額已滿。
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, realpathSync, renameSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -53,8 +53,9 @@ function api() {
   return { base: 'https://api.elevenlabs.io', key };
 }
 const scrubKey = (s, key) => String(s ?? '').split(key).join('<key>');
-async function post(A, path, body, { binary = false } = {}) {
+async function post(A, path, body, { binary = false, before } = {}) {
   for (let attempt = 1; ; attempt++) {
+    before?.(attempt); // 每次 HTTP 嘗試都先記用量(逾時的請求服務端可能已計費)
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), REQ_TIMEOUT);
     let res;
     try { res = await fetch(A.base + path, { method: 'POST', headers: { 'xi-api-key': A.key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal }); }
@@ -92,7 +93,7 @@ const artOf = (voiceFile) => resolve(dirname(voiceFile), '..', '..');
 function audio(input, outDir, name) {
   const a = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'process', input, '--type', 'voice', '--out', outDir, '--name', name], { encoding: 'utf8' });
   if (a.status === 2) die(`audio.mjs process 失敗:${(a.stderr || '').trim().split('\n').pop()}`);
-  if (a.status !== 0) return { ok: false, error: (a.stderr || '').trim().split('\n').pop() };
+  if (a.status !== 0) { const err = (a.stderr || '').trim().split('\n').pop(); return { ok: false, error: err, noRetry: /超過 \d+ 秒|請拆句/.test(err) }; }
   let j = {}; try { j = JSON.parse(a.stdout.trim().split('\n').pop()); } catch { /* */ }
   const c = spawnSync('node', [join(KIT, 'scripts', 'audio.mjs'), 'check', join(outDir, `${name}.ogg`), join(outDir, `${name}.m4a`), '--type', 'voice', ...(j.normalized === 'peak' ? ['--peak'] : [])], { encoding: 'utf8' });
   let cj = {}; try { cj = JSON.parse(c.stdout.trim().split('\n').pop()); } catch { /* */ }
@@ -117,8 +118,8 @@ export async function design(voiceFile, { outDir, budget, limit, run, redesign =
   if (NAME_RE.test(v.design)) die('design 疑似要求模仿特定人物的聲音(voice of / sounds like …):只描述一般特徵');
   if (!run) die('缺 --run <派工 id>');
   const A = api(), b = openBudget(budget, limit, '字元'), art = artOf(voiceFile);
-  const used = b.reserve(len, 'voice design');
-  const res = await postLogged(A, `/v1/text-to-voice/design?output_format=${encodeURIComponent(v.models.output_format)}`, { voice_description: v.design, text: v.preview_text, model_id: v.models.design, ...(v.seed != null ? { seed: v.seed } : {}) }, {}, (st) => appendManifest(outDir, { kind: 'design', chars: len, status: st }, used, run));
+  let used = b.used;
+  const res = await postLogged(A, `/v1/text-to-voice/design?output_format=${encodeURIComponent(v.models.output_format)}`, { voice_description: v.design, text: v.preview_text, model_id: v.models.design, ...(v.seed != null ? { seed: v.seed } : {}) }, { before: (n) => { used = b.reserve(len, `voice design(第 ${n} 次嘗試)`); } }, (st) => appendManifest(outDir, { kind: 'design', chars: len, status: st }, used, run));
   const dh = createHash('sha256').update(JSON.stringify([v.design, v.preview_text, v.models.design])).digest('hex').slice(0, 12);
   if (v.candidates_for !== dh) v.candidates = [];
   let n = v.next_n ?? 1; const made = [];
@@ -139,11 +140,13 @@ export async function design(voiceFile, { outDir, budget, limit, run, redesign =
   return { ok: true, chars: len, budget: { used, limit }, candidates: made.map(c => ({ n: c.n, check: c.check, listen: join(art, c.path) })), prev_voice_id: v.prev_voice_id ?? null, key_scan: scan(art, A.key) };
 }
 
-export async function pick(voiceFile, n) {
+export async function pick(voiceFile, n, { repick = false } = {}) {
   const v = loadVoice(voiceFile);
+  if (v.voice_id && !repick) die('voice.json 已選定音色(voice_id 已建立);換選會建立新的付費 voice、所有台詞重錄,要明確加 --repick');
   const c = (v.candidates ?? []).find(x => x.n === n) ?? die(`voice.json 的 candidates 沒有 n = ${n}(先跑 design;描述改過的話舊候選已作廢)`);
   const A = api();
   const r = await post(A, '/v1/text-to-voice', { voice_name: v.voice_name ?? v.id ?? 'character', voice_description: v.design, generated_voice_id: c.generated_voice_id, labels: { character: v.id ?? '' } });
+  if (v.voice_id) v.prev_voice_id = v.voice_id;
   v.voice_id = r.voice_id ?? die('ElevenLabs 沒有回傳 voice_id', 3);
   writeJson(voiceFile, v);
   return { ok: true, n, voice_id_set: true, key_scan: scan(artOf(voiceFile), A.key) };
@@ -164,19 +167,20 @@ export async function lines(voiceFile, { linesFile, out, procDir, budget, limit,
   if (!run) die('缺 --run <派工 id>');
   const L = loadLines(linesFile), A = api(), b = openBudget(budget, limit, '字元'), art = artOf(voiceFile);
   const { todo, deferred } = plan(voiceFile, { linesFile, all, out, max });
-  const raw = join(procDir, 'raw'); mkdirSync(raw, { recursive: true }); mkdirSync(out, { recursive: true });
+  const raw = join(procDir, 'raw'), stage = join(procDir, 'stage'); mkdirSync(raw, { recursive: true }); mkdirSync(stage, { recursive: true }); mkdirSync(out, { recursive: true });
   v.lines = v.lines ?? {}; v.line_seeds = v.line_seeds ?? {};
   const t0 = Date.now(), done = [], failed = []; let used = b.used, stoppedAt = null;
   for (const k of todo) {
     if ((Date.now() - t0) / 1000 > maxSeconds) { stoppedAt = k; break; }
     const text = L[k], len = [...text].length; let seed = lineSeed(v, k), res = null, tries = 0;
     for (; tries < TRIES; tries++) {
-      used = b.reserve(len, `line ${k}`); // 超過上限 → BudgetError(結束碼 6),已完成的都已寫回
-      const buf = await postLogged(A, `/v1/text-to-speech/${encodeURIComponent(v.voice_id)}?output_format=${encodeURIComponent(v.models.output_format)}`, { text, model_id: v.models.tts, voice_settings: { stability: v.stability }, seed }, { binary: true }, (st) => appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: st }, used, run));
+      // 每次 HTTP 嘗試都先記用量;超過上限 → BudgetError(結束碼 6),已完成的都已寫回
+      const buf = await postLogged(A, `/v1/text-to-speech/${encodeURIComponent(v.voice_id)}?output_format=${encodeURIComponent(v.models.output_format)}`, { text, model_id: v.models.tts, voice_settings: { stability: v.stability }, seed }, { binary: true, before: (n) => { used = b.reserve(len, `line ${k}(第 ${n} 次嘗試)`); } }, (st) => appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: st }, used, run));
       const mp3 = join(raw, `${k}.mp3`); writeFileSync(mp3, buf);
-      res = audio(mp3, out, k);
+      res = audio(mp3, stage, k); // 先放過程目錄,check 通過才換掉成品(失敗不會蓋掉原本好的錄音)
+      if (res.ok) for (const ext of ['ogg', 'm4a']) renameSync(join(stage, `${k}.${ext}`), join(out, `${k}.${ext}`));
       appendManifest(procDir, { kind: 'line', key: k, text, chars: len, seed, try: tries + 1, status: res.ok ? 'ok' : `check 不過:${res.error}` }, used, run);
-      if (res.ok) break;
+      if (res.ok || res.noRetry) break; // 超過 15 秒換 seed 也不會變短:不重錄,請拆句
       seed = (seed + 1000003) % SEED_MAX;
     }
     if (seed !== lineSeed(v, k)) v.line_seeds[k] = seed;
@@ -208,19 +212,19 @@ if (isMain) {
   try {
     const [cmd, ...rest] = process.argv.slice(2);
     const f = {};
-    for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (['--redesign', '--all'].includes(a)) f[a.slice(2)] = true; else if (a.startsWith('--')) f[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else die(`多餘的參數 ${a}`); }
+    for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (['--redesign', '--all', '--repick'].includes(a)) f[a.slice(2)] = true; else if (a.startsWith('--')) f[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else die(`多餘的參數 ${a}`); }
     const int = (k) => { if (!/^\d+$/.test(String(f[k]))) die(`--${k} 要是正整數`); const n = Number(f[k]); if (n < 1) die(`--${k} 要 ≥ 1`); return n; };
     const vf = () => f.voice ?? die('缺 --voice <voice.json>');
     let r;
     if (cmd === 'design') r = await design(vf(), { outDir: f['out-dir'] ?? die('缺 --out-dir'), budget: f.budget, limit: f.limit != null ? int('limit') : undefined, run: f.run, redesign: !!f.redesign });
-    else if (cmd === 'pick') r = await pick(vf(), int('n'));
+    else if (cmd === 'pick') r = await pick(vf(), int('n'), { repick: !!f.repick });
     else if (cmd === 'plan') r = plan(vf(), { linesFile: f.lines ?? die('缺 --lines'), all: !!f.all, out: f.out, max: f.max != null ? int('max') : undefined });
     else if (cmd === 'lines') r = await lines(vf(), { linesFile: f.lines ?? die('缺 --lines'), out: f.out ?? die('缺 --out'), procDir: f['raw-dir'] ?? die('缺 --raw-dir'), budget: f.budget, limit: f.limit != null ? int('limit') : undefined, run: f.run, all: !!f.all, maxSeconds: f['max-seconds'] != null ? int('max-seconds') : 480, max: f.max != null ? int('max') : undefined });
     else if (cmd === 'status') r = status(vf(), { linesFile: f.lines ?? die('缺 --lines'), out: f.out ?? die('缺 --out') });
     else if (cmd === 'scan') { let key = null; try { key = api().key; } catch (e) { if (!(e instanceof Fail && e.code === 5)) throw e; } r = key ? scan(resolve(f.art ?? die('缺 --art')), key) : { found: false, files: [], note: '這台沒有 ElevenLabs 金鑰,不用掃' }; }
     else die('用法:voice.mjs design | pick | plan | lines | status | scan(見檔頭)');
     console.log(JSON.stringify(r));
-    process.exit(r.ok === false || r.found ? 1 : 0);
+    process.exit(r.ok === false || r.found || r.key_scan?.found ? 1 : 0);
   } catch (e) {
     console.error(`錯誤:${e instanceof Fail || e instanceof BudgetError ? e.message : e?.stack || e}`);
     process.exit(e instanceof Fail || e instanceof BudgetError ? e.code : 2);

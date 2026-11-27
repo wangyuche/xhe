@@ -29,7 +29,7 @@ const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE = JSON.parse(readFileSync(join(KIT, 'templates', 'character-actions.json'), 'utf8'));
 const load = (f) => { let b; try { b = readFileSync(f); } catch (e) { die(`讀不到 ${f}:${e.message}`); } return decodePng(b); };
 const save = (f, img) => { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, encodePng(img)); };
-export const ALLOWED_ITEMS = new Set(['agent_message', 'reasoning']);
+export const ALLOWED_ITEMS = new Set(['agent_message', 'reasoning', 'todo_list', 'error']); // 不是工具的 item(規劃清單、錯誤訊息)
 // 出圖工具本身(實測 codex 0.172 不會出現在事件裡;之後的版本若發出 image_generation 類 item 也算允許)
 const allowedItem = (t) => ALLOWED_ITEMS.has(t) || /^image_gen/.test(String(t));
 // 違規事件只記類型與指令,不記指令輸出(輸出可能含金鑰);再遮蔽常見金鑰樣式
@@ -129,9 +129,13 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
   const b = openBudget(budget, limit, '張');
   const used = b.reserve(1, `codex ${action}`); // 送出前先記;超過上限丟 BudgetError(結束碼 6)
   const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+  // 先佔好檔名(wx 獨佔建立),同一個動作平行出圖不會撞號;沒出圖就刪掉佔位檔
+  mkdirSync(outDir, { recursive: true });
+  let n = nextN(outDir, action);
+  for (;; n++) { try { writeFileSync(join(outDir, `${action}-${n}.png`), '', { flag: 'wx' }); break; } catch (e) { if (e.code !== 'EEXIST') throw e; } }
   const r = await runCodex(text, basePath, timeout);
-  if (r.spawnError) { appendManifest(outDir, { run, action, status: `跑不了 codex:${r.spawnError.code ?? ''}`, budget_used: used, budget_limit: limit }); die(`跑不了 codex:${r.spawnError.message}`, 3); }
-  const ev = parseEvents(r.out), n = nextN(outDir, action), file = `${action}-${n}.png`;
+  if (r.spawnError) { rmSync(join(outDir, `${action}-${n}.png`), { force: true }); appendManifest(outDir, { run, action, status: `跑不了 codex:${r.spawnError.code ?? ''}`, budget_used: used, budget_limit: limit }); die(`跑不了 codex:${r.spawnError.message}`, 3); }
+  const ev = parseEvents(r.out), file = `${action}-${n}.png`;
   const dir = threadDir(codexHome, ev.thread);
   const made = dir ? readdirSync(dir).filter(f => f.endsWith('.png')).map(f => join(dir, f)).sort((a, b2) => statSync(a).mtimeMs - statSync(b2).mtimeMs) : [];
   const entry = { run, action, n, file, prompt: text, thread: ev.thread, reply: redactSecrets(scrubPaths(r.reply, codexHome)).slice(0, 500), usage: ev.usage, violations: ev.violations.map(v => ({ type: v.type, detail: scrubPaths(v.detail, codexHome) })), budget_used: used, budget_limit: limit };
@@ -151,6 +155,7 @@ export async function gen(cfgFile, { action, outDir, budget, limit, run, art, ti
     // 不論成敗,只要 thread id 合法就刪掉 Codex 留下的圖(不留副本)
     if (dir) { rmSync(dir, { recursive: true, force: true }); cleaned = true; }
     entry.status = status ?? '失敗'; entry.thread_cleaned = cleaned;
+    if (status !== 'ok') rmSync(join(outDir, file), { force: true }); // 佔位檔
     if (code === 3) entry.errors = ev.errors.map(e => scrubPaths(e, codexHome).slice(0, 300));
     appendManifest(outDir, entry);
   }
@@ -193,7 +198,7 @@ if (isMain) {
     const f = {}, pos = [];
     for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (a.startsWith('--')) f[a.slice(2)] = rest[++i] ?? die(`${a} 缺值`); else pos.push(a); }
     const cfg = () => f.config ?? die('缺 --config <actions.json>');
-    const int = (k, def) => { const v = f[k] ?? def; if (v == null) die(`缺 --${k}`); if (!/^\d+$/.test(String(v))) die(`--${k} 要是非負整數`); return Number(v); };
+    const int = (k, def) => { const v = f[k] ?? def; if (v == null) die(`缺 --${k}`); if (!/^\d+$/.test(String(v)) || Number(v) < 1) die(`--${k} 要是正整數`); return Number(v); };
     let r;
     if (cmd === 'prompt') r = { prompt: prompt(loadConfig(cfg(), f.art).c, f.action ?? die('缺 --action')) };
     else if (cmd === 'gen') {
