@@ -165,7 +165,7 @@ def common_forbidden(argv, cfg):
         if any(c.prefixlen == 0 for c in ipaddress.collapse_addresses(nets)):
             return "一律禁止:多個網段合起來涵蓋整個網際網路"
     sa = cfg.get("GG_SA")
-    if sa and sa in text:
+    if sa and any(sa.lower() in a.lower() for a in argv):  # 看原始參數(含旗標值),SA 一定在 --member= 裡
         return f"一律禁止:動到 gcp-guardian 自己的 SA({sa})"
     return None
 
@@ -280,6 +280,19 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
                     res["rollback_warning"] = "這條還原會把 allow 規則調回較高優先序,執行前請確認"
             except ValueError:
                 pass
+    if rollback_args and not res.get("rollback_warning"):
+        rl = change_rules().get("rollback_loosening_flags", {})
+        for a in rollback_args:
+            if not isinstance(a, str) or not a.startswith("--"):
+                continue
+            name, _, val = a.partition("=")
+            rule = k.get("flags", {}).get(name, {})
+            if name in rl:
+                res["rollback_warning"] = rl[name] + ",執行前請確認"
+                break
+            if val and val in (rule.get("loosens_values") or {}):
+                res["rollback_warning"] = f"還原會放寬安全:{rule['loosens_values'][val]},執行前請確認"
+                break
     loosen_flags = {f for f, r in k.get("flags", {}).items() if r.get("loosens")}
     if rollback_args and not res.get("rollback_warning") and any(a.split("=")[0] in loosen_flags for a in rollback_args if isinstance(a, str)):
         res["rollback_warning"] = "這條還原會放寬安全設定(回到變更前較寬鬆的狀態),執行前請確認"
@@ -714,6 +727,9 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
         elif val not in POD_SECURITY_ORDER:
             res["blocked_reason"] = f"Pod Security 等級不認得:{val}"
             return None, [], None
+    if key.startswith("pod-security.kubernetes.io/") and not key.endswith("-version") and (
+            old is None or POD_SECURITY_ORDER.get(old, -1) < POD_SECURITY_ORDER.get(val, -1)):
+        res["rollback_warning"] = f"還原會把 Pod Security {key.rsplit('/', 1)[1]} 降回 {old or '(未設定)'},執行前請確認"
     res["auto_pre"].append({"field": "/metadata/labels/" + key.replace("~", "~0").replace("/", "~1"), "expect": old})
     rb_label = f"{key}={old}" if old is not None else f"{key}-"
     return ["kubectl", f"--context={res['target']['context']}", "label", "namespace", pos_ns, rb_label,

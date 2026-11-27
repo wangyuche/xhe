@@ -89,7 +89,11 @@ def main(argv):
         if shutil.which(t) is None:
             print(f"BLOCKED: 缺工具 {t}", file=sys.stderr)
             return gglib.EXIT_BLOCKED
-    cfg = gglib.load_config(require=False)
+    try:
+        cfg = gglib.load_config(require=False)
+    except gglib.Blocked as e:
+        print(f"BLOCKED: {e}", file=sys.stderr)
+        return gglib.EXIT_BLOCKED
     label = re.sub(r"[^a-z0-9-]+", "-", (label or os.path.basename(os.path.realpath(paths[0]))).lower()).strip("-")[:50] or "yaml"
     files, kustom = gather(paths)  # 先確認輸入存在,再建立 run 目錄
     run = gglib.new_run(cfg, f"yaml-{label}"[:60], "yaml")

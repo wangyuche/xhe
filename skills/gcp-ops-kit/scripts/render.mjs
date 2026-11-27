@@ -45,11 +45,10 @@ function stats(d) {
 
 function status(d, s) {
   if (d.meta.mode === 'change') return d.change?.status || 'BLOCKED';
-  if (d.meta.mode === 'plan') {
-    const items = d.plan.items || [];
-    return items.some((i) => i.blocked_reason || i.loosens_security) || !items.length ? 'ISSUES' : 'PASS';
-  }
-  return COUNTED.slice(0, 3).some((k) => s[k] > 0) || s['無法判定'] > 0 ? 'ISSUES' : 'PASS';
+  const items = d.plan.items || [];
+  const planBad = items.some((i) => i.blocked_reason || i.loosens_security);
+  if (d.meta.mode === 'plan') return planBad || !items.length ? 'ISSUES' : 'PASS';
+  return planBad || COUNTED.slice(0, 3).some((k) => s[k] > 0) || s['無法判定'] > 0 ? 'ISSUES' : 'PASS';
 }
 
 function diffPrev(d, all) {

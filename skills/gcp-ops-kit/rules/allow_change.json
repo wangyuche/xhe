@@ -425,14 +425,16 @@
           "restore": "/settings/ipConfiguration/requireSsl",
           "format": "bool_flag",
           "true_flag": "--require-ssl",
-          "false_flag": "--no-require-ssl"
+          "false_flag": "--no-require-ssl",
+          "default": false
         },
         "--no-require-ssl": {
           "restore": "/settings/ipConfiguration/requireSsl",
           "format": "bool_flag",
           "true_flag": "--require-ssl",
           "false_flag": "--no-require-ssl",
-          "loosens": "允許未加密連線"
+          "loosens": "允許未加密連線",
+          "default": false
         },
         "--authorized-networks": {
           "restore": "/settings/ipConfiguration/authorizedNetworks",
@@ -547,5 +549,18 @@
     "--min-nodes": "--enable-autoscaling",
     "--max-nodes": "--enable-autoscaling"
   },
-  "system_namespaces": "^(kube-system|kube-public|kube-node-lease|gke-.*|gmp-.*|config-management-.*|istio-system|asm-.*|cnrm-system|anthos-.*)$"
+  "system_namespaces": "^(kube-system|kube-public|kube-node-lease|gke-.*|gmp-.*|config-management-.*|istio-system|asm-.*|cnrm-system|anthos-.*)$",
+  "rollback_loosening_flags": {
+    "--disable-workload-identity": "還原會關閉 Workload Identity",
+    "--no-enable-master-authorized-networks": "還原會關閉控制平面授權網路",
+    "--no-enable-shielded-nodes": "還原會關閉 Shielded Nodes",
+    "--no-enable-network-policy": "還原會關閉 NetworkPolicy",
+    "--no-require-ssl": "還原會允許未加密連線",
+    "--no-public-access-prevention": "還原會關閉公開存取防護",
+    "--no-uniform-bucket-level-access": "還原會改回 ACL",
+    "--no-enable-autoupgrade": "還原會關閉自動升級",
+    "--no-enable-autorepair": "還原會關閉自動修復",
+    "--no-enable-logging": "還原會關閉防火牆記錄",
+    "--no-disabled": "還原會重新啟用這條防火牆規則"
+  }
 }

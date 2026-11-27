@@ -415,7 +415,8 @@ def t_classify():
         ("停用 IAP 防火牆", ["gcloud", "compute", "firewall-rules", "update", "allow-iap", f"--project={P}", "--disabled"], iap),
         ("新增 owner", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/owner", f"--project={P}"], pol),
         ("移除 owner", ["gcloud", "projects", "remove-iam-policy-binding", P, "--member=user:alice@example.com", "--role=roles/owner", f"--project={P}"], pol),
-        ("動 GG_SA 自己", ["gcloud", "projects", "remove-iam-policy-binding", P, f"--member=serviceAccount:{FX.GG_SA}", "--role=roles/editor", f"--project={P}"], pol),
+        ("動 GG_SA 自己(移除)", ["gcloud", "projects", "remove-iam-policy-binding", P, f"--member=serviceAccount:{FX.GG_SA}", "--role=roles/editor", f"--project={P}", "--condition=None"], pol),
+        ("動 GG_SA 自己(新增)", ["gcloud", "projects", "add-iam-policy-binding", P, f"--member=serviceAccount:{FX.GG_SA}", "--role=roles/resourcemanager.projectIamAdmin", f"--project={P}", "--condition=None"], pol),
         ("新增 allUsers", ["gcloud", "storage", "buckets", "add-iam-policy-binding", "gs://b", "--member=allUsers", "--role=roles/storage.objectViewer", f"--project={P}"], {}),
         ("來源 0.0.0.0/0", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges=0.0.0.0/0"], fw),
         ("--rules=all", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--rules=all"], fw),
@@ -459,6 +460,8 @@ def t_classify():
     for name, argv, snap in blocked:
         r = ggchange.classify(argv, cfg, snap, shape_only=snap is None)
         ok(f"分類 BLOCKED:{name}", r["blocked_reason"], r)
+        if name.startswith("動 GG_SA"):
+            ok(f"分類 BLOCKED 原因正確:{name}", "gcp-guardian 自己的 SA" in (r["blocked_reason"] or ""), r["blocked_reason"])
     r = ggchange.classify(["kubectl", f"--context={CTX}", "apply", "--filename=/x/manifests/C1.yaml"], cfg,
                           {"objects": [{"_absent": True}]}, [], True)
     ok("分類:apply 新建資源 → 不可還原 BLOCKED", r["blocked_reason"] and r["reversible"] is False, r)
@@ -522,6 +525,10 @@ def t_classify():
         ("autoscaling min=0 被省略時調 max", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
                                           f"--project={P}", "--enable-autoscaling", "--max-nodes=10"], {"autoscaling": {"enabled": True, "maxNodeCount": 5}}, False),
         ("描述含 delete 字樣", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--description=temp rule, delete later"], fw, False),
+        ("SQL 加 --require-ssl(快照沒有 requireSsl)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--require-ssl"],
+         {"settings": {"ipConfiguration": {"sslMode": "ENCRYPTED_ONLY"}}}, False),
+        ("開 GKE_METADATA:還原回 GCE_METADATA 要警示", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                                     f"--project={P}", "--workload-metadata=GKE_METADATA"], dict(FX.NODEPOOLS[0], config={"workloadMetadataConfig": {"mode": "GCE_METADATA"}}), False),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
         ("開 bucket 版本(describe 沒有這個欄位)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}, False),
     ]
@@ -536,6 +543,8 @@ def t_classify():
         if name.startswith("改防火牆描述"):
             import shlex
             good = good and shlex.split(shlex.join(r["rollback"])) == r["rollback"] and "--description=Allow SSH from office" in r["rollback"]
+        if name.startswith("開 GKE_METADATA"):
+            good = good and r.get("rollback_warning")
         if name.startswith("從 all 收緊"):
             good = good and r.get("rollback_warning")
         if name.startswith("GKE_METADATA"):
