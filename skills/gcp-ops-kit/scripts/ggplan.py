@@ -293,7 +293,8 @@ def _safe_actual(v):
 
 
 def check_pre(pre_list, snap):
-    """回傳不成立的條件清單(actual 已遮蔽)。"""
+    """回傳不成立的條件清單(actual 已遮蔽)。比對的是遮蔽後的快照:不能拿 precondition / expected 猜秘密值。"""
+    snap = gglib.redact(snap) if isinstance(snap, (dict, list)) else snap
     bad = []
     for p in pre_list or []:
         if "field" in p:

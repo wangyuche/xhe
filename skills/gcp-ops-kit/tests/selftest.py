@@ -143,6 +143,14 @@ def t_allowlists():
 
 def t_guard(e):
     g = os.path.join(S, "guard.py")
+    proj2 = os.path.join(e.tmp, "proj2")
+    os.makedirs(proj2, exist_ok=True)
+    mid = os.path.join(e.tmp, "mid")
+    os.makedirs(mid, exist_ok=True)
+    if not os.path.lexists(os.path.join(mid, "l2")):
+        os.symlink(os.path.join(e.tmp, "conf"), os.path.join(mid, "l2"))
+    if not os.path.lexists(os.path.join(proj2, "l1")):
+        os.symlink(mid, os.path.join(proj2, "l1"))
     k = S
     cases = [
         (f"{k}/collect.sh {FX.P}", "allow"),
@@ -176,6 +184,7 @@ def t_guard(e):
         (f"grep -oFhf{e.key} {e.reports}/p/r/manual.json", "deny"),
         (f"find -x {e.tmp}/conf", "deny"),
         (f"find -f {e.tmp}/conf", "deny"),
+        (f"diff -r {proj2} {e.reports}", "deny"),
         (f"grep -C 2 x {e.key}", "deny"),
         (f"find {e.reports}/p/r -name ..", "allow"),
         (f"grep kubectl.kubernetes.io {e.reports}/p/r/x.json", "allow"),
@@ -316,6 +325,9 @@ def t_check_pre_redact():
     import ggplan
     bad = ggplan.check_pre([{"field": "/data/DB_PASSWORD", "expect": None}], {"data": {"DB_PASSWORD": "hunter2checkpre"}})
     ok("precondition 不符時不寫出快照原值", bad and "hunter2checkpre" not in json.dumps(bad), bad)
+    snap = {"spec": {"template": {"spec": {"containers": [{"env": [{"name": "DB_PASS", "value": "realsecret"}]}]}}}}
+    right = ggplan.check_pre([{"field": "/spec/template/spec/containers/0/env/0", "expect": {"name": "DB_PASS", "value": "realsecret"}}], snap)
+    ok("precondition 指父物件也猜不到秘密(猜對也不成立)", bool(right), right)
 
 
 def t_sa_change():
@@ -509,6 +521,8 @@ def t_classify():
          {"settings": {"ipConfiguration": {"sslMode": "ENCRYPTED_ONLY"}}}),
         ("新值等於現值(--priority=1000)", ["gcloud", "compute", "firewall-rules", "update", "allow-internal", f"--project={P}", "--priority=1000"], FX.FIREWALLS[2]),
         ("IAM 授權給 domain:gmail.com", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=domain:gmail.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol),
+        ("SQL 授權網路原值有名稱(還原會遺失)", ["gcloud", "sql", "instances", "patch", "db1", f"--project={P}", "--authorized-networks=198.51.100.0/24"],
+         {"settings": {"ipConfiguration": {"authorizedNetworks": [{"value": "203.0.113.0/24", "name": "office", "kind": "sql#aclEntry"}]}}}),
         ("--namespace 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace", "--replicas=3"], None),
         ("--replicas 沒帶值", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas"], None),
         ("kubectl 缺 --context(清楚原因)", ["kubectl", "scale", "deployment/web", "--namespace=shop", "--replicas=2"], None),

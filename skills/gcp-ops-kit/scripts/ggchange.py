@@ -392,6 +392,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 if v is None and "default" in rw:
                     v = rw["default"]
                 if rw.get("format") == "join":
+                    if rw.get("item_key") and any(isinstance(i, dict) and any(x not in (None, "") for kk, x in i.items() if kk not in (rw["item_key"], "kind")) for i in (v or [])):
+                        return None, f"{fl}:原值的項目含名稱等欄位,還原會遺失"
                     vals = [str(i.get(rw["item_key"]) if rw.get("item_key") else i) for i in (v or [])]
                     if vals:
                         out.append(f"{rw['flag']}={','.join(vals)}")
@@ -423,6 +425,8 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
             if fmt == "join":
                 key = rule.get("item_key")
                 items = cur or []
+                if key and any(isinstance(i, dict) and any(v not in (None, "") for kk, v in i.items() if kk not in (key, "kind")) for i in items):
+                    return None, f"{fl}:原值的項目含名稱 / 到期時間等欄位,還原會遺失"
                 vals = [str(i.get(key) if key else i) for i in items]
                 if not vals:
                     if rule.get("clear_flag"):

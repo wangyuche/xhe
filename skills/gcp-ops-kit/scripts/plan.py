@@ -131,9 +131,9 @@ def build_item(s, cfg, run, project, raw, ctx_done):
         return blocked(str(e))
     if err:
         return blocked("快照失敗:" + err)
+    if isinstance(snap, dict) and snap.get("_absent"):
+        return blocked("要變更的資源不存在")
     if kind in ("kubectl-apply", "kubectl-patch"):
-        if kind == "kubectl-patch" and (snap or {}).get("_absent"):
-            return blocked("要 patch 的資源不存在")
         try:
             created, new_findings, log, err = ggplan.k8s_dryrun(s, kind, argv, snap)
         except gglib.Denied as e:

@@ -93,8 +93,11 @@ def _protected_symlink_under(top, cfg, cwd):
             if n > WALK_LIMIT:
                 return f"{top} 底下檔案太多(> {WALK_LIMIT}),請指定較小的範圍"
             p = os.path.join(root, name)
-            if os.path.islink(p) and is_protected(os.path.realpath(p), cfg, cwd, ancestor=True):
-                return f"{p} 是指向受保護路徑的 symlink"
+            if os.path.islink(p):
+                if os.path.isdir(p):  # 目錄 symlink:遞迴工具會跟隨,可串接多層,一律不允許
+                    return f"{p} 是目錄 symlink,遞迴讀取可能跟隨到受保護路徑;請指定不含目錄 symlink 的範圍"
+                if is_protected(os.path.realpath(p), cfg, cwd, ancestor=True):
+                    return f"{p} 是指向受保護路徑的 symlink"
     return None
 
 

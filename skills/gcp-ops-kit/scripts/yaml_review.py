@@ -96,6 +96,8 @@ def main(argv):
         print(f"BLOCKED: {e}", file=sys.stderr)
         return gglib.EXIT_BLOCKED
     label = re.sub(r"[^a-z0-9-]+", "-", (label or os.path.basename(os.path.realpath(paths[0]))).lower()).strip("-")[:50] or "yaml"
+    if label in ("gcloud", "kubeconfig", "home"):
+        label = "yaml-" + label  # 避免和 run 內的憑證快取名稱相同(guard 會擋)
     files, kustom = gather(paths)  # 先確認輸入存在,再建立 run 目錄
     run = gglib.new_run(cfg, os.path.join("_yaml", label), "yaml")  # 與 GCP 專案 ID 分開的命名空間
     meta = gglib.read_json(os.path.join(run, "meta.json"))
