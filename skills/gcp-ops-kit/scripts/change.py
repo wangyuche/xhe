@@ -111,7 +111,9 @@ class Runner:
             res = ggchange.classify(argv, self.cfg, snap, new_f, created)
         else:
             res = ggchange.classify(argv, self.cfg, snap)
-        for k in ("kind", "reversible", "loosens_security"):
+        if res.get("rollback"):
+            res["rollback"] = [a.replace("<before/C?.json>", f"<變更 run>/before/{cid}.rollback.json") for a in res["rollback"]]
+        for k in ("kind", "reversible", "loosens_security", "rollback"):
             if res[k] != it.get(k):
                 return self.stop("BLOCKED", cid, f"重新計算的 {k}={res[k]} 與計畫 {it.get(k)} 不符")
         if res["blocked_reason"]:

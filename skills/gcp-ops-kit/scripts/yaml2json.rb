@@ -37,7 +37,7 @@ def build(node, path, lines)
     node.children.each_slice(2) do |k, v|
       raise 'alias not allowed' if k.is_a?(Psych::Nodes::Alias)
       key = k.is_a?(Psych::Nodes::Scalar) ? k.value : build(k, path, {}).to_s
-      next if key == '<<'
+      raise 'merge key (<<) not allowed' if key == '<<'
       h[key] = build(v, "#{path}/#{esc(key)}", lines)
     end
     h

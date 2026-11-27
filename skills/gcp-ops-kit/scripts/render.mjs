@@ -138,7 +138,29 @@ function changeSection(d) {
 <table><thead><tr><th>編號</th><th>結果</th><th>原因 / 驗證</th><th>結束碼</th><th>還原指令</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function reportDir() {
+  const cfgPath = process.env.GG_CONFIG || path.join(process.env.HOME || '', '.config', 'gcp-guardian', 'config');
+  let dir = path.join(process.env.HOME || '', 'gcp-guardian-reports');
+  try {
+    for (const line of fs.readFileSync(cfgPath, 'utf8').split('\n')) {
+      const m = line.trim().match(/^GG_REPORT_DIR=(.*)$/);
+      if (m) dir = m[1].trim().replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, process.env.HOME || '');
+    }
+  } catch { /* 沒有設定檔用預設 */ }
+  return fs.realpathSync(dir);
+}
+
+function assertRun(run) {
+  const real = fs.realpathSync(run);
+  if (!real.startsWith(reportDir() + path.sep) || !fs.existsSync(path.join(real, 'meta.json'))) {
+    console.error(`拒絕:${run} 不是 GG_REPORT_DIR 底下的 run 目錄`);
+    process.exit(2);
+  }
+  return real;
+}
+
 export function render(run) {
+  run = assertRun(run);
   const d = load(run);
   const all = allFindings(d);
   const s = stats(d);

@@ -109,6 +109,18 @@ def truthy(v):
     return str(v).strip().lower() in ("true", "1", "yes", "on")
 
 
+def _covers_all(srcs):
+    import ipaddress
+    v4, v6 = [], []
+    for x in srcs:
+        try:
+            n = ipaddress.ip_network(x, strict=False)
+        except ValueError:
+            continue
+        (v4 if n.version == 4 else v6).append(n)
+    return any(c.prefixlen == 0 for nets in (v4, v6) for c in ipaddress.collapse_addresses(nets))
+
+
 def scan(inv, gg_sa=None, now=None):
     now = now or datetime.datetime.now(datetime.timezone.utc)
     o = Out(inv)
@@ -154,7 +166,9 @@ def scan(inv, gg_sa=None, now=None):
         if fw.get("direction", "INGRESS") != "INGRESS" or fw.get("disabled"):
             continue
         srcs = fw.get("sourceRanges") or []
-        if not any(s in ("0.0.0.0/0", "::/0") for s in srcs):
+        if not srcs and not fw.get("sourceTags") and not fw.get("sourceServiceAccounts"):
+            srcs = ["0.0.0.0/0"]  # 沒有任何來源條件的 ingress 規則 = 全部來源
+        if not _covers_all(srcs):
             continue
         name = fw.get("name")
         admin, other = [], []

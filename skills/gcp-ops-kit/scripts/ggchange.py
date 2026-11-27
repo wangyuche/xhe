@@ -290,6 +290,11 @@ def _flag_rollback(prefix_argv, pos, flags, snap, res, k):
                 res["auto_pre"].append({"field": rw["from"], "expect": v})
             changed = True
         elif "restore" in rule:
+            if rule.get("skip_if_off") and not _as_bool(gglib.ptr_get(snap, rule["skip_if_off"])):
+                # 功能原本關閉:還原時關掉功能即可(由陪同旗標的反向旗標處理),不需要舊值
+                res["auto_pre"].append({"field": rule["skip_if_off"], "expect": gglib.ptr_get(snap, rule["skip_if_off"])})
+                changed = True
+                continue
             cur = gglib.ptr_get(snap, rule["restore"])
             fmt = rule.get("format", "scalar")
             if cur is None and not rule.get("empty_ok") and not rule.get("state_required") and fmt != "join":
@@ -399,6 +404,12 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
                     return None, [], None
             if not _rules_subset(_ranges(flags[key]), _fw_rules_from_snapshot(snap)):
                 reasons.append("放寬防火牆協定 / 埠")
+    if "--source-ranges" in flags and not _ranges(flags["--source-ranges"]) and flags["--source-ranges"] is not True:
+        res["blocked_reason"] = "一律禁止:清空 --source-ranges(沒有來源的 ingress 規則等於 0.0.0.0/0)"
+        return None, [], None
+    if "--source-ranges" in flags and flags["--source-ranges"] is True:
+        res["blocked_reason"] = "--source-ranges 要有值"
+        return None, [], None
     if "--source-ranges" in flags and not _subset_cidrs(_ranges(flags["--source-ranges"]), snap.get("sourceRanges") or []):
         reasons.append("放寬防火牆來源網段")
     if "--target-tags" in flags:
@@ -605,10 +616,14 @@ def _k_kubectl_label_namespace(pos, flags, snap, res, k, cfg, *_):
     key, val = m.groups()
     old = (gglib.ptr_get(snap, "/metadata/labels") or {}).get(key)
     reasons = []
-    if key == "pod-security.kubernetes.io/enforce":
-        rank_old = POD_SECURITY_ORDER.get(old, -1)
-        if old is not None and POD_SECURITY_ORDER.get(val, -1) < rank_old:
-            reasons.append(f"Pod Security enforce 由 {old} 降為 {val}")
+    if key.startswith("pod-security.kubernetes.io/"):
+        if key.endswith("-version"):
+            reasons.append(f"變更 Pod Security 版本({key}: {old} → {val})")
+        elif old is not None and POD_SECURITY_ORDER.get(val, -1) < POD_SECURITY_ORDER.get(old, -1):
+            reasons.append(f"Pod Security {key.rsplit('/', 1)[1]} 由 {old} 降為 {val}")
+        elif val not in POD_SECURITY_ORDER:
+            res["blocked_reason"] = f"Pod Security 等級不認得:{val}"
+            return None, [], None
     res["auto_pre"].append({"field": "/metadata/labels/" + key.replace("~", "~0").replace("/", "~1"), "expect": old})
     rb_label = f"{key}={old}" if old is not None else f"{key}-"
     return ["kubectl", f"--context={res['target']['context']}", "label", "namespace", pos_ns, rb_label,

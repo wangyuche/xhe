@@ -193,10 +193,12 @@
           ]
         },
         "--min-nodes": {
-          "restore": "/autoscaling/minNodeCount"
+          "restore": "/autoscaling/minNodeCount",
+          "skip_if_off": "/autoscaling/enabled"
         },
         "--max-nodes": {
-          "restore": "/autoscaling/maxNodeCount"
+          "restore": "/autoscaling/maxNodeCount",
+          "skip_if_off": "/autoscaling/enabled"
         }
       }
     },

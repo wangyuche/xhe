@@ -116,6 +116,7 @@ def t_allowlists():
         ["kubectl", f"--context={CTX}", "get", "Secret", "db", "-n", "shop", "-o", "json", "--request-timeout=60s"],
         ["kubectl", f"--context={CTX}", "get", "secrets.v1", "db", "-n", "shop", "-o", "json", "--request-timeout=60s"],
         ["kubectl", f"--context={CTX}", "get", "secret/db", "-n", "shop", "-o", "json", "--request-timeout=60s"],
+        ["kubectl", f"--context={CTX}", "get", "secret,configmap", "db", "-n", "shop", "-o", "json", "--request-timeout=60s"],
         ["kubectl", f"--context={CTX}", "patch", "Secret", "db", "-n", "shop", "--type=merge", "--patch-file=/r/patches/C1.json", "--dry-run=server", "-o", "json", "--request-timeout=60s"],
     ]
     allow_dry = [["kubectl", f"--context={CTX}", "patch", "deployment", "app-secret", "-n", "shop", "--type=merge",
@@ -233,8 +234,15 @@ def t_redact():
     ok("遮蔽:env 標 looks_secret", env[0]["looks_secret"] is True and env[1]["looks_secret"] is False, env)
 
 
-def t_misc():
+def t_misc(e):
     ok("ptr_get 拒絕負數索引", gglib.ptr_get({"a": [1, 2]}, "/a/-1", "NONE") == "NONE" and gglib.ptr_get({"a": [1, 2]}, "/a/1") == 2)
+    r = subprocess.run(["ruby", os.path.join(S, "yaml2json.rb"), "-"], input="spec:\n  <<: {hostNetwork: true}\n", capture_output=True, text=True)
+    ok("YAML 合併鍵 << 一律拒絕(不靜默略過)", r.returncode == 1 and "merge key" in r.stderr, r.stderr)
+    ok("GCP 規則:0.0.0.0/1 + 128.0.0.0/1 也算對全網開放", gcp_rules._covers_all(["0.0.0.0/1", "128.0.0.0/1"]) and not gcp_rules._covers_all(["10.0.0.0/8"]))
+    other = os.path.join(e.tmp, "not-a-run")
+    os.makedirs(other, exist_ok=True)
+    r = e.run(["node", os.path.join(S, "render.mjs"), other])
+    ok("render.mjs 拒絕寫到 run 目錄以外", r.returncode == 2 and not os.path.exists(os.path.join(other, "report.html")), r.stderr)
 
 
 def t_yaml_bool():
@@ -309,6 +317,7 @@ def t_classify():
                                        "--master-authorized-networks=10.1.0.0/16"], dict(FX.CLUSTER, masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]})),
         ("deployment 縮到 0", ["kubectl", f"--context={CTX}", "scale", "deployment/web", "--namespace=shop", "--replicas=0"], FX.DEPLOY),
         ("member 大寫", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:Alice@example.com", "--role=roles/viewer", f"--project={P}"], pol),
+        ("清空防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges="], fw),
         ("bucket 狀態欄位不存在", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {}),
     ]
     for name, argv, snap in blocked:
@@ -354,6 +363,10 @@ def t_classify():
         ("關閉 autoscaling(還原帶回 min / max)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
                                             f"--project={P}", "--no-enable-autoscaling"],
          {"autoscaling": {"enabled": True, "minNodeCount": 1, "maxNodeCount": 5}}, False),
+        ("開啟 autoscaling(原本關)", ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                     f"--project={P}", "--enable-autoscaling", "--min-nodes=1", "--max-nodes=3"], {"autoscaling": {}}, False),
+        ("Pod Security 版本變更(放寬)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "pod-security.kubernetes.io/enforce-version=v1.0", "--overwrite"],
+         {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "restricted"}}}, True),
         ("開 bucket 版本(原本關)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--versioning"], {"versioning_enabled": False}, False),
     ]
     for name, argv, snap, loosens in okcases:
@@ -361,6 +374,8 @@ def t_classify():
         good = not r["blocked_reason"] and r["reversible"] and r["rollback"]
         if name == "開 shielded nodes(原本關)":
             good = good and {"field": "/shieldedNodes/enabled", "expect": None} in r["auto_pre"]
+        if name.startswith("開啟 autoscaling"):
+            good = good and "--no-enable-autoscaling" in r["rollback"] and not any(a.startswith("--min-nodes") for a in r["rollback"])
         if name.startswith("關閉授權網路"):
             good = good and "--master-authorized-networks=10.0.0.0/8" in r["rollback"]
         if name.startswith("關閉 autoscaling"):
@@ -787,7 +802,7 @@ def main():
         t_redact()
         t_rule_tables()
         t_yaml_bool()
-        t_misc()
+        t_misc(e)
         t_approve_parse()
         t_classify()
         t_wrapper(e)
