@@ -19,6 +19,7 @@ import ggchange
 import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
+CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
 
@@ -153,7 +154,7 @@ class Runner:
                          "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
                          "rollback_warning": it.get("rollback_warning")}
         try:
-            r = s._exec(argv, "change", timeout=1800)
+            r = s._exec(argv, "change", timeout=CHANGE_TIMEOUT_GKE if kind.startswith("gke-") else 1800)
         except gglib.Denied as e:  # 第二道防線在執行前拒絕:雲端沒被動到
             self.inflight = None
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
@@ -162,7 +163,10 @@ class Runner:
                "stderr": gglib._short(r.stderr, 800)}
         if r.returncode != 0:
             rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
-            rec.update({"result": "失敗(可能部分套用)", "reason": f"指令失敗(rc={r.returncode});請先確認現況再決定是否還原"})
+            if r.returncode == 124:
+                rec.update({"result": "逾時(狀態不明)", "reason": "等待逾時;伺服器端的操作可能仍在進行,請先確認現況(gcloud container operations list)"})
+            else:
+                rec.update({"result": "失敗(可能部分套用)", "reason": f"指令失敗(rc={r.returncode});請先確認現況再決定是否還原"})
             self.results.append(rec)
             self.status = "ISSUES"
             return False

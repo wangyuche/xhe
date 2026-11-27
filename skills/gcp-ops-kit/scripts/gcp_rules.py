@@ -258,7 +258,7 @@ def scan(inv, gg_sa=None, now=None):
         vm_os = im.get("enable-oslogin")
         if not (truthy(vm_os) if vm_os is not None else proj_oslogin):
             oslogin_missing.append(name)
-        if not truthy(im.get("block-project-ssh-keys")) and not proj_oslogin:
+        if not truthy(im.get("block-project-ssh-keys")) and not (truthy(vm_os) if vm_os is not None else proj_oslogin):
             o.add("GCE-SSH-001", f"vm:{name}", vf, f"/{i}/metadata")
         if vm.get("canIpForward"):
             o.add("GCE-IPF-001", f"vm:{name}", vf, f"/{i}/canIpForward")

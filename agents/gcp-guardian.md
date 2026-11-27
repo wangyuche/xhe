@@ -29,7 +29,7 @@ hooks:
 ## 模式與流程
 
 ### 審查(預設)
-1. `<kit>/scripts/check.sh review <專案>`(完成條件:結束碼 0;3 → 回 BLOCKED,附它印出的原因與安裝指令)。
+1. `<kit>/scripts/check.sh review <專案> [--scope <同 collect 的範圍>]`(完成條件:結束碼 0;3 → 回 BLOCKED,附它印出的原因與安裝指令)。
 2. `<kit>/scripts/collect.sh [<專案>] [--scope …] [--clusters …] [--prev <上次 run>]`(完成條件:印出 `run=`)。
 3. 讀 `<run>/findings.json`、`<run>/inventory/undetermined.json`,必要時讀 `inventory/` 的檔案。規則沒涵蓋、但你從資料看出的問題寫進 `<run>/manual.json`(格式見 SKILL.md,`rule_id` 為 `MANUAL-<n>`,依下方嚴重度表判並寫 `reason`)。沒有就不寫。
 4. 為「嚴重 / 高」與值得修的「中」問題寫 `<run>/plan.input.json`(每條一個 C 編號,`finding` 填規則 ID,`expected` 必填)。只寫允許清單內的指令型態;刪除、升級、開放公開存取這類修法不要寫進計畫,改在回報的「需使用者自己處理」列出。
@@ -43,7 +43,7 @@ hooks:
 4. `render.mjs --check <run>`。
 
 ### 計畫(管理需求,例「node pool 調成 3 台」)
-1. `check.sh plan <專案>`。
+1. `check.sh plan <專案> [--scope <相關範圍>]`。
 2. `collect.sh <專案> --mode plan --scope <相關範圍>`(只盤點需要的範圍)。
 3. 依需求寫 `<run>/plan.input.json`。precondition 寫你依賴的現況(例 `/node_count_per_zone`、`/sourceRanges`),expected 寫變更後要看到的值。
 4. `plan.py build <run>`,再 `render.mjs --check <run>`。

@@ -476,6 +476,12 @@ def t_classify():
         ("namespace 一般 label(可能影響 NetworkPolicy)", ["kubectl", f"--context={CTX}", "label", "namespace", "shop", "team=x", "--overwrite"], {"metadata": {"labels": {}}}),
         ("防火牆拆成多段合計全開", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}",
                                   "--rules=" + ",".join(f"tcp:{i * 1000 + 1}-{min(i * 1000 + 1000, 65535)}" for i in range(66))], FX.FIREWALLS[1]),
+        ("公開規則再加開 SSH", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:8080,tcp:22"], FX.FIREWALLS[1]),
+        ("公開規則清空 target-tags", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--target-tags="], dict(FX.FIREWALLS[1], targetTags=["web"])),
+        ("autoscaling pool 做 resize", ["gcloud", "container", "clusters", "resize", "prod", "--node-pool=default-pool", "--num-nodes=3", "--location=asia-east1", f"--project={P}"],
+         {"nodepool": {"autoscaling": {"enabled": True}}, "node_count_per_zone": 2}),
+        ("停用只涵蓋 IAP 子網段的規則", ["gcloud", "compute", "firewall-rules", "update", "allow-iap-ssh", f"--project={P}", "--disabled"],
+         {"name": "allow-iap-ssh", "direction": "INGRESS", "sourceRanges": ["35.235.240.0/22"], "allowed": [{"IPProtocol": "tcp", "ports": ["22"]}]}),
         ("清空防火牆來源", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--source-ranges="], fw),
         ("bucket 狀態欄位不存在(統一存取)", ["gcloud", "storage", "buckets", "update", "gs://b", f"--project={P}", "--uniform-bucket-level-access"], {}),
         ("系統 namespace scale", ["kubectl", f"--context={CTX}", "scale", "deployment/kube-dns", "--namespace=kube-system", "--replicas=3"], None),
@@ -517,7 +523,7 @@ def t_classify():
         ("新增 IAM(還原帶 --condition=None)", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}", "--condition=None"], pol, False),
         ("IAM 沒帶 --condition", ["gcloud", "projects", "add-iam-policy-binding", P, "--member=user:x@example.com", "--role=roles/viewer", f"--project={P}"], pol, None),
         ("清空防火牆 target-tags(放寬)", ["gcloud", "compute", "firewall-rules", "update", "allow-ssh", f"--project={P}", "--target-tags="],
-         dict(fw, targetTags=["bastion"]), True),
+         dict(fw, targetTags=["bastion"], sourceRanges=["10.0.0.0/8"]), True),
         ("快照協定是數字 6:收緊到 tcp:443 不算放寬", ["gcloud", "compute", "firewall-rules", "update", "allow-web", f"--project={P}", "--rules=tcp:443"],
          dict(FX.FIREWALLS[1], allowed=[{"IPProtocol": "6", "ports": ["0-1000"]}]), False),
         ("rollout restart(不需還原,rollback 為 None)", ["kubectl", f"--context={CTX}", "rollout", "restart", "deployment/web", "--namespace=shop"], FX.DEPLOY, False),
@@ -769,6 +775,19 @@ def t_default_project(e):
     ok("沒給專案也沒有 GG_DEFAULT_PROJECT → BLOCKED", r.returncode == 3, r.stderr[-300:])
 
 
+def t_check_scope(e):
+    bind = os.path.join(e.tmp, "only-gcloud")
+    os.makedirs(bind, exist_ok=True)
+    for t in ("gcloud",):
+        if not os.path.lexists(os.path.join(bind, t)):
+            os.symlink(os.path.join(HERE, "stub", t), os.path.join(bind, t))
+    env = e.env()
+    env["PATH"] = bind + ":/usr/bin:/bin:/usr/sbin:/opt/homebrew/bin:/usr/local/bin"
+    r1 = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam,gcs"], env=env)
+    r2 = e.run([os.path.join(S, "check.sh"), "review", FX.P], env=env)
+    ok("check.sh:scope 不含 gke / k8s 時不要求 kubectl;預設範圍仍要求", r1.returncode == 0 and r2.returncode == 3 and "kubectl" in r2.stderr, (r1.stderr[-300:], r2.stderr[-300:]))
+
+
 def t_undetermined(e):
     fx = [f for f in FX.review_fixtures() if not f["re"].startswith("^sql instances list")]
     fx.append({"tool": "gcloud", "re": "^sql instances list", "rc": 1, "err": "ERROR: API [sqladmin.googleapis.com] not enabled"})
@@ -845,6 +864,10 @@ def t_plan_change(e, review_run):
     e.set_fixtures(plan_fixtures())
     e.state({})
     run = review_run
+    with open(os.path.join(run, "plan.input.json"), "w") as f:
+        json.dump({"items": ["C1"]}, f)
+    r, _ = plan_build(e, run)
+    ok("計畫:items 元素不是物件 → BLOCKED(結束碼 3,不是 traceback)", r.returncode == 3 and "Traceback" not in r.stderr, r.stderr[-300:])
     write_input(run, [
         {"id": "C1", "summary": "移除 bucket 公開讀取", "finding": "GCS-PUB-001",
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
@@ -1143,6 +1166,7 @@ def main():
         t_undetermined(e)
         t_activate_fail(e)
         t_default_project(e)
+        t_check_scope(e)
         if run:
             t_plan_change(e, run)
     finally:

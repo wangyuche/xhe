@@ -45,6 +45,13 @@ def _ranges(v):
     return [x.strip() for x in str(v).split(",") if x.strip()]
 
 
+def _net(x):
+    try:
+        return ipaddress.ip_network(x, strict=False)
+    except ValueError:
+        return None
+
+
 def _subset_cidrs(new, old):
     try:
         oldn = [ipaddress.ip_network(o, strict=False) for o in old]
@@ -483,6 +490,9 @@ def _k_gke_resize(pos, flags, snap, res, k, cfg, *_):
     if n <= 0:
         res["blocked_reason"] = "一律禁止:node pool 縮到 0"
         return None, [], None
+    if (gglib.ptr_get(snap, "/nodepool/autoscaling/enabled")):
+        res["blocked_reason"] = "這個 node pool 已啟用 autoscaling,resize 會被 autoscaler 蓋掉;改用 node-pools update --min-nodes / --max-nodes"
+        return None, [], None
     cur = snap.get("node_count_per_zone")
     if not isinstance(cur, int) or cur <= 0:
         return None, [], "快照取不到目前每區節點數"
@@ -497,6 +507,18 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
         res["blocked_reason"] = "只允許修改 INGRESS 的 allow 規則;deny / egress 規則請使用者自己改"
         return None, [], None
     reasons = _loosen_by_table(flags, k)
+    src = snap.get("sourceRanges") or []
+    public = (not src and not snap.get("sourceTags") and not snap.get("sourceServiceAccounts")) or \
+        any(c.prefixlen == 0 for v in (4, 6) for c in ipaddress.collapse_addresses(
+            [n for n in (_net(x) for x in src) if n is not None and n.version == v]))
+    if public and "--source-ranges" not in flags:
+        widen = ("--no-disabled" in flags
+                 or any(key in flags and not _rules_subset(_ranges(flags[key]), _fw_rules_from_snapshot(snap)) for key in ("--rules", "--allow"))
+                 or ("--target-tags" in flags and snap.get("targetTags") and
+                     (not _ranges(flags["--target-tags"]) or not set(_ranges(flags["--target-tags"])) <= set(snap.get("targetTags")))))
+        if widen:
+            res["blocked_reason"] = "一律禁止:這條規則對整個網際網路開放,不可再擴大埠 / 對象或重新啟用(請先收緊來源)"
+            return None, [], None
     for key in ("--rules", "--allow"):
         if key in flags:
             for r in _ranges(flags[key]):
@@ -535,7 +557,7 @@ def _k_firewall_update(pos, flags, snap, res, k, cfg, *_):
         for x in ranges or []:
             try:
                 n = ipaddress.ip_network(x, strict=False)
-                if n.version == 4 and IAP.subnet_of(n):
+                if n.version == 4 and n.overlaps(IAP):
                     return True
             except ValueError:
                 pass

@@ -30,7 +30,7 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 
 ```bash
 <kit>/scripts/check.sh yaml                         # ruby / python3 / node
-<kit>/scripts/check.sh review|plan|change [<專案>]  # 沒給專案用 GG_DEFAULT_PROJECT; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
+<kit>/scripts/check.sh review|plan|change [<專案>] [--scope iam,gcs,…]  # 沒給專案用 GG_DEFAULT_PROJECT;scope 不含 gke / k8s 時不要求 kubectl; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
 
 <kit>/scripts/collect.sh [<專案>] [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
 #   → run=<GG_REPORT_DIR>/<專案>/<時間>-<模式>/ :inventory/(遮蔽後)、findings.json、plan.json(空)、report.html
@@ -96,6 +96,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - **共同禁止**:任何 delete / `set-iam-policy` / `services disable` / upgrade / `--cluster-version` / `--release-channel` / `--node-version` / `--image-type`;新增 allUsers / allAuthenticatedUsers;任何 `0.0.0.0/0`、`::/0`;防火牆 `all` 或 1–65535 全埠;動 gcp-guardian 自己的 SA;新增 / 移除 `roles/owner`;停用 GKE / IAP 防火牆規則;`--prune`、`--force`、kustomize apply;retention 設定;建立 SA 金鑰。
 - **反向旗標**(例 `--enable-shielded-nodes`)會先讀變更前狀態;已是目標狀態 → 判「不可還原」(其實不需變更,還原反而會改掉原設定),狀態記入 `auto_pre`。bucket / Cloud SQL 的狀態欄位讀不到也判不可還原。
 - gcloud 規定要成對的旗標(`--master-authorized-networks` 要帶 `--enable-master-authorized-networks`、`--min/max-nodes` 要帶 `--enable-autoscaling`)缺一就 BLOCKED;已啟用時這個 enable 旗標當「陪同旗標」,還原時保留。
+- 原本就對全網開放的防火牆規則:不可再擴大埠 / 套用對象或重新啟用(要先收緊來源)。已啟用 autoscaling 的 node pool 不可 resize(改用 --min/--max-nodes)。GKE 類變更逾時 4 小時(`GG_GKE_TIMEOUT`),逾時記「狀態不明」。
 - 防火牆 target-tags 清空 / 新增、priority 調高、Cloud SQL SSL 降級都標「放寬安全」;IAM member 一律小寫。
 - YAML 審查的 kustomize 展開結果只存遮蔽後的 JSON(`inventory/rendered/*.json`);`--check` 不允許 inventory 有其他格式的檔案。
 - 關閉功能的反向旗標會連同被清掉的設定一起還原(關授權網路 → 還原帶回原網段;關 autoscaling → 帶回 min / max)。

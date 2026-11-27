@@ -43,6 +43,8 @@ def build(run):
     inp = gglib.read_json(os.path.join(run, "plan.input.json"))
     if not inp or not isinstance(inp.get("items"), list):
         raise gglib.Blocked("缺 plan.input.json 或格式不對(要有 items 陣列)")
+    if not all(isinstance(it, dict) for it in inp["items"]):
+        raise gglib.Blocked("plan.input.json 的 items 每個元素都要是物件")
     ids = [it.get("id") for it in inp["items"]]
     if len(set(ids)) != len(ids) or not all(isinstance(i, str) and ID_RE.match(i) for i in ids):
         raise gglib.Blocked(f"id 要是不重複的 C<n>:{ids}")
