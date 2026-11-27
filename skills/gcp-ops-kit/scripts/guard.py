@@ -20,8 +20,8 @@ READONLY_CMDS = {"ls", "cat", "head", "tail", "wc", "grep", "shasum", "stat", "d
 FIND_DENY = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 CLOUD_WORDS = ("gcloud", "kubectl", "cloudsdk", "kubeconfig", "gke-gcloud-auth-plugin", "gsutil", "bq ", "terraform",
                "curl", "wget", "googleapis")
-GREP_VALUE_OPTS = {"-d", "-D", "-m", "-A", "-B", "-C", "--directories", "--devices", "--max-count", "--after-context",
-                   "--before-context", "--context", "--label", "--include", "--exclude", "--exclude-dir", "--binary-files", "--color", "--colour"}
+GREP_VALUE_OPTS = {"-d", "-D", "-m", "-A", "-B", "--directories", "--devices", "--max-count", "--after-context",
+                   "--before-context", "--label", "--include", "--exclude", "--exclude-dir", "--binary-files"}
 WRITABLE_NAMES = {"manual.json", "plan.input.json"}
 
 
@@ -191,26 +191,17 @@ def check_bash(cmd, cfg, cwd):
         if bad:
             return bad
     rec_tool = first in ("grep", "diff", "find") or (first == "ls" and any(x.startswith("-") and "R" in x for x in toks[1:]))
-    # 只檢查真的是路徑的參數:grep 用 gpaths(+ -f / --file 的值)、find 用表達式前的起點,其餘指令看全部參數
-    if first == "grep":
-        path_toks = gpaths + [toks[i] for i in pat_vals if i > 1 and toks[i - 1] in ("-f", "--file")] + \
-            [t for t in toks[1:] if (t.startswith("--file=") or (t.startswith("-f") and not t.startswith("--"))) and len(t) > 2]
-    elif first == "find":
-        path_toks = []
-        for t in toks[1:]:
-            if t.startswith("-") or t in ("!", "("):
-                break
-            path_toks.append(t)
-    else:
-        path_toks = toks[1:]
+    # 保守:每個參數(含旗標裡黏著的值)都當成可能的路徑檢查,不去猜哪個是樣式。
+    # 只有會遞迴走目錄的用法才檢查「上層目錄」(非遞迴的 grep 把 . 當樣式時不會誤擋)。
+    walks = recursive or first == "find" or (first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x for x in toks[1:]))
+    path_toks = toks[1:]
     for t in path_toks:
         for pth in arg_paths(t):
             if rec_tool and pth and os.path.isdir(_raw(pth, cwd)):
                 bad = _protected_symlink_under(_raw(pth, cwd), cfg, cwd)
                 if bad:
                     return bad
-            ls_recursive = first == "ls" and any(x.startswith("-") and not x.startswith("--") and "R" in x or x == "--recursive" for x in toks[1:])
-            if pth and is_protected(pth, cfg, cwd, ancestor=ls_recursive or first not in ("ls", "stat", "pwd", "date")):
+            if pth and is_protected(pth, cfg, cwd, ancestor=walks):
                 return f"不可讀受保護路徑(或其上層目錄):{t}"
     return None
 
