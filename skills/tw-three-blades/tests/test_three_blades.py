@@ -24,7 +24,7 @@ check("11/27 三條均線", "小藍 20MA 39,066" in o and "小綠 60MA 39,794" i
 check("11/27 空頭排列", "排列:空頭排列" in o)
 check("11/27 空方環境、小橘斜率轉負", "① 方向(小橘斜率):空方環境(小橘斜率 11/03 11:00 由正轉負)" in o)
 check("11/27 藍綠死亡交叉", "② 藍綠交叉:最近一次 11/17 12:00 死亡交叉" in o)
-check("11/27 結論", "結論:空方環境,條件未齊" in o)
+check("11/27 結論(列出缺的條件)", "結論:空方環境,偏空條件未齊(價格未在三線之下)" in o)
 
 # 2. 11/13 13:00:藍綠剛黃金交叉,小橘斜率為負 → 逆勢反彈
 o = run(F60, "--asof", "2026-11-13 13:00").stdout
@@ -118,8 +118,12 @@ try:
     o = run(flat).stdout
     check("小橘走平 → 方向不明,不判空方", "小橘走平(方向不明)" in o and "空方環境" not in o and "斜率走平 →" in o)
     check("均線相等不算交叉", "資料期間內沒有交叉" in o)
+    check("小橘走平時雙斜率不說反方向、價格貼著均線", "③ 雙斜率:小橘走平,無法比較方向" in o and "價格貼著均線" in o and "在上方壓著" not in o)
 finally:
     if os.path.exists(flat): os.remove(flat)
+check("--asof 小時一位數會正規化", "【60分K 均線三刀流】11/13 09:00" in run(F60, "--asof", "2026-11-13 9:00").stdout)
+r = run(F60, "--slopen", "3")
+check("看不懂的參數報用法", r.returncode != 0 and "看不懂的參數" in r.stderr)
 r = run(F60, "--asof", "2026-11-13T13:00")
 check("--asof 格式錯報用法", r.returncode != 0 and "用法" in r.stderr)
 

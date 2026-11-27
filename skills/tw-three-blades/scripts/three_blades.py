@@ -38,8 +38,8 @@ COL = {20: "#2b6cb0", 60: "#1e8449", 240: "#e08a1e"}
 
 def tstr(b): return b["date"][:16].replace("T", " ")
 
-if not args:
-    sys.exit(USAGE)
+if len(args) != 1 or args[0].startswith("-"):
+    sys.exit(f"{USAGE}\n看不懂的參數:{' '.join(args) or '(缺資料檔)'}")
 try:
     raw = json.load(open(args[0]))
 except Exception as e:
@@ -57,7 +57,7 @@ if asof:
     if len(asof) == 10:  # 只給日期:包含當天整天
         asof += " 23:59"
     try:
-        _dt.datetime.strptime(asof, "%Y-%m-%d %H:%M")
+        asof = _dt.datetime.strptime(asof, "%Y-%m-%d %H:%M").strftime("%Y-%m-%d %H:%M")  # 正規化(9:00 → 09:00)再做字串比較
     except ValueError:
         sys.exit(f"{USAGE}\n--asof 格式要是 YYYY-MM-DD 或 YYYY-MM-DD HH:MM")
     bars = [b for b in bars if tstr(b) <= asof]
@@ -134,14 +134,15 @@ for p in PER:
     since = f",{t(ci)} {kind}" if ci else ""
     sgn = lambda v: ("+" if v > 0 else "-" if v < 0 else "±") + px(abs(v))
     word = {1: "正 ↗", -1: "負 ↘", 0: "走平 →"}[sg[p]]
-    out.append(f"{NAME[p]} {px(m)}:價格在{'上' if C[last] > m else '下'}方 {sgn(C[last]-m)}、斜率{word}({sgn(s)}){since}")
+    where = "在上方" if C[last] > m else "在下方" if C[last] < m else "貼著均線"
+    out.append(f"{NAME[p]} {px(m)}:價格{where} {sgn(C[last]-m)}、斜率{word}({sgn(s)}){since}")
 m20, m60, m240 = MA[20][last], MA[60][last], MA[240][last]
 order = "多頭排列(小藍>小綠>小橘)" if m20 > m60 > m240 else "空頭排列(小藍<小綠<小橘)" if m20 < m60 < m240 else "糾結(非多空排列)"
 out.append(f"排列:{order}")
 fi, before = last_flip(240)
 env = {1: "多方環境", -1: "空方環境", 0: "小橘走平(方向不明)"}[sg[240]]
 flip = f"(小橘斜率 {t(fi)} 由{'負轉正' if before == 1 else '正轉負'})" if fi and sg[240] else ""   # before = 目前的斜率方向
-pos240 = "價格在小橘之上" if C[last] > m240 else "價格在小橘之下"
+pos240 = "價格在小橘之上" if C[last] > m240 else "價格在小橘之下" if C[last] < m240 else "價格貼著小橘"
 out.append(f"① 方向(小橘斜率):{env}{flip};{pos240}" + (" → 斜率仍負,切忌積極做多" if sg[240] < 0 and C[last] >= m240 else "")
            + (" → 斜率為正但價格已跌破小橘,多方結構受損" if sg[240] > 0 and C[last] < m240 else ""))
 if crosses:
@@ -150,12 +151,15 @@ if crosses:
     out.append(f"② 藍綠交叉:最近一次 {t(ci)} {kind}(交叉那根收 {px(C[ci])},K{K[ci]:.0f}/D{D[ci]:.0f});目前 KD {kd_now}")
 else:
     out.append("② 藍綠交叉:資料期間內沒有交叉")
-dbl = [NAME[p].split()[0] for p in (20, 60) if sg[240] and sg[p] == sg[240]]
-out.append(f"③ 雙斜率:" + (f"{'、'.join(dbl)}與小橘同方向" if dbl else "小藍、小綠都與小橘反方向"))
+if sg[240] == 0:
+    out.append("③ 雙斜率:小橘走平,無法比較方向")
+else:
+    rel = {p: ("同方向" if sg[p] == sg[240] else "走平" if sg[p] == 0 else "反方向") for p in (20, 60)}
+    out.append("③ 雙斜率:" + "、".join(f"{NAME[p].split()[0]}{rel[p]}" for p in (20, 60)) + "(相對小橘)")
 above_all = all(C[last] > MA[p][last] for p in PER)
 below_all = all(C[last] < MA[p][last] for p in PER)
 out.append("④ 不逆勢:" + ("價格站上三條線" if above_all else "價格在三條線之下" if below_all
-           else "價格還沒全部站上(" + "、".join(NAME[p].split()[0] for p in PER if C[last] <= MA[p][last]) + " 在上方壓著)"))
+           else "價格還沒全部站上(" + "、".join(NAME[p].split()[0] + ("貼著" if C[last] == MA[p][last] else "在上方壓著") for p in PER if C[last] <= MA[p][last]) + ")"))
 # 綜合:書中的順勢條件
 gold = crosses and crosses[-1][0] == "黃金交叉"
 if sg[240] > 0 and gold and K[last] > D[last] and above_all:
@@ -165,9 +169,13 @@ elif sg[240] < 0 and crosses and not gold and below_all:
 elif sg[240] == 0:
     verdict = "小橘走平,方向不明,等斜率出現方向再判斷"
 elif sg[240] > 0:
-    verdict = "多方環境但條件未齊(" + ("藍綠未金叉" if not gold else "KD 未轉強" if K[last] <= D[last] else "價格未站上三線") + "),等條件到齊"
+    miss = [x for x, ok in (("藍綠未金叉", gold), ("KD 未轉強", K[last] > D[last]), ("價格未站上三線", above_all)) if not ok]
+    verdict = "多方環境但條件未齊(" + "、".join(miss) + "),等條件到齊"
+elif gold:
+    verdict = "空方環境但出現藍綠黃金交叉,屬逆勢反彈,書中建議不積極做多"
 else:
-    verdict = "空方環境" + ("但出現藍綠黃金交叉,屬逆勢反彈,書中建議不積極做多" if gold else ",條件未齊")
+    miss = [x for x, ok in (("沒有藍綠死亡交叉", bool(crosses)), ("價格未在三線之下", below_all)) if not ok]
+    verdict = "空方環境,偏空條件未齊(" + "、".join(miss) + ")"
 out.append(f"結論:{verdict}")
 print("\n".join(out))
 
