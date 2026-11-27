@@ -25,11 +25,23 @@ def opt(name, default=None):
     if name in args:
         i = args.index(name); v = args[i+1]; del args[i:i+2]; return v
     return default
-asof = opt("--asof"); days = int(opt("--days", "4")); svg = opt("--svg"); title = opt("--title", "加權指數")
-zone_days = int(opt("--zone-days", "2"))
-keep_days = int(opt("--keep-days", "10"))   # 背離確認後最多往回保留幾個交易日(Gg 2026-11-27 3A:保留到跌破才失效)
-ch_from = opt("--channel-from")             # 通道下緣起點(低點 1)的 K 棒時間 "YYYY-MM-DD HH:MM";
+import re
+def posint(name, default):
+    v = opt(name, default)
+    if not re.fullmatch(r"[1-9][0-9]*", str(v)):
+        sys.exit(f"用法錯誤: {name} 要是正整數(收到 {v!r})")
+    return int(v)
+asof = opt("--asof"); svg = opt("--svg"); title = opt("--title", "加權指數")
+days = posint("--days", "4")
+zone_days = posint("--zone-days", "2")
+keep_days = posint("--keep-days", "10")     # 背離確認後最多往回保留幾個交易日(Gg 2026-11-27 3A:保留到跌破才失效);小於 --days 時以 --days 為準
+ch_from = opt("--channel-from")             # 通道下緣起點(低點 1)的 30 分 K 棒時間 "YYYY-MM-DD HH:MM";只用在 30 分 K
                                             # 沒給就不畫通道:低點 1 的自動選法待 Gg 確認(用背離前低會讓通道過陡、失真)
+if ch_from:
+    m = re.fullmatch(r"\s*(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})\s*", ch_from)
+    if not m:
+        sys.exit(f'用法錯誤: --channel-from 格式要是 "YYYY-MM-DD HH:MM"(收到 {ch_from!r})')
+    ch_from = f"{m.group(1)} {int(m.group(2)):02d}:{m.group(3)}"
 NSTEP = 6
 W = 3
 
@@ -54,8 +66,9 @@ def load(path):
     return merged, int(raw.get("timeframe", "30") or 30)
 
 class Series:
-    def __init__(self, bars, tf):
-        self.bars, self.tf = bars, tf
+    def __init__(self, bars, tf, ch=None):
+        self.bars, self.tf, self.ch = bars, tf, ch     # ch = 通道低點 1 的時間(只有 30 分 K 會給)
+        self.notes = []
         n = self.n = len(bars)
         self.O = [b["open"] for b in bars]; self.H = [b["high"] for b in bars]
         self.L = [b["low"] for b in bars]; self.C = [b["close"] for b in bars]
@@ -101,7 +114,12 @@ class Series:
             a, b = self.lows[j-1], self.lows[j]
             if a < self.k0: break
             if D[a] < 20 and L[b] < L[a] and D[b] > D[a] and D[b] < 30:
-                div = {"a": a, "i": b, "confirm": b + W, "kept": a < w0}; break
+                div = {"a": a, "i": b, "confirm": b + W, "kept": a < w0}
+                # 回看範圍外的舊背離,如果在回看範圍開始前就已經被跌破,是早就失效的訊號:當作沒有,不報「失效」
+                brk = next((i for i in range(b+1, last+1) if L[i] < L[b]), None)
+                if div["kept"] and brk is not None and brk < w0:
+                    div = None
+                break
         # ① 鈍化:回看範圍內 D<20;背離是保留下來的(前低在回看範圍外)時,鈍化從背離前低算起
         s0 = min(w0, div["a"]) if div else w0
         dz = [i for i in range(s0, last+1) if D[i] < 20]
@@ -141,11 +159,18 @@ class Series:
                 if H[b2] < H[a2]:
                     s = (H[b2]-H[a2])/(b2-a2)
                     lines.append({"kind": "高點連線", "a": a2, "b": b2, "x0": b2, "y0": H[b2], "s": s}); break
-            p1 = next((i for i, bb in enumerate(self.bars) if tstr(bb) == ch_from), None) if ch_from else None
-            if p1 is not None and p1 < b:
-                s = (L[b]-L[p1])/(b-p1)
-                p2 = max(range(p1, b+1), key=lambda i: H[i] - (L[p1] + s*(i-p1)))
-                lines.append({"kind": "通道上緣", "a": p1, "b": b, "p2": p2, "x0": p2, "y0": H[p2], "s": s})
+            if self.ch:
+                p1 = next((i for i, bb in enumerate(self.bars) if tstr(bb) == self.ch), None)
+                if p1 is None:
+                    self.notes.append(f"通道:找不到 --channel-from 指定的 K 棒 {self.ch}(要是 {self.tf} 分 K 的開始時間,例如 09:00、09:30),沒有畫通道")
+                elif p1 >= b:
+                    self.notes.append(f"通道:低點 1 {self.ch} 不在背離低點 {tstr(self.bars[b])} 之前,沒有畫通道")
+                elif L[p1] <= L[b]:
+                    self.notes.append(f"通道:低點 1 {px(L[p1])} 不高於背離低點 {px(L[b])},通道不是往下,不算下降壓力線")
+                else:
+                    s = (L[b]-L[p1])/(b-p1)
+                    p2 = max(range(p1, b+1), key=lambda i: H[i] - (L[p1] + s*(i-p1)))
+                    lines.append({"kind": "通道上緣", "a": p1, "b": b, "p2": p2, "x0": p2, "y0": H[p2], "s": s})
             for e in lines:
                 ln = lambda x, e=e: e["y0"] + e["s"]*(x-e["x0"])
                 e["line"] = ln(last)
@@ -184,7 +209,8 @@ def report(S, r, label):
     end = _dt.datetime.strptime(tstr(S.bars[last]), "%Y-%m-%d %H:%M") + _dt.timedelta(minutes=S.tf)
     now = _dt.datetime.utcnow() + _dt.timedelta(hours=8)
     live = not asof and now < end and tstr(S.bars[last])[11:] < "13:30"
-    out = [f"【{label}】{t(last)} 收 {C[last]:,.2f}  K {K[last]:.1f} / D {D[last]:.1f}  (回看 {days} 天:{t(S.w0)} 起)"
+    keep = f";背離保留自 {t(st[2]['a'])}" if st[2] and st[2].get("kept") else ""
+    out = [f"【{label}】{t(last)} 收 {C[last]:,.2f}  K {K[last]:.1f} / D {D[last]:.1f}  (回看 {days} 天:{t(S.w0)} 起{keep})"
            + ("  ⚠️ 最後一根還沒走完,訊號可能變動" if live else "")]
     skip = "⏸ 前一步未成立,不判斷"
     s1 = st[1]
@@ -218,6 +244,8 @@ def report(S, r, label):
                     how = f"下緣 {t(e['a'])} {L[e['a']]:,.0f} → {t(e['b'])} {L[e['b']]:,.0f},平行通過 {t(e['p2'])} {S.H[e['p2']]:,.0f}"
                 mark = f"✅ {t(e['i'])} 首次站上" if e["i"] is not None else f"❌ 差 {C[last]-e['line']:+,.0f}"
                 out.append(f"　{e['kind']}:線 {e['line']:,.0f}({how})當下收 {C[last]:,.0f} {mark}")
+        for nt in S.notes:
+            out.append(f"　⚠️ {nt}")
         z = getattr(S, "zone", None)
         if st[6]:
             out.append(f"⑥ 突破水平壓力區間: 有 ✅ 當下收 {px(C[last])} > 區間上緣 {px(z['hi'])}(區間 {zstr(z)},{t(st[6]['i'])} 首次站上)")
@@ -232,7 +260,7 @@ def report(S, r, label):
     return "\n".join(out)
 
 b30, tf30 = load(args[0])
-S30 = Series(b30, tf30); r30 = S30.run()
+S30 = Series(b30, tf30, ch_from); r30 = S30.run()   # --channel-from 是 30 分 K 的時間,60 分 K 不套用
 print(report(S30, r30, f"{tf30}分K"))
 r60 = None
 if len(args) > 1:
@@ -262,6 +290,7 @@ if svg and r30["stage"] >= 2:
     conf = f"　60分K STAGE {r60['stage']}/{NSTEP}" if r60 and r30["stage"] >= 3 else ""
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 {Wd} {Ht}">',
          f'<rect width="{Wd}" height="{Ht}" fill="#fcfcfb"/>',
+         f'<clipPath id="pricearea"><rect x="{Lm}" y="{T}" width="{Wd-Lm-Rm}" height="{P1b-T}"/></clipPath>',
          f'<text x="{Lm}" y="60" {f} font-size="38" font-weight="600" fill="#0b0b0b">{title}　{S.tf}分K 底部訊號</text>',
          f'<text x="{Lm}" y="104" {f} font-size="24" fill="#52514e">{t(i0)} – {t(last)}　STAGE {r30["stage"]}/{NSTEP}{conf}　KD(9,3,3)　Fugle</text>']
     step = next(s for s in [10, 20, 50, 100, 200, 250, 500, 1000, 2000] if (hi-lo)/s <= 8)
@@ -339,9 +368,9 @@ if svg and r30["stage"] >= 2:
                 if j >= i0: o.append(f'<circle cx="{X(j):.1f}" cy="{Y(H[j]):.1f}" r="7" fill="none" stroke="{PUR}" stroke-width="2.5"/>')
         else:   # 通道:上緣＋下緣(下緣用細線),上緣通過的高點畫圈
             xa = max(e["a"], i0); sl = e["s"]; la = e["a"]
-            o.append(f'<line x1="{X(xa):.1f}" y1="{Y(L[la]+sl*(xa-la)):.1f}" x2="{X(last):.1f}" y2="{Y(L[la]+sl*(last-la)):.1f}" stroke="{PUR}" stroke-width="1.5"{dash}/>')
+            o.append(f'<line x1="{X(xa):.1f}" y1="{Y(L[la]+sl*(xa-la)):.1f}" x2="{X(last):.1f}" y2="{Y(L[la]+sl*(last-la)):.1f}" stroke="{PUR}" stroke-width="1.5"{dash} clip-path="url(#pricearea)"/>')
             if e["p2"] >= i0: o.append(f'<circle cx="{X(e["p2"]):.1f}" cy="{Y(H[e["p2"]]):.1f}" r="7" fill="none" stroke="{PUR}" stroke-width="2.5"/>')
-        o.append(f'<line x1="{X(xa):.1f}" y1="{Y(ln(xa)):.1f}" x2="{X(last):.1f}" y2="{Y(ln(last)):.1f}" stroke="{PUR}" stroke-width="3"{dash}/>')
+        o.append(f'<line x1="{X(xa):.1f}" y1="{Y(ln(xa)):.1f}" x2="{X(last):.1f}" y2="{Y(ln(last)):.1f}" stroke="{PUR}" stroke-width="3"{dash} clip-path="url(#pricearea)"/>')
     if st[5]:
         i = st[5]["i"]
         o.append(f'<path d="M{X(i):.1f},{Y(H[i])-14:.1f} l-9,-18 h18 z" fill="{PUR}"/>')

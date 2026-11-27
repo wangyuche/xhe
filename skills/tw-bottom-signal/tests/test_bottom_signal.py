@@ -93,6 +93,26 @@ o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:30"
 check("通道圖", "SVG" in o and os.path.exists(svg4) and "突破通道上緣" in open(svg4).read())
 if os.path.exists(svg4): os.remove(svg4)
 
+# 6b3. PR #41 review:--channel-from 只用在 30 分 K;往上斜的通道不算;對不到 K 棒要提示;格式寬鬆但錯的要報錯
+o = run(F30b, F60b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:30")
+p30, p60 = o.split("⑦")
+check("通道只畫在 30 分 K", "通道上緣" in p30 and "通道" not in p60)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13T9:30")
+check("--channel-from 少前導 0、用 T 也對得到", "通道上緣:線 40,056" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-13 09:15")
+check("對不到 K 棒要提示", "⚠️ 通道:找不到 --channel-from 指定的 K 棒 2026-11-13 09:15" in o and "通道上緣:" not in o
+      and "STAGE 3/6" in o)
+o = run(F30b, "--asof", "2026-11-18 11:30", "--channel-from", "2026-11-06 09:00")
+check("低點 1 比背離低點低 → 通道往上,不算", "通道不是往下,不算下降壓力線" in o and "通道上緣:" not in o
+      and "STAGE 3/6" in o)
+r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--channel-from", "11-13 09:30"], capture_output=True, text=True)
+check("--channel-from 格式錯 → 用法錯誤", r.returncode != 0 and "用法錯誤" in r.stderr and "Traceback" not in r.stderr)
+for bad_v in ("0", "abc"):
+    r = subprocess.run([sys.executable, "-I", SCRIPT, F30b, "--keep-days", bad_v], capture_output=True, text=True)
+    check(f"--keep-days {bad_v} → 用法錯誤", r.returncode != 0 and "正整數" in r.stderr and "Traceback" not in r.stderr)
+o = run(F30, F60)
+check("背離保留時標題註明", "(回看 4 天:11/11 09:00 起;背離保留自 11/04 12:00)" in o)
+
 # 6c. --zone-days 改區間範圍:只看 1 天 → 只剩 11/18 09:00 一個高點,區間退化成單一價位
 o = run(F30b, "--asof", "2026-11-18 11:30", "--zone-days", "1")
 check("zone-days 1 天", "區間 40,938.2(在區間下方" in o)
@@ -106,6 +126,24 @@ o = run(F30c, "--asof", "2026-11-19 09:30", "--svg", svg3)
 check("失效後不畫圖", "SVG" not in o and not os.path.exists(svg3))
 o = run(F30c, "--asof", "2026-11-19 09:00")
 check("跌破前仍有效", "② 底部背離: 有 ✅" in o and "STAGE 3/6" in o)
+
+# 6e. PR #41 review:回看範圍開始前就被跌破的舊背離是早就失效的,不報「失效」(看起來像剛失效),當作沒有背離
+#     在 F30c 後面接兩天平盤 K 棒(11/20、11/21),--days 1 → 回看只剩 11/21,跌破發生在 11/19 → 舊背離不列
+old = os.path.join(TMP, "bs_old.json")
+try:
+    d = json.load(open(F30c))
+    lastc = sorted(d["data"], key=lambda b: b["date"])[-1]["close"]
+    for day in ("2026-11-20", "2026-11-21"):
+        for hm in ("09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00"):
+            d["data"].append({"date": f"{day}T{hm}:00.000+08:00", "open": lastc, "high": lastc, "low": lastc,
+                              "close": lastc, "volume": 1})
+    json.dump(d, open(old, "w"))
+    o = run(old, "--days", "1")
+    check("舊背離早就跌破 → 不報失效", "失效" not in o and ("② 底部背離: 沒有 ❌" in o or "② 底部背離: ⏸" in o))
+    o = run(old, "--days", "3")
+    check("跌破在回看範圍內 → 照樣報失效", "② 底部背離: 失效 ❌ 11/19 09:30" in o)
+finally:
+    if os.path.exists(old): os.remove(old)
 
 # 7. 抓不到資料時要明確報錯
 bad = os.path.join(TMP, "bad_fugle.json")
