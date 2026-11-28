@@ -144,7 +144,7 @@ function changeSection(d) {
   const c = d.change;
   if (!c) return '';
   const rows = (c.results || []).map((r) => `<tr><td class="mono"><b>${esc(r.id)}</b></td><td>${esc(r.result)}</td><td>${esc(r.reason || '')}</td>
-<td class="mono">${esc(r.rc ?? '-')}</td><td><pre class="mono">${esc(shjoin(r.rollback) || '-')}</pre></td></tr>`).join('\n');
+<td class="mono">${esc(r.rc ?? '-')}</td><td>${r.exec_warning ? `<div class="sub" style="color:var(--crit)">⚠ 執行前注意:${esc(r.exec_warning)}</div>` : ''}${r.rollback_warning ? `<div class="sub" style="color:var(--crit)">⚠ ${esc(r.rollback_warning)}</div>` : ''}<pre class="mono">${esc(shjoin(r.rollback) || '-')}</pre></td></tr>`).join('\n');
   return `<h2>變更結果</h2><p class="sub">計畫 <span class="mono">${esc(c.plan)}</span>(sha256 ${esc(String(c.sha256).slice(0, 16))}…),核准 ${esc((c.approved || []).join(', '))}。不自動還原;需要時由使用者依還原指令執行。</p>
 <table><thead><tr><th>編號</th><th>結果</th><th>原因 / 驗證</th><th>結束碼</th><th>還原指令</th></tr></thead><tbody>${rows}</tbody></table>`;
 }

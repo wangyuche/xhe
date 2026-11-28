@@ -23,11 +23,10 @@ OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
 OP_FAIL_WINDOW = float(os.environ.get("GG_OP_FAIL_WINDOW", "600"))  # 連續查不到狀態超過 10 分鐘才放棄
 CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
-STATE_STABLE = float(os.environ.get("GG_STATE_STABLE", "120"))  # 依資源狀態判斷完成時,要連續穩定多久
 
 
-CHANGING = {"PROVISIONING", "RECONCILING", "STOPPING", "MAINTENANCE", "PENDING_CREATE", "PENDING_DELETE"}
-MIG_UNSTABLE_MAX = float(os.environ.get("GG_MIG_UNSTABLE_MAX", "1800"))  # MIG 一直不穩定(例如配額不足)最多等 30 分鐘
+CHANGING = {"PROVISIONING", "RECONCILING", "STOPPING", "MAINTENANCE", "ONLINE_MAINTENANCE", "REPAIRING", "PENDING_CREATE", "PENDING_DELETE"}
+GKE_KINDS = {"gke-cluster-update": "container", "gke-resize": "container", "gke-nodepool-update": "container", "sql-patch": "sql"}
 
 
 def _res_state(svc, after):
@@ -102,15 +101,14 @@ class Runner:
             except ValueError:
                 op = None
             if isinstance(op, list):
+                if len(op) > 1:
+                    return unknown("指令回傳多個操作,無法逐一追蹤;請用 gcloud container / sql operations list 確認")
                 op = op[0] if op else None
             is_op = isinstance(op, dict) and (op.get("operationType") or op.get("kind") == "sql#operation"
                                               or "/operations/" in str(op.get("selfLink") or op.get("name") or ""))
             name = (op.get("name") or "").rsplit("/", 1)[-1] if is_op else ""  # 印出的不是操作(例如資源本身):改用差集找
             if not name:
-                # gcloud 原始碼:container clusters update / resize 加 --async 時不印操作。
-                # 不去猜哪個操作是自己的:改由 one() 依資源狀態(回到 RUNNING 且符合預期值)判斷完成
-                self.wait_state = True
-                return subprocess.CompletedProcess(r.args, 0, "", "")
+                return unknown("指令已送出,但輸出不是操作物件,無法追蹤;請用 gcloud container / sql operations list 確認")
             if op.get("status") == "DONE":
                 return self._op_result(r, svc, op)
             project = _flag(argv, "--project")
@@ -204,7 +202,6 @@ class Runner:
 
     def one(self, s, it, ctx_done):
         cid = it["id"]
-        self.wait_state = False  # 每條重設:上一條的狀態不影響這條
         self.op_note = False
         argv = ggplan.materialize(it, self.run)
         kind = it["kind"]
@@ -248,7 +245,7 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
-        if kinfo.get("async") and _res_state(kinfo["async"], snap) in ("changing", "mig"):
+        if kind in GKE_KINDS and _res_state(GKE_KINDS[kind], snap) in ("changing", "mig"):
             # 穩定但有錯誤(DEGRADED 等)照樣可以送:使用者可能正是要修它
             return self.stop("BLOCKED", cid, "資源正在變更中(PROVISIONING / RECONCILING 或 MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
@@ -272,7 +269,9 @@ class Runner:
         run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
             # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時 8 分鐘(留餘裕,避免中途過期)
-            tmo = 300 if kinfo.get("async") else (480 if self.cfg.get("GG_AUTH") == "user" else 1800)
+            # 帳號模式:送出前換一張至少剩 55 分鐘的 token,同步指令最多 50 分鐘;SA 模式由 gcloud 自己換新
+            tmo = 300 if kinfo.get("async") else (3000 if self.cfg.get("GG_AUTH") == "user"
+                                                   else (CHANGE_TIMEOUT_GKE if kind in GKE_KINDS else 1800))
             r = s._exec(run_argv, "change", timeout=tmo)
         except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None
@@ -304,54 +303,17 @@ class Runner:
         self.results.append(rec)
         self.inflight = None
         exp = it.get("expected") or []
-        note = ("操作完成但帶有訊息:" + gglib._short(r.stderr, 200)) if self.op_note else ""
-        if (self.wait_state or self.op_note) and not exp:
-            # 依資源狀態判斷完成、或 DONE 但帶 statusMessage:沒有預期值可驗證就不能確定成功
-            why = "gcloud 沒印出操作,只能依資源狀態判斷" if self.wait_state else note
-            rec.update({"result": "狀態不明", "reason": why + ";這條沒有預期值可驗證,請先確認現況"})
+        note = (r.stderr or "") if self.op_note else ""  # 「操作 DONE,附帶訊息:…」
+        if self.op_note and not exp:
+            rec.update({"result": "狀態不明", "reason": note + ";這條沒有預期值可驗證,請先確認現況"})
             self.status = "ISSUES"
             return False
-        if self.wait_state:  # 沒有操作可追:等資源回到 RUNNING 且符合預期值
-            deadline = time.time() + (CHANGE_TIMEOUT_SQL if kinfo.get("async") == "sql" else CHANGE_TIMEOUT_GKE)
-        else:
-            deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
-        svc = kinfo.get("async")
-        stable_since, err_since, bad_since, mig_since = None, None, None, None
+        deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
         while True:
             try:
                 after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
             except (gglib.Blocked, gglib.Denied) as e:
                 after, err = None, str(e)
-            if self.wait_state:
-                # 沒有操作可追:要連續 STATE_STABLE 秒都「不在變更中且符合預期值」才算完成;快照暫時失敗在時間窗內重試
-                now = time.time()
-                if err:
-                    err_since = err_since or now
-                    stable_since = None
-                    if now - err_since >= OP_FAIL_WINDOW or now >= deadline:
-                        rec.update({"result": "狀態不明", "reason": f"gcloud 沒印出操作,且連續查不到資源狀態:{gglib._short(err, 200)};請先確認現況"})
-                        self.status = "ISSUES"
-                        return False
-                else:
-                    err_since = None
-                    rs = _res_state(svc, after)
-                    good = rs == "ok" and not ggplan.check_pre(exp, after)
-                    stable_since = (stable_since or now) if good else None
-                    if good and now - stable_since >= STATE_STABLE:
-                        break
-                    bad_since = (bad_since or now) if rs.startswith("error:") else None
-                    mig_since = (mig_since or now) if rs == "mig" else None
-                    if (bad_since and now - bad_since >= STATE_STABLE) or (mig_since and now - mig_since >= MIG_UNSTABLE_MAX):
-                        why = f"資源處在 {rs[6:]} 狀態" if bad_since else f"MIG 超過 {int(MIG_UNSTABLE_MAX)} 秒仍不穩定(可能配額不足)"
-                        rec.update({"result": "狀態不明", "reason": f"gcloud 沒印出操作;{why},不再等待,請先確認現況"})
-                        self.status = "ISSUES"
-                        return False
-                    if now >= deadline:
-                        rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作;等到逾時,資源仍在變更中或不符預期值,伺服器端可能仍在進行,請先確認現況"})
-                        self.status = "ISSUES"
-                        return False
-                time.sleep(OP_POLL_SECONDS)
-                continue
             # resize:新節點要一段時間才加入叢集,驗證不符時等一下再看
             if err or not exp or not ggplan.check_pre(exp, after) or time.time() >= deadline:
                 break
@@ -371,7 +333,7 @@ class Runner:
             rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
             self.status = "ISSUES"
             return False
-        rec.update({"result": "已執行", "reason": "驗證符合" + (";依資源狀態判斷完成(gcloud 沒印出操作)" if self.wait_state else "") + (";" + note if note else "")})
+        rec.update({"result": "已執行", "reason": "驗證符合" + (";" + gglib._short(note, 300) if note else "")})
         return True
 
 

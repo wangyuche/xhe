@@ -385,7 +385,7 @@ class Session:
     TOKEN_MAX_AGE = 5 * 60
     TOKEN_SAFE_AGE = 600  # 取得時至少剩 15 分鐘:取得後 10 分鐘內仍安全
 
-    def _refresh_user_token(self):
+    def _refresh_user_token(self, min_expiry="15m"):
         """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
         不複製使用者的憑證檔;token 只放 <run>/gcloud/token(權限 600,結束時刪除),gcloud / kubectl 外掛都讀這個檔。"""
         acct = (self.cfg.get("GG_ACCOUNT_RAW") or self.cfg["GG_ACCOUNT"]).strip()
@@ -407,7 +407,7 @@ class Session:
             self._imp_checked = True
         try:
             # config-helper --min-expiry:保證拿到的 token 至少還有 15 分鐘(不會拿到快過期的快取 token)
-            r = subprocess.run(["gcloud", "config", "config-helper", "--format=json", "--min-expiry=15m", f"--account={acct}", "--quiet"],
+            r = subprocess.run(["gcloud", "config", "config-helper", "--format=json", f"--min-expiry={min_expiry}", f"--account={acct}", "--quiet"],
                                env=user_env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         except FileNotFoundError:
             raise Blocked("找不到 gcloud")
@@ -448,7 +448,7 @@ class Session:
                         pass
         self.env["CLOUDSDK_CORE_ACCOUNT"] = acct
         self._token_at = time.time()
-        append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", "--min-expiry=15m", "--account=<GG_ACCOUNT>"],
+        append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", f"--min-expiry={min_expiry}", "--account=<GG_ACCOUNT>"],
                                           "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
 
     def ensure_fresh(self, margin=0, strict=False):
@@ -462,7 +462,7 @@ class Session:
             return
         # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用;strict(變更)時換不到就停,不沿用
         usable = (not strict) and age < self.TOKEN_SAFE_AGE - margin
-        if now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試(不每個指令都等一次逾時)
+        if not strict and now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試(變更前一律重試)
             if usable:
                 return
             raise Blocked(getattr(self, "_refresh_failed_msg", "換 token 失敗"))
@@ -507,7 +507,11 @@ class Session:
         else:
             raise Denied("未知模式")
         try:
-            self.ensure_fresh(strict=(check_mode == "change"))  # 讀取:換新失敗但舊 token 仍安全時沿用;變更:換不到就停
+            if check_mode == "change" and self.cfg.get("GG_AUTH") == "user":
+                # 變更:送出前一律換一張至少剩 55 分鐘的 token(gcloud 只在啟動時讀一次 token 檔,同步等待操作時不會換新)
+                self._refresh_user_token("55m")
+            else:
+                self.ensure_fresh()  # 讀取:換新失敗但舊 token 仍安全時沿用
         except Blocked as e:
             if check_mode == "change":
                 raise

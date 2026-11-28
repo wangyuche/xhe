@@ -119,8 +119,7 @@
           "state": "/networkPolicy/enabled",
           "target": false
         }
-      },
-      "async": "container"
+      }
     },
     "gke-nodepool-update": {
       "prefix": [
@@ -220,8 +219,7 @@
       ],
       "snapshot": "resize",
       "dry_run": null,
-      "flags": {},
-      "async": "container"
+      "flags": {}
     },
     "firewall-update": {
       "prefix": [

@@ -1139,22 +1139,24 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^compute firewall-rules describe allow-ssh ", "out": FX.FIREWALLS[0]},
         {"tool": "gcloud", "re": "^compute firewall-rules update allow-ssh ", "rc": 1, "err": "ERROR: simulated failure"},
         {"tool": "gcloud", "re": "^container clusters describe prod ", "out": FX.CLUSTER},
+        {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "when": {"np_updated": True},
+         "out": dict(FX.NODEPOOLS[0], config=dict(FX.NODEPOOLS[0].get("config") or {}, workloadMetadataConfig={"mode": "GKE_METADATA"}))},
+        {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "when": {"np_mode": "gce"},
+         "out": dict(FX.NODEPOOLS[0], config=dict(FX.NODEPOOLS[0].get("config") or {}, workloadMetadataConfig={"mode": "GCE_METADATA"}))},
+        {"tool": "gcloud", "re": "^container node-pools update default-pool ", "when": {"async_op": True},
+         "out": {"name": "projects/demo-proj-123/locations/asia-east1/operations/op-9", "operationType": "UPGRADE_NODES", "status": "RUNNING"}},
+        {"tool": "gcloud", "re": "^container node-pools update default-pool ", "when": {"no_op_name": True}, "out": ""},
+        {"tool": "gcloud", "re": "^container node-pools update default-pool ", "when": {"op_bad": True}, "out": {"name": "op-bad", "operationType": "X", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "out": FX.NODEPOOLS[0]},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": None}, "out": nodes(4)},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"mig_busy": True}, "out": {"targetSize": 2, "status": {"isStable": False}}},
-        {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True, "mig_unstable_after": True}, "out": {"targetSize": 3, "status": {"isStable": False}}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True}, "out": {"targetSize": 3}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "out": {"targetSize": 2}},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"async_op": True},
-         "out": {"name": "projects/demo-proj-123/locations/asia-east1/operations/op-9", "status": "RUNNING"}},
-        {"tool": "gcloud", "re": "^container operations describe op-9 ", "out": {"name": "op-9", "status": "DONE"}, "set": {"resized": True, "op_polled": True}},
+        {"tool": "gcloud", "re": "^container operations describe op-9 ", "out": {"name": "op-9", "status": "DONE"}, "set": {"np_updated": True, "op_polled": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "operationType": "X", "status": "DONE"}, "set": {"resize_ran": True}},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
         {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "ERROR: 503 backend unavailable"},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_bad": True}, "out": {"name": "op-bad", "operationType": "X", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {"name": "op-1", "operationType": "X", "status": "DONE"}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
         {"tool": "kubectl", "re": " get horizontalpodautoscalers -n shop -o json", "out": {"items": []}},
@@ -1328,35 +1330,42 @@ def t_plan_change(e, review_run):
     ok("變更:驗證等待中被中斷 → 記「已執行(驗證中被中斷)」+ 還原、狀態 ISSUES",
        cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "已執行" in r.get("result", "") and r.get("rollback") for r in cj.get("results", [])), (cj, err[-300:]))
     e.state({})
-    # --async:長時間操作送出後輪詢狀態,DONE 才驗證
-    e.state({"async_op": True})
+    # GKE clusters resize 不加 --async(gcloud 原始碼:resize / clusters update 的 --async 不回傳操作):由 gcloud 自己等完成
+    e.state({})
     e.clear_log()
-    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"; env_op["GG_GKE_TIMEOUT"] = "1"; env_op["GG_STATE_STABLE"] = "0.2"; env_op["GG_MIG_UNSTABLE_MAX"] = "0.5"
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
-    st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
-    ok("變更:GKE resize 以 --async 送出並輪詢到 DONE 才驗證(PASS)",
-       r.returncode == 0 and rz and "--async" in rz[0] and st_.get("op_polled"), (r.stdout[-400:], rz))
-    # 沒有操作名稱 / 連續查不到操作狀態 → 「狀態不明」並附還原指令(不當成完成)
-    e.state({"op_listed": True})
-    e.clear_log()
-    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-    ok("變更:--async 沒印操作 → 依資源狀態(符合預期值)判斷完成(PASS),不查操作清單",
-       r.returncode == 0 and "status=PASS" in r.stdout and not any(c["argv"][:3] == ["container", "operations", "list"] for c in e.stub_calls()), r.stdout[-400:])
+    ok("變更:GKE resize 不加 --async,由 gcloud 自己等完成後驗證(PASS)", r.returncode == 0 and rz and "--async" not in rz[0], (r.stdout[-400:], rz))
     e.state({"mig_busy": True})
     e.clear_log()
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     ok("變更:資源正在變更中(MIG 不穩定)→ BLOCKED、沒送出、核准檔還在",
        r.returncode == 3 and not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls())
        and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
-    e.state({"op_listed": True, "mig_unstable_after": True})
-    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-    ok("變更:沒印操作、targetSize 已符合但 MIG 一直不穩定 → 不算完成,超過上限即狀態不明(不等滿 4 小時)",
-       r.returncode == 1 and "狀態不明" in r.stdout and "MIG" in r.stdout, r.stdout[-400:])
-    for st_name, label in (("no_op_name", "沒印操作且等不到預期狀態"), ("op_bad", "連續查不到狀態")):
-        e.state({st_name: True})
-        r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-        ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "--num-nodes=2" in r.stdout, r.stdout[-500:])
+    # node-pools update:--async 會回傳操作 → 輪詢到 DONE 才驗證
+    e.state({"np_mode": "gce"})
+    r = e.run([os.path.join(S, "collect.sh"), P, "--mode", "plan", "--scope", "gke"])
+    nrun = run_dir(r.stdout)
+    write_input(nrun, [{"id": "C1", "summary": "default-pool 改用 GKE metadata server",
+                        "command": ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                    f"--project={P}", "--workload-metadata=GKE_METADATA"],
+                        "expected": [{"field": "/config/workloadMetadataConfig/mode", "expect": "GKE_METADATA"}]}])
+    r, nsha = plan_build(e, nrun)
+    nplan = os.path.join(nrun, "plan.json")
+    nit = (json.load(open(nplan))["items"] or [{}])[0] if os.path.exists(nplan) else {}
+    ok("計畫:node-pools update 可執行、可還原", nsha and not nit.get("blocked_reason") and nit.get("reversible"), (r.stderr[-300:], nit))
+    e.state({"np_mode": "gce", "async_op": True})
+    e.clear_log()
+    r = run_change(e, ch, nplan, nsha, "使用者已核准變更 C1", env=env_op)
+    up = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "node-pools", "update"]]
+    st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
+    ok("變更:node-pools update 以 --async 送出並輪詢到 DONE 才驗證(PASS)",
+       r.returncode == 0 and up and "--async" in up[0] and st_.get("op_polled"), (r.stdout[-400:], up))
+    for st_name, label in (("no_op_name", "輸出不是操作"), ("op_bad", "連續查不到狀態")):
+        e.state({"np_mode": "gce", st_name: True})
+        r = run_change(e, ch, nplan, nsha, "使用者已核准變更 C1", env=env_op)
+        ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "GCE_METADATA" in r.stdout, r.stdout[-500:])
     e.state({})
     cfg_sw = os.path.join(e.tmp, "conf", "config-switch")
     with open(cfg_sw, "w") as f:
