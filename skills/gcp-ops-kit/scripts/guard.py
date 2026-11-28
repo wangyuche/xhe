@@ -68,8 +68,8 @@ def _same_file_protected(path, cfg, ancestor):
         return False
     mine = target[0] if os.path.exists(path) else None  # 不存在的路徑只檢查「是否在受保護路徑底下」
     for q in _raw_protected(cfg):
-        if not os.path.lexists(q):
-            continue  # 不存在的受保護路徑:_ids 會拿到上層目錄(例如 home),不能用 inode 比;改由 is_protected 的路徑字串比對處理
+        if not os.path.exists(q):
+            continue  # 不存在(含指向不存在目標的連結)的受保護路徑:_ids 會拿到上層目錄(例如 home),不能用 inode 比;改由 is_protected 的路徑字串比對處理
         qids = _ids(q)
         if not qids:
             continue

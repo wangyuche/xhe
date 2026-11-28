@@ -143,12 +143,15 @@ def t_allowlists():
 
 
 def t_guard_fresh_home(e):
-    """沒有 ~/.kube、沒有設定檔目錄(帳號模式常見):不能把整個 home(含報告目錄)當成受保護。"""
+    """~/.kube 不存在(這裡用斷掉的連結)、沒有設定檔目錄(帳號模式常見):不能把整個 home(含報告目錄)當成受保護。"""
     g = os.path.join(S, "guard.py")
     home = os.path.join(e.tmp, "fresh-home")
     rep = os.path.join(home, "gcp-guardian-reports", "p", "r")
     os.makedirs(rep, exist_ok=True)
-    open(os.path.join(rep, "findings.json"), "w").write("[]")
+    with open(os.path.join(rep, "findings.json"), "w") as f:
+        f.write("[]")
+    if not os.path.lexists(os.path.join(home, ".kube")):  # ~/.kube 是指向不存在目標的連結(例如外接碟沒掛載)
+        os.symlink(os.path.join(e.tmp, "unmounted-volume", "kube"), os.path.join(home, ".kube"))
     env = {"PATH": os.environ.get("PATH", ""), "HOME": home}
     for tool, inp, want in (("Read", {"file_path": os.path.join(rep, "findings.json")}, 0),
                             ("Read", {"file_path": os.path.join(home, ".kube", "config")}, 2),
