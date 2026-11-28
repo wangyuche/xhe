@@ -679,6 +679,8 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
+    if flags.get("--member", "").startswith(("group:", "domain:")) and flags.get("--role") in ("roles/owner", "roles/editor"):
+        res["rollback_warning"] = "移除群組 / 網域的 editor 權限前,請確認 gcp-guardian 使用的身分(你的帳號)不是靠它取得權限,否則可能把自己鎖在專案外"
     if pos[0] != flags.get("--project"):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
         return None, [], None

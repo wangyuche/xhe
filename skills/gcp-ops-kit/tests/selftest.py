@@ -342,6 +342,23 @@ def t_check_pre_redact():
     ok("precondition 指父物件也猜不到秘密(猜對也不成立)", bool(right), right)
 
 
+def t_impersonation(e):
+    cfgu = os.path.join(e.tmp, "conf", "config-imp")
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgu, 0o600)
+    env = e.env(); env["GG_CONFIG"] = cfgu
+    e.state({"impersonate": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
+    e.state({})
+
+
+def t_parse_time():
+    import change
+    ok("GKE 奈秒時間可解析(Python 3.9)", change._parse_time("2024-02-20T10:15:30.123456789Z") is not None and change._parse_time("bad") is None)
+
+
 def t_sa_change():
     import ggplan
 
@@ -954,7 +971,7 @@ def t_user_auth(e):
     run = run_dir(r.stdout)
     calls = e.stub_calls()
     ok("帳號模式:collect 完成,不呼叫 activate-service-account", r.returncode == 0 and run and not any(c["argv"][:2] == ["auth", "activate-service-account"] for c in calls), r.stderr[-300:])
-    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] != ["config", "config-helper"]]
+    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] not in (["config", "config-helper"], ["config", "get-value"])]
     ok("帳號模式:gcloud 用 run 內的 token 檔(CLOUDSDK_AUTH_ACCESS_TOKEN_FILE)", tf and all(t and t.startswith(run) for t in tf), tf[:2])
     blob = ""
     for root, _, fns in os.walk(run or e.tmp):
@@ -1038,10 +1055,13 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
         {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True},
-         "out": [{"name": "projects/p/locations/l/operations/op-L", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING"}]},
+         "out": [{"name": "projects/p/locations/l/operations/op-X", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod-2"},
+                 {"name": "projects/p/locations/l/operations/op-L", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"}]},
         {"tool": "gcloud", "re": "^container operations list ", "out": []},
         {"tool": "gcloud", "re": "^container operations describe op-L ", "out": {"name": "op-L", "status": "DONE"}},
-        {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "PERMISSION_DENIED: container.operations.get"},
+        {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "ERROR: 503 backend unavailable"},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_bad": True}, "out": {"name": "op-bad", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {"name": "op-1", "status": "DONE"}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
@@ -1219,7 +1239,7 @@ def t_plan_change(e, review_run):
     # --async:長時間操作送出後輪詢狀態,DONE 才驗證
     e.state({"async_op": True})
     e.clear_log()
-    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
     st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
@@ -1227,8 +1247,11 @@ def t_plan_change(e, review_run):
        r.returncode == 0 and rz and "--async" in rz[0] and st_.get("op_polled"), (r.stdout[-400:], rz))
     # 沒有操作名稱 / 連續查不到操作狀態 → 「狀態不明」並附還原指令(不當成完成)
     e.state({"op_listed": True})
+    e.clear_log()
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-    ok("變更:--async 沒印操作時,從 operations list 找到並等到 DONE(PASS)", r.returncode == 0 and "status=PASS" in r.stdout, r.stdout[-400:])
+    descs = [c["argv"][3] for c in e.stub_calls() if c["argv"][:3] == ["container", "operations", "describe"]]
+    ok("變更:--async 沒印操作時,從 operations list 找到這個叢集的操作(不是 prod-2)並等到 DONE(PASS)",
+       r.returncode == 0 and "status=PASS" in r.stdout and descs and all(d == "op-L" for d in descs), (r.stdout[-400:], descs))
     for st_name, label in (("no_op_name", "找不到操作"), ("op_bad", "連續查不到狀態")):
         e.state({st_name: True})
         r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
@@ -1428,6 +1451,7 @@ def main():
         t_reserved_project()
         t_guard_import_fail(e)
         t_sa_change()
+        t_parse_time()
         t_check_pre_redact()
         t_bad_metadata()
         t_secret_names()
@@ -1443,6 +1467,7 @@ def main():
         t_default_project(e)
         t_check_scope(e)
         t_user_auth(e)
+        t_impersonation(e)
         t_missing_cluster(e)
         t_rbac_broad()
         if run:

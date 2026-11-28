@@ -79,7 +79,7 @@ def main(argv):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         print(f"{mode} ok project={project} auth={cfg['GG_AUTH']} principal={cfg['GG_PRINCIPAL']}")
-        print("sa_roles=" + (",".join(roles) if roles else "（讀不到專案層級角色)"))
+        print(("roles=" if cfg["GG_AUTH"] == "user" else "sa_roles=") + (",".join(roles) if roles else "（讀不到專案層級角色)"))
         if any(r in WRITE_HINT or r.endswith("admin") or r.endswith("Admin") for r in roles):
             print(f"資訊:{'這個帳號' if cfg['GG_AUTH'] == 'user' else '此 SA'}有寫入權限(使用者已知)")
         return 0

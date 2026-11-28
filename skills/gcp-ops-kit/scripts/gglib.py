@@ -344,6 +344,16 @@ class Session:
         acct = self.cfg["GG_ACCOUNT"].strip()
         user_env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
         user_env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"  # 要重新驗證時直接失敗,不等輸入
+        if not getattr(self, "_imp_checked", False):  # 使用者 gcloud 設了模擬 SA 時,token 會是那個 SA 的:不接受
+            try:
+                imp = subprocess.run(["gcloud", "config", "get-value", "auth/impersonate_service_account", "--quiet"],
+                                     env=user_env, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+                if (imp.stdout or "").strip() and (imp.stdout or "").strip() != "(unset)":
+                    raise Blocked("你的 gcloud 設了 auth/impersonate_service_account,帳號模式拿到的會是被模擬 SA 的 token;"
+                                  "請先在終端機執行 gcloud config unset auth/impersonate_service_account,或改用 SA 金鑰模式")
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            self._imp_checked = True
         try:
             # config-helper --min-expiry:保證拿到的 token 至少還有 15 分鐘(不會拿到快過期的快取 token)
             r = subprocess.run(["gcloud", "config", "config-helper", "--format=json", "--min-expiry=15m", f"--account={acct}", "--quiet"],

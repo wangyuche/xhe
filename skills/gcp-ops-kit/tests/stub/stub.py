@@ -21,6 +21,9 @@ if tool == "gke-gcloud-auth-plugin":
     sys.exit(0)
 sp = os.path.join(d, "state.json")
 state = json.load(open(sp)) if os.path.exists(sp) else {}
+if tool == "gcloud" and argv[:3] == ["config", "get-value", "auth/impersonate_service_account"]:
+    print("deployer@p.iam.gserviceaccount.com" if state.get("impersonate") else "(unset)")
+    sys.exit(0)
 if tool == "gcloud" and argv[:2] == ["config", "config-helper"]:
     if state.get("user_not_logged_in"):
         sys.stderr.write("ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens\n")

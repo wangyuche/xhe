@@ -21,7 +21,7 @@ import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
 OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
-OP_MAX_FAILS = 8
+OP_FAIL_WINDOW = float(os.environ.get("GG_OP_FAIL_WINDOW", "600"))  # 連續查不到狀態超過 10 分鐘才放棄
 CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
@@ -47,6 +47,15 @@ def rollback_object(o):
         md.pop(k, None)
     o.pop("status", None)
     return o  # 保留 last-applied 註解,replace 後與變更前一致
+
+
+def _parse_time(t):
+    """GKE 的時間有 9 位小數(奈秒),Python 3.9 的 fromisoformat 不接受:先截到 6 位。"""
+    t = re.sub(r"(\.\d{6})\d+", r"\1", str(t)).replace("Z", "+00:00")
+    try:
+        return _dt.datetime.fromisoformat(t).timestamp()
+    except ValueError:
+        return None
 
 
 def _flag(argv, name):
@@ -88,12 +97,13 @@ class Runner:
                 op = {}
             if not name:
                 return unknown("指令已送出,但找不到對應的操作,無法確認是否完成;請用 gcloud container / sql operations list 確認")
+            self.seen_ops = getattr(self, "seen_ops", set()) | {name}
             if op.get("status") == "DONE":
                 return self._op_result(r, svc, op)
             project = _flag(argv, "--project")
             loc = _flag(argv, "--location")
             deadline = time.time() + (CHANGE_TIMEOUT_GKE if svc == "container" else CHANGE_TIMEOUT_SQL)
-            fails, last_err = 0, ""
+            fail_since, last_err = None, ""
             while time.time() < deadline:
                 time.sleep(OP_POLL_SECONDS)
                 args = (["container", "operations", "describe", name, f"--location={loc}"] if svc == "container"
@@ -104,12 +114,14 @@ class Runner:
                 except ValueError:
                     st = None
                 if not isinstance(st, dict):
-                    fails += 1
                     last_err = gglib._short(q.stderr, 300) or "回應不是 JSON 物件"
-                    if fails >= OP_MAX_FAILS:
-                        return unknown(f"連續 {fails} 次查不到操作 {name} 的狀態:{last_err}")
+                    if re.search(r"PERMISSION_DENIED|NOT_FOUND|403|404", last_err):
+                        return unknown(f"查不到操作 {name} 的狀態(不會恢復的錯誤):{last_err}")
+                    fail_since = fail_since or time.time()
+                    if time.time() - fail_since >= OP_FAIL_WINDOW:
+                        return unknown(f"連續 {int(time.time() - fail_since)} 秒查不到操作 {name} 的狀態:{last_err}")
                     continue
-                fails = 0
+                fail_since = None
                 if st.get("status") == "DONE":
                     return self._op_result(r, svc, st)
             return unknown(f"等待操作 {name} 逾時")
@@ -130,16 +142,27 @@ class Runner:
             ops = json.loads(q.stdout or "[]") if q.returncode == 0 else []
         except ValueError:
             ops = []
-        since = getattr(self, "sent_at", 0) - 120  # 容許時鐘誤差
+        since = getattr(self, "sent_at", 0) - 30  # 只接受送出後才開始的操作(容許 30 秒時鐘誤差)
+        seen = getattr(self, "seen_ops", set())
+        best = None
         for o in ops if isinstance(ops, list) else []:
-            t = o.get("startTime") or o.get("insertTime") or ""
-            try:
-                ts = _dt.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
-            except ValueError:
+            if not isinstance(o, dict) or not o.get("name"):
                 continue
-            if ts >= since and o.get("name"):
-                return o["name"].rsplit("/", 1)[-1]
-        return ""
+            nm = o["name"].rsplit("/", 1)[-1]
+            if nm in seen:
+                continue
+            if svc == "container":
+                link = str(o.get("targetLink") or "")
+                if not re.search(r"/clusters/" + re.escape(cluster) + r"(/|$)", link):
+                    continue  # targetLink 要完整對到這個叢集(prod 不會比中 prod-2)
+            elif str(o.get("operationType") or "").upper() != "UPDATE":
+                continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
+            ts = _parse_time(o.get("startTime") or o.get("insertTime") or "")
+            if ts is None or ts < since:
+                continue
+            if best is None or ts < best[0]:
+                best = (ts, nm)  # 送出後最早開始的那筆
+        return best[1] if best else ""
 
     @staticmethod
     def _op_result(r, svc, st):
