@@ -954,7 +954,7 @@ def t_user_auth(e):
     run = run_dir(r.stdout)
     calls = e.stub_calls()
     ok("帳號模式:collect 完成,不呼叫 activate-service-account", r.returncode == 0 and run and not any(c["argv"][:2] == ["auth", "activate-service-account"] for c in calls), r.stderr[-300:])
-    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] not in (["auth", "print-access-token"], ["config", "config-helper"])]
+    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] != ["config", "config-helper"]]
     ok("帳號模式:gcloud 用 run 內的 token 檔(CLOUDSDK_AUTH_ACCESS_TOKEN_FILE)", tf and all(t and t.startswith(run) for t in tf), tf[:2])
     blob = ""
     for root, _, fns in os.walk(run or e.tmp):
@@ -980,6 +980,9 @@ def t_user_auth(e):
                            f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
     r2 = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, f"--member=deleted:serviceAccount:{FX.GG_SA}?uid=1", "--role=roles/editor",
                             f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA}, FX.POLICY)
+    r3 = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, f'--member="serviceAccount:{FX.GG_SA}"', "--role=roles/editor",
+                            f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA}, FX.POLICY)
+    ok("自己身分:被引號包住也擋", (r3["blocked_reason"] or "").startswith("一律禁止:動到"), r3["blocked_reason"])
     ok("自己身分:deleted:serviceAccount:…?uid= 寫法也擋", (r2["blocked_reason"] or "").startswith("一律禁止:動到"), r2["blocked_reason"])
     ok("帳號模式:別人的帳號(time@ 含 me@ 子字串)不會被誤擋", not (r["blocked_reason"] or "").startswith("一律禁止:動到"), r["blocked_reason"])
     with open(cfgu, "w") as f:
@@ -1033,6 +1036,11 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "status": "DONE"}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
+        {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True},
+         "out": [{"name": "projects/p/locations/l/operations/op-L", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING"}]},
+        {"tool": "gcloud", "re": "^container operations list ", "out": []},
+        {"tool": "gcloud", "re": "^container operations describe op-L ", "out": {"name": "op-L", "status": "DONE"}},
         {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "PERMISSION_DENIED: container.operations.get"},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_bad": True}, "out": {"name": "op-bad", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {"name": "op-1", "status": "DONE"}, "set": {"resized": True}},
@@ -1218,7 +1226,10 @@ def t_plan_change(e, review_run):
     ok("變更:GKE resize 以 --async 送出並輪詢到 DONE 才驗證(PASS)",
        r.returncode == 0 and rz and "--async" in rz[0] and st_.get("op_polled"), (r.stdout[-400:], rz))
     # 沒有操作名稱 / 連續查不到操作狀態 → 「狀態不明」並附還原指令(不當成完成)
-    for st_name, label in (("no_op_name", "讀不到操作名稱"), ("op_bad", "連續查不到狀態")):
+    e.state({"op_listed": True})
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    ok("變更:--async 沒印操作時,從 operations list 找到並等到 DONE(PASS)", r.returncode == 0 and "status=PASS" in r.stdout, r.stdout[-400:])
+    for st_name, label in (("no_op_name", "找不到操作"), ("op_bad", "連續查不到狀態")):
         e.state({st_name: True})
         r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
         ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "--num-nodes=2" in r.stdout, r.stdout[-500:])

@@ -181,7 +181,7 @@ def common_forbidden(argv, cfg):
         if any(c.prefixlen == 0 for c in ipaddress.collapse_addresses(nets)):
             return "一律禁止:多個網段合起來涵蓋整個網際網路"
     me = (cfg.get("GG_SA") or "").lower()
-    me_re = re.compile(r"(^|[:/=,])" + re.escape(me) + r"($|[?,&/])") if me else None
+    me_re = re.compile(r"(?<![a-z0-9._%+-])" + re.escape(me) + r"(?![a-z0-9._%+-])") if me else None  # 以 email 字元為邊界
     for a in argv:  # 以邊界比對身分(type:id、deleted:serviceAccount:id?uid=、.../serviceAccounts/id、逗號清單),避免 time@x 誤中 me@x
         if me_re and me_re.search(a.lower()):
             return f"一律禁止:動到 gcp-guardian 自己使用的身分({cfg.get('GG_SA')})"

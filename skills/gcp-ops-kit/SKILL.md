@@ -30,7 +30,7 @@ GG_AUTH=user
 GG_ACCOUNT=you@example.com
 ```
 
-kit 每個 run 用 `gcloud config config-helper --min-expiry=15m --account=<帳號>` 取短效 token(保證至少還有 15 分鐘,每 5 分鐘換新;要重新驗證時直接失敗並提示 `gcloud auth login`),只寫進 `<run>/gcloud/token`(600,結束刪除),以 `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` 給 gcloud 與 GKE 外掛使用;不複製、不讀你的憑證檔,`~/.config/gcloud` 仍受 guard 保護。權限就是你帳號的權限:審查 / 計畫照樣只跑唯讀白名單,變更照樣要逐條核准;「不可動自己的 IAM 綁定」改成套用在這個帳號。報告的寫入權限提示依帳號在專案上的直接綁定判斷(透過群組取得的角色不會列出)。
+kit 每個 run 用 `gcloud config config-helper --min-expiry=15m --account=<帳號>` 取短效 token(保證至少還有 15 分鐘,每 5 分鐘換新,換新時清掉 GKE 外掛的 token 快取;帳號模式下沒走 `--async` 的變更逾時 10 分鐘;要重新驗證時直接失敗並提示 `gcloud auth login`),只寫進 `<run>/gcloud/token`(600,結束刪除),以 `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` 給 gcloud 與 GKE 外掛使用;不複製、不讀你的憑證檔,`~/.config/gcloud` 仍受 guard 保護。權限就是你帳號的權限:審查 / 計畫照樣只跑唯讀白名單,變更照樣要逐條核准;「不可動自己的 IAM 綁定」改成套用在這個帳號。報告的寫入權限提示依帳號在專案上的直接綁定判斷(透過群組取得的角色不會列出)。
 
 使用者自己要裝:`brew install --cask google-cloud-sdk`、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
 
@@ -121,7 +121,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - 已有條目執行後,後面的條目被擋:整體狀態是 ISSUES(不是 BLOCKED)。收到 SIGTERM / SIGHUP / SIGINT 會先寫紀錄、清憑證;被 SIGKILL 留下的憑證快取下次執行時清掉(超過 6 小時)。collect / plan / change 請在背景執行(可能超過 10 分鐘)。
 - gcloud update 一次只能改一類設定(`exclusive_groups`),多類請拆成多個 C 編號。
 - 變更指令成功但之後的快照 / 驗證失敗:結果記「已執行(驗證失敗)」並附還原指令。
-- GKE(clusters update / resize、node-pools update)與 Cloud SQL patch 執行時自動加 `--async`,由 kit 輪詢操作狀態(`operations describe`,每次輪詢前換 token)到 DONE 再驗證;讀不到操作名稱、連續 8 次查不到狀態、逾時(GKE 4 小時、SQL 1 小時)或輪詢出錯,一律記「狀態不明」並附還原指令。計畫裡不可自己寫 `--async` / `--format`。
+- GKE(clusters update / resize、node-pools update)與 Cloud SQL patch 執行時自動加 `--async`,由 kit 輪詢操作狀態(`operations describe`,每次輪詢前換 token)到 DONE 再驗證;gcloud 沒印操作時改從 `operations list` 找這個資源在送出後開始的操作;找不到、連續 8 次查不到狀態、逾時(GKE 4 小時、SQL 1 小時)或輪詢出錯,一律記「狀態不明」並附還原指令。計畫裡不可自己寫 `--async` / `--format`。
 - 新值等於現值的條目判「不需變更」→ BLOCKED(避免空操作被記成修正)。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。

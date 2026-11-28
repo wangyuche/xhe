@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import sys
 import time
+import datetime as _dt
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.realpath(__file__)))
 
@@ -82,8 +83,11 @@ class Runner:
             if isinstance(op, list):
                 op = op[0] if op else None
             name = (op.get("name") or "").rsplit("/", 1)[-1] if isinstance(op, dict) else ""
+            if not name:  # gcloud --async 可能不印操作:找這個資源在送出之後開始的操作
+                name = self._find_operation(s, svc, argv)
+                op = {}
             if not name:
-                return unknown("指令已送出,但讀不到操作名稱,無法確認是否完成;請用 gcloud container / sql operations list 確認")
+                return unknown("指令已送出,但找不到對應的操作,無法確認是否完成;請用 gcloud container / sql operations list 確認")
             if op.get("status") == "DONE":
                 return self._op_result(r, svc, op)
             project = _flag(argv, "--project")
@@ -111,6 +115,31 @@ class Runner:
             return unknown(f"等待操作 {name} 逾時")
         except Exception as e:  # 輪詢中任何錯誤(例如換 token 失敗):指令已送出 → 狀態不明
             return unknown(f"輪詢操作狀態時出錯({type(e).__name__}: {gglib._short(str(e), 200)})")
+
+    def _find_operation(self, s, svc, argv):
+        project = _flag(argv, "--project")
+        pos = [a for a in argv if not a.startswith("-")]
+        target = pos[4] if len(pos) > 4 else None  # gcloud container clusters <verb> <name> / gcloud sql instances patch <name>
+        if svc == "container":
+            cluster = _flag(argv, "--cluster") or target  # node-pools update 用 --cluster
+            q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink:clusters/{cluster}",
+                          "--sort-by=~startTime", "--limit=5", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+        else:
+            q = s.gcloud(["sql", "operations", "list", f"--instance={target}", "--limit=5", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+        try:
+            ops = json.loads(q.stdout or "[]") if q.returncode == 0 else []
+        except ValueError:
+            ops = []
+        since = getattr(self, "sent_at", 0) - 120  # 容許時鐘誤差
+        for o in ops if isinstance(ops, list) else []:
+            t = o.get("startTime") or o.get("insertTime") or ""
+            try:
+                ts = _dt.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            if ts >= since and o.get("name"):
+                return o["name"].rsplit("/", 1)[-1]
+        return ""
 
     @staticmethod
     def _op_result(r, svc, st):
@@ -231,7 +260,10 @@ class Runner:
         kinfo = ggchange.change_rules()["kinds"][kind]
         run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
-            r = s._exec(run_argv, "change", timeout=300 if kinfo.get("async") else 1800)
+            # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時不超過 10 分鐘(避免中途過期)
+            tmo = 300 if kinfo.get("async") else (600 if self.cfg.get("GG_AUTH") == "user" else 1800)
+            self.sent_at = time.time()
+            r = s._exec(run_argv, "change", timeout=tmo)
         except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))

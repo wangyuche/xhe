@@ -365,6 +365,14 @@ class Session:
         with os.fdopen(fd, "w") as f:
             f.write(tok)
         self.env["CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"] = path
+        # GKE 驗證外掛會另外快取 token:換新時一併清掉,讓 kubectl 下次重新取
+        for root, _, files in os.walk(self.gdir):
+            for fn in files:
+                if fn == "gke_gcloud_auth_plugin_cache":
+                    try:
+                        os.remove(os.path.join(root, fn))
+                    except OSError:
+                        pass
         self.env["CLOUDSDK_CORE_ACCOUNT"] = acct
         self._token_at = time.time()
         append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", "--min-expiry=15m", "--account=<GG_ACCOUNT>"],

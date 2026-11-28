@@ -27,12 +27,6 @@ if tool == "gcloud" and argv[:2] == ["config", "config-helper"]:
         sys.exit(1)
     print(json.dumps({"credential": {"access_token": "ya29." + "x" * 40, "token_expiry": "2099-01-01T00:00:00Z"}}))
     sys.exit(0)
-if tool == "gcloud" and argv[:2] == ["auth", "print-access-token"]:
-    if state.get("user_not_logged_in"):
-        sys.stderr.write("ERROR: (gcloud.auth.print-access-token) There was a problem refreshing your current auth tokens\n")
-        sys.exit(1)
-    print("ya29." + "x" * 40)  # 假 token(符合秘密樣式,用來確認不外洩)
-    sys.exit(0)
 if tool == "gcloud" and argv[:2] == ["auth", "activate-service-account"]:
     if state.get("activate_fail"):
         sys.stderr.write("ERROR: (gcloud.auth.activate-service-account) key disabled\n")
