@@ -14,6 +14,9 @@
 #   bot.sh jobs <pipeline id>               列出 pipeline 的 job(id、stage、名稱、狀態)
 #   bot.sh log <job id> [行數]              印 job log 的最後幾行(預設 200,最多 5000)
 #   bot.sh retry <pipeline id>              重跑 pipeline 裡失敗 / 取消的 job
+#   bot.sh tag <vX.Y.Z> --sha <完整 SHA> [-m <訊息>]
+#                                           在預設分支上的 commit 建立 annotated tag(GitLab API,不 push);
+#                                           tag 已存在、SHA 不在預設分支上就拒絕,不覆寫、不刪除
 #   bot.sh fetch [分支…]                    從 origin 抓分支到 refs/remotes/origin/<分支>(預設:預設分支;唯讀,token 處理同 push)
 #   bot.sh rebase <MR iid>                  請 GitLab 把 MR 的來源分支 rebase 到目標分支（同網頁上的 Rebase 按鈕；
 #                                           本機不 force-push），等到完成後印出新的 head SHA（要重新 review / 等 CI）
@@ -415,6 +418,29 @@ case $cmd in
     n=${2-200}; [[ $n =~ ^[0-9]{1,4}$ && $n -ge 1 && $n -le 5000 ]] || die "行數要 1 ~ 5000"
     # 去掉 ANSI 控制碼與 GitLab 的 section 標記
     api_text "/projects/$PID_ENC/jobs/$1/trace" | tail -n "$n" | sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g; s/section_(start|end):[0-9]+:[A-Za-z0-9_-]+\r?//g; s/\r$//' ;;
+  tag)
+    name="" sha="" msg=""
+    [[ $# -ge 1 && ${1-} != --* && ${1-} != -m ]] && { name=$1; shift; }
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --sha) need "$@"; sha=$2; shift 2 ;;
+        -m) need "$@"; msg=$2; shift 2 ;;
+        *) die "不認得的參數:$1" ;;
+      esac
+    done
+    [[ $name =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "用法:bot.sh tag <vX.Y.Z> --sha <完整 SHA> [-m <訊息>](只接受 vX.Y.Z)"
+    [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要 40 碼完整 SHA"
+    [[ -n $msg ]] || msg=$name
+    # 只有 404 才算不存在;其他狀態(401、403、5xx、連不上)直接停,不帶著未知狀態往下做
+    code=$(printf 'PRIVATE-TOKEN: %s\n' "$TOKEN" | curl -q -sS -o /dev/null -w '%{http_code}' -H @- \
+      "$API/projects/$PID_ENC/repository/tags/$name" 2>/dev/null) || code=000
+    case $code in 2*) die "tag $name 已存在(不覆寫)" ;; 404) ;; *) die "查詢 tag $name → HTTP $code,停止" ;; esac
+    def=$(project_json | jq -r .default_branch)
+    # SHA 在預設分支上 ⇔ 它是預設分支 head 的祖先 ⇔ merge_base(SHA, 預設分支) == SHA(不受分支數量 / 分頁影響)
+    base=$(api GET "/projects/$PID_ENC/repository/merge_base?refs%5B%5D=$sha&refs%5B%5D=$(jq -rn --arg d "$def" '$d|@uri')" | jq -r '.id // empty')
+    [[ $base == "$sha" ]] || die "$sha 不在預設分支 $def 上,拒絕打 tag"
+    body=$(jq -nc --arg t "$name" --arg r "$sha" --arg m "$msg" '{tag_name:$t, ref:$r, message:$m}')
+    api POST "/projects/$PID_ENC/repository/tags" "$body" | jq -r '"tag \(.name) → \(.target // .commit.id)  commit \(.commit.id)"' ;;
   retry)
     [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "用法:bot.sh retry <pipeline id>"
     api POST "/projects/$PID_ENC/pipelines/$1/retry" | jq -r '"pipeline #\(.id) \(.status)"' ;;
@@ -451,5 +477,5 @@ case $cmd in
     done
     die "rebase 3 分鐘內沒有完成" ;;
   *)
-    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
+    sed -n '2,/^set -euo pipefail$/p' "$0" | sed '$d; s/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
 esac

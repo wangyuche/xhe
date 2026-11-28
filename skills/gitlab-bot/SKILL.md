@@ -32,8 +32,10 @@ bash $BOT commit -m "訊息"              # 以 token 擁有者身分 commit(其
 bash $BOT push <功能分支>                # 推 HEAD 到遠端同名分支
 bash $BOT mr --head <功能分支> --title "標題" --body-file <內文.md>   # 印 MR 網址;--base 預設為預設分支
 bash $BOT merge <MR iid> --sha <review 過的完整 SHA>
+bash $BOT tag v1.2.3 --sha <預設分支上的完整 SHA> [-m 訊息]   # 發版 tag(GitLab API 建 annotated tag;已存在或不在預設分支就拒絕)
 ```
 
+- tag 只接受 `vX.Y.Z`,SHA 必須已在預設分支上(合併後的 merge commit),不覆寫、不刪 tag;tag 受保護時 token 擁有者要有建立權限。
 - push 拒絕 `main`、`master`、預設分支,不支援 force;改歷史先問使用者。
 - token 不進指令列、環境變數、remote URL 或 `.git/config`:API 經 stdin 給 curl,push 時只在 0700 暫存目錄的 0600 檔給 credential helper 讀,結束即刪;helper 只綁 origin 的主機(`credential.https://<主機>.helper`),不會送給別的主機。push 不讀全域/系統 git 設定(保留 safe.directory)、HOME 換成空目錄、停用 hooks、不遞迴推 submodule(`--no-recurse-submodules`),並移除 proxy、TLS(含 `SSLKEYLOGFILE`)、SSH、trace(含 trace2)類環境變數;repo 的任何設定檔(local、worktree、include)有 `url.*`、`credential.*`、`http.*`(`postBuffer`、`version`、`lowSpeedLimit`、`lowSpeedTime`、`maxRequests`、`minSessions` 除外)、`remote.<網址>.*`(例如 pushurl)、`core.sshCommand` 就拒絕。
 - 平行任務在各自 worktree 執行即可(worktree 共用 origin)。

@@ -36,6 +36,7 @@ MR 情境(iid → 說明),head SHA 預設 a*40:
   22 head 7*40:head pipeline success,但外部 commit status(jenkins)failed → 結束碼 2
   23 head 8*40:head pipeline 是舊 head 的(sha 不同、ref 是分支)→ 等;不等時結束碼 4
   24 head a*40:沒有 CI 檔,MR 有 merged results pipeline(ref refs/merge-requests/24/merge,sha 是合併用的 commit)success → 可合併
+tag:v1.0.0 已存在,其他 404;POST repository/tags 回 201。merge_base:2*40 在 develop / main 上,3*40(withci)不在。
 分支 → commit:develop / main → 2*40,withci → 3*40(有 .gitlab-ci.yml),tgtci → 1*40;其他 404。
 專案預設回傳 Maintainer 看得到的 CI 欄位(ci_config_path "",兩個布林 false);
 情境 {"hide_fields": [...]} 拿掉欄位(模擬 Developer 權限),{<欄位>: 值} 覆寫。
@@ -269,6 +270,17 @@ class H(BaseHTTPRequestHandler):
             b = "".join(f"line {i}\n" for i in range(1, 301)) + "\x1b[31;1m--- FAIL: TestX\x1b[0m\nsection_end:1700000000:step_script\r\x1b[0KERROR: Job failed\n"
             self.send_response(200); self.send_header("Content-Type", "text/plain"); self.send_header("Content-Length", str(len(b.encode())))
             self.end_headers(); return self.wfile.write(b.encode())
+        if rest.startswith("repository/tags/"):
+            if unquote(rest[len("repository/tags/"):]) == "v1.0.0":
+                return self.send(200, {"name": "v1.0.0"})
+            return self.send(404, {"message": "404 Tag Not Found"})
+        if rest == "repository/merge_base":
+            refs = q.get("refs[]", [])
+            if len(refs) != 2:
+                return self.send(400, {"message": "refs"})
+            heads = [BRANCHES.get(r, r) for r in refs]
+            # 簡化的祖先關係:2*40 是 develop / main 的 head;3*40(withci)跟 develop 的共同祖先是 2*40
+            return self.send(200, {"id": heads[0] if heads[0] == heads[1] else T2})
         if rest.startswith("repository/commits/") and rest.endswith("/statuses"):
             sha = rest.split("/")[2]
             return self.send(200, STATUSES.get(sha, []))
@@ -284,6 +296,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {})
         if self.token() is None:
             return self.send(401, {"message": "401 Unauthorized"})
+        if p == PROJ + "/repository/tags":
+            d = json.loads(b or "{}")
+            return self.send(201, {"name": d.get("tag_name"), "target": "t" * 40, "commit": {"id": d.get("ref")}})
         if p == PROJ + "/pipelines/50/retry":
             return self.send(201, {"id": 50, "status": "pending"})
         if p == PROJ + "/merge_requests":

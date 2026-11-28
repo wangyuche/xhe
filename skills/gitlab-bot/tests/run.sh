@@ -249,6 +249,24 @@ check "repo 有 url.*.insteadOf 時 fetch 也拒絕" bash -c "bash '$BOT' fetch 
 git config --unset url."git@evil.example:".insteadOf
 unset GITLAB_BOT_PUSH_URL
 
+# --- tag ---
+T2=$(printf '2%.0s' $(seq 40)); T3=$(printf '3%.0s' $(seq 40))
+: > "$TMP/req.log"
+check "tag 在預設分支上的 commit 建立 annotated tag" bash -c "out=\$(bash '$BOT' tag v1.2.3 --sha $T2 -m 'release 1.2.3'); grep -q '^tag v1.2.3 → ' <<<\"\$out\" && grep '^POST .*/repository/tags ' '$TMP/req.log' | sed 's/^[^{]*//' | jq -e '. == {tag_name: \"v1.2.3\", ref: \"$T2\", message: \"release 1.2.3\"}' >/dev/null"
+: > "$TMP/req.log"
+check "tag 沒給 -m 時訊息用 tag 名稱" bash -c "bash '$BOT' tag v1.2.4 --sha $T2 >/dev/null && grep '^POST .*/repository/tags ' '$TMP/req.log' | sed 's/^[^{]*//' | jq -e '.message == \"v1.2.4\"' >/dev/null"
+: > "$TMP/req.log"
+check "tag 已存在拒絕且沒送 POST" bash -c "! bash '$BOT' tag v1.0.0 --sha $T2 2>/dev/null && ! grep -q '^POST' '$TMP/req.log'"
+check "tag SHA 不在預設分支上拒絕且沒送 POST" bash -c "! bash '$BOT' tag v1.2.5 --sha $T3 2>/dev/null && ! grep -q '^POST' '$TMP/req.log'"
+check "tag 名稱不是 vX.Y.Z 拒絕" bash -c "! bash '$BOT' tag 1.2.3 --sha $T2 2>/dev/null && ! bash '$BOT' tag v1.2 --sha $T2 2>/dev/null && ! bash '$BOT' tag 'v1.2.3;x' --sha $T2 2>/dev/null"
+check "tag 短 SHA 或缺 --sha 拒絕" bash -c "! bash '$BOT' tag v1.2.3 --sha 2222222 2>/dev/null && ! bash '$BOT' tag v1.2.3 2>/dev/null"
+check "tag 不認得的參數拒絕" bash -c "! bash '$BOT' tag v1.2.3 --sha $T2 --force 2>/dev/null && ! grep -q '^POST' '$TMP/req.log'"
+
+echo '{}' > "$TMP/scenario.json"
+check "tag 查詢 tag 非 404 錯誤時停止且沒送 POST" bash -c "! GITLAB_BOT_TOKEN_CMD='echo glpat-wrong' bash '$BOT' tag v1.2.6 --sha $T2 2>'$TMP/err'; ! grep -q '^POST' '$TMP/req.log'"
+check "tag 用 merge_base 判斷是否在預設分支" bash -c "grep -q 'repository/merge_base?refs%5B%5D=$T3&refs%5B%5D=develop' '$TMP/req.log'"
+check "沒有參數時說明文字印到多專案段落" bash -c "bash '$BOT' 2>&1 | grep -q 'GITLAB_BOT_PUSH_URL' && ! bash '$BOT' 2>&1 | grep -q 'set -euo'"
+
 # --- rebase ---
 : > "$TMP/req.log"
 check "rebase 送 PUT、印新的 head SHA" bash -c "out=\$(bash '$BOT' rebase 13); grep -q '^rebased: a\{40\} -> 7\{40\}$' <<<\"\$out\" && grep -q '^PUT .*/merge_requests/13/rebase' '$TMP/req.log'"
