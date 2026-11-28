@@ -683,7 +683,8 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
-    lockout = cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:"))
+    via_group = flags.get("--member", "").startswith(("group:", "domain:"))
+    lockout = cfg.get("GG_AUTH") == "user" and via_group
     role = flags.get("--role", "")
     if lockout and (role in IAM_ADMIN_ROLES or not role.startswith("roles/")):  # 自訂角色可能含 setIamPolicy:一律當 IAM 管理
         res["blocked_reason"] = (f"帳號模式下移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得權限,"
@@ -697,8 +698,9 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
           f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
-    if lockout:  # 執行前的風險(不是放寬安全):gcp-guardian 使用的身分可能靠這個群組 / 網域取得權限
-        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得權限,可能把自己鎖在專案外"
+    if via_group:  # 執行前的風險(不是放寬安全):gcp-guardian 使用的身分可能靠這個群組 / 網域取得權限
+        who = "你的帳號" if lockout else "gcp-guardian 的 SA"
+        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若{who}靠它取得權限,可能把自己鎖在專案外(連還原都做不了)"
     return rb, [], None
 
 

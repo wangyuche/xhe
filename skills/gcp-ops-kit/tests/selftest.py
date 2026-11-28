@@ -389,7 +389,7 @@ def t_impersonation(e):
     r_sa = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
                               "--role=roles/editor", f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA},
                              {"bindings": [{"role": "roles/editor", "members": ["group:admins@example.com"]}]})
-    ok("SA 模式移除群組權限不標「鎖在外面」", not r_sa.get("exec_warning"), r_sa)
+    ok("SA 模式移除群組權限:也有執行前警示(SA 可能靠群組取得權限),不算放寬", "gcp-guardian 的 SA" in (r_sa.get("exec_warning") or "") and not r_sa["loosens_security"], r_sa)
     r_o = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
                              "--role=roles/iam.securityAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
                             {"bindings": [{"role": "roles/iam.securityAdmin", "members": ["group:admins@example.com"]}]})
@@ -1117,6 +1117,7 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "operationType": "X", "status": "DONE"}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
+        {"tool": "gcloud", "re": "^container operations list ", "when": {"ops_list_fail": True}, "rc": 1, "err": "ERROR: 503"},
         {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True, "resized": None},
          "out": [{"name": "projects/p/locations/l/operations/op-P", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING", "operationType": "UPDATE_CLUSTER",
                   "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod"}],},
@@ -1331,6 +1332,12 @@ def t_plan_change(e, review_run):
         e.state({st_name: True})
         r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
         ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "--num-nodes=2" in r.stdout, r.stdout[-500:])
+    e.state({"ops_list_fail": True})
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    sent = [c for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
+    ok("變更:送出前列不出操作 → BLOCKED、沒送出、核准檔還在",
+       r.returncode == 3 and not sent and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
     e.state({})
     e.state({"flip_fw": True})
     e.clear_log()

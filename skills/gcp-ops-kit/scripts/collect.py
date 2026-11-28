@@ -165,7 +165,8 @@ def analyze(run, cfg):
     meta = gglib.read_json(os.path.join(run, "meta.json"), {})
     meta["sa_roles"] = sorted(b.get("role") for b in pol.get("bindings") or [] if me in (b.get("members") or []))
     gglib.write_json(os.path.join(run, "meta.json"), meta)
-    findings = gcp_rules.scan(inv, cfg.get("GG_SA"))
+    # 只豁免專用 SA;帳號模式(即使登入的是某個 SA)不豁免,避免把那個身分自己的問題藏起來
+    findings = gcp_rules.scan(inv, cfg.get("GG_SA") if cfg.get("GG_AUTH") != "user" else None)
     areas = (gglib.read_json(os.path.join(run, "meta.json"), {}) or {}).get("areas") or []
     if areas and "gke" not in areas:  # 只掃 k8s 時仍要抓叢集清單,但不報 GKE 層規則
         findings = [f for f in findings if not f["rule_id"].startswith("GKE-")]

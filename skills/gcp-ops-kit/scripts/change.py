@@ -84,6 +84,8 @@ class Runner:
             is_op = isinstance(op, dict) and (op.get("operationType") or op.get("kind") == "sql#operation"
                                               or "/operations/" in str(op.get("selfLink") or op.get("name") or ""))
             name = (op.get("name") or "").rsplit("/", 1)[-1] if is_op else ""  # 印出的不是操作(例如資源本身):改用差集找
+            if not name and getattr(self, "pre_ops", None) is None:
+                return unknown("指令已送出,但沒有送出前的操作快照,無法確認是哪個操作;請用 gcloud container / sql operations list 確認")
             if not name:  # gcloud --async 可能不印操作:在時間窗內重查這個資源在送出後開始的操作
                 op = {}
                 t_end = time.time() + OP_FAIL_WINDOW
@@ -182,7 +184,7 @@ class Runner:
             return None
         cands = []
         for o in ops if isinstance(ops, list) else []:
-            if not isinstance(o, dict) or not o.get("name"):
+            if not isinstance(o, dict) or not isinstance(o.get("name"), str) or not o["name"]:
                 continue
             nm = o["name"].rsplit("/", 1)[-1]
             if svc == "container":
@@ -302,6 +304,21 @@ class Runner:
             rb = {"apiVersion": "v1", "kind": "List", "items": [rollback_object(o) for o in objs if not o.get("_absent")]}
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
+        kinfo = ggchange.change_rules()["kinds"][kind]
+        if kinfo.get("async"):  # 作廢核准檔與送出前,先快照這個資源既有的操作(之後 gcloud 沒印操作時用差集找自己的)
+            self.cur_kind = kind
+            pre = None
+            for _ in range(3):
+                try:
+                    pre = self._list_ops(s, kinfo["async"], argv)
+                except Exception:
+                    pre = None
+                if pre is not None:
+                    break
+                time.sleep(min(OP_POLL_SECONDS, 5))
+            if pre is None:
+                return self.stop("BLOCKED", cid, "送出前列不出這個資源的操作(無法在送出後確認自己的操作);雲端沒被動到、核准檔還在,請稍後重試")
+            self.pre_ops = set(pre)
         try:
             s.ensure_fresh(margin=180)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
         except gglib.Blocked as e:
@@ -319,18 +336,10 @@ class Runner:
                          "reason": "指令已送出但沒有等到結果;請先確認現況",
                          "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
                          "rollback_warning": it.get("rollback_warning")}
-        kinfo = ggchange.change_rules()["kinds"][kind]
         run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
             # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時 8 分鐘(留餘裕,避免中途過期)
             tmo = 300 if kinfo.get("async") else (480 if self.cfg.get("GG_AUTH") == "user" else 1800)
-            if kinfo.get("async"):  # 送出前快照這個資源既有的操作:之後 gcloud 沒印操作時,用差集找自己的
-                self.cur_kind = kind
-                try:
-                    pre = self._list_ops(s, kinfo["async"], argv)
-                except gglib.Blocked:
-                    pre = None
-                self.pre_ops = set(pre) if pre is not None else None
             r = s._exec(run_argv, "change", timeout=tmo)
         except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None
