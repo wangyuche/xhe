@@ -84,36 +84,11 @@ class Runner:
             is_op = isinstance(op, dict) and (op.get("operationType") or op.get("kind") == "sql#operation"
                                               or "/operations/" in str(op.get("selfLink") or op.get("name") or ""))
             name = (op.get("name") or "").rsplit("/", 1)[-1] if is_op else ""  # 印出的不是操作(例如資源本身):改用差集找
-            if not name and getattr(self, "pre_ops", None) is None:
-                return unknown("指令已送出,但沒有送出前的操作快照,無法確認是哪個操作;請用 gcloud container / sql operations list 確認")
-            if not name:  # gcloud --async 可能不印操作:在時間窗內重查這個資源在送出後開始的操作
-                op = {}
-                self.op_via_diff = True
-                t_end = time.time() + OP_FAIL_WINDOW
-                while True:
-                    try:
-                        name = self._find_operation(s, svc, argv)
-                    except gglib.Blocked:
-                        name = ""  # 換 token 暫時失敗:當成這次沒找到
-                    if name == "MULTI":
-                        return unknown("指令已送出,但同時有多個可能的操作,無法確定是哪一個;請用 gcloud container / sql operations list 確認")
-                    if name:  # 再列一次確認仍是同一筆唯一的新操作,避免剛好只看到別人的
-                        time.sleep(OP_POLL_SECONDS)
-                        try:
-                            again = self._find_operation(s, svc, argv)
-                        except gglib.Blocked:
-                            again = ""
-                        if again == name:
-                            break
-                        if again == "MULTI":
-                            return unknown("指令已送出,但同時有多個可能的操作,無法確定是哪一個;請用 gcloud container / sql operations list 確認")
-                        name = ""
-                    if time.time() >= t_end:
-                        break
-                    time.sleep(OP_POLL_SECONDS)
             if not name:
-                return unknown("指令已送出,但找不到對應的操作,無法確認是否完成;請用 gcloud container / sql operations list 確認")
-            self.seen_ops = getattr(self, "seen_ops", set()) | {name}
+                # gcloud 原始碼:container clusters update / resize 加 --async 時不印操作。
+                # 不去猜哪個操作是自己的:改由 one() 依資源狀態(回到 RUNNING 且符合預期值)判斷完成
+                self.wait_state = True
+                return subprocess.CompletedProcess(r.args, 0, "", "")
             if op.get("status") == "DONE":
                 return self._op_result(r, svc, op)
             project = _flag(argv, "--project")
@@ -146,65 +121,6 @@ class Runner:
             return unknown(f"等待操作 {name} 逾時")
         except Exception as e:  # 輪詢中任何錯誤(例如換 token 失敗):指令已送出 → 狀態不明
             return unknown(f"輪詢操作狀態時出錯({type(e).__name__}: {gglib._short(str(e), 200)})")
-
-    def _find_operation(self, s, svc, argv):
-        """送出後才出現(不在送出前快照裡)的對應操作。不依賴兩邊時鐘。"""
-        now = self._list_ops(s, svc, argv)
-        pre = getattr(self, "pre_ops", None)
-        if now is None or pre is None:
-            return ""  # 送出前或現在列不出操作:無法安全比對
-        cands = [n for n in now if n not in pre and n not in getattr(self, "seen_ops", set())]
-        if len(cands) > 1:
-            return "MULTI"  # 不猜:多筆都可能是,交給使用者確認
-        return cands[0] if cands else ""
-
-    def _list_ops(self, s, svc, argv):
-        """列出這個資源可能是這類變更的操作名稱;列不出來回 None。"""
-        project = _flag(argv, "--project")
-        pos = [a for a in argv if not a.startswith("-")]
-        target = pos[4] if len(pos) > 4 else None  # gcloud container clusters <verb> <name> / gcloud sql instances patch <name>
-        kind = getattr(self, "cur_kind", "")
-        nodepool = None
-        if kind == "gke-nodepool-update":
-            nodepool = target
-        elif kind == "gke-resize":
-            nodepool = _flag(argv, "--node-pool")
-        if svc == "container":
-            cluster = _flag(argv, "--cluster") or target  # node-pools update 用 --cluster
-            # 精確的 regex 過濾(prod 不會比中 prod-2),取多一點再在本地比對
-            tl = f"/clusters/{cluster}"  # 伺服器端只粗篩(不用括號等 filter 語法),精確比對在下面的 want
-            q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink~{tl}",
-                          "--sort-by=~startTime", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
-        else:
-            q = s.gcloud(["sql", "operations", "list", f"--instance={target}", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
-        if q.returncode != 0:
-            return None
-        try:
-            ops = json.loads(q.stdout or "[]")
-        except ValueError:
-            return None
-        cands = []
-        for o in ops if isinstance(ops, list) else []:
-            if not isinstance(o, dict) or not isinstance(o.get("name"), str) or not o["name"]:
-                continue
-            nm = o["name"].rsplit("/", 1)[-1]
-            if svc == "container":
-                link = str(o.get("targetLink") or "")
-                # 叢集層級一定接受;改 node pool 時也接受那個 node pool 層級(gcloud 有些 node pool 變更走 clusters.update)
-                want = r"/clusters/" + re.escape(cluster) + (r"(/nodePools/" + re.escape(nodepool) + r")?" if nodepool else "") + r"$"
-                if not re.search(want, link):
-                    continue
-                ot = str(o.get("operationType") or "").upper()
-                if ot.startswith("AUTO_") or ot == "UPGRADE_MASTER" or (ot == "UPGRADE_NODES" and kind != "gke-nodepool-update"):
-                    continue  # 系統自動升級 / 修復不是這次的變更
-                if kind == "gke-resize" and ot != "SET_NODE_POOL_SIZE":
-                    continue  # 排除 auto-repair / auto-upgrade;其他同時出現的候選會變成「多筆」→ 狀態不明,不猜
-            elif str(o.get("operationType") or "").upper() != "UPDATE":
-                continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
-            elif o.get("user") and str(o["user"]).lower() != (self.cfg.get("GG_SA") or "").lower():
-                continue  # SQL 操作記有發起者:不是自己送的就排除
-            cands.append(nm)
-        return cands
 
     @staticmethod
     def _op_result(r, svc, st):
@@ -266,7 +182,7 @@ class Runner:
 
     def one(self, s, it, ctx_done):
         cid = it["id"]
-        self.op_via_diff = False  # 每條重設:上一條的狀態不影響這條
+        self.wait_state = False  # 每條重設:上一條的狀態不影響這條
         self.op_note = False
         argv = ggplan.materialize(it, self.run)
         kind = it["kind"]
@@ -311,25 +227,6 @@ class Runner:
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
-        if kinfo.get("async"):
-            try:
-                s.ensure_fresh(margin=180, strict=True)  # 先換好 token:換不到時直接報真正原因(例如要重新 gcloud auth login)
-            except gglib.Blocked as e:
-                return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
-        if kinfo.get("async"):  # 作廢核准檔與送出前,先快照這個資源既有的操作(之後 gcloud 沒印操作時用差集找自己的)
-            self.cur_kind = kind
-            pre = None
-            for _ in range(3):
-                try:
-                    pre = self._list_ops(s, kinfo["async"], argv)
-                except Exception:
-                    pre = None
-                if pre is not None:
-                    break
-                time.sleep(min(OP_POLL_SECONDS, 5))
-            if pre is None:
-                return self.stop("BLOCKED", cid, "送出前列不出這個資源的操作(無法在送出後確認自己的操作);這條沒送出," + left)
-            self.pre_ops = set(pre)
         try:
             s.ensure_fresh(margin=180, strict=True)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
         except gglib.Blocked as e:
@@ -356,7 +253,6 @@ class Runner:
             self.inflight = None
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
         if r.returncode == 0 and kinfo.get("async"):
-            self.cur_kind = kind
             r = self.wait_operation(s, kinfo["async"], r, argv)
             self.op_note = r.returncode == 0 and (r.stderr or "").startswith("操作 DONE,附帶訊息")
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
@@ -374,6 +270,8 @@ class Runner:
         rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
         if it.get("rollback_warning"):
             rec["rollback_warning"] = it["rollback_warning"]
+        if it.get("exec_warning"):
+            rec["exec_warning"] = it["exec_warning"]
         if it.get("rollback_note"):
             rec["rollback_note"] = it["rollback_note"]
         # 指令已成功:立刻記錄(驗證期間被中斷也留得下這條與還原指令),之後就地更新結果
@@ -381,22 +279,31 @@ class Runner:
         self.results.append(rec)
         self.inflight = None
         exp = it.get("expected") or []
-        if (self.op_via_diff or self.op_note) and not exp:
-            # 操作由清單差集找到,或 DONE 但帶 statusMessage:沒有預期值可驗證就不能確定成功
-            why = "gcloud 沒印出操作,改由清單比對找到" if self.op_via_diff else ("操作完成但帶有訊息:" + gglib._short(r.stderr, 200))
+        note = ("操作完成但帶有訊息:" + gglib._short(r.stderr, 200)) if self.op_note else ""
+        if (self.wait_state or self.op_note) and not exp:
+            # 依資源狀態判斷完成、或 DONE 但帶 statusMessage:沒有預期值可驗證就不能確定成功
+            why = "gcloud 沒印出操作,只能依資源狀態判斷" if self.wait_state else note
             rec.update({"result": "狀態不明", "reason": why + ";這條沒有預期值可驗證,請先確認現況"})
             self.status = "ISSUES"
             return False
-        deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
+        if self.wait_state:  # 沒有操作可追:等資源回到 RUNNING 且符合預期值(最多 GKE 逾時)
+            deadline = time.time() + CHANGE_TIMEOUT_GKE
+        else:
+            deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
+        settled = lambda a: not isinstance(a, dict) or a.get("status") in (None, "RUNNING")
         while True:
             try:
                 after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
             except (gglib.Blocked, gglib.Denied) as e:
                 after, err = None, str(e)
             # resize:新節點要一段時間才加入叢集,驗證不符時等一下再看
-            if err or not exp or not ggplan.check_pre(exp, after) or time.time() >= deadline:
+            if err or not exp or (not ggplan.check_pre(exp, after) and (not self.wait_state or settled(after))) or time.time() >= deadline:
                 break
-            time.sleep(15)
+            time.sleep(OP_POLL_SECONDS if self.wait_state else 15)
+        if self.wait_state and not err and (ggplan.check_pre(exp, after) or not settled(after)):
+            rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作;等到逾時,資源仍未回到 RUNNING 或不符預期值,伺服器端可能仍在進行,請先確認現況"})
+            self.status = "ISSUES"
+            return False
         if err:
             rec.update({"result": "已執行(驗證失敗)", "reason": "指令已成功執行,但變更後快照失敗:" + err})
             self.status = "ISSUES"
@@ -412,7 +319,7 @@ class Runner:
             rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
             self.status = "ISSUES"
             return False
-        rec.update({"result": "已執行", "reason": "驗證符合"})
+        rec.update({"result": "已執行", "reason": "驗證符合" + (";依資源狀態判斷完成(gcloud 沒印出操作)" if self.wait_state else "") + (";" + note if note else "")})
         return True
 
 
@@ -424,7 +331,7 @@ def write_log(run, plan_path, sha, approved, runner):
         return str(x).replace("|", "\\|").replace("\r", "").replace("\n", "<br>")
     for r in runner.results:
         rb = shlex.join(r.get("rollback") or []) or r.get("rollback_note") or "-"
-        warn = f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""
+        warn = (f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else "") + (f"<br>⚠ 執行前注意:{r['exec_warning']}" if r.get("exec_warning") else "")
         lines.append(f"| {cell(r['id'])} | {cell(r['result'])} | {cell(r.get('reason', ''))} | {r.get('rc', '-')} | `{cell(rb)}`{cell(warn)} |")
     lines += ["", "實際執行的指令見 `inventory/commands.log`(由 kit 記錄,agent 不寫此檔)。", ""]
     with open(os.path.join(run, "change-log.md"), "w", encoding="utf-8") as f:
@@ -520,7 +427,8 @@ def main(argv):
         print(f"run={run}")
         for r in runner.results:
             print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}"
-                  + (f"\t⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""))
+                  + (f"\t⚠ {r['rollback_warning']}" if r.get("rollback_warning") else "")
+                  + (f"\t⚠ 執行前注意:{r['exec_warning']}" if r.get("exec_warning") else ""))
         return {"PASS": 0, "ISSUES": 1, "BLOCKED": 3}[status]
     except gglib.Blocked as e:
         print("status=BLOCKED")

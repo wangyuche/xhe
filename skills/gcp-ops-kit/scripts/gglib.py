@@ -430,10 +430,13 @@ class Session:
                           + _short(scrub_text(r.stderr or "", self.cfg)))
         path = os.path.join(self.gdir, "token")
         tmp = path + ".tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(tok)
-        os.replace(tmp, path)  # 原子替換:中斷時不會留下空的 token 檔
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(tok)
+            os.replace(tmp, path)  # 原子替換:中斷時不會留下空的 token 檔
+        except OSError as e:
+            raise Blocked(f"寫入 token 檔失敗:{e}")
         self.env["CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"] = path
         # GKE 驗證外掛會另外快取 token:換新時一併清掉,讓 kubectl 下次重新取
         for root, _, files in os.walk(self.gdir):

@@ -1142,26 +1142,6 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "operationType": "X", "status": "DONE"}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
-        {"tool": "gcloud", "re": "^container operations list ", "when": {"ops_list_fail": True}, "rc": 1, "err": "ERROR: 503"},
-        {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True, "resized": None},
-         "out": [{"name": "projects/p/locations/l/operations/op-P", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING", "operationType": "UPDATE_CLUSTER",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod"}],},
-        {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True},
-         "out": [{"name": "projects/p/locations/l/operations/op-P", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING", "operationType": "UPDATE_CLUSTER",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod"},
-                 {"name": "projects/p/locations/l/operations/op-X", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod-2/nodePools/default-pool", "operationType": "SET_NODE_POOL_SIZE"},
-                 {"name": "projects/p/locations/l/operations/op-R", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
-                  "operationType": "AUTO_REPAIR_NODES",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"},
-                 {"name": "projects/p/locations/l/operations/op-O", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING",
-                  "operationType": "UPGRADE_NODES",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/other-pool"},
-                 {"name": "projects/p/locations/l/operations/op-L", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
-                  "operationType": "SET_NODE_POOL_SIZE",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"}]},
-        {"tool": "gcloud", "re": "^container operations list ", "out": []},
-        {"tool": "gcloud", "re": "^container operations describe op-L ", "out": {"name": "op-L", "status": "DONE"}},
         {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "ERROR: 503 backend unavailable"},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_bad": True}, "out": {"name": "op-bad", "operationType": "X", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {"name": "op-1", "operationType": "X", "status": "DONE"}, "set": {"resized": True}},
@@ -1340,7 +1320,7 @@ def t_plan_change(e, review_run):
     # --async:長時間操作送出後輪詢狀態,DONE 才驗證
     e.state({"async_op": True})
     e.clear_log()
-    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"; env_op["GG_GKE_TIMEOUT"] = "1"
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
     st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
@@ -1350,19 +1330,12 @@ def t_plan_change(e, review_run):
     e.state({"op_listed": True})
     e.clear_log()
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-    descs = [c["argv"][3] for c in e.stub_calls() if c["argv"][:3] == ["container", "operations", "describe"]]
-    ok("變更:--async 沒印操作時,從 operations list 找到這個叢集的操作(不是 prod-2)並等到 DONE(PASS)",
-       r.returncode == 0 and "status=PASS" in r.stdout and descs and all(d == "op-L" for d in descs), (r.stdout[-400:], descs))
-    for st_name, label in (("no_op_name", "找不到操作"), ("op_bad", "連續查不到狀態")):
+    ok("變更:--async 沒印操作 → 依資源狀態(符合預期值)判斷完成(PASS),不查操作清單",
+       r.returncode == 0 and "status=PASS" in r.stdout and not any(c["argv"][:3] == ["container", "operations", "list"] for c in e.stub_calls()), r.stdout[-400:])
+    for st_name, label in (("no_op_name", "沒印操作且等不到預期狀態"), ("op_bad", "連續查不到狀態")):
         e.state({st_name: True})
         r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
         ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "--num-nodes=2" in r.stdout, r.stdout[-500:])
-    e.state({"ops_list_fail": True})
-    e.clear_log()
-    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-    sent = [c for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
-    ok("變更:送出前列不出操作 → BLOCKED、沒送出、核准檔還在",
-       r.returncode == 3 and not sent and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
     e.state({})
     cfg_sw = os.path.join(e.tmp, "conf", "config-switch")
     with open(cfg_sw, "w") as f:
