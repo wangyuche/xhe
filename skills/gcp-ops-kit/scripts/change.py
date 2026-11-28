@@ -21,6 +21,11 @@ import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
 OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
+OP_TYPES = {
+    "gke-cluster-update": {"UPDATE_CLUSTER"},
+    "gke-nodepool-update": {"UPDATE_NODE_POOL", "SET_NODE_POOL_MANAGEMENT", "SET_NODE_POOL_AUTOSCALING"},
+    "gke-resize": {"SET_NODE_POOL_SIZE"},
+}
 OP_FAIL_WINDOW = float(os.environ.get("GG_OP_FAIL_WINDOW", "600"))  # 連續查不到狀態超過 10 分鐘才放棄
 CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
@@ -92,9 +97,19 @@ class Runner:
             if isinstance(op, list):
                 op = op[0] if op else None
             name = (op.get("name") or "").rsplit("/", 1)[-1] if isinstance(op, dict) else ""
-            if not name:  # gcloud --async 可能不印操作:找這個資源在送出之後開始的操作
-                name = self._find_operation(s, svc, argv)
+            if not name:  # gcloud --async 可能不印操作:在時間窗內重查這個資源在送出後開始的操作
                 op = {}
+                t_end = time.time() + OP_FAIL_WINDOW
+                while True:
+                    try:
+                        name = self._find_operation(s, svc, argv)
+                    except gglib.Blocked:
+                        name = ""  # 換 token 暫時失敗:當成這次沒找到
+                    if name == "MULTI":
+                        return unknown("指令已送出,但同時有多個可能的操作,無法確定是哪一個;請用 gcloud container / sql operations list 確認")
+                    if name or time.time() >= t_end:
+                        break
+                    time.sleep(OP_POLL_SECONDS)
             if not name:
                 return unknown("指令已送出,但找不到對應的操作,無法確認是否完成;請用 gcloud container / sql operations list 確認")
             self.seen_ops = getattr(self, "seen_ops", set()) | {name}
@@ -108,14 +123,17 @@ class Runner:
                 time.sleep(OP_POLL_SECONDS)
                 args = (["container", "operations", "describe", name, f"--location={loc}"] if svc == "container"
                         else ["sql", "operations", "describe", name])
-                q = s.gcloud(args + [f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+                try:
+                    q = s.gcloud(args + [f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+                except gglib.Blocked as e:  # 換 token 暫時失敗:當成一次查詢失敗
+                    q = subprocess.CompletedProcess(args, 1, "", str(e))
                 try:
                     st = json.loads(q.stdout or "null") if q.returncode == 0 else None
                 except ValueError:
                     st = None
                 if not isinstance(st, dict):
                     last_err = gglib._short(q.stderr, 300) or "回應不是 JSON 物件"
-                    if re.search(r"PERMISSION_DENIED|NOT_FOUND|403|404", last_err):
+                    if re.search(r"PERMISSION_DENIED|NOT_FOUND|\bHTTP(?:Error)? ?40[34]\b|\b40[34]\b(?=[: ]+(?:Forbidden|Not Found|PERMISSION|NOT_FOUND))", last_err):
                         return unknown(f"查不到操作 {name} 的狀態(不會恢復的錯誤):{last_err}")
                     fail_since = fail_since or time.time()
                     if time.time() - fail_since >= OP_FAIL_WINDOW:
@@ -132,6 +150,12 @@ class Runner:
         project = _flag(argv, "--project")
         pos = [a for a in argv if not a.startswith("-")]
         target = pos[4] if len(pos) > 4 else None  # gcloud container clusters <verb> <name> / gcloud sql instances patch <name>
+        kind = getattr(self, "cur_kind", "")
+        nodepool = None
+        if kind == "gke-nodepool-update":
+            nodepool = target
+        elif kind == "gke-resize":
+            nodepool = _flag(argv, "--node-pool")
         if svc == "container":
             cluster = _flag(argv, "--cluster") or target  # node-pools update 用 --cluster
             q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink:clusters/{cluster}",
@@ -144,7 +168,7 @@ class Runner:
             ops = []
         since = getattr(self, "sent_at", 0) - 30  # 只接受送出後才開始的操作(容許 30 秒時鐘誤差)
         seen = getattr(self, "seen_ops", set())
-        best = None
+        cands = []
         for o in ops if isinstance(ops, list) else []:
             if not isinstance(o, dict) or not o.get("name"):
                 continue
@@ -153,16 +177,20 @@ class Runner:
                 continue
             if svc == "container":
                 link = str(o.get("targetLink") or "")
-                if not re.search(r"/clusters/" + re.escape(cluster) + r"(/|$)", link):
-                    continue  # targetLink 要完整對到這個叢集(prod 不會比中 prod-2)
+                want = r"/clusters/" + re.escape(cluster) + (r"/nodePools/" + re.escape(nodepool) if nodepool else "") + r"$"
+                if not re.search(want, link):
+                    continue  # targetLink 要完整對到這個叢集(或 node pool)層級
+                if str(o.get("operationType") or "").upper() not in OP_TYPES.get(kind, set()):
+                    continue  # 只接受這類變更會產生的操作類型(排除 auto-repair / auto-upgrade 等)
             elif str(o.get("operationType") or "").upper() != "UPDATE":
                 continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
             ts = _parse_time(o.get("startTime") or o.get("insertTime") or "")
             if ts is None or ts < since:
                 continue
-            if best is None or ts < best[0]:
-                best = (ts, nm)  # 送出後最早開始的那筆
-        return best[1] if best else ""
+            cands.append(nm)
+        if len(cands) > 1:
+            return "MULTI"  # 不猜:多筆都可能是,交給使用者確認
+        return cands[0] if cands else ""
 
     @staticmethod
     def _op_result(r, svc, st):
@@ -263,6 +291,10 @@ class Runner:
             rb = {"apiVersion": "v1", "kind": "List", "items": [rollback_object(o) for o in objs if not o.get("_absent")]}
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
+        try:
+            s.ensure_fresh()  # 帳號模式:作廢核准檔與送出前先換好 token;失敗代表指令還沒送出、核准檔也還在
+        except gglib.Blocked as e:
+            return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e))
         if not self.consumed:
             # 第一條指令真正送出前才作廢核准檔(改名,原子):之前的檢查失敗不會浪費核准
             src = os.path.join(os.path.dirname(self.plan_path), "approval.json")
@@ -271,10 +303,6 @@ class Runner:
             except OSError:
                 return self.stop("BLOCKED", cid, "核准檔已被使用或不存在(每份核准只能執行一次)")
             self.consumed = True
-        try:
-            s.ensure_fresh()  # 帳號模式:送出前先換好 token;失敗代表指令還沒送出
-        except gglib.Blocked as e:
-            return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e))
         # 先記「執行中」:若在執行途中被中斷,紀錄仍會有這條與還原指令
         self.inflight = {"id": cid, "kind": kind, "argv": it["command"], "result": "執行中被中斷(狀態不明)",
                          "reason": "指令已送出但沒有等到結果;請先確認現況",
@@ -291,6 +319,7 @@ class Runner:
             self.inflight = None
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
         if r.returncode == 0 and kinfo.get("async"):
+            self.cur_kind = kind
             r = self.wait_operation(s, kinfo["async"], r, argv)
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}

@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import gglib  # noqa: E402
+import gglib  # noqa: E402  (載入時會把 gcloud SDK 的 bin 加進 PATH,找得到 gke-gcloud-auth-plugin)
 
 WRITE_HINT = ("roles/owner", "roles/editor")
 

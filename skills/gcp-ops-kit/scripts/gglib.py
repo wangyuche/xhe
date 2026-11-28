@@ -25,6 +25,20 @@ RULES_DIR = os.path.join(KIT, "rules")
 EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_BLOCKED, EXIT_DENIED = 0, 1, 2, 3, 4
 
 
+def _add_gcloud_sdk_bin():
+    """Homebrew 只把 gcloud 連進 PATH;gke-gcloud-auth-plugin 等元件在 SDK 的 bin 目錄。
+    找得到 gcloud、找不到外掛時,把 gcloud 實際所在的目錄加到 PATH 後面(只影響 kit 自己與它啟動的 gcloud / kubectl)。"""
+    g = shutil.which("gcloud")
+    if not g or shutil.which("gke-gcloud-auth-plugin"):
+        return
+    sdk_bin = os.path.dirname(os.path.realpath(g))
+    if os.path.isfile(os.path.join(sdk_bin, "gke-gcloud-auth-plugin")):
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + sdk_bin
+
+
+_add_gcloud_sdk_bin()
+
+
 class Blocked(Exception):
     """事前檢查不過 → 回報 BLOCKED。"""
 
@@ -351,8 +365,12 @@ class Session:
                 if (imp.stdout or "").strip() and (imp.stdout or "").strip() != "(unset)":
                     raise Blocked("你的 gcloud 設了 auth/impersonate_service_account,帳號模式拿到的會是被模擬 SA 的 token;"
                                   "請先在終端機執行 gcloud config unset auth/impersonate_service_account,或改用 SA 金鑰模式")
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
+            except FileNotFoundError:
+                raise Blocked("找不到 gcloud")
+            except subprocess.TimeoutExpired:
+                raise Blocked("檢查 gcloud 的 impersonate 設定逾時,為避免用錯身分先停止")
+            if imp.returncode != 0:
+                raise Blocked("讀不到 gcloud 的 impersonate 設定,為避免用錯身分先停止:" + _short(imp.stderr))
             self._imp_checked = True
         try:
             # config-helper --min-expiry:保證拿到的 token 至少還有 15 分鐘(不會拿到快過期的快取 token)

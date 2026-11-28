@@ -350,8 +350,25 @@ def t_impersonation(e):
     env = e.env(); env["GG_CONFIG"] = cfgu
     e.state({"impersonate": True})
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    r_ = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                            "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"},
+                           {"bindings": [{"role": "roles/resourcemanager.projectIamAdmin", "members": ["group:admins@example.com"]}]})
+    ok("移除群組的權限:計畫標放寬(可能把自己鎖在外面)", r_["loosens_security"] and any("鎖在專案外" in x for x in r_["loosens_reasons"]), r_)
     ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
     e.state({})
+
+
+def t_sdk_bin(e):
+    sdk = os.path.join(e.tmp, "fake-sdk", "bin"); os.makedirs(sdk, exist_ok=True)
+    link_dir = os.path.join(e.tmp, "fake-brew-bin"); os.makedirs(link_dir, exist_ok=True)
+    for t, body in (("gcloud", "#!/bin/bash\nexit 0\n"), ("gke-gcloud-auth-plugin", "#!/bin/bash\nexit 0\n")):
+        open(os.path.join(sdk, t), "w").write(body); os.chmod(os.path.join(sdk, t), 0o755)
+    if not os.path.lexists(os.path.join(link_dir, "gcloud")):
+        os.symlink(os.path.join(sdk, "gcloud"), os.path.join(link_dir, "gcloud"))
+    r = subprocess.run(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import gglib, shutil; print(shutil.which('gke-gcloud-auth-plugin') or '')", S],
+                       env={"PATH": link_dir + ":/usr/bin:/bin", "HOME": os.environ.get("HOME", "")}, capture_output=True, text=True)
+    ok("gcloud 只連進 PATH 時,kit 自動找到 SDK bin 裡的 gke-gcloud-auth-plugin",
+       os.path.realpath(r.stdout.strip() or "/nonexistent") == os.path.realpath(os.path.join(sdk, "gke-gcloud-auth-plugin")), r.stdout + r.stderr)
 
 
 def t_parse_time():
@@ -920,7 +937,9 @@ def t_check_scope(e):
     os.makedirs(bind, exist_ok=True)
     for t in ("gcloud",):
         if not os.path.lexists(os.path.join(bind, t)):
-            os.symlink(os.path.join(HERE, "stub", t), os.path.join(bind, t))
+            # 複製而非連結:SDK bin 自動補 PATH 會跟著 symlink 找到 stub 目錄裡的外掛,這裡要模擬真的沒有外掛
+            open(os.path.join(bind, t), "w").write('#!/bin/bash\nexec python3 "%s" gcloud "$@"\n' % os.path.join(HERE, "stub", "stub.py"))
+            os.chmod(os.path.join(bind, t), 0o755)
     env = e.env()
     env["PATH"] = bind + ":/usr/bin:/bin:/usr/sbin:/opt/homebrew/bin:/usr/local/bin"
     r1 = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam,gcs"], env=env)
@@ -1056,8 +1075,12 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
         {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True},
          "out": [{"name": "projects/p/locations/l/operations/op-X", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
-                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod-2"},
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod-2/nodePools/default-pool", "operationType": "SET_NODE_POOL_SIZE"},
+                 {"name": "projects/p/locations/l/operations/op-R", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
+                  "operationType": "AUTO_REPAIR_NODES",
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"},
                  {"name": "projects/p/locations/l/operations/op-L", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
+                  "operationType": "SET_NODE_POOL_SIZE",
                   "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"}]},
         {"tool": "gcloud", "re": "^container operations list ", "out": []},
         {"tool": "gcloud", "re": "^container operations describe op-L ", "out": {"name": "op-L", "status": "DONE"}},
@@ -1468,6 +1491,7 @@ def main():
         t_check_scope(e)
         t_user_auth(e)
         t_impersonation(e)
+        t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()
         if run:

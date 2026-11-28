@@ -679,8 +679,7 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
-    if flags.get("--member", "").startswith(("group:", "domain:")) and flags.get("--role") in ("roles/owner", "roles/editor"):
-        res["rollback_warning"] = "移除群組 / 網域的 editor 權限前,請確認 gcp-guardian 使用的身分(你的帳號)不是靠它取得權限,否則可能把自己鎖在專案外"
+    lockout = flags.get("--member", "").startswith(("group:", "domain:"))
     if pos[0] != flags.get("--project"):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
         return None, [], None
@@ -689,7 +688,10 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
           f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
-    return rb, [], None
+    reasons = []
+    if lockout:  # 執行前的風險:gcp-guardian 使用的身分可能靠這個群組 / 網域取得權限
+        reasons.append(f"移除 {flags['--member']} 的 {flags['--role']}:若 gcp-guardian 使用的身分(你的帳號)靠它取得權限,可能把自己鎖在專案外")
+    return rb, reasons, None
 
 
 PUBLIC_WARN = "這條還原會重新公開資料(加回 allUsers / allAuthenticatedUsers);除非確定要回復公開,否則不要執行"
