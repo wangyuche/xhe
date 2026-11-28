@@ -461,18 +461,18 @@ class Session:
             self._refresh_user_token("55m")
             self._long_token_at = time.time()
 
-    def ensure_fresh(self, margin=0, strict=False):
-        """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。
-        margin:提早換新的秒數(作廢核准檔前用,確保接下來幾分鐘內不需要再換)。"""
+    def ensure_fresh(self):
+        """帳號模式(讀取用):token 太舊或檔案不見就換新;換新失敗但舊 token 仍安全時沿用,否則丟 Blocked。
+        變更改用 prepare_change_token()(一律換新、不沿用)。"""
         if self.cfg.get("GG_AUTH") != "user":
             return
         now = time.time()
         age = now - getattr(self, "_token_at", 0)
-        if age <= self.TOKEN_MAX_AGE - margin:
+        missing = not os.path.exists(os.path.join(self.gdir, "token"))  # 例如被殘留清理刪掉
+        if age <= self.TOKEN_MAX_AGE and not missing:
             return
-        # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用;strict(變更)時換不到就停,不沿用
-        usable = (not strict) and age < self.TOKEN_SAFE_AGE - margin
-        if not strict and now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試(變更前一律重試)
+        usable = age < self.TOKEN_SAFE_AGE and not missing  # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用
+        if now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試
             if usable:
                 return
             raise Blocked(getattr(self, "_refresh_failed_msg", "換 token 失敗"))

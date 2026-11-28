@@ -121,7 +121,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - 已有條目執行後,後面的條目被擋:整體狀態是 ISSUES(不是 BLOCKED)。收到 SIGTERM / SIGHUP / SIGINT 會先寫紀錄、清憑證;被 SIGKILL 留下的憑證快取下次執行時清掉(超過 6 小時)。collect / plan / change 請在背景執行(可能超過 10 分鐘)。
 - gcloud update 一次只能改一類設定(`exclusive_groups`),多類請拆成多個 C 編號。
 - 變更指令成功但之後的快照 / 驗證失敗:結果記「已執行(驗證失敗)」並附還原指令。
-- `node-pools update` 與 Cloud SQL `instances patch` 執行時自動加 `--async`(gcloud 原始碼:這兩個會回傳操作),由 kit 輪詢操作狀態(`operations describe`,每次輪詢前換 token)到 DONE 再驗證;輸出不是單一操作物件、連續 10 分鐘查不到狀態(權限不足則立即)、逾時(GKE 4 小時、SQL 1 小時)或輪詢出錯,一律記「狀態不明」並附還原指令。`clusters update` / `clusters resize` 的 `--async` 不回傳操作,所以不加,由 gcloud 自己等完成(帳號模式送出前先換一張至少剩 55 分鐘的 token,同步指令最多 50 分鐘,超過記狀態不明;SA 模式 GKE 最多 4 小時)。GKE / SQL 變更送出前,資源(node pool 變更另看叢集)若正在變更中(PROVISIONING / RECONCILING / 維護中 / MIG 不穩定)直接 BLOCKED 不送出;處在錯誤狀態則照樣可送(可能正是要修它)。計畫裡不可自己寫 `--async` / `--format`。
+- `node-pools update` 與 Cloud SQL `instances patch` 執行時自動加 `--async`(gcloud 原始碼:這兩個會回傳操作),由 kit 輪詢操作狀態(`operations describe`,每次輪詢前換 token)到 DONE 再驗證;輸出不是單一操作物件、連續 10 分鐘查不到狀態(權限不足則立即)、逾時(GKE 4 小時、SQL 1 小時)或輪詢出錯,一律記「狀態不明」並附還原指令。`clusters update` / `clusters resize` 的 `--async` 不回傳操作,所以不加,由 gcloud 自己等完成(帳號模式送出前先換一張至少剩 55 分鐘的 token,同步指令最多 50 分鐘,超過記狀態不明;SA 模式 GKE 最多 4 小時)。GKE / SQL 變更送出前,資源(node pool 變更另看叢集)若正在變更中或讀不到狀態(PROVISIONING / RECONCILING / 維護中;resize 另看 MIG 是否穩定)直接 BLOCKED 不送出;處在錯誤狀態則照樣可送(可能正是要修它)。計畫裡不可自己寫 `--async` / `--format`。
 - 新值等於現值的條目判「不需變更」→ BLOCKED(避免空操作被記成修正)。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。

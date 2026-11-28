@@ -378,7 +378,8 @@ def t_refresh_fallback(e):
     calls = []
     def fail():
         calls.append(1); raise gglib.Blocked("網路暫時失敗")
-    o = types.SimpleNamespace(cfg={"GG_AUTH": "user"}, run=e.tmp, TOKEN_MAX_AGE=300, TOKEN_SAFE_AGE=600,
+    gd = os.path.join(e.tmp, "fake-gdir"); os.makedirs(gd, exist_ok=True); open(os.path.join(gd, "token"), "w").write("x")
+    o = types.SimpleNamespace(cfg={"GG_AUTH": "user"}, run=e.tmp, gdir=gd, TOKEN_MAX_AGE=300, TOKEN_SAFE_AGE=600,
                               _token_at=_t.time() - 400, _refresh_user_token=fail)
     gglib.Session.ensure_fresh(o)  # 換新失敗但 token 才 400 秒:沿用,不丟錯
     gglib.Session.ensure_fresh(o)  # 1 分鐘內不重試
@@ -389,6 +390,12 @@ def t_refresh_fallback(e):
     except gglib.Blocked:
         raised = True
     ok("換 token 失敗且舊 token 已太舊 → Blocked", raised)
+    os.remove(os.path.join(gd, "token")); o._token_at = _t.time(); o._refresh_failed_at = -1e9; calls.clear()
+    try:
+        gglib.Session.ensure_fresh(o); raised = False
+    except gglib.Blocked:
+        raised = True
+    ok("token 檔不見(例如被殘留清理刪掉)→ 立刻換新,換不到就 Blocked(不沿用)", raised and len(calls) == 1)
 
 
 def t_bad_config_path(e):

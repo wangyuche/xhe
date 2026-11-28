@@ -222,6 +222,9 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     if not kind:
         return block("不在變更允許清單(請使用者自己執行)")
     res["kind"] = kind
+    if cfg.get("GG_AUTH") == "user" and kind in ("gke-cluster-update", "gke-resize"):
+        # gcloud 對這兩種不回傳操作,只能同步等;帳號模式的 token 最多約 1 小時
+        res["exec_warning"] = "帳號模式最多等 50 分鐘:超過時記「狀態不明」(伺服器端仍會繼續);預期很久的叢集變更(大量節點)請改用 SA 模式"
     k = rules["kinds"][kind]
     snap = snapshot or {}
     try:

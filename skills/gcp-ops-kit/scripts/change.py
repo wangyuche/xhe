@@ -35,6 +35,8 @@ def _res_state(svc, after):
         return "changing"
     np = after.get("nodepool") if isinstance(after.get("nodepool"), dict) else after
     st = str((after.get("state") if svc == "sql" else np.get("status")) or "")
+    if not st:
+        return "unknown"  # 讀不到狀態:不當成可以送
     if st in CHANGING:
         return "changing"
     if st not in ("", "RUNNING", "RUNNABLE"):
@@ -245,7 +247,7 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
-        busy = kind in GKE_KINDS and _res_state(GKE_KINDS[kind], snap) in ("changing", "mig")
+        busy = kind in GKE_KINDS and _res_state(GKE_KINDS[kind], snap) in ("changing", "mig", "unknown")
         if not busy and kind in ("gke-nodepool-update", "gke-resize"):  # node pool 變更:叢集本身在變更中(例如控制平面升級)也不送
             f = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in argv if a.startswith("--") and "=" in a}
             pos = [a for a in argv if not a.startswith("-")]
@@ -258,10 +260,10 @@ class Runner:
                 cl = None
             if not isinstance(cl, dict):
                 return self.stop("BLOCKED", cid, "讀不到叢集狀態,無法確認叢集是否在變更中;這條沒送出")
-            busy = _res_state("container", cl) == "changing"
+            busy = _res_state("container", cl) in ("changing", "unknown")
         if busy:
             # 穩定但有錯誤(DEGRADED 等)照樣可以送:使用者可能正是要修它
-            return self.stop("BLOCKED", cid, "資源正在變更中(PROVISIONING / RECONCILING 或 MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
+            return self.stop("BLOCKED", cid, "資源正在變更中或讀不到狀態(PROVISIONING / RECONCILING / 維護中 / MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
         try:
             s.prepare_change_token()  # 帳號模式:作廢核准檔前先換好至少剩 55 分鐘的 token(送出時不必再換);失敗代表指令還沒送出、核准檔也還在
@@ -343,7 +345,7 @@ class Runner:
         else:
             badexp = ggplan.check_pre(exp, after)
         if badexp:
-            rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
+            rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500] + (";" + gglib._short(note, 300) if note else "")})
             self.status = "ISSUES"
             return False
         rec.update({"result": "已執行", "reason": "驗證符合" + (";" + gglib._short(note, 300) if note else "")})
