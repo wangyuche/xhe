@@ -335,8 +335,8 @@ class Session:
             raise
         return self
 
-    # gcloud print-access-token 會回傳快取中尚未過期的 token(可能只剩約 5 分鐘),所以頻繁換新
-    TOKEN_MAX_AGE = 3 * 60
+    # 取 token 時保證至少剩 15 分鐘;每 5 分鐘換新,任何時刻至少剩約 10 分鐘
+    TOKEN_MAX_AGE = 5 * 60
 
     def _refresh_user_token(self):
         """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
@@ -345,13 +345,18 @@ class Session:
         user_env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
         user_env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"  # 要重新驗證時直接失敗,不等輸入
         try:
-            r = subprocess.run(["gcloud", "auth", "print-access-token", f"--account={acct}", "--quiet"],
+            # config-helper --min-expiry:保證拿到的 token 至少還有 15 分鐘(不會拿到快過期的快取 token)
+            r = subprocess.run(["gcloud", "config", "config-helper", "--format=json", "--min-expiry=15m", f"--account={acct}", "--quiet"],
                                env=user_env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         except FileNotFoundError:
             raise Blocked("找不到 gcloud")
         except subprocess.TimeoutExpired:
             raise Blocked("取 access token 逾時")
-        tok = (r.stdout or "").strip()
+        try:
+            tok = (json.loads(r.stdout or "{}").get("credential") or {}).get("access_token") or ""
+        except ValueError:
+            tok = ""
+        tok = tok.strip()
         if r.returncode != 0 or not tok or any(c.isspace() for c in tok):
             raise Blocked(f"無法用帳號 {acct} 取得 access token(請使用者自己在終端機執行 gcloud auth login {acct}):"
                           + _short(scrub_text(r.stderr or "", self.cfg)))
@@ -362,7 +367,7 @@ class Session:
         self.env["CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"] = path
         self.env["CLOUDSDK_CORE_ACCOUNT"] = acct
         self._token_at = time.time()
-        append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "auth", "print-access-token", "--account=<GG_ACCOUNT>"],
+        append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", "--min-expiry=15m", "--account=<GG_ACCOUNT>"],
                                           "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
 
     def ensure_fresh(self):
@@ -391,7 +396,8 @@ class Session:
             check_read(argv, check_mode)
         elif check_mode == "change":
             import ggchange  # 第二道防線:只檢查形狀(允許清單、共同禁止、旗標);完整判定在 change.py
-            shape = ggchange.classify(argv, self.cfg, shape_only=True)
+            # --async / --format=json 是 kit 執行時自己加的(計畫裡不准寫),檢查形狀時先拿掉
+            shape = ggchange.classify([a for a in argv if a not in ("--async", "--format=json")], self.cfg, shape_only=True)
             if shape["blocked_reason"]:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
         else:

@@ -954,7 +954,7 @@ def t_user_auth(e):
     run = run_dir(r.stdout)
     calls = e.stub_calls()
     ok("帳號模式:collect 完成,不呼叫 activate-service-account", r.returncode == 0 and run and not any(c["argv"][:2] == ["auth", "activate-service-account"] for c in calls), r.stderr[-300:])
-    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] != ["auth", "print-access-token"]]
+    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] not in (["auth", "print-access-token"], ["config", "config-helper"])]
     ok("帳號模式:gcloud 用 run 內的 token 檔(CLOUDSDK_AUTH_ACCESS_TOKEN_FILE)", tf and all(t and t.startswith(run) for t in tf), tf[:2])
     blob = ""
     for root, _, fns in os.walk(run or e.tmp):
@@ -978,6 +978,9 @@ def t_user_auth(e):
     ok("帳號模式:不能動自己帳號的 IAM 綁定", r["blocked_reason"] and "自己" in r["blocked_reason"], r["blocked_reason"])
     r = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=user:time@example.com", "--role=roles/editor",
                            f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
+    r2 = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, f"--member=deleted:serviceAccount:{FX.GG_SA}?uid=1", "--role=roles/editor",
+                            f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA}, FX.POLICY)
+    ok("自己身分:deleted:serviceAccount:…?uid= 寫法也擋", (r2["blocked_reason"] or "").startswith("一律禁止:動到"), r2["blocked_reason"])
     ok("帳號模式:別人的帳號(time@ 含 me@ 子字串)不會被誤擋", not (r["blocked_reason"] or "").startswith("一律禁止:動到"), r["blocked_reason"])
     with open(cfgu, "w") as f:
         f.write(f"GG_AUTH=user\nGG_ACCOUNT=Me@Example.com\nGG_REPORT_DIR={e.reports}\n")
@@ -1028,8 +1031,11 @@ def plan_fixtures():
          "out": {"name": "projects/demo-proj-123/locations/asia-east1/operations/op-9", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container operations describe op-9 ", "out": {"name": "op-9", "status": "DONE"}, "set": {"resized": True, "op_polled": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {}, "set": {"resize_ran": True}},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "status": "DONE"}, "set": {"resize_ran": True}},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
+        {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "PERMISSION_DENIED: container.operations.get"},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_bad": True}, "out": {"name": "op-bad", "status": "RUNNING"}},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {"name": "op-1", "status": "DONE"}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
         {"tool": "kubectl", "re": " get horizontalpodautoscalers -n shop -o json", "out": {"items": []}},
         {"tool": "kubectl", "re": " get configmap new-cm -n shop -o json", "rc": 1, "err": 'Error from server (NotFound): configmaps "new-cm" not found'},
@@ -1093,6 +1099,9 @@ def t_plan_change(e, review_run):
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
                      "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
          "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
+        {"id": "C11", "summary": "計畫自己寫 --async", "command": ["gcloud", "container", "clusters", "resize", "prod", "--node-pool=default-pool", "--num-nodes=3",
+                                                              "--location=asia-east1", f"--project={P}", "--async"],
+         "expected": [{"field": "/node_count_per_zone", "expect": 3}]},
         {"id": "C10", "summary": "expected 少 expect 鍵", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
          "expected": [{"field": "/versioning_enabled", "value": True}]},
         {"id": "C8", "summary": "expected 比對 ConfigMap data", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
@@ -1123,7 +1132,7 @@ def t_plan_change(e, review_run):
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
     ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"]
-       and by.get("C7", {}).get("blocked_reason") and by.get("C10", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
+       and by.get("C7", {}).get("blocked_reason") and by.get("C10", {}).get("blocked_reason") and by.get("C11", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
     ok("計畫:移除 allUsers 的還原附「會重新公開」警示", by["C1"].get("rollback_warning") and "重新公開" in by["C1"]["rollback_warning"], by["C1"].get("rollback_warning"))
     ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
@@ -1208,6 +1217,11 @@ def t_plan_change(e, review_run):
     st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
     ok("變更:GKE resize 以 --async 送出並輪詢到 DONE 才驗證(PASS)",
        r.returncode == 0 and rz and "--async" in rz[0] and st_.get("op_polled"), (r.stdout[-400:], rz))
+    # 沒有操作名稱 / 連續查不到操作狀態 → 「狀態不明」並附還原指令(不當成完成)
+    for st_name, label in (("no_op_name", "讀不到操作名稱"), ("op_bad", "連續查不到狀態")):
+        e.state({st_name: True})
+        r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+        ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "--num-nodes=2" in r.stdout, r.stdout[-500:])
     e.state({})
     e.state({"flip_fw": True})
     e.clear_log()

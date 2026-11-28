@@ -20,6 +20,8 @@ import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
 OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
+OP_MAX_FAILS = 8
+CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
@@ -69,35 +71,54 @@ class Runner:
         return False
 
     def wait_operation(self, s, svc, r, argv):
-        """--async 送出後輪詢操作狀態(每次輪詢前換 token,長時間操作不會因 token 過期中斷)。
-        回傳和 subprocess 相同形狀的結果:DONE 且沒有 error → rc 0;操作錯誤 → rc 1;逾時 → rc 124。"""
+        """--async 送出後輪詢操作狀態(每次輪詢前換 token)。回傳和 subprocess 相同形狀的結果:
+        DONE 且沒有錯誤 → rc 0;操作錯誤 → rc 1;讀不到操作名稱、連續查不到狀態、逾時或任何例外 → rc 124(狀態不明)。"""
+        unknown = lambda msg: subprocess.CompletedProcess(r.args, 124, "", msg)
         try:
-            op = json.loads(r.stdout or "{}")
-        except ValueError:
-            op = {}
-        if isinstance(op, list):
-            op = op[0] if op else {}
-        name = (op.get("name") or "").rsplit("/", 1)[-1] if isinstance(op, dict) else ""
-        if not name or op.get("status") == "DONE" and not op.get("error"):
-            return r  # 沒有操作可等(或已完成)
-        project = _flag(argv, "--project")
-        loc = _flag(argv, "--location")
-        deadline = time.time() + CHANGE_TIMEOUT_GKE
-        while time.time() < deadline:
-            time.sleep(OP_POLL_SECONDS)
-            args = (["container", "operations", "describe", name, f"--location={loc}"] if svc == "container"
-                    else ["sql", "operations", "describe", name])
-            q = s.gcloud(args + [f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
-            if q.returncode != 0:
-                continue  # 暫時讀不到狀態:繼續等到逾時
             try:
-                st = json.loads(q.stdout or "{}")
+                op = json.loads(r.stdout or "null")
             except ValueError:
-                continue
-            if st.get("status") == "DONE":
-                err = st.get("error") or st.get("statusMessage") if st.get("error") else None
-                return subprocess.CompletedProcess(r.args, 1 if err else 0, q.stdout, json.dumps(err, ensure_ascii=False) if err else "")
-        return subprocess.CompletedProcess(r.args, 124, "", f"等待操作 {name} 逾時")
+                op = None
+            if isinstance(op, list):
+                op = op[0] if op else None
+            name = (op.get("name") or "").rsplit("/", 1)[-1] if isinstance(op, dict) else ""
+            if not name:
+                return unknown("指令已送出,但讀不到操作名稱,無法確認是否完成;請用 gcloud container / sql operations list 確認")
+            if op.get("status") == "DONE":
+                return self._op_result(r, svc, op)
+            project = _flag(argv, "--project")
+            loc = _flag(argv, "--location")
+            deadline = time.time() + (CHANGE_TIMEOUT_GKE if svc == "container" else CHANGE_TIMEOUT_SQL)
+            fails, last_err = 0, ""
+            while time.time() < deadline:
+                time.sleep(OP_POLL_SECONDS)
+                args = (["container", "operations", "describe", name, f"--location={loc}"] if svc == "container"
+                        else ["sql", "operations", "describe", name])
+                q = s.gcloud(args + [f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+                try:
+                    st = json.loads(q.stdout or "null") if q.returncode == 0 else None
+                except ValueError:
+                    st = None
+                if not isinstance(st, dict):
+                    fails += 1
+                    last_err = gglib._short(q.stderr, 300) or "回應不是 JSON 物件"
+                    if fails >= OP_MAX_FAILS:
+                        return unknown(f"連續 {fails} 次查不到操作 {name} 的狀態:{last_err}")
+                    continue
+                fails = 0
+                if st.get("status") == "DONE":
+                    return self._op_result(r, svc, st)
+            return unknown(f"等待操作 {name} 逾時")
+        except Exception as e:  # 輪詢中任何錯誤(例如換 token 失敗):指令已送出 → 狀態不明
+            return unknown(f"輪詢操作狀態時出錯({type(e).__name__}: {gglib._short(str(e), 200)})")
+
+    @staticmethod
+    def _op_result(r, svc, st):
+        err = st.get("error")
+        if not err and svc == "container" and st.get("statusMessage") and str(st.get("statusMessage")).strip():
+            err = st.get("statusMessage")  # GKE 失敗時有時只填 statusMessage
+        return subprocess.CompletedProcess(r.args, 1 if err else 0, json.dumps(st, ensure_ascii=False),
+                                           json.dumps(err, ensure_ascii=False) if err else "")
 
     def precheck_static(self):
         byid = {it["id"]: it for it in self.plan["items"]}
@@ -221,7 +242,7 @@ class Runner:
         if r.returncode != 0:
             rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
             if r.returncode == 124:
-                rec.update({"result": "逾時(狀態不明)", "reason": "等待逾時;伺服器端的操作可能仍在進行,請先確認現況(gcloud container operations list)"})
+                rec.update({"result": "狀態不明", "reason": (gglib._short(r.stderr, 300) or "等待逾時") + ";伺服器端的操作可能仍在進行,請先確認現況(gcloud container / sql operations list)"})
             else:
                 rec.update({"result": "失敗(可能部分套用)", "reason": f"指令失敗(rc={r.returncode});請先確認現況再決定是否還原"})
             self.results.append(rec)
@@ -330,9 +351,11 @@ def main(argv):
             gglib.acquire_lock(cfg, project, "change", run)
             status = runner.execute(run)
         except (gglib.Blocked, gglib.Denied) as e:
-            runner.status = "BLOCKED"
+            if runner.inflight:  # 指令已送出後才出錯:保留這條與還原指令
+                runner.results.append(runner.inflight)
+            runner.status = "ISSUES" if runner.inflight or any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
             runner.results.append({"id": "-", "result": "BLOCKED", "reason": str(e)})
-            status = "BLOCKED"
+            status = runner.status
         except SystemExit:
             # 被中斷(例如逾時被砍):先寫紀錄(含已執行 / 執行中條目的還原指令)再結束
             if runner.inflight:
@@ -351,7 +374,9 @@ def main(argv):
                 print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}", flush=True)
             raise
         except Exception as e:
-            runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
+            if runner.inflight:
+                runner.results.append(runner.inflight)
+            runner.status = "ISSUES" if runner.inflight or any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
             runner.results.append({"id": "-", "result": "錯誤", "reason": f"{type(e).__name__}: {gglib._short(str(e), 300)}"})
             status = runner.status
         finally:

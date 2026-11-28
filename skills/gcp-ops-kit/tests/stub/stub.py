@@ -21,6 +21,12 @@ if tool == "gke-gcloud-auth-plugin":
     sys.exit(0)
 sp = os.path.join(d, "state.json")
 state = json.load(open(sp)) if os.path.exists(sp) else {}
+if tool == "gcloud" and argv[:2] == ["config", "config-helper"]:
+    if state.get("user_not_logged_in"):
+        sys.stderr.write("ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens\n")
+        sys.exit(1)
+    print(json.dumps({"credential": {"access_token": "ya29." + "x" * 40, "token_expiry": "2099-01-01T00:00:00Z"}}))
+    sys.exit(0)
 if tool == "gcloud" and argv[:2] == ["auth", "print-access-token"]:
     if state.get("user_not_logged_in"):
         sys.stderr.write("ERROR: (gcloud.auth.print-access-token) There was a problem refreshing your current auth tokens\n")
