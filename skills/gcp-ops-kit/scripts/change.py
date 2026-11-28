@@ -23,6 +23,19 @@ OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
 OP_FAIL_WINDOW = float(os.environ.get("GG_OP_FAIL_WINDOW", "600"))  # 連續查不到狀態超過 10 分鐘才放棄
 CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
+STATE_STABLE = float(os.environ.get("GG_STATE_STABLE", "120"))  # 依資源狀態判斷完成時,要連續穩定多久
+
+
+def _settled(svc, after):
+    """資源是否不在變更中:GKE 叢集 / node pool 是 RUNNING(resize 另看 MIG 是否穩定),Cloud SQL 是 RUNNABLE。"""
+    if not isinstance(after, dict):
+        return False
+    if svc == "sql":
+        return after.get("state") in (None, "RUNNABLE")
+    np = after.get("nodepool") if isinstance(after.get("nodepool"), dict) else after
+    return np.get("status") in (None, "RUNNING") and all(x in (None, True) for x in (after.get("mig_stable") or []))
+
+
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
 
@@ -226,6 +239,8 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
+        if kinfo.get("async") and not _settled(kinfo["async"], snap):
+            return self.stop("BLOCKED", cid, "資源正在變更中(不是 RUNNING / MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
         try:
             s.ensure_fresh(margin=180, strict=True)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
@@ -243,7 +258,7 @@ class Runner:
         self.inflight = {"id": cid, "kind": kind, "argv": it["command"], "result": "執行中被中斷(狀態不明)",
                          "reason": "指令已送出但沒有等到結果;請先確認現況",
                          "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
-                         "rollback_warning": it.get("rollback_warning")}
+                         "rollback_warning": it.get("rollback_warning"), "exec_warning": it.get("exec_warning")}
         run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
             # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時 8 分鐘(留餘裕,避免中途過期)
@@ -257,6 +272,8 @@ class Runner:
             self.op_note = r.returncode == 0 and (r.stderr or "").startswith("操作 DONE,附帶訊息")
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
+        if it.get("exec_warning"):
+            rec["exec_warning"] = it["exec_warning"]
         if r.returncode != 0:
             rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
             if r.returncode == 124:
@@ -270,8 +287,6 @@ class Runner:
         rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
         if it.get("rollback_warning"):
             rec["rollback_warning"] = it["rollback_warning"]
-        if it.get("exec_warning"):
-            rec["exec_warning"] = it["exec_warning"]
         if it.get("rollback_note"):
             rec["rollback_note"] = it["rollback_note"]
         # 指令已成功:立刻記錄(驗證期間被中斷也留得下這條與還原指令),之後就地更新結果
@@ -290,20 +305,39 @@ class Runner:
             deadline = time.time() + CHANGE_TIMEOUT_GKE
         else:
             deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
-        settled = lambda a: not isinstance(a, dict) or a.get("status") in (None, "RUNNING")
+        svc = kinfo.get("async")
+        stable_since, err_since = None, None
         while True:
             try:
                 after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
             except (gglib.Blocked, gglib.Denied) as e:
                 after, err = None, str(e)
+            if self.wait_state:
+                # 沒有操作可追:要連續 STATE_STABLE 秒都「不在變更中且符合預期值」才算完成;快照暫時失敗在時間窗內重試
+                now = time.time()
+                if err:
+                    err_since = err_since or now
+                    stable_since = None
+                    if now - err_since >= OP_FAIL_WINDOW or now >= deadline:
+                        rec.update({"result": "狀態不明", "reason": f"gcloud 沒印出操作,且連續查不到資源狀態:{gglib._short(err, 200)};請先確認現況"})
+                        self.status = "ISSUES"
+                        return False
+                else:
+                    err_since = None
+                    good = _settled(svc, after) and not ggplan.check_pre(exp, after)
+                    stable_since = (stable_since or now) if good else None
+                    if good and now - stable_since >= STATE_STABLE:
+                        break
+                    if now >= deadline:
+                        rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作;等到逾時,資源仍在變更中或不符預期值,伺服器端可能仍在進行,請先確認現況"})
+                        self.status = "ISSUES"
+                        return False
+                time.sleep(OP_POLL_SECONDS)
+                continue
             # resize:新節點要一段時間才加入叢集,驗證不符時等一下再看
-            if err or not exp or (not ggplan.check_pre(exp, after) and (not self.wait_state or settled(after))) or time.time() >= deadline:
+            if err or not exp or not ggplan.check_pre(exp, after) or time.time() >= deadline:
                 break
-            time.sleep(OP_POLL_SECONDS if self.wait_state else 15)
-        if self.wait_state and not err and (ggplan.check_pre(exp, after) or not settled(after)):
-            rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作;等到逾時,資源仍未回到 RUNNING 或不符預期值,伺服器端可能仍在進行,請先確認現況"})
-            self.status = "ISSUES"
-            return False
+            time.sleep(15)
         if err:
             rec.update({"result": "已執行(驗證失敗)", "reason": "指令已成功執行,但變更後快照失敗:" + err})
             self.status = "ISSUES"

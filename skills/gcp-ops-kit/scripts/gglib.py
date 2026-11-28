@@ -500,10 +500,10 @@ class Session:
             # --async / --format=json 是 kit 執行時自己加的(計畫裡不准寫),檢查形狀時先拿掉
             core = argv[:-2] if argv[-2:] == ["--async", "--format=json"] else argv  # 只拿掉 kit 自己加在尾端的兩個
             shape = ggchange.classify(core, self.cfg, shape_only=True)
-            if core is not argv and not (ggchange.change_rules()["kinds"].get(shape.get("kind")) or {}).get("async"):
-                raise Denied("只有允許 --async 的變更種類可以帶 --async")
             if shape["blocked_reason"]:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
+            if core is not argv and not (ggchange.change_rules()["kinds"].get(shape.get("kind")) or {}).get("async"):
+                raise Denied("只有允許 --async 的變更種類可以帶 --async")
         else:
             raise Denied("未知模式")
         try:

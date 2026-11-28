@@ -1133,6 +1133,8 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "out": FX.NODEPOOLS[0]},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": None}, "out": nodes(4)},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
+        {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"mig_busy": True}, "out": {"targetSize": 2, "status": {"isStable": False}}},
+        {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True, "mig_unstable_after": True}, "out": {"targetSize": 3, "status": {"isStable": False}}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True}, "out": {"targetSize": 3}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "out": {"targetSize": 2}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"async_op": True},
@@ -1320,7 +1322,7 @@ def t_plan_change(e, review_run):
     # --async:長時間操作送出後輪詢狀態,DONE 才驗證
     e.state({"async_op": True})
     e.clear_log()
-    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"; env_op["GG_GKE_TIMEOUT"] = "1"
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"; env_op["GG_GKE_TIMEOUT"] = "1"; env_op["GG_STATE_STABLE"] = "0.2"
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
     st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
@@ -1332,6 +1334,15 @@ def t_plan_change(e, review_run):
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     ok("變更:--async 沒印操作 → 依資源狀態(符合預期值)判斷完成(PASS),不查操作清單",
        r.returncode == 0 and "status=PASS" in r.stdout and not any(c["argv"][:3] == ["container", "operations", "list"] for c in e.stub_calls()), r.stdout[-400:])
+    e.state({"mig_busy": True})
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    ok("變更:資源正在變更中(MIG 不穩定)→ BLOCKED、沒送出、核准檔還在",
+       r.returncode == 3 and not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls())
+       and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
+    e.state({"op_listed": True, "mig_unstable_after": True})
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    ok("變更:沒印操作、targetSize 已符合但 MIG 仍不穩定 → 不算完成(狀態不明)", r.returncode == 1 and "狀態不明" in r.stdout, r.stdout[-400:])
     for st_name, label in (("no_op_name", "沒印操作且等不到預期狀態"), ("op_bad", "連續查不到狀態")):
         e.state({st_name: True})
         r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
