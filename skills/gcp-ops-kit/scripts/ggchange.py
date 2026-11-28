@@ -675,11 +675,19 @@ def _k_project_iam_add(pos, flags, snap, res, k, cfg, *_):
     return rb, reasons, None
 
 
+IAM_ADMIN_ROLES = {"roles/owner", "roles/resourcemanager.projectIamAdmin", "roles/iam.securityAdmin",
+                   "roles/iam.securityReviewer", "roles/securityAdmin"}
+
+
 def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
     lockout = cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:"))
+    if lockout and flags.get("--role") in IAM_ADMIN_ROLES:
+        res["blocked_reason"] = (f"帳號模式下移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得權限,"
+                                 "移除後連還原都做不了;請使用者自己在 console 確認後執行")
+        return None, [], None
     if pos[0] != flags.get("--project"):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
         return None, [], None
@@ -700,8 +708,8 @@ def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
-    if cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:")):
-        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得 bucket 權限,可能之後讀不到這個 bucket"
+    if flags.get("--member", "").startswith(("group:", "domain:", "projectOwner:", "projectEditor:", "projectViewer:")):
+        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若 gcp-guardian 使用的身分靠它取得 bucket 權限,之後可能讀不到這個 bucket"
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN
     # --condition=None 只移除無條件綁定;帶條件的同名綁定不受影響,還原也只加回無條件那條

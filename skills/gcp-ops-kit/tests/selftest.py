@@ -384,12 +384,16 @@ def t_impersonation(e):
     e.state({"impersonate": True})
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
     r_ = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
-                            "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
-                           {"bindings": [{"role": "roles/resourcemanager.projectIamAdmin", "members": ["group:admins@example.com"]}]})
+                            "--role=roles/editor", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                           {"bindings": [{"role": "roles/editor", "members": ["group:admins@example.com"]}]})
     r_sa = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
-                              "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA},
-                             {"bindings": [{"role": "roles/resourcemanager.projectIamAdmin", "members": ["group:admins@example.com"]}]})
+                              "--role=roles/editor", f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA},
+                             {"bindings": [{"role": "roles/editor", "members": ["group:admins@example.com"]}]})
     ok("SA 模式移除群組權限不標「鎖在外面」", not r_sa.get("exec_warning"), r_sa)
+    r_o = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                             "--role=roles/iam.securityAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                            {"bindings": [{"role": "roles/iam.securityAdmin", "members": ["group:admins@example.com"]}]})
+    ok("帳號模式移除群組的 IAM 管理角色 → BLOCKED(移除後可能連還原都做不了)", "連還原都做不了" in (r_o["blocked_reason"] or ""), r_o)
     ok("帳號模式移除群組權限:執行前警示「鎖在專案外」,但不算放寬", not r_["loosens_security"] and "鎖在專案外" in (r_.get("exec_warning") or ""), r_)
     ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
     e.state({})
@@ -1111,8 +1115,13 @@ def plan_fixtures():
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "status": "DONE"}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"no_op_name": True}, "out": ""},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"op_listed": True}, "out": "", "set": {"resized": True}},
+        {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True, "resized": None},
+         "out": [{"name": "projects/p/locations/l/operations/op-P", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING", "operationType": "UPDATE_CLUSTER",
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod"}],},
         {"tool": "gcloud", "re": "^container operations list ", "when": {"op_listed": True},
-         "out": [{"name": "projects/p/locations/l/operations/op-X", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
+         "out": [{"name": "projects/p/locations/l/operations/op-P", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING", "operationType": "UPDATE_CLUSTER",
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod"},
+                 {"name": "projects/p/locations/l/operations/op-X", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
                   "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod-2/nodePools/default-pool", "operationType": "SET_NODE_POOL_SIZE"},
                  {"name": "projects/p/locations/l/operations/op-R", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
                   "operationType": "AUTO_REPAIR_NODES",

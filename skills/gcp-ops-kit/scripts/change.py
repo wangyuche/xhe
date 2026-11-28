@@ -102,7 +102,18 @@ class Runner:
                         name = ""  # 換 token 暫時失敗:當成這次沒找到
                     if name == "MULTI":
                         return unknown("指令已送出,但同時有多個可能的操作,無法確定是哪一個;請用 gcloud container / sql operations list 確認")
-                    if name or time.time() >= t_end:
+                    if name:  # 再列一次確認仍是同一筆唯一的新操作,避免剛好只看到別人的
+                        time.sleep(OP_POLL_SECONDS)
+                        try:
+                            again = self._find_operation(s, svc, argv)
+                        except gglib.Blocked:
+                            again = ""
+                        if again == name:
+                            break
+                        if again == "MULTI":
+                            return unknown("指令已送出,但同時有多個可能的操作,無法確定是哪一個;請用 gcloud container / sql operations list 確認")
+                        name = ""
+                    if time.time() >= t_end:
                         break
                     time.sleep(OP_POLL_SECONDS)
             if not name:
@@ -142,6 +153,18 @@ class Runner:
             return unknown(f"輪詢操作狀態時出錯({type(e).__name__}: {gglib._short(str(e), 200)})")
 
     def _find_operation(self, s, svc, argv):
+        """送出後才出現(不在送出前快照裡)的對應操作。不依賴兩邊時鐘。"""
+        now = self._list_ops(s, svc, argv)
+        pre = getattr(self, "pre_ops", None)
+        if now is None or pre is None:
+            return ""  # 送出前或現在列不出操作:無法安全比對
+        cands = [n for n in now if n not in pre and n not in getattr(self, "seen_ops", set())]
+        if len(cands) > 1:
+            return "MULTI"  # 不猜:多筆都可能是,交給使用者確認
+        return cands[0] if cands else ""
+
+    def _list_ops(self, s, svc, argv):
+        """列出這個資源可能是這類變更的操作名稱;列不出來回 None。"""
         project = _flag(argv, "--project")
         pos = [a for a in argv if not a.startswith("-")]
         target = pos[4] if len(pos) > 4 else None  # gcloud container clusters <verb> <name> / gcloud sql instances patch <name>
@@ -159,19 +182,17 @@ class Runner:
                           "--sort-by=~startTime", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
         else:
             q = s.gcloud(["sql", "operations", "list", f"--instance={target}", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+        if q.returncode != 0:
+            return None
         try:
-            ops = json.loads(q.stdout or "[]") if q.returncode == 0 else []
+            ops = json.loads(q.stdout or "[]")
         except ValueError:
-            ops = []
-        since = getattr(self, "sent_at", 0) - 120  # 只接受送出後才開始的操作(容許 2 分鐘時鐘誤差;多筆候選會記狀態不明)
-        seen = getattr(self, "seen_ops", set())
+            return None
         cands = []
         for o in ops if isinstance(ops, list) else []:
             if not isinstance(o, dict) or not o.get("name"):
                 continue
             nm = o["name"].rsplit("/", 1)[-1]
-            if nm in seen:
-                continue
             if svc == "container":
                 link = str(o.get("targetLink") or "")
                 # 叢集層級一定接受;改 node pool 時也接受那個 node pool 層級(gcloud 有些 node pool 變更走 clusters.update)
@@ -182,13 +203,8 @@ class Runner:
                     continue  # 排除 auto-repair / auto-upgrade;其他同時出現的候選會變成「多筆」→ 狀態不明,不猜
             elif str(o.get("operationType") or "").upper() != "UPDATE":
                 continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
-            ts = _parse_time(o.get("startTime") or o.get("insertTime") or "")
-            if ts is None or ts < since:
-                continue
             cands.append(nm)
-        if len(cands) > 1:
-            return "MULTI"  # 不猜:多筆都可能是,交給使用者確認
-        return cands[0] if cands else ""
+        return cands
 
     @staticmethod
     def _op_result(r, svc, st):
@@ -313,7 +329,13 @@ class Runner:
         try:
             # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時 8 分鐘(留餘裕,避免中途過期)
             tmo = 300 if kinfo.get("async") else (480 if self.cfg.get("GG_AUTH") == "user" else 1800)
-            self.sent_at = time.time()
+            if kinfo.get("async"):  # 送出前快照這個資源既有的操作:之後 gcloud 沒印操作時,用差集找自己的
+                self.cur_kind = kind
+                try:
+                    pre = self._list_ops(s, kinfo["async"], argv)
+                except gglib.Blocked:
+                    pre = None
+                self.pre_ops = set(pre) if pre is not None else None
             r = s._exec(run_argv, "change", timeout=tmo)
         except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None

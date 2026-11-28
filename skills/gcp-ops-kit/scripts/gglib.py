@@ -82,8 +82,10 @@ def load_config(require=True):
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
     # 有設定檔時一律照寫的走:沒寫 GG_AUTH=user 就是 SA 模式(缺金鑰會 BLOCKED),不默默改用個人帳號
+    auto_acct = False
     if require and cfg.get("GG_AUTH", "").lower() == "user" and not cfg.get("GG_ACCOUNT"):
         cfg["GG_ACCOUNT"] = _gcloud_active_account()
+        auto_acct = True
     cfg["GG_AUTH"] = cfg.get("GG_AUTH", "sa").lower()
     if cfg["GG_AUTH"] not in ("sa", "user"):
         raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")
@@ -91,7 +93,8 @@ def load_config(require=True):
         acct = cfg.get("GG_ACCOUNT", "").strip().lower()  # IAM 成員一律小寫
         cfg["GG_ACCOUNT"] = acct
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", acct):
-            raise Blocked("GG_AUTH=user 時設定檔要有 GG_ACCOUNT=<你在 gcloud 登入的帳號 email>")
+            raise Blocked(("gcloud 目前登入的帳號不是 email(例如 Workforce Identity),帳號模式不支援;請改用 SA 金鑰模式" if auto_acct
+                           else "GG_AUTH=user 時設定檔要有 GG_ACCOUNT=<你在 gcloud 登入的帳號 email>"))
         cfg["GG_SA"] = acct  # 「自己的身分」:禁止動自己的 IAM 綁定等規則照樣套用
         cfg["GG_PRINCIPAL"] = ("serviceAccount:" if acct.endswith("gserviceaccount.com") else "user:") + acct
         return cfg
