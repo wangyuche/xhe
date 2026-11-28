@@ -142,6 +142,28 @@ def t_allowlists():
             ok("白名單拒絕:" + " ".join(a[:6]), True)
 
 
+def t_guard_fresh_home(e):
+    """~/.kube 不存在(這裡用斷掉的連結)、沒有設定檔目錄(帳號模式常見):不能把整個 home(含報告目錄)當成受保護。"""
+    g = os.path.join(S, "guard.py")
+    home = os.path.join(e.tmp, "fresh-home")
+    rep = os.path.join(home, "gcp-guardian-reports", "p", "r")
+    os.makedirs(rep, exist_ok=True)
+    with open(os.path.join(rep, "findings.json"), "w") as f:
+        f.write("[]")
+    if not os.path.lexists(os.path.join(home, ".kube")):  # ~/.kube 是指向不存在目標的連結(例如外接碟沒掛載)
+        os.symlink(os.path.join(e.tmp, "unmounted-volume", "kube"), os.path.join(home, ".kube"))
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": home}
+    for tool, inp, want in (("Read", {"file_path": os.path.join(rep, "findings.json")}, 0),
+                            ("Read", {"file_path": os.path.join(home, ".kube", "config")}, 2),
+                            ("Read", {"file_path": os.path.join(home, ".config", "gcloud", "credentials.db")}, 2)):
+        r = subprocess.run(["python3", g], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": "/"}),
+                           env=env, capture_output=True, text=True)
+        ok(f"guard(沒有 ~/.kube 與設定檔):{tool} {os.path.relpath(inp['file_path'], home)} → {want}", r.returncode == want, r.stderr[-300:])
+    r = subprocess.run(["python3", g], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": f"cat {rep}/findings.json"}, "cwd": "/"}),
+                       env=env, capture_output=True, text=True)
+    ok("guard(沒有 ~/.kube 與設定檔):cat 報告目錄的 findings.json → 允許", r.returncode == 0 and '"deny"' not in r.stdout, r.stdout[-300:] + r.stderr[-300:])
+
+
 def t_guard(e):
     g = os.path.join(S, "guard.py")
     proj2 = os.path.join(e.tmp, "proj2")
@@ -1576,6 +1598,7 @@ def main():
     try:
         t_allowlists()
         t_guard(e)
+        t_guard_fresh_home(e)
         t_redact()
         t_rule_tables()
         t_yaml_bool()
