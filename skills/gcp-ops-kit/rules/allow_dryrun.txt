@@ -15,3 +15,6 @@ kubectl --context={CTX} diff -f {RUNFILE} --request-timeout=60s
 kubectl --context={CTX} apply --dry-run=server -o json -f {RUNFILE} --request-timeout=60s
 kubectl --context={CTX} patch {ANY} {N} -n {N} --type={ANY} --patch-file={RUNFILE} --dry-run=server -o json --request-timeout=60s
 kubectl --context={CTX} patch {ANY} {N} --type={ANY} --patch-file={RUNFILE} --dry-run=server -o json --request-timeout=60s
+# 長時間變更(--async)的操作狀態輪詢
+gcloud container operations describe {N} --location={L} --project={P} --format=json --quiet
+gcloud sql operations describe {N} --project={P} --format=json --quiet

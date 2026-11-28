@@ -180,16 +180,18 @@ def common_forbidden(argv, cfg):
     for nets in (nets4, nets6):
         if any(c.prefixlen == 0 for c in ipaddress.collapse_addresses(nets)):
             return "一律禁止:多個網段合起來涵蓋整個網際網路"
-    sa = cfg.get("GG_SA")
-    if sa and any(sa.lower() in a.lower() for a in argv):  # 看原始參數(含旗標值),SA 一定在 --member= 裡
-        return f"一律禁止:動到 gcp-guardian 自己的 SA({sa})"
+    me = (cfg.get("GG_SA") or "").lower()
+    me_re = re.compile(r"(?<![a-z0-9._%+-])" + re.escape(me) + r"(?![a-z0-9._%+-])") if me else None  # 以 email 字元為邊界
+    for a in argv:  # 以邊界比對身分(type:id、deleted:serviceAccount:id?uid=、.../serviceAccounts/id、逗號清單),避免 time@x 誤中 me@x
+        if me_re and me_re.search(a.lower()):
+            return f"一律禁止:動到 gcp-guardian 自己使用的身分({cfg.get('GG_SA')})"
     return None
 
 
 def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None, shape_only=False):
     """snapshot:變更前快照(dict,依 kind 不同)。manifest_findings:apply / patch dry-run 結果跑 k8s_rules 的 findings。
     diff_created:kubectl diff 是否出現新建資源。"""
-    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None, "rollback_note": None,
+    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None, "rollback_note": None, "exec_warning": None,
            "loosens_security": False, "loosens_reasons": [], "blocked_reason": None,
            "auto_pre": [], "dry_run": None}
 
@@ -220,6 +222,9 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     if not kind:
         return block("不在變更允許清單(請使用者自己執行)")
     res["kind"] = kind
+    if cfg.get("GG_AUTH") == "user" and kind in ("gke-cluster-update", "gke-resize"):
+        # gcloud 對這兩種不回傳操作,只能同步等;帳號模式的 token 最多約 1 小時
+        res["exec_warning"] = "帳號模式最多等 50 分鐘:超過時記「狀態不明」(伺服器端仍會繼續);預期很久的叢集變更(大量節點)請改用 SA 模式"
     k = rules["kinds"][kind]
     snap = snapshot or {}
     try:
@@ -673,9 +678,20 @@ def _k_project_iam_add(pos, flags, snap, res, k, cfg, *_):
     return rb, reasons, None
 
 
+IAM_ADMIN_ROLES = {"roles/owner", "roles/resourcemanager.projectIamAdmin", "roles/iam.securityAdmin",
+                   "roles/resourcemanager.folderAdmin", "roles/resourcemanager.organizationAdmin"}
+
+
 def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
+        return None, [], None
+    via_group = flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:"))
+    lockout = cfg.get("GG_AUTH") == "user" and via_group
+    role = flags.get("--role", "")
+    if via_group and (role in IAM_ADMIN_ROLES or not role.startswith("roles/")):  # 帳號 / SA 模式都擋  # 自訂角色可能含 setIamPolicy:一律當 IAM 管理
+        res["blocked_reason"] = (f"移除 {flags['--member']} 的 {flags['--role']}:若{'你的帳號' if lockout else 'gcp-guardian 的 SA'}靠它取得權限,"
+                                 "移除後連還原都做不了;請使用者自己在 console 確認後執行")
         return None, [], None
     if pos[0] != flags.get("--project"):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
@@ -685,16 +701,31 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
           f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
+    if via_group:  # 執行前的風險(不是放寬安全):gcp-guardian 使用的身分可能靠這個群組 / 網域取得權限
+        who = "你的帳號" if lockout else "gcp-guardian 的 SA"
+        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若{who}靠它取得權限,可能把自己鎖在專案外(連還原都做不了)"
     return rb, [], None
 
 
 PUBLIC_WARN = "這條還原會重新公開資料(加回 allUsers / allAuthenticatedUsers);除非確定要回復公開,否則不要執行"
 
 
+BUCKET_ADMIN_ROLES = {"roles/storage.admin", "roles/owner", "roles/storage.legacyBucketOwner"}
+
+
 def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
+    role = flags.get("--role", "")
+    if (flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:"))
+            and (role in BUCKET_ADMIN_ROLES or not role.startswith("roles/"))):
+        res["blocked_reason"] = (f"移除 {flags['--member']} 的 {role}:若{'你的帳號' if cfg.get('GG_AUTH') == 'user' else 'gcp-guardian 的 SA'}靠它取得 bucket 管理權限,"
+                                 "移除後連還原都做不了;請使用者自己在 console 確認後執行")
+        return None, [], None
+    if flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:")):
+        res["exec_warning"] = (f"移除 {flags['--member']} 的 {flags['--role']}:若{'你的帳號' if cfg.get('GG_AUTH') == 'user' else 'gcp-guardian 的 SA'}"
+                               "靠它取得 bucket 權限,之後可能讀不到這個 bucket")
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN
     # --condition=None 只移除無條件綁定;帶條件的同名綁定不受影響,還原也只加回無條件那條

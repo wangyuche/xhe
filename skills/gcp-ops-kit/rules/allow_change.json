@@ -200,7 +200,8 @@
           "restore": "/autoscaling/maxNodeCount",
           "skip_if_off": "/autoscaling/enabled"
         }
-      }
+      },
+      "async": "container"
     },
     "gke-resize": {
       "prefix": [
@@ -444,7 +445,8 @@
           "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
           "target": false
         }
-      }
+      },
+      "async": "sql"
     },
     "kubectl-apply": {
       "prefix": [

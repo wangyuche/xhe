@@ -25,6 +25,20 @@ RULES_DIR = os.path.join(KIT, "rules")
 EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_BLOCKED, EXIT_DENIED = 0, 1, 2, 3, 4
 
 
+def _add_gcloud_sdk_bin():
+    """Homebrew 只把 gcloud 連進 PATH;gke-gcloud-auth-plugin 等元件在 SDK 的 bin 目錄。
+    找得到 gcloud、找不到外掛時,把 gcloud 實際所在的目錄加到 PATH 後面(只影響 kit 自己與它啟動的 gcloud / kubectl)。"""
+    g = shutil.which("gcloud")
+    if not g or shutil.which("gke-gcloud-auth-plugin"):
+        return
+    sdk_bin = os.path.dirname(os.path.realpath(g))
+    if os.path.isfile(os.path.join(sdk_bin, "gke-gcloud-auth-plugin")):
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + sdk_bin
+
+
+_add_gcloud_sdk_bin()
+
+
 class Blocked(Exception):
     """事前檢查不過 → 回報 BLOCKED。"""
 
@@ -48,7 +62,11 @@ def load_config(require=True):
     """讀 KEY=value 設定。require=True 時缺檔 / 權限不對 / 缺金鑰 → Blocked。"""
     path = config_path()
     cfg = {}
-    if os.path.exists(path):
+    path_exists = os.path.exists(path)
+    if require and not path_exists and (os.environ.get("GG_CONFIG") or os.path.lexists(path)):
+        # 明確指定了設定檔(或是斷掉的連結)卻讀不到:不默默改用個人帳號
+        raise Blocked(f"找不到設定檔 {path}(GG_CONFIG 指定的路徑或斷掉的連結);要用自己的帳號請拿掉 GG_CONFIG")
+    if path_exists:
         if require and not _mode_ok(path):
             raise Blocked(f"設定檔權限要是 600:chmod 600 {path}")
         with open(path, encoding="utf-8") as f:
@@ -60,11 +78,30 @@ def load_config(require=True):
                 v = re.sub(r"\s+#.*$", "", v).strip().strip('"').strip("'")  # 去掉行內註解
                 cfg[k.strip()] = os.path.expanduser(v)
     elif require:
-        raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,權限 600)")
+        # 沒有設定檔:直接用 gcloud 目前登入的帳號(帳號模式);要用 SA 金鑰或指定別的帳號才需要設定檔
+        cfg["GG_AUTH"] = "user"
     cfg.setdefault("GG_REPORT_DIR", os.path.expanduser("~/gcp-guardian-reports"))
     cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
+    # 有設定檔時一律照寫的走:沒寫 GG_AUTH=user 就是 SA 模式(缺金鑰會 BLOCKED),不默默改用個人帳號
+    auto_acct = False
+    if require and cfg.get("GG_AUTH", "").lower() == "user" and not cfg.get("GG_ACCOUNT"):
+        cfg["GG_ACCOUNT"] = _gcloud_active_account()
+        auto_acct = True
+    cfg["GG_AUTH"] = cfg.get("GG_AUTH", "sa").lower()
+    if require and cfg["GG_AUTH"] not in ("sa", "user"):  # guard / YAML 審查(require=False)不因設定打錯而全擋
+        raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")
+    if require and cfg["GG_AUTH"] == "user":
+        cfg["GG_ACCOUNT_RAW"] = cfg.get("GG_ACCOUNT", "").strip()  # 傳給 gcloud 用原本的寫法(憑證庫照登入時的大小寫比對)
+        acct = cfg["GG_ACCOUNT_RAW"].lower()  # IAM 成員比對一律小寫
+        cfg["GG_ACCOUNT"] = acct
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", acct):
+            raise Blocked(("gcloud 目前登入的帳號不是 email(例如 Workforce Identity),帳號模式不支援;請改用 SA 金鑰模式" if auto_acct
+                           else "GG_AUTH=user 時設定檔要有 GG_ACCOUNT=<你在 gcloud 登入的帳號 email>"))
+        cfg["GG_SA"] = acct  # 「自己的身分」:禁止動自己的 IAM 綁定等規則照樣套用
+        cfg["GG_PRINCIPAL"] = ("serviceAccount:" if acct.endswith("gserviceaccount.com") else "user:") + acct
+        return cfg
     if require:
         key = cfg.get("GG_SA_KEY_FILE")
         if not key or not os.path.isfile(key):
@@ -76,7 +113,24 @@ def load_config(require=True):
                 cfg["GG_SA"] = json.load(f)["client_email"]
         except Exception:
             raise Blocked("金鑰檔不是有效的 SA JSON(缺 client_email)")
+        cfg["GG_PRINCIPAL"] = "serviceAccount:" + cfg["GG_SA"]
     return cfg
+
+
+def _gcloud_active_account():
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
+    env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"
+    try:
+        r = subprocess.run(["gcloud", "config", "get-value", "account", "--quiet"], env=env, capture_output=True,
+                           text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        raise Blocked("找不到 gcloud(請使用者自己安裝:brew install --cask gcloud-cli)")
+    except subprocess.TimeoutExpired:
+        raise Blocked("讀 gcloud 目前帳號逾時")
+    acct = (r.stdout or "").strip()
+    if r.returncode != 0 or not acct or acct == "(unset)":
+        raise Blocked("gcloud 沒有登入的帳號:請使用者自己在終端機執行 gcloud auth login(或建立 ~/.config/gcp-guardian/config 改用 SA 金鑰)")
+    return acct
 
 
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
@@ -136,6 +190,10 @@ def clean_stale_creds(cfg):
                 dead = owner.get("pid") and not _pid_alive(owner.get("pid"))
                 if dead or now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
                     shutil.rmtree(p, ignore_errors=True)  # 程序已不在(例如被 SIGKILL)就立刻清
+                    continue
+                tp = os.path.join(p, "token")  # 帳號模式的個人 token:超過 1 小時(必定已過期)就刪
+                if os.path.lexists(tp) and now - os.lstat(tp).st_mtime > 3600:
+                    os.remove(tp)
             except OSError:
                 pass
     for x in os.listdir(rd):
@@ -144,6 +202,10 @@ def clean_stale_creds(cfg):
             try:
                 if now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
                     shutil.rmtree(p, ignore_errors=True)
+                    continue
+                for root, _, files in os.walk(p):  # 帳號模式的個人 token:超過 1 小時就刪
+                    if "token" in files and now - os.lstat(os.path.join(root, "token")).st_mtime > 3600:
+                        os.remove(os.path.join(root, "token"))
             except OSError:
                 pass
 
@@ -168,7 +230,7 @@ def new_run(cfg, project, mode):
         raise Blocked("同一秒內建立的 run 目錄太多,請稍後再試")
     write_json(os.path.join(run, "meta.json"), {
         "project": project, "mode": mode, "started": now_iso(),
-        "kit": KIT, "sa": cfg.get("GG_SA"),
+        "kit": KIT, "sa": cfg.get("GG_SA"), "auth": cfg.get("GG_AUTH", "sa"),
     })
     return run
 
@@ -311,14 +373,118 @@ class Session:
         open(self.kube, "a").close()
         os.chmod(self.kube, 0o600)
         try:
-            r = self._exec(["gcloud", "auth", "activate-service-account", "<key>",
-                            f"--project={self.project}", "--quiet"], check_mode="read")
-            if r.returncode != 0:
-                raise Blocked("SA 啟用失敗:" + _short(r.stderr))
+            if self.cfg.get("GG_AUTH") == "user":
+                self._refresh_user_token()
+            else:
+                r = self._exec(["gcloud", "auth", "activate-service-account", "<key>",
+                                f"--project={self.project}", "--quiet"], check_mode="read")
+                if r.returncode != 0:
+                    raise Blocked("SA 啟用失敗:" + _short(r.stderr))
         except BaseException:
             self.__exit__(None, None, None)
             raise
         return self
+
+    # 取 token 時保證至少剩 15 分鐘;每 5 分鐘換新,任何時刻至少剩約 10 分鐘
+    TOKEN_MAX_AGE = 5 * 60
+    TOKEN_SAFE_AGE = 600  # 取得時至少剩 15 分鐘:取得後 10 分鐘內仍安全
+
+    def _refresh_user_token(self, min_expiry="15m"):
+        """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
+        不複製使用者的憑證檔;token 只放 <run>/gcloud/token(權限 600,結束時刪除),gcloud / kubectl 外掛都讀這個檔。"""
+        acct = (self.cfg.get("GG_ACCOUNT_RAW") or self.cfg["GG_ACCOUNT"]).strip()
+        user_env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
+        user_env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"  # 要重新驗證時直接失敗,不等輸入
+        if not getattr(self, "_imp_checked", False):  # 使用者 gcloud 設了模擬 SA 時,token 會是那個 SA 的:不接受
+            try:
+                imp = subprocess.run(["gcloud", "config", "get-value", "auth/impersonate_service_account", "--quiet"],
+                                     env=user_env, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+                if (imp.stdout or "").strip() and (imp.stdout or "").strip() != "(unset)":
+                    raise Blocked("你的 gcloud 設了 auth/impersonate_service_account,帳號模式拿到的會是被模擬 SA 的 token;"
+                                  "請先在終端機執行 gcloud config unset auth/impersonate_service_account,或改用 SA 金鑰模式")
+            except FileNotFoundError:
+                raise Blocked("找不到 gcloud")
+            except subprocess.TimeoutExpired:
+                raise Blocked("檢查 gcloud 的 impersonate 設定逾時,為避免用錯身分先停止")
+            if imp.returncode != 0:
+                raise Blocked("讀不到 gcloud 的 impersonate 設定,為避免用錯身分先停止:" + _short(imp.stderr))
+            self._imp_checked = True
+        try:
+            # config-helper --min-expiry:保證拿到的 token 至少還有 15 分鐘(不會拿到快過期的快取 token)
+            r = subprocess.run(["gcloud", "config", "config-helper", "--format=json", f"--min-expiry={min_expiry}", f"--account={acct}", "--quiet"],
+                               env=user_env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            raise Blocked("找不到 gcloud")
+        except subprocess.TimeoutExpired:
+            raise Blocked("取 access token 逾時")
+        try:
+            helper = json.loads(r.stdout or "{}")
+        except ValueError:
+            helper = {}
+        tok = ((helper.get("credential") or {}).get("access_token") or "") if isinstance(helper, dict) else ""
+        props = ((helper.get("configuration") or {}).get("properties") or {}) if isinstance(helper, dict) else {}
+        auth_props = props.get("auth") or {}
+        swapped = [k for k in ("impersonate_service_account", "credential_file_override", "access_token_file") if auth_props.get(k)]
+        if swapped:  # 這些設定會讓 token 變成別的身分:「不可動自己的綁定」就會保護到錯的人
+            raise Blocked(f"你的 gcloud 設了 auth/{', auth/'.join(swapped)},帳號模式拿到的 token 不是 {acct} 本人;"
+                          "請先在終端機 gcloud config unset 這些設定,或改用 SA 金鑰模式")
+        tok = tok.strip()
+        if r.returncode != 0 or not tok or any(c.isspace() for c in tok):
+            raise Blocked(f"無法用帳號 {acct} 取得 access token(請使用者自己在終端機執行 gcloud auth login {acct}):"
+                          + _short(scrub_text(r.stderr or "", self.cfg)))
+        path = os.path.join(self.gdir, "token")
+        tmp = path + ".tmp"
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(tok)
+            os.replace(tmp, path)  # 原子替換:中斷時不會留下空的 token 檔
+        except OSError as e:
+            raise Blocked(f"寫入 token 檔失敗:{e}")
+        self.env["CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"] = path
+        # GKE 驗證外掛會另外快取 token:換新時一併清掉,讓 kubectl 下次重新取
+        for root, _, files in os.walk(self.gdir):
+            for fn in files:
+                if fn == "gke_gcloud_auth_plugin_cache":
+                    try:
+                        os.remove(os.path.join(root, fn))
+                    except OSError:
+                        pass
+        self.env["CLOUDSDK_CORE_ACCOUNT"] = acct
+        self._token_at = time.time()
+        append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", f"--min-expiry={min_expiry}", "--account=<GG_ACCOUNT>"],
+                                          "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
+
+    def prepare_change_token(self):
+        """帳號模式:換一張至少剩 55 分鐘的 token(送出變更前、作廢核准檔前呼叫;失敗丟 Blocked)。"""
+        if self.cfg.get("GG_AUTH") == "user":
+            self._refresh_user_token("55m")
+            self._long_token_at = time.time()
+
+    def ensure_fresh(self):
+        """帳號模式(讀取用):token 太舊或檔案不見就換新;換新失敗但舊 token 仍安全時沿用,否則丟 Blocked。
+        變更改用 prepare_change_token()(一律換新、不沿用)。"""
+        if self.cfg.get("GG_AUTH") != "user":
+            return
+        now = time.time()
+        age = now - getattr(self, "_token_at", 0)
+        missing = not os.path.exists(os.path.join(self.gdir, "token"))  # 例如被殘留清理刪掉
+        if age <= self.TOKEN_MAX_AGE and not missing:
+            return
+        usable = age < self.TOKEN_SAFE_AGE and not missing  # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用
+        if now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試
+            if usable:
+                return
+            raise Blocked(getattr(self, "_refresh_failed_msg", "換 token 失敗"))
+        try:
+            self._refresh_user_token()
+            self._refresh_failed_at = -1e9
+        except Blocked as e:
+            self._refresh_failed_at, self._refresh_failed_msg = now, str(e)
+            if not usable:
+                raise
+            append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper"], "rc": 1,
+                                              "err": "換 token 失敗,沿用尚未過期的 token:" + _short(str(e), 200)})
 
     def __exit__(self, *a):
         shutil.rmtree(self.gdir, ignore_errors=True)
@@ -341,11 +507,29 @@ class Session:
             check_read(argv, check_mode)
         elif check_mode == "change":
             import ggchange  # 第二道防線:只檢查形狀(允許清單、共同禁止、旗標);完整判定在 change.py
-            shape = ggchange.classify(argv, self.cfg, shape_only=True)
+            # --async / --format=json 是 kit 執行時自己加的(計畫裡不准寫),檢查形狀時先拿掉
+            core = argv[:-2] if argv[-2:] == ["--async", "--format=json"] else argv  # 只拿掉 kit 自己加在尾端的兩個
+            shape = ggchange.classify(core, self.cfg, shape_only=True)
             if shape["blocked_reason"]:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
+            if core is not argv and not (ggchange.change_rules()["kinds"].get(shape.get("kind")) or {}).get("async"):
+                raise Denied("只有允許 --async 的變更種類可以帶 --async")
         else:
             raise Denied("未知模式")
+        try:
+            if check_mode == "change" and self.cfg.get("GG_AUTH") == "user":
+                # 變更:送出時要有一張至少剩 55 分鐘的 token(gcloud 只在啟動時讀一次 token 檔)。
+                # 通常 change.py 已在作廢核准檔前用 prepare_change_token() 換好;太久沒換才在這裡補換
+                if time.time() - getattr(self, "_long_token_at", -1e9) > 120:
+                    self.prepare_change_token()
+            else:
+                self.ensure_fresh()  # 讀取:換新失敗但舊 token 仍安全時沿用
+        except Blocked as e:
+            if check_mode == "change":
+                raise
+            # 讀取模式:這個指令記為失敗(列入無法判定),不讓整個審查中斷、已收集的部分照樣出報告
+            append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": 1, "err": "換 token 失敗"})
+            return subprocess.CompletedProcess(argv, 1, "", "換 token 失敗:" + str(e))
         real = [("--key-file=" + self.cfg["GG_SA_KEY_FILE"]) if a == "<key>" else a for a in argv]
         if check_mode == "change":
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": None, "state": "started"})

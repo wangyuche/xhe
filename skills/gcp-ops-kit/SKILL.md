@@ -9,7 +9,7 @@ description: GCP 專案 / GKE 審查與受控變更的固定腳本(gcp-guardian 
 
 ## 本機設定(不進 git)
 
-`~/.config/gcp-guardian/config`(權限 600,使用者建立):
+**沒有設定檔時**:直接用 gcloud 目前登入的帳號(`gcloud config get-value account`,即帳號模式),不用寫任何設定;專案 ID 由簡報指定。有設定檔時一律照設定檔走:沒寫 `GG_AUTH=user` 就是 SA 模式(缺金鑰 BLOCKED,不默默改用個人帳號)。要用 SA 金鑰、指定別的帳號、設預設專案或報告目錄時,才建 `~/.config/gcp-guardian/config`(只為了預設專案而建設定檔、又要用自己的帳號,也要寫 `GG_AUTH=user`)(權限 600,使用者建立):
 
 ```
 # SA 金鑰(權限 600)
@@ -22,7 +22,17 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 
 值後面的 `  # 註解` 會被忽略。
 
-使用者自己要裝:`brew install --cask google-cloud-sdk`、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
+**指定別的帳號(不需 SA 金鑰)**:設定檔改寫
+
+```
+GG_AUTH=user
+# 你在本機 gcloud 登入的帳號(使用者自己先在終端機執行 gcloud auth login <帳號>)
+GG_ACCOUNT=you@example.com
+```
+
+kit 每個 run 用 `gcloud config config-helper --min-expiry=15m --account=<帳號>` 取短效 token(保證至少還有 15 分鐘,每 5 分鐘換新,換新時清掉 GKE 外掛的 token 快取;帳號模式下每條變更送出前換一張至少剩 55 分鐘的 token,沒走 `--async` 的變更最多 50 分鐘;要重新驗證時直接失敗並提示 `gcloud auth login`),只寫進 `<run>/gcloud/token`(600,結束刪除),以 `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` 給 gcloud 與 GKE 外掛使用(2026-11-28 已用真的 gcloud 594 + 外掛實測 get-credentials 與 kubectl 可用);審查中途換 token 失敗時,該指令列入無法判定,不中斷整份報告;不複製、不讀你的憑證檔,`~/.config/gcloud` 仍受 guard 保護(gcloud 自己換新 token 時會更新它的快取)。你的 gcloud 設了 `auth/impersonate_service_account`、`auth/credential_file_override` 或 `auth/access_token_file` 時直接 BLOCKED(拿到的 token 不是你本人)。權限就是你帳號的權限:審查 / 計畫照樣只跑唯讀白名單,變更照樣要逐條核准;「不可動自己的 IAM 綁定」改成套用在這個帳號。報告的寫入權限提示依帳號在專案上的直接綁定判斷(透過群組取得的角色不會列出)。
+
+使用者自己要裝:`brew install --cask gcloud-cli`(舊名 google-cloud-sdk)、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
 
 ## 入口腳本
 
@@ -30,7 +40,7 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 
 ```bash
 <kit>/scripts/check.sh yaml                         # ruby / python3 / node
-<kit>/scripts/check.sh review|plan|change [<專案>] [--scope iam,gcs,…]  # 沒給專案用 GG_DEFAULT_PROJECT;scope 不含 gke / k8s 時不要求 kubectl; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
+<kit>/scripts/check.sh review|plan|change [<專案>] [--scope iam,gcs,…]  # 沒給專案用 GG_DEFAULT_PROJECT;scope 不含 gke / k8s 時不要求 kubectl;GG_AUTH=user 時不需金鑰; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
 
 <kit>/scripts/collect.sh [<專案>] [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
 #   → run=<GG_REPORT_DIR>/<專案>/<時間>-<模式>/ :inventory/(遮蔽後)、findings.json、plan.json(空)、report.html
@@ -111,6 +121,7 @@ node <kit>/scripts/render.mjs --check <run>         # 整個 run 目錄無秘密
 - 已有條目執行後,後面的條目被擋:整體狀態是 ISSUES(不是 BLOCKED)。收到 SIGTERM / SIGHUP / SIGINT 會先寫紀錄、清憑證;被 SIGKILL 留下的憑證快取下次執行時清掉(超過 6 小時)。collect / plan / change 請在背景執行(可能超過 10 分鐘)。
 - gcloud update 一次只能改一類設定(`exclusive_groups`),多類請拆成多個 C 編號。
 - 變更指令成功但之後的快照 / 驗證失敗:結果記「已執行(驗證失敗)」並附還原指令。
+- `node-pools update` 與 Cloud SQL `instances patch` 執行時自動加 `--async`(gcloud 原始碼:這兩個會回傳操作),由 kit 輪詢操作狀態(`operations describe`,每次輪詢前換 token)到 DONE 再驗證;輸出不是單一操作物件、連續 10 分鐘查不到狀態(權限不足則立即)、逾時(GKE 4 小時、SQL 1 小時)或輪詢出錯,一律記「狀態不明」並附還原指令。`clusters update` / `clusters resize` 的 `--async` 不回傳操作,所以不加,由 gcloud 自己等完成(帳號模式送出前先換一張至少剩 55 分鐘的 token,同步指令最多 50 分鐘,超過記狀態不明;SA 模式 GKE 最多 4 小時)。GKE / SQL 變更送出前,資源(node pool 變更另看叢集)若正在變更中或讀不到狀態(PROVISIONING / RECONCILING / 維護中;resize 另看 MIG 是否穩定)直接 BLOCKED 不送出;處在錯誤狀態則照樣可送(可能正是要修它)。計畫裡不可自己寫 `--async` / `--format`。
 - 新值等於現值的條目判「不需變更」→ BLOCKED(避免空操作被記成修正)。
 - kubectl scale 縮到 0 一律禁止(會停止服務)。`GG_REPORT_DIR` 不可含空白。
 - IAM 增減(含 bucket 移除)必帶 `--condition=None`(帶條件的綁定請使用者自己處理);綁定比對只看無條件綁定,同名的帶條件綁定不受影響。

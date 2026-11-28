@@ -28,7 +28,7 @@ def need_tools(mode, areas=AREAS):
     if missing:
         hint = []
         if "gcloud" in missing:
-            hint.append("brew install --cask google-cloud-sdk")
+            hint.append("brew install --cask gcloud-cli")
         if "gke-gcloud-auth-plugin" in missing:
             hint.append("gcloud components install gke-gcloud-auth-plugin")
         raise gglib.Blocked(f"缺工具:{', '.join(missing)}(請使用者自己安裝:{';'.join(hint) or '見 SKILL.md'})")
@@ -161,11 +161,12 @@ def k8s_docs(inv):
 def analyze(run, cfg):
     inv = os.path.join(run, "inventory")
     pol = gglib.read_json(os.path.join(inv, "iam-policy.json"), {}) or {}
-    me = "serviceAccount:" + (cfg.get("GG_SA") or "")
+    me = cfg.get("GG_PRINCIPAL") or ("serviceAccount:" + (cfg.get("GG_SA") or ""))
     meta = gglib.read_json(os.path.join(run, "meta.json"), {})
     meta["sa_roles"] = sorted(b.get("role") for b in pol.get("bindings") or [] if me in (b.get("members") or []))
     gglib.write_json(os.path.join(run, "meta.json"), meta)
-    findings = gcp_rules.scan(inv, cfg.get("GG_SA"))
+    # 只豁免專用 SA;帳號模式(即使登入的是某個 SA)不豁免,避免把那個身分自己的問題藏起來
+    findings = gcp_rules.scan(inv, cfg.get("GG_SA") if cfg.get("GG_AUTH") != "user" else None)
     areas = (gglib.read_json(os.path.join(run, "meta.json"), {}) or {}).get("areas") or []
     if areas and "gke" not in areas:  # 只掃 k8s 時仍要抓叢集清單,但不報 GKE 層規則
         findings = [f for f in findings if not f["rule_id"].startswith("GKE-")]

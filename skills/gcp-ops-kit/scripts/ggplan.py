@@ -95,7 +95,7 @@ def snapshot(s, kind, argv, project, ctx_done):
                 if not endpoint:
                     return None, None, "讀不到叢集 endpoint(kubeconfig 解析失敗),不能確認是同一個叢集"
                 # 每區節點數以 MIG 的 targetSize 為準(Kubernetes Node 數在 surge / 刪除中會不準)
-                sizes = []
+                sizes, stable = [], []
                 for url in snap.get("instanceGroupUrls") or []:
                     m = re.search(r"/zones/([a-z0-9-]+)/instanceGroup(?:Manager)?s/([A-Za-z0-9._-]+)$", url)
                     if not m:
@@ -104,8 +104,9 @@ def snapshot(s, kind, argv, project, ctx_done):
                     if err2:
                         return None, None, "讀不到 MIG:" + err2
                     sizes.append((mig or {}).get("targetSize"))
+                    stable.append(((mig or {}).get("status") or {}).get("isStable"))
                 per_zone = sizes[0] if sizes and all(x == sizes[0] for x in sizes) and isinstance(sizes[0], int) else None
-                snap = {"nodepool": snap, "mig_target_sizes": sizes, "zones": len(sizes), "node_count_per_zone": per_zone}
+                snap = {"nodepool": snap, "mig_target_sizes": sizes, "mig_stable": stable, "zones": len(sizes), "node_count_per_zone": per_zone}
         elif typ == "firewall":
             snap, err = g(["compute", "firewall-rules", "describe", name])
         elif typ in ("bucket", "bucket-iam"):

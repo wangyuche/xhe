@@ -19,7 +19,33 @@ import ggchange
 import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
+OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
+OP_FAIL_WINDOW = float(os.environ.get("GG_OP_FAIL_WINDOW", "600"))  # 連續查不到狀態超過 10 分鐘才放棄
+CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
+
+
+CHANGING = {"PROVISIONING", "RECONCILING", "STOPPING", "MAINTENANCE", "ONLINE_MAINTENANCE", "REPAIRING", "PENDING_CREATE", "PENDING_DELETE"}
+GKE_KINDS = {"gke-cluster-update": "container", "gke-resize": "container", "gke-nodepool-update": "container", "sql-patch": "sql"}
+
+
+def _res_state(svc, after):
+    """資源狀態:'ok'(RUNNING / RUNNABLE 且 MIG 穩定)、'changing'(變更中)、'mig'(只剩 MIG 不穩定)、'error:<狀態>'(穩定但有錯誤)。"""
+    if not isinstance(after, dict):
+        return "changing"
+    np = after.get("nodepool") if isinstance(after.get("nodepool"), dict) else after
+    st = str((after.get("state") if svc == "sql" else np.get("status")) or "")
+    if not st:
+        return "unknown"  # 讀不到狀態:不當成可以送
+    if st in CHANGING:
+        return "changing"
+    if st not in ("", "RUNNING", "RUNNABLE"):
+        return "error:" + st  # DEGRADED / ERROR / RUNNING_WITH_ERROR / FAILED / SUSPENDED…
+    if not all(x in (None, True) for x in (after.get("mig_stable") or [])):
+        return "mig"
+    return "ok"
+
+
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
 
@@ -45,6 +71,13 @@ def rollback_object(o):
     return o  # 保留 last-applied 註解,replace 後與變更前一致
 
 
+def _flag(argv, name):
+    for a in argv:
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
 class Runner:
     def __init__(self, cfg, plan, plan_path, approved):
         self.cfg, self.plan, self.plan_path, self.approved = cfg, plan, plan_path, approved
@@ -59,6 +92,67 @@ class Runner:
         # 已經有條目改了雲端:整體不能回 BLOCKED(那代表「事前檢查不過、什麼都沒改」)
         self.status = "ISSUES" if executed else status
         return False
+
+    def wait_operation(self, s, svc, r, argv):
+        """--async 送出後輪詢操作狀態(每次輪詢前換 token)。回傳和 subprocess 相同形狀的結果:
+        DONE 且沒有錯誤 → rc 0;操作錯誤 → rc 1;讀不到操作名稱、連續查不到狀態、逾時或任何例外 → rc 124(狀態不明)。"""
+        unknown = lambda msg: subprocess.CompletedProcess(r.args, 124, "", msg)
+        try:
+            try:
+                op = json.loads(r.stdout or "null")
+            except ValueError:
+                op = None
+            if isinstance(op, list):
+                if len(op) > 1:
+                    return unknown("指令回傳多個操作,無法逐一追蹤;請用 gcloud container / sql operations list 確認")
+                op = op[0] if op else None
+            is_op = isinstance(op, dict) and (op.get("operationType") or op.get("kind") == "sql#operation"
+                                              or "/operations/" in str(op.get("selfLink") or op.get("name") or ""))
+            name = (op.get("name") or "").rsplit("/", 1)[-1] if is_op else ""  # 印出的不是操作(例如資源本身):改用差集找
+            if not name:
+                return unknown("指令已送出,但輸出不是操作物件,無法追蹤;請用 gcloud container / sql operations list 確認")
+            if op.get("status") == "DONE":
+                return self._op_result(r, svc, op)
+            project = _flag(argv, "--project")
+            loc = _flag(argv, "--location")
+            deadline = time.time() + (CHANGE_TIMEOUT_GKE if svc == "container" else CHANGE_TIMEOUT_SQL)
+            fail_since, last_err = None, ""
+            while time.time() < deadline:
+                time.sleep(OP_POLL_SECONDS)
+                args = (["container", "operations", "describe", name, f"--location={loc}"] if svc == "container"
+                        else ["sql", "operations", "describe", name])
+                try:
+                    q = s.gcloud(args + [f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+                except gglib.Blocked as e:  # 換 token 暫時失敗:當成一次查詢失敗
+                    q = subprocess.CompletedProcess(args, 1, "", str(e))
+                try:
+                    st = json.loads(q.stdout or "null") if q.returncode == 0 else None
+                except ValueError:
+                    st = None
+                if not isinstance(st, dict):
+                    last_err = gglib._short(q.stderr, 300) or "回應不是 JSON 物件"
+                    if re.search(r"PERMISSION_DENIED|\bHTTP(?:Error)? ?403\b|\b403\b(?=[: ]+(?:Forbidden|PERMISSION))", last_err):  # NOT_FOUND 可能是最終一致:照樣在時間窗內重試
+                        return unknown(f"查不到操作 {name} 的狀態(不會恢復的錯誤):{last_err}")
+                    fail_since = fail_since or time.time()
+                    if time.time() - fail_since >= OP_FAIL_WINDOW:
+                        return unknown(f"連續 {int(time.time() - fail_since)} 秒查不到操作 {name} 的狀態:{last_err}")
+                    continue
+                fail_since = None
+                if st.get("status") == "DONE":
+                    return self._op_result(r, svc, st)
+            return unknown(f"等待操作 {name} 逾時")
+        except Exception as e:  # 輪詢中任何錯誤(例如換 token 失敗):指令已送出 → 狀態不明
+            return unknown(f"輪詢操作狀態時出錯({type(e).__name__}: {gglib._short(str(e), 200)})")
+
+    @staticmethod
+    def _op_result(r, svc, st):
+        err = st.get("error")
+        if not err and svc == "container" and str(st.get("statusMessage") or "").strip():
+            # DONE、沒有 error 但帶 statusMessage:當成功並照常驗證(沒有預期值時記狀態不明),訊息附在紀錄裡
+            return subprocess.CompletedProcess(r.args, 0, json.dumps(st, ensure_ascii=False),
+                                               "操作 DONE,附帶訊息:" + gglib._short(str(st.get("statusMessage")), 300))
+        return subprocess.CompletedProcess(r.args, 1 if err else 0, json.dumps(st, ensure_ascii=False),
+                                           json.dumps(err, ensure_ascii=False) if err else "")
 
     def precheck_static(self):
         byid = {it["id"]: it for it in self.plan["items"]}
@@ -110,6 +204,7 @@ class Runner:
 
     def one(self, s, it, ctx_done):
         cid = it["id"]
+        self.op_note = False
         argv = ggplan.materialize(it, self.run)
         kind = it["kind"]
         try:
@@ -151,6 +246,29 @@ class Runner:
             rb = {"apiVersion": "v1", "kind": "List", "items": [rollback_object(o) for o in objs if not o.get("_absent")]}
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
+        kinfo = ggchange.change_rules()["kinds"][kind]
+        busy = kind in GKE_KINDS and _res_state(GKE_KINDS[kind], snap) in ("changing", "mig", "unknown")
+        if not busy and kind in ("gke-nodepool-update", "gke-resize"):  # node pool 變更:叢集本身在變更中(例如控制平面升級)也不送
+            f = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in argv if a.startswith("--") and "=" in a}
+            pos = [a for a in argv if not a.startswith("-")]
+            cname = f.get("--cluster") or (pos[4] if len(pos) > 4 else "")
+            q = s.gcloud(["container", "clusters", "describe", cname, f"--location={f.get('--location')}",
+                          f"--project={self.project}", "--format=json", "--quiet"], mode="dryrun")
+            try:
+                cl = json.loads(q.stdout or "null") if q.returncode == 0 else None
+            except ValueError:
+                cl = None
+            if not isinstance(cl, dict):
+                return self.stop("BLOCKED", cid, "讀不到叢集狀態,無法確認叢集是否在變更中;這條沒送出")
+            busy = _res_state("container", cl) in ("changing", "unknown")
+        if busy:
+            # 穩定但有錯誤(DEGRADED 等)照樣可以送:使用者可能正是要修它
+            return self.stop("BLOCKED", cid, "資源正在變更中或讀不到狀態(PROVISIONING / RECONCILING / 維護中 / MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
+        left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
+        try:
+            s.prepare_change_token()  # 帳號模式:作廢核准檔前先換好至少剩 55 分鐘的 token(送出時不必再換);失敗代表指令還沒送出、核准檔也還在
+        except gglib.Blocked as e:
+            return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
         if not self.consumed:
             # 第一條指令真正送出前才作廢核准檔(改名,原子):之前的檢查失敗不會浪費核准
             src = os.path.join(os.path.dirname(self.plan_path), "approval.json")
@@ -163,18 +281,27 @@ class Runner:
         self.inflight = {"id": cid, "kind": kind, "argv": it["command"], "result": "執行中被中斷(狀態不明)",
                          "reason": "指令已送出但沒有等到結果;請先確認現況",
                          "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
-                         "rollback_warning": it.get("rollback_warning")}
+                         "rollback_warning": it.get("rollback_warning"), "exec_warning": it.get("exec_warning")}
+        run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
-            r = s._exec(argv, "change", timeout=CHANGE_TIMEOUT_GKE if kind.startswith("gke-") else 1800)
-        except gglib.Denied as e:  # 第二道防線在執行前拒絕:雲端沒被動到
+            # 帳號模式:送出前換一張至少剩 55 分鐘的 token,同步指令最多 50 分鐘;SA 模式由 gcloud 自己換新
+            tmo = 300 if kinfo.get("async") else (3000 if self.cfg.get("GG_AUTH") == "user"
+                                                   else (CHANGE_TIMEOUT_GKE if kind in GKE_KINDS else 1800))
+            r = s._exec(run_argv, "change", timeout=tmo)
+        except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None
-            return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
+            return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e) + ";這條沒送出" + (",核准已用掉,剩下的條目需重新核准" if self.consumed else ""))
+        if r.returncode == 0 and kinfo.get("async"):
+            r = self.wait_operation(s, kinfo["async"], r, argv)
+            self.op_note = r.returncode == 0 and (r.stderr or "").startswith("操作 DONE,附帶訊息")
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
+        if it.get("exec_warning"):
+            rec["exec_warning"] = it["exec_warning"]
         if r.returncode != 0:
             rec["rollback"] = [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])]
             if r.returncode == 124:
-                rec.update({"result": "逾時(狀態不明)", "reason": "等待逾時;伺服器端的操作可能仍在進行,請先確認現況(gcloud container operations list)"})
+                rec.update({"result": "狀態不明", "reason": (gglib._short(r.stderr, 300) or "等待逾時") + ";伺服器端的操作可能仍在進行,請先確認現況(gcloud container / sql operations list)"})
             else:
                 rec.update({"result": "失敗(可能部分套用)", "reason": f"指令失敗(rc={r.returncode});請先確認現況再決定是否還原"})
             self.results.append(rec)
@@ -191,6 +318,11 @@ class Runner:
         self.results.append(rec)
         self.inflight = None
         exp = it.get("expected") or []
+        note = (r.stderr or "") if self.op_note else ""  # 「操作 DONE,附帶訊息:…」
+        if self.op_note and not exp:
+            rec.update({"result": "狀態不明", "reason": note + ";這條沒有預期值可驗證,請先確認現況"})
+            self.status = "ISSUES"
+            return False
         deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
         while True:
             try:
@@ -213,10 +345,10 @@ class Runner:
         else:
             badexp = ggplan.check_pre(exp, after)
         if badexp:
-            rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500]})
+            rec.update({"result": "已執行(驗證失敗)", "reason": "驗證不符:" + json.dumps(badexp, ensure_ascii=False)[:500] + (";" + gglib._short(note, 300) if note else "")})
             self.status = "ISSUES"
             return False
-        rec.update({"result": "已執行", "reason": "驗證符合"})
+        rec.update({"result": "已執行", "reason": "驗證符合" + (";" + gglib._short(note, 300) if note else "")})
         return True
 
 
@@ -228,7 +360,7 @@ def write_log(run, plan_path, sha, approved, runner):
         return str(x).replace("|", "\\|").replace("\r", "").replace("\n", "<br>")
     for r in runner.results:
         rb = shlex.join(r.get("rollback") or []) or r.get("rollback_note") or "-"
-        warn = f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""
+        warn = (f"<br>⚠ {r['rollback_warning']}" if r.get("rollback_warning") else "") + (f"<br>⚠ 執行前注意:{r['exec_warning']}" if r.get("exec_warning") else "")
         lines.append(f"| {cell(r['id'])} | {cell(r['result'])} | {cell(r.get('reason', ''))} | {r.get('rc', '-')} | `{cell(rb)}`{cell(warn)} |")
     lines += ["", "實際執行的指令見 `inventory/commands.log`(由 kit 記錄,agent 不寫此檔)。", ""]
     with open(os.path.join(run, "change-log.md"), "w", encoding="utf-8") as f:
@@ -266,6 +398,11 @@ def main(argv):
             raise gglib.Blocked("plan.json 不是有效 JSON")
         if not plan or os.path.realpath(plan.get("source_run") or "") != src_run or plan.get("project") != src_meta.get("project"):
             raise gglib.Blocked("plan.json 的 source_run / project 與所在 run 目錄不符")
+        # 計畫時的身分要和現在相同:避免計畫後切換 gcloud 帳號,用使用者沒確認過的身分執行
+        # 比對 plan.json(已算進 sha256)記的身分,不是 meta.json
+        if (plan.get("auth") or "sa") != cfg.get("GG_AUTH") or (plan.get("sa") or "").lower() != (cfg.get("GG_SA") or "").lower():
+            raise gglib.Blocked(f"計畫時的身分({plan.get('auth')}:{plan.get('sa')})和現在({cfg.get('GG_AUTH')}:{cfg.get('GG_SA')})不同;"
+                                "請用同一個身分重新產生計畫")
         approved = parse_approved(approved_text)
         # 核准檔:由主 agent 依使用者原話寫在計畫 run 目錄(gcp-guardian 的 hook 不准寫這個檔),旗標必須與它一致
         appr = gglib.read_json(os.path.join(src_run, "approval.json"), None)
@@ -283,9 +420,11 @@ def main(argv):
             gglib.acquire_lock(cfg, project, "change", run)
             status = runner.execute(run)
         except (gglib.Blocked, gglib.Denied) as e:
-            runner.status = "BLOCKED"
+            if runner.inflight:  # 指令已送出後才出錯:保留這條與還原指令
+                runner.results.append(runner.inflight)
+            runner.status = "ISSUES" if runner.inflight or any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
             runner.results.append({"id": "-", "result": "BLOCKED", "reason": str(e)})
-            status = "BLOCKED"
+            status = runner.status
         except SystemExit:
             # 被中斷(例如逾時被砍):先寫紀錄(含已執行 / 執行中條目的還原指令)再結束
             if runner.inflight:
@@ -304,7 +443,9 @@ def main(argv):
                 print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}", flush=True)
             raise
         except Exception as e:
-            runner.status = "ISSUES" if any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
+            if runner.inflight:
+                runner.results.append(runner.inflight)
+            runner.status = "ISSUES" if runner.inflight or any(r.get("rc") == 0 for r in runner.results) else "BLOCKED"
             runner.results.append({"id": "-", "result": "錯誤", "reason": f"{type(e).__name__}: {gglib._short(str(e), 300)}"})
             status = runner.status
         finally:
@@ -315,7 +456,8 @@ def main(argv):
         print(f"run={run}")
         for r in runner.results:
             print(f"{r['id']}\t{r['result']}\t{r.get('reason', '')}\t{shlex.join(r.get('rollback') or [])}"
-                  + (f"\t⚠ {r['rollback_warning']}" if r.get("rollback_warning") else ""))
+                  + (f"\t⚠ {r['rollback_warning']}" if r.get("rollback_warning") else "")
+                  + (f"\t⚠ 執行前注意:{r['exec_warning']}" if r.get("exec_warning") else ""))
         return {"PASS": 0, "ISSUES": 1, "BLOCKED": 3}[status]
     except gglib.Blocked as e:
         print("status=BLOCKED")

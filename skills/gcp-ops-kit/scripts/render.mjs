@@ -133,7 +133,7 @@ ${i.manifest ? `<details><summary>manifest</summary><pre class="mono">${esc(i.ma
 ${i.patch ? `<details><summary>patch</summary><pre class="mono">${esc(i.patch)}</pre></details>` : ''}</td>
 <td><div class="sub">dry-run:${esc(i.dry_run || '無法 dry-run')}</div>
 ${(i.dry_run_log || []).map((l) => `<details><summary>${esc(l.step)}(rc=${esc(l.rc)})</summary><pre class="mono">${esc(l.out || '')}</pre></details>`).join('')}
-<div class="sub">還原:</div>${i.rollback_warning ? `<div class="sub" style="color:var(--crit)">⚠ ${esc(i.rollback_warning)}</div>` : ''}<pre class="mono">${esc(i.rollback ? shjoin(i.rollback) : (i.rollback_note || '（無)'))}</pre>
+${i.exec_warning ? `<div class="sub" style="color:var(--crit)">⚠ 執行前注意:${esc(i.exec_warning)}</div>` : ''}<div class="sub">還原:</div>${i.rollback_warning ? `<div class="sub" style="color:var(--crit)">⚠ ${esc(i.rollback_warning)}</div>` : ''}<pre class="mono">${esc(i.rollback ? shjoin(i.rollback) : (i.rollback_note || '（無)'))}</pre>
 <details><summary>precondition / expected</summary><pre class="mono">${esc(JSON.stringify({ precondition: i.precondition, auto: i.auto_pre, expected: i.expected }, null, 1))}</pre></details></td></tr>`;
   }).join('\n');
   return `<p class="sub">plan.json sha256:<span class="mono">${esc(d.planSha)}</span>。每條都要使用者逐條核准才會執行;標「放寬安全」的條目請特別確認。</p>
@@ -144,7 +144,7 @@ function changeSection(d) {
   const c = d.change;
   if (!c) return '';
   const rows = (c.results || []).map((r) => `<tr><td class="mono"><b>${esc(r.id)}</b></td><td>${esc(r.result)}</td><td>${esc(r.reason || '')}</td>
-<td class="mono">${esc(r.rc ?? '-')}</td><td><pre class="mono">${esc(shjoin(r.rollback) || '-')}</pre></td></tr>`).join('\n');
+<td class="mono">${esc(r.rc ?? '-')}</td><td>${r.exec_warning ? `<div class="sub" style="color:var(--crit)">⚠ 執行前注意:${esc(r.exec_warning)}</div>` : ''}${r.rollback_warning ? `<div class="sub" style="color:var(--crit)">⚠ ${esc(r.rollback_warning)}</div>` : ''}<pre class="mono">${esc(shjoin(r.rollback) || '-')}</pre></td></tr>`).join('\n');
   return `<h2>變更結果</h2><p class="sub">計畫 <span class="mono">${esc(c.plan)}</span>(sha256 ${esc(String(c.sha256).slice(0, 16))}…),核准 ${esc((c.approved || []).join(', '))}。不自動還原;需要時由使用者依還原指令執行。</p>
 <table><thead><tr><th>編號</th><th>結果</th><th>原因 / 驗證</th><th>結束碼</th><th>還原指令</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -199,9 +199,9 @@ export function render(run) {
 <!-- gg-stats ${statsJSON} -->
 <!-- gg-plan-sha256 ${d.planSha || "none"} -->
 <h1>gcp-guardian ${esc(modeName)}報告</h1>
-<div class="sub">${esc(m.project || '')} · ${esc(m.started || '')} · SA ${esc(m.sa || '（未使用)')}</div>
+<div class="sub">${esc(m.project || '')} · ${esc(m.started || '')} · ${m.auth === 'user' ? '帳號' : 'SA'} ${esc(m.sa || '（未使用)')}</div>
 <p><span class="status ${st}">狀態:${st}</span></p>
-${(m.sa_roles || []).some((r) => /^roles\/(owner|editor)$|admin$/i.test(r)) ? `<div class="note">這個 SA 有寫入權限(${esc(m.sa_roles.join(', '))})。審查、計畫模式只執行唯讀白名單內的指令;變更只執行使用者逐條核准的條目。</div>` : ''}
+${(m.sa_roles || []).some((r) => /^roles\/(owner|editor)$|admin$/i.test(r)) ? `<div class="note">${m.auth === 'user' ? '你的帳號' : '這個 SA'}有寫入權限(${esc(m.sa_roles.join(', '))})。審查、計畫模式只執行唯讀白名單內的指令;變更只執行使用者逐條核准的條目。</div>` : ''}
 <div class="tiles">${tiles}</div>
 ${changeSection(d)}
 <h2>變更計畫</h2>${planSection(d)}

@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import gglib  # noqa: E402
+import gglib  # noqa: E402  (載入時會把 gcloud SDK 的 bin 加進 PATH,找得到 gke-gcloud-auth-plugin)
 
 WRITE_HINT = ("roles/owner", "roles/editor")
 
@@ -51,7 +51,7 @@ def main(argv):
         if missing:
             hint = []
             if "gcloud" in missing:
-                hint.append("brew install --cask google-cloud-sdk")
+                hint.append("brew install --cask gcloud-cli")
             if "gke-gcloud-auth-plugin" in missing:
                 hint.append("gcloud components install gke-gcloud-auth-plugin")
             raise gglib.Blocked(f"缺工具 {', '.join(missing)}(請使用者自己安裝:{';'.join(hint) or '見 SKILL.md'})")
@@ -64,7 +64,7 @@ def main(argv):
             with gglib.Session(cfg, tmp, project, "read") as s:
                 r = s.gcloud(["projects", "describe", project, f"--project={project}", "--format=json", "--quiet"])
                 if r.returncode != 0:
-                    raise gglib.Blocked(f"SA 無法存取專案 {project}:" + gglib._short(r.stderr))
+                    raise gglib.Blocked(f"{'帳號' if cfg['GG_AUTH'] == 'user' else 'SA'} 無法存取專案 {project}:" + gglib._short(r.stderr))
                 r = s.gcloud(["projects", "get-iam-policy", project, f"--project={project}", "--format=json", "--quiet"])
                 roles = []
                 pol = None
@@ -74,14 +74,14 @@ def main(argv):
                     except json.JSONDecodeError:
                         pol = None
                 if pol is not None:
-                    me = "serviceAccount:" + cfg["GG_SA"]
+                    me = cfg["GG_PRINCIPAL"]
                     roles = sorted(b["role"] for b in pol.get("bindings") or [] if me in (b.get("members") or []))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        print(f"{mode} ok project={project} sa={cfg['GG_SA']}")
-        print("sa_roles=" + (",".join(roles) if roles else "（讀不到專案層級角色)"))
+        print(f"{mode} ok project={project} auth={cfg['GG_AUTH']} principal={cfg['GG_PRINCIPAL']}")
+        print(("roles=" if cfg["GG_AUTH"] == "user" else "sa_roles=") + (",".join(roles) if roles else "（讀不到專案層級角色)"))
         if any(r in WRITE_HINT or r.endswith("admin") or r.endswith("Admin") for r in roles):
-            print("資訊:此 SA 有寫入權限(使用者已知)")
+            print(f"資訊:{'這個帳號' if cfg['GG_AUTH'] == 'user' else '此 SA'}有寫入權限(使用者已知)")
         return 0
     except gglib.Blocked as e:
         print(f"BLOCKED: {e}", file=sys.stderr)

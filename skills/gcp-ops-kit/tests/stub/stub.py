@@ -15,11 +15,27 @@ d = os.environ.get("GG_STUB_DIR", "")
 text = " ".join(argv)
 with open(os.environ["GG_STUB_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps({"tool": tool, "argv": argv, "CLOUDSDK_CONFIG": os.environ.get("CLOUDSDK_CONFIG"),
-                        "KUBECONFIG": os.environ.get("KUBECONFIG"), "HOME": os.environ.get("HOME")}, ensure_ascii=False) + "\n")
+                        "KUBECONFIG": os.environ.get("KUBECONFIG"), "HOME": os.environ.get("HOME"),
+                        "TOKEN_FILE": os.environ.get("CLOUDSDK_AUTH_ACCESS_TOKEN_FILE")}, ensure_ascii=False) + "\n")
 if tool == "gke-gcloud-auth-plugin":
     sys.exit(0)
 sp = os.path.join(d, "state.json")
 state = json.load(open(sp)) if os.path.exists(sp) else {}
+if tool == "gcloud" and argv[:3] == ["config", "get-value", "account"]:
+    print("" if state.get("no_account") else "auto@example.com")
+    sys.exit(0)
+if tool == "gcloud" and argv[:3] == ["config", "get-value", "auth/impersonate_service_account"]:
+    print("deployer@p.iam.gserviceaccount.com" if state.get("impersonate") else "(unset)")
+    sys.exit(0)
+if tool == "gcloud" and argv[:2] == ["config", "config-helper"]:
+    if state.get("user_not_logged_in"):
+        sys.stderr.write("ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens\n")
+        sys.exit(1)
+    auth = {"credential_file_override": "/x/deployer.json"} if state.get("cred_override") else {}
+    acct = [a.split("=", 1)[1] for a in argv if a.startswith("--account=")]
+    print(json.dumps({"credential": {"access_token": "ya29." + "x" * 40, "token_expiry": "2099-01-01T00:00:00Z"},
+                      "configuration": {"properties": {"core": {"account": acct[0] if acct else ""}, **({"auth": auth} if auth else {})}}}))
+    sys.exit(0)
 if tool == "gcloud" and argv[:2] == ["auth", "activate-service-account"]:
     if state.get("activate_fail"):
         sys.stderr.write("ERROR: (gcloud.auth.activate-service-account) key disabled\n")

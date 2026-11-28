@@ -342,6 +342,125 @@ def t_check_pre_redact():
     ok("precondition 指父物件也猜不到秘密(猜對也不成立)", bool(right), right)
 
 
+def t_no_config(e):
+    env = e.env(); env.pop("GG_CONFIG", None)
+    env["HOME"] = os.path.join(e.tmp, "home-noconf"); os.makedirs(env["HOME"], exist_ok=True)  # 預設路徑不存在 = 沒有設定檔
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("沒有設定檔:自動用 gcloud 目前登入的帳號(帳號模式)", r.returncode == 0 and "auth=user" in r.stdout and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
+    e.state({"no_account": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("沒有設定檔也沒登入 → BLOCKED 並提示 gcloud auth login", r.returncode == 3 and "gcloud auth login" in r.stderr, r.stderr[-300:])
+    e.state({})
+
+
+def t_partial_config(e):
+    cfgp = os.path.join(e.tmp, "conf", "config-partial")
+    with open(cfgp, "w") as f:
+        f.write(f"GG_DEFAULT_PROJECT={FX.P}\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgp, 0o600)
+    env = e.env(); env["GG_CONFIG"] = cfgp
+    r = e.run([os.path.join(S, "check.sh"), "review", "--scope", "iam"], env=env)
+    ok("設定檔只有預設專案、沒寫 GG_AUTH=user → BLOCKED 缺金鑰(不默默改用個人帳號)", r.returncode == 3 and "GG_SA_KEY_FILE" in r.stderr, r.stdout + r.stderr)
+
+
+def t_typo_config(e):
+    cfgp = os.path.join(e.tmp, "conf", "config-typo")
+    with open(cfgp, "w") as f:
+        f.write(f"GG_SA_KEYFILE=/x/key.json\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgp, 0o600)
+    env = e.env(); env["GG_CONFIG"] = cfgp
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("設定檔金鑰欄位拼錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "GG_SA_KEY_FILE" in r.stderr, r.stdout + r.stderr)
+
+
+def t_refresh_fallback(e):
+    import types, time as _t
+    calls = []
+    def fail():
+        calls.append(1); raise gglib.Blocked("網路暫時失敗")
+    gd = os.path.join(e.tmp, "fake-gdir"); os.makedirs(gd, exist_ok=True); open(os.path.join(gd, "token"), "w").write("x")
+    o = types.SimpleNamespace(cfg={"GG_AUTH": "user"}, run=e.tmp, gdir=gd, TOKEN_MAX_AGE=300, TOKEN_SAFE_AGE=600,
+                              _token_at=_t.time() - 400, _refresh_user_token=fail)
+    gglib.Session.ensure_fresh(o)  # 換新失敗但 token 才 400 秒:沿用,不丟錯
+    gglib.Session.ensure_fresh(o)  # 1 分鐘內不重試
+    ok("換 token 失敗但舊 token 仍安全 → 沿用,且 1 分鐘內不重試", len(calls) == 1)
+    o._token_at = _t.time() - 700; o._refresh_failed_at = -1e9
+    try:
+        gglib.Session.ensure_fresh(o); raised = False
+    except gglib.Blocked:
+        raised = True
+    ok("換 token 失敗且舊 token 已太舊 → Blocked", raised)
+    os.remove(os.path.join(gd, "token")); o._token_at = _t.time(); o._refresh_failed_at = -1e9; calls.clear()
+    try:
+        gglib.Session.ensure_fresh(o); raised = False
+    except gglib.Blocked:
+        raised = True
+    ok("token 檔不見(例如被殘留清理刪掉)→ 立刻換新,換不到就 Blocked(不沿用)", raised and len(calls) == 1)
+
+
+def t_bad_config_path(e):
+    env = e.env(); env["GG_CONFIG"] = os.path.join(e.tmp, "conf", "conifg-typo")
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("GG_CONFIG 路徑打錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "GG_CONFIG" in r.stderr, r.stdout + r.stderr)
+
+
+def t_res_state():
+    import change
+    ok("資源狀態:RUNNING=ok、RECONCILING=變更中、DEGRADED=錯誤、MIG 不穩定=mig、SQL MAINTENANCE=變更中",
+       change._res_state("container", {"status": "RUNNING"}) == "ok" and change._res_state("container", {"status": "RECONCILING"}) == "changing"
+       and change._res_state("container", {"status": "DEGRADED"}) == "error:DEGRADED"
+       and change._res_state("container", {"nodepool": {"status": "RUNNING"}, "mig_stable": [False]}) == "mig"
+       and change._res_state("sql", {"state": "MAINTENANCE"}) == "changing" and change._res_state("sql", {"state": "RUNNABLE"}) == "ok")
+
+
+def t_impersonation(e):
+    cfgu = os.path.join(e.tmp, "conf", "config-imp")
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgu, 0o600)
+    env = e.env(); env["GG_CONFIG"] = cfgu
+    e.state({"cred_override": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:gcloud 設了 credential_file_override → BLOCKED", r.returncode == 3 and "credential_file_override" in r.stderr, r.stderr[-300:])
+    e.state({"impersonate": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    r_ = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                            "--role=roles/editor", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                           {"bindings": [{"role": "roles/editor", "members": ["group:admins@example.com"]}]})
+    r_sa = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                              "--role=roles/editor", f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA},
+                             {"bindings": [{"role": "roles/editor", "members": ["group:admins@example.com"]}]})
+    ok("SA 模式移除群組權限:也有執行前警示(SA 可能靠群組取得權限),不算放寬", "gcp-guardian 的 SA" in (r_sa.get("exec_warning") or "") and not r_sa["loosens_security"], r_sa)
+    r_o = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                             "--role=roles/iam.securityAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                            {"bindings": [{"role": "roles/iam.securityAdmin", "members": ["group:admins@example.com"]}]})
+    r_c = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                             f"--role=projects/{FX.P}/roles/iamManager", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                            {"bindings": [{"role": f"projects/{FX.P}/roles/iamManager", "members": ["group:admins@example.com"]}]})
+    r_b = ggchange.classify(["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://b1", "--member=group:ops@example.com",
+                             "--role=roles/storage.admin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                            {"bindings": [{"role": "roles/storage.admin", "members": ["group:ops@example.com"]}]})
+    ok("帳號模式移除 bucket 群組的 storage.admin → BLOCKED", "連還原都做不了" in (r_b["blocked_reason"] or ""), r_b)
+    ok("帳號模式移除群組的自訂角色 → BLOCKED(可能含 setIamPolicy)", "連還原都做不了" in (r_c["blocked_reason"] or ""), r_c)
+    ok("帳號模式移除群組的 IAM 管理角色 → BLOCKED(移除後可能連還原都做不了)", "連還原都做不了" in (r_o["blocked_reason"] or ""), r_o)
+    ok("帳號模式移除群組權限:執行前警示「鎖在專案外」,但不算放寬", not r_["loosens_security"] and "鎖在專案外" in (r_.get("exec_warning") or ""), r_)
+    ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
+    e.state({})
+
+
+def t_sdk_bin(e):
+    sdk = os.path.join(e.tmp, "fake-sdk", "bin"); os.makedirs(sdk, exist_ok=True)
+    link_dir = os.path.join(e.tmp, "fake-brew-bin"); os.makedirs(link_dir, exist_ok=True)
+    for t, body in (("gcloud", "#!/bin/bash\nexit 0\n"), ("gke-gcloud-auth-plugin", "#!/bin/bash\nexit 0\n")):
+        open(os.path.join(sdk, t), "w").write(body); os.chmod(os.path.join(sdk, t), 0o755)
+    if not os.path.lexists(os.path.join(link_dir, "gcloud")):
+        os.symlink(os.path.join(sdk, "gcloud"), os.path.join(link_dir, "gcloud"))
+    r = subprocess.run(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import gglib, shutil; print(shutil.which('gke-gcloud-auth-plugin') or '')", S],
+                       env={"PATH": link_dir + ":/usr/bin:/bin", "HOME": os.environ.get("HOME", "")}, capture_output=True, text=True)
+    ok("gcloud 只連進 PATH 時,kit 自動找到 SDK bin 裡的 gke-gcloud-auth-plugin",
+       os.path.realpath(r.stdout.strip() or "/nonexistent") == os.path.realpath(os.path.join(sdk, "gke-gcloud-auth-plugin")), r.stdout + r.stderr)
+
+
 def t_sa_change():
     import ggplan
 
@@ -603,7 +722,7 @@ def t_classify():
         r = ggchange.classify(argv, cfg, snap, shape_only=snap is None)
         ok(f"分類 BLOCKED:{name}", r["blocked_reason"], r)
         if name.startswith("動 GG_SA"):
-            ok(f"分類 BLOCKED 原因正確:{name}", "gcp-guardian 自己的 SA" in (r["blocked_reason"] or ""), r["blocked_reason"])
+            ok(f"分類 BLOCKED 原因正確:{name}", "自己使用的身分" in (r["blocked_reason"] or ""), r["blocked_reason"])
     r = ggchange.classify(["kubectl", f"--context={CTX}", "apply", "--filename=/x/manifests/C1.yaml"], cfg,
                           {"objects": [{"_absent": True}]}, [], True)
     ok("分類:apply 新建資源 → 不可還原 BLOCKED", r["blocked_reason"] and r["reversible"] is False, r)
@@ -903,7 +1022,9 @@ def t_check_scope(e):
     os.makedirs(bind, exist_ok=True)
     for t in ("gcloud",):
         if not os.path.lexists(os.path.join(bind, t)):
-            os.symlink(os.path.join(HERE, "stub", t), os.path.join(bind, t))
+            # 複製而非連結:SDK bin 自動補 PATH 會跟著 symlink 找到 stub 目錄裡的外掛,這裡要模擬真的沒有外掛
+            open(os.path.join(bind, t), "w").write('#!/bin/bash\nexec python3 "%s" gcloud "$@"\n' % os.path.join(HERE, "stub", "stub.py"))
+            os.chmod(os.path.join(bind, t), 0o755)
     env = e.env()
     env["PATH"] = bind + ":/usr/bin:/bin:/usr/sbin:/opt/homebrew/bin:/usr/local/bin"
     r1 = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam,gcs"], env=env)
@@ -939,6 +1060,63 @@ def t_missing_cluster(e):
     ok("--clusters 打錯名稱 → 列入無法判定(不會靜默 PASS)", any(u["item"] == "prod-typo" for u in und), und)
 
 
+def t_user_auth(e):
+    """GG_AUTH=user:用使用者自己的 gcloud 帳號(不需 SA 金鑰)。"""
+    cfgu = os.path.join(e.tmp, "conf", "config-user")
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgu, 0o600)
+    env = e.env()
+    env["GG_CONFIG"] = cfgu
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:check.sh 不需金鑰,印出 principal=user:", r.returncode == 0 and "auth=user" in r.stdout and "principal=user:me@example.com" in r.stdout, r.stdout + r.stderr)
+    e.clear_log()
+    r = e.run([os.path.join(S, "collect.sh"), FX.P, "--scope", "iam"], env=env)
+    run = run_dir(r.stdout)
+    calls = e.stub_calls()
+    ok("帳號模式:collect 完成,不呼叫 activate-service-account", r.returncode == 0 and run and not any(c["argv"][:2] == ["auth", "activate-service-account"] for c in calls), r.stderr[-300:])
+    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] not in (["config", "config-helper"], ["config", "get-value"])]
+    ok("帳號模式:gcloud 用 run 內的 token 檔(CLOUDSDK_AUTH_ACCESS_TOKEN_FILE)", tf and all(t and t.startswith(run) for t in tf), tf[:2])
+    blob = ""
+    for root, _, fns in os.walk(run or e.tmp):
+        for fn in fns:
+            blob += open(os.path.join(root, fn), encoding="utf-8", errors="ignore").read()
+    ok("帳號模式:run 目錄沒有 token、結束後 gcloud/ 已刪", bool(run) and "ya29." not in blob and not os.path.exists(os.path.join(run, "gcloud")))
+    r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run], env=env) if run else None
+    ok("帳號模式:render --check 通過", r2 is not None and r2.returncode == 0, r2.stderr if r2 else "沒有 run")
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_REPORT_DIR={e.reports}\n")
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:沒寫 GG_ACCOUNT → 用 gcloud 目前登入的帳號", r.returncode == 0 and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
+    e.state({"user_not_logged_in": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:沒登入 → BLOCKED 並提示 gcloud auth login", r.returncode == 3 and "gcloud auth login" in r.stderr, r.stderr)
+    e.state({})
+    r = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=user:me@example.com", "--role=roles/editor",
+                           f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
+    ok("帳號模式:不能動自己帳號的 IAM 綁定", r["blocked_reason"] and "自己" in r["blocked_reason"], r["blocked_reason"])
+    r = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=user:time@example.com", "--role=roles/editor",
+                           f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
+    r2 = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, f"--member=deleted:serviceAccount:{FX.GG_SA}?uid=1", "--role=roles/editor",
+                            f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA}, FX.POLICY)
+    r3 = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, f'--member="serviceAccount:{FX.GG_SA}"', "--role=roles/editor",
+                            f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA}, FX.POLICY)
+    ok("自己身分:被引號包住也擋", (r3["blocked_reason"] or "").startswith("一律禁止:動到"), r3["blocked_reason"])
+    ok("自己身分:deleted:serviceAccount:…?uid= 寫法也擋", (r2["blocked_reason"] or "").startswith("一律禁止:動到"), r2["blocked_reason"])
+    ok("帳號模式:別人的帳號(time@ 含 me@ 子字串)不會被誤擋", not (r["blocked_reason"] or "").startswith("一律禁止:動到"), r["blocked_reason"])
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=Me@Example.com\nGG_REPORT_DIR={e.reports}\n")
+    old = os.environ.get("GG_CONFIG"); os.environ["GG_CONFIG"] = cfgu
+    try:
+        c = gglib.load_config(require=True)
+        ok("帳號模式:帳號轉小寫(對得上 IAM 成員)", c["GG_PRINCIPAL"] == "user:me@example.com", c.get("GG_PRINCIPAL"))
+    finally:
+        if old is None: os.environ.pop("GG_CONFIG", None)
+        else: os.environ["GG_CONFIG"] = old
+
+
 def t_undetermined(e):
     fx = [f for f in FX.review_fixtures() if not f["re"].startswith("^sql instances list")]
     fx.append({"tool": "gcloud", "re": "^sql instances list", "rc": 1, "err": "ERROR: API [sqladmin.googleapis.com] not enabled"})
@@ -967,15 +1145,27 @@ def plan_fixtures():
          "out": dict(FX.FIREWALLS[0], sourceRanges=["1.2.3.0/24"])},
         {"tool": "gcloud", "re": "^compute firewall-rules describe allow-ssh ", "out": FX.FIREWALLS[0]},
         {"tool": "gcloud", "re": "^compute firewall-rules update allow-ssh ", "rc": 1, "err": "ERROR: simulated failure"},
+        {"tool": "gcloud", "re": "^container clusters describe prod ", "when": {"cluster_busy": True}, "out": dict(FX.CLUSTER, status="RECONCILING")},
         {"tool": "gcloud", "re": "^container clusters describe prod ", "out": FX.CLUSTER},
+        {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "when": {"np_updated": True},
+         "out": dict(FX.NODEPOOLS[0], config=dict(FX.NODEPOOLS[0].get("config") or {}, workloadMetadataConfig={"mode": "GKE_METADATA"}))},
+        {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "when": {"np_mode": "gce"},
+         "out": dict(FX.NODEPOOLS[0], config=dict(FX.NODEPOOLS[0].get("config") or {}, workloadMetadataConfig={"mode": "GCE_METADATA"}))},
+        {"tool": "gcloud", "re": "^container node-pools update default-pool ", "when": {"async_op": True},
+         "out": {"name": "projects/demo-proj-123/locations/asia-east1/operations/op-9", "operationType": "UPGRADE_NODES", "status": "RUNNING"}},
+        {"tool": "gcloud", "re": "^container node-pools update default-pool ", "when": {"no_op_name": True}, "out": ""},
+        {"tool": "gcloud", "re": "^container node-pools update default-pool ", "when": {"op_bad": True}, "out": {"name": "op-bad", "operationType": "X", "status": "RUNNING"}},
         {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "out": FX.NODEPOOLS[0]},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": None}, "out": nodes(4)},
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
+        {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"mig_busy": True}, "out": {"targetSize": 2, "status": {"isStable": False}}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True}, "out": {"targetSize": 3}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "out": {"targetSize": 2}},
+        {"tool": "gcloud", "re": "^container operations describe op-9 ", "out": {"name": "op-9", "status": "DONE"}, "set": {"np_updated": True, "op_polled": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {}, "set": {"resize_ran": True}},
-        {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {"name": "op-v", "operationType": "X", "status": "DONE"}, "set": {"resize_ran": True}},
+        {"tool": "gcloud", "re": "^container operations describe op-bad ", "rc": 1, "err": "ERROR: 503 backend unavailable"},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {"name": "op-1", "operationType": "X", "status": "DONE"}, "set": {"resized": True}},
         {"tool": "kubectl", "re": " get deployment web -n shop -o json", "out": FX.DEPLOY},
         {"tool": "kubectl", "re": " get horizontalpodautoscalers -n shop -o json", "out": {"items": []}},
         {"tool": "kubectl", "re": " get configmap new-cm -n shop -o json", "rc": 1, "err": 'Error from server (NotFound): configmaps "new-cm" not found'},
@@ -1039,6 +1229,9 @@ def t_plan_change(e, review_run):
          "command": ["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://public-assets", "--member=allUsers",
                      "--role=roles/storage.objectViewer", f"--project={P}", "--condition=None"],
          "expected": [{"binding_absent": ["allUsers", "roles/storage.objectViewer"]}], "impact": "無"},
+        {"id": "C11", "summary": "計畫自己寫 --async", "command": ["gcloud", "container", "clusters", "resize", "prod", "--node-pool=default-pool", "--num-nodes=3",
+                                                              "--location=asia-east1", f"--project={P}", "--async"],
+         "expected": [{"field": "/node_count_per_zone", "expect": 3}]},
         {"id": "C10", "summary": "expected 少 expect 鍵", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
          "expected": [{"field": "/versioning_enabled", "value": True}]},
         {"id": "C8", "summary": "expected 比對 ConfigMap data", "command": ["gcloud", "storage", "buckets", "update", "gs://public-assets", f"--project={P}", "--versioning"],
@@ -1069,7 +1262,7 @@ def t_plan_change(e, review_run):
        by and not by["C1"]["blocked_reason"] and not by["C2"]["blocked_reason"] and not by["C3"]["blocked_reason"]
        and by["C4"]["reversible"] is False and by["C4"]["blocked_reason"], json.dumps(by, ensure_ascii=False)[:1500])
     ok("計畫:格式錯的條目只有該條 BLOCKED(整份計畫照常產出)", by.get("C6", {}).get("blocked_reason") and "precondition" in by["C6"]["blocked_reason"]
-       and by.get("C7", {}).get("blocked_reason") and by.get("C10", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
+       and by.get("C7", {}).get("blocked_reason") and by.get("C10", {}).get("blocked_reason") and by.get("C11", {}).get("blocked_reason") and "秘密" in (by.get("C8", {}).get("blocked_reason") or ""), (by.get("C6"), by.get("C7"), by.get("C8")))
     ok("計畫:移除 allUsers 的還原附「會重新公開」警示", by["C1"].get("rollback_warning") and "重新公開" in by["C1"]["rollback_warning"], by["C1"].get("rollback_warning"))
     ok("計畫:不屬於本專案的 bucket → BLOCKED", by.get("C5", {}).get("blocked_reason") and "不屬於" in by["C5"]["blocked_reason"], by.get("C5"))
     ok("計畫:還原指令由 kit 產生(C2 還原回 0.0.0.0/0、C3 回 2 台)",
@@ -1145,6 +1338,58 @@ def t_plan_change(e, review_run):
     ok("變更:驗證等待中被中斷 → 記「已執行(驗證中被中斷)」+ 還原、狀態 ISSUES",
        cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "已執行" in r.get("result", "") and r.get("rollback") for r in cj.get("results", [])), (cj, err[-300:]))
     e.state({})
+    # GKE clusters resize 不加 --async(gcloud 原始碼:resize / clusters update 的 --async 不回傳操作):由 gcloud 自己等完成
+    e.state({})
+    e.clear_log()
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
+    ok("變更:GKE resize 不加 --async,由 gcloud 自己等完成後驗證(PASS)", r.returncode == 0 and rz and "--async" not in rz[0], (r.stdout[-400:], rz))
+    e.state({"mig_busy": True})
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    ok("變更:資源正在變更中(MIG 不穩定)→ BLOCKED、沒送出、核准檔還在",
+       r.returncode == 3 and not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls())
+       and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
+    e.state({"cluster_busy": True})
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    ok("變更:叢集正在變更中(RECONCILING)→ node pool resize 也 BLOCKED、沒送出、核准檔還在",
+       r.returncode == 3 and not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls())
+       and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
+    # node-pools update:--async 會回傳操作 → 輪詢到 DONE 才驗證
+    e.state({"np_mode": "gce"})
+    r = e.run([os.path.join(S, "collect.sh"), P, "--mode", "plan", "--scope", "gke"])
+    nrun = run_dir(r.stdout)
+    write_input(nrun, [{"id": "C1", "summary": "default-pool 改用 GKE metadata server",
+                        "command": ["gcloud", "container", "node-pools", "update", "default-pool", "--cluster=prod", "--location=asia-east1",
+                                    f"--project={P}", "--workload-metadata=GKE_METADATA"],
+                        "expected": [{"field": "/config/workloadMetadataConfig/mode", "expect": "GKE_METADATA"}]}])
+    r, nsha = plan_build(e, nrun)
+    nplan = os.path.join(nrun, "plan.json")
+    nit = (json.load(open(nplan))["items"] or [{}])[0] if os.path.exists(nplan) else {}
+    ok("計畫:node-pools update 可執行、可還原", nsha and not nit.get("blocked_reason") and nit.get("reversible"), (r.stderr[-300:], nit))
+    e.state({"np_mode": "gce", "async_op": True})
+    e.clear_log()
+    r = run_change(e, ch, nplan, nsha, "使用者已核准變更 C1", env=env_op)
+    up = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "node-pools", "update"]]
+    st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
+    ok("變更:node-pools update 以 --async 送出並輪詢到 DONE 才驗證(PASS)",
+       r.returncode == 0 and up and "--async" in up[0] and st_.get("op_polled"), (r.stdout[-400:], up))
+    for st_name, label in (("no_op_name", "輸出不是操作"), ("op_bad", "連續查不到狀態")):
+        e.state({"np_mode": "gce", st_name: True})
+        r = run_change(e, ch, nplan, nsha, "使用者已核准變更 C1", env=env_op)
+        ok(f"變更:--async {label} → 狀態不明 + 還原指令(ISSUES)", r.returncode == 1 and "狀態不明" in r.stdout and "GCE_METADATA" in r.stdout, r.stdout[-500:])
+    e.state({})
+    cfg_sw = os.path.join(e.tmp, "conf", "config-switch")
+    with open(cfg_sw, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=other@example.com\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfg_sw, 0o600)
+    env_sw = e.env(); env_sw["GG_CONFIG"] = cfg_sw
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_sw)
+    ok("變更:身分和計畫時不同 → BLOCKED、沒送出", r.returncode == 3 and "身分" in r.stderr and
+       not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls()), (r.stdout[-200:], r.stderr[-300:]))
     e.state({"flip_fw": True})
     e.clear_log()
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1, C2")
@@ -1353,6 +1598,15 @@ def main():
         t_activate_fail(e)
         t_default_project(e)
         t_check_scope(e)
+        t_user_auth(e)
+        t_impersonation(e)
+        t_no_config(e)
+        t_partial_config(e)
+        t_typo_config(e)
+        t_refresh_fallback(e)
+        t_res_state()
+        t_bad_config_path(e)
+        t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()
         if run:
