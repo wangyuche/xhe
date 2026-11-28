@@ -30,7 +30,7 @@ GG_AUTH=user
 GG_ACCOUNT=you@example.com
 ```
 
-kit 每個 run 用 `gcloud config config-helper --min-expiry=15m --account=<帳號>` 取短效 token(保證至少還有 15 分鐘,每 5 分鐘換新,換新時清掉 GKE 外掛的 token 快取;帳號模式下沒走 `--async` 的變更逾時 8 分鐘;要重新驗證時直接失敗並提示 `gcloud auth login`),只寫進 `<run>/gcloud/token`(600,結束刪除),以 `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` 給 gcloud 與 GKE 外掛使用(2026-11-28 已用真的 gcloud 594 + 外掛實測 get-credentials 與 kubectl 可用);審查中途換 token 失敗時,該指令列入無法判定,不中斷整份報告;不複製、不讀你的憑證檔,`~/.config/gcloud` 仍受 guard 保護(gcloud 自己換新 token 時會更新它的快取)。你的 gcloud 設了 `auth/impersonate_service_account`、`auth/credential_file_override` 或 `auth/access_token_file`,時直接 BLOCKED(拿到的 token 不是你本人)。權限就是你帳號的權限:審查 / 計畫照樣只跑唯讀白名單,變更照樣要逐條核准;「不可動自己的 IAM 綁定」改成套用在這個帳號。報告的寫入權限提示依帳號在專案上的直接綁定判斷(透過群組取得的角色不會列出)。
+kit 每個 run 用 `gcloud config config-helper --min-expiry=15m --account=<帳號>` 取短效 token(保證至少還有 15 分鐘,每 5 分鐘換新,換新時清掉 GKE 外掛的 token 快取;帳號模式下沒走 `--async` 的變更逾時 8 分鐘;要重新驗證時直接失敗並提示 `gcloud auth login`),只寫進 `<run>/gcloud/token`(600,結束刪除),以 `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` 給 gcloud 與 GKE 外掛使用(2026-11-28 已用真的 gcloud 594 + 外掛實測 get-credentials 與 kubectl 可用);審查中途換 token 失敗時,該指令列入無法判定,不中斷整份報告;不複製、不讀你的憑證檔,`~/.config/gcloud` 仍受 guard 保護(gcloud 自己換新 token 時會更新它的快取)。你的 gcloud 設了 `auth/impersonate_service_account`、`auth/credential_file_override` 或 `auth/access_token_file` 時直接 BLOCKED(拿到的 token 不是你本人)。權限就是你帳號的權限:審查 / 計畫照樣只跑唯讀白名單,變更照樣要逐條核准;「不可動自己的 IAM 綁定」改成套用在這個帳號。報告的寫入權限提示依帳號在專案上的直接綁定判斷(透過群組取得的角色不會列出)。
 
 使用者自己要裝:`brew install --cask gcloud-cli`(舊名 google-cloud-sdk)、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
 

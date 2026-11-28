@@ -187,6 +187,10 @@ def clean_stale_creds(cfg):
                 dead = owner.get("pid") and not _pid_alive(owner.get("pid"))
                 if dead or now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
                     shutil.rmtree(p, ignore_errors=True)  # 程序已不在(例如被 SIGKILL)就立刻清
+                    continue
+                tp = os.path.join(p, "token")  # 帳號模式的個人 token:超過 1 小時(必定已過期)就刪
+                if os.path.lexists(tp) and now - os.lstat(tp).st_mtime > 3600:
+                    os.remove(tp)
             except OSError:
                 pass
     for x in os.listdir(rd):
@@ -376,6 +380,7 @@ class Session:
 
     # 取 token 時保證至少剩 15 分鐘;每 5 分鐘換新,任何時刻至少剩約 10 分鐘
     TOKEN_MAX_AGE = 5 * 60
+    TOKEN_SAFE_AGE = 600  # 取得時至少剩 15 分鐘:取得後 10 分鐘內仍安全
 
     def _refresh_user_token(self):
         """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
@@ -421,9 +426,11 @@ class Session:
             raise Blocked(f"無法用帳號 {acct} 取得 access token(請使用者自己在終端機執行 gcloud auth login {acct}):"
                           + _short(scrub_text(r.stderr or "", self.cfg)))
         path = os.path.join(self.gdir, "token")
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        tmp = path + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(tok)
+        os.replace(tmp, path)  # 原子替換:中斷時不會留下空的 token 檔
         self.env["CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"] = path
         # GKE 驗證外掛會另外快取 token:換新時一併清掉,讓 kubectl 下次重新取
         for root, _, files in os.walk(self.gdir):
@@ -441,8 +448,26 @@ class Session:
     def ensure_fresh(self, margin=0):
         """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。
         margin:提早換新的秒數(作廢核准檔前用,確保接下來幾分鐘內不需要再換)。"""
-        if self.cfg.get("GG_AUTH") == "user" and time.time() - getattr(self, "_token_at", 0) > self.TOKEN_MAX_AGE - margin:
+        if self.cfg.get("GG_AUTH") != "user":
+            return
+        now = time.time()
+        age = now - getattr(self, "_token_at", 0)
+        if age <= self.TOKEN_MAX_AGE - margin:
+            return
+        usable = age < self.TOKEN_SAFE_AGE - margin  # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用
+        if now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試(不每個指令都等一次逾時)
+            if usable:
+                return
+            raise Blocked(getattr(self, "_refresh_failed_msg", "換 token 失敗"))
+        try:
             self._refresh_user_token()
+            self._refresh_failed_at = -1e9
+        except Blocked as e:
+            self._refresh_failed_at, self._refresh_failed_msg = now, str(e)
+            if not usable:
+                raise
+            append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper"], "rc": 1,
+                                              "err": "換 token 失敗,沿用尚未過期的 token:" + _short(str(e), 200)})
 
     def __exit__(self, *a):
         shutil.rmtree(self.gdir, ignore_errors=True)
@@ -475,15 +500,10 @@ class Session:
         else:
             raise Denied("未知模式")
         try:
-            if check_mode != "change" and time.time() - getattr(self, "_refresh_failed_at", -1e9) < 300:
-                raise Blocked(getattr(self, "_refresh_failed_msg", "換 token 失敗"))  # 冷卻中:不每個指令都等一次逾時
-            self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新
-            self._refresh_failed_at = -1e9
+            self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新(換新失敗但舊 token 仍安全時沿用)
         except Blocked as e:
             if check_mode == "change":
                 raise
-            if time.time() - getattr(self, "_refresh_failed_at", -1e9) >= 300:
-                self._refresh_failed_at, self._refresh_failed_msg = time.time(), str(e)
             # 讀取模式:這個指令記為失敗(列入無法判定),不讓整個審查中斷、已收集的部分照樣出報告
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": 1, "err": "換 token 失敗"})
             return subprocess.CompletedProcess(argv, 1, "", "換 token 失敗:" + str(e))

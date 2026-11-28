@@ -372,6 +372,24 @@ def t_typo_config(e):
     ok("設定檔金鑰欄位拼錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "GG_SA_KEY_FILE" in r.stderr, r.stdout + r.stderr)
 
 
+def t_refresh_fallback(e):
+    import types, time as _t
+    calls = []
+    def fail():
+        calls.append(1); raise gglib.Blocked("網路暫時失敗")
+    o = types.SimpleNamespace(cfg={"GG_AUTH": "user"}, run=e.tmp, TOKEN_MAX_AGE=300, TOKEN_SAFE_AGE=600,
+                              _token_at=_t.time() - 400, _refresh_user_token=fail)
+    gglib.Session.ensure_fresh(o)  # 換新失敗但 token 才 400 秒:沿用,不丟錯
+    gglib.Session.ensure_fresh(o)  # 1 分鐘內不重試
+    ok("換 token 失敗但舊 token 仍安全 → 沿用,且 1 分鐘內不重試", len(calls) == 1)
+    o._token_at = _t.time() - 700; o._refresh_failed_at = -1e9
+    try:
+        gglib.Session.ensure_fresh(o); raised = False
+    except gglib.Blocked:
+        raised = True
+    ok("換 token 失敗且舊 token 已太舊 → Blocked", raised)
+
+
 def t_impersonation(e):
     cfgu = os.path.join(e.tmp, "conf", "config-imp")
     with open(cfgu, "w") as f:
@@ -1552,6 +1570,7 @@ def main():
         t_no_config(e)
         t_partial_config(e)
         t_typo_config(e)
+        t_refresh_fallback(e)
         t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()
