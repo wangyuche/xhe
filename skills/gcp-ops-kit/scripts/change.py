@@ -210,7 +210,7 @@ class Runner:
     def _op_result(r, svc, st):
         err = st.get("error")
         if not err and svc == "container" and str(st.get("statusMessage") or "").strip():
-            # DONE、沒有 error 但帶 statusMessage:當成功並照常驗證,訊息附在紀錄裡
+            # DONE、沒有 error 但帶 statusMessage:當成功並照常驗證(沒有預期值時記狀態不明),訊息附在紀錄裡
             return subprocess.CompletedProcess(r.args, 0, json.dumps(st, ensure_ascii=False),
                                                "操作 DONE,附帶訊息:" + gglib._short(str(st.get("statusMessage")), 300))
         return subprocess.CompletedProcess(r.args, 1 if err else 0, json.dumps(st, ensure_ascii=False),
@@ -266,6 +266,8 @@ class Runner:
 
     def one(self, s, it, ctx_done):
         cid = it["id"]
+        self.op_via_diff = False  # 每條重設:上一條的狀態不影響這條
+        self.op_note = False
         argv = ggplan.materialize(it, self.run)
         kind = it["kind"]
         try:
@@ -355,8 +357,8 @@ class Runner:
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
         if r.returncode == 0 and kinfo.get("async"):
             self.cur_kind = kind
-            self.op_via_diff = False
             r = self.wait_operation(s, kinfo["async"], r, argv)
+            self.op_note = r.returncode == 0 and (r.stderr or "").startswith("操作 DONE,附帶訊息")
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
         if r.returncode != 0:
@@ -379,9 +381,10 @@ class Runner:
         self.results.append(rec)
         self.inflight = None
         exp = it.get("expected") or []
-        if getattr(self, "op_via_diff", False) and not exp:
-            # 操作是用清單差集找到的(gcloud 沒印操作),又沒有預期值可驗證:不能確定追到的是自己的操作
-            rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作,改由清單比對找到;這條沒有預期值可驗證,請先確認現況"})
+        if (self.op_via_diff or self.op_note) and not exp:
+            # 操作由清單差集找到,或 DONE 但帶 statusMessage:沒有預期值可驗證就不能確定成功
+            why = "gcloud 沒印出操作,改由清單比對找到" if self.op_via_diff else ("操作完成但帶有訊息:" + gglib._short(r.stderr, 200))
+            rec.update({"result": "狀態不明", "reason": why + ";這條沒有預期值可驗證,請先確認現況"})
             self.status = "ISSUES"
             return False
         deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
