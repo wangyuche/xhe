@@ -51,7 +51,7 @@ def rollback_object(o):
 
 def _parse_time(t):
     """GKE 的時間有 9 位小數(奈秒),Python 3.9 的 fromisoformat 不接受:先截到 6 位。"""
-    t = re.sub(r"(\.\d{6})\d+", r"\1", str(t)).replace("Z", "+00:00")
+    t = re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), str(t), count=1).replace("Z", "+00:00")  # 小數補 / 截成 6 位
     try:
         return _dt.datetime.fromisoformat(t).timestamp()
     except ValueError:
@@ -163,7 +163,7 @@ class Runner:
             ops = json.loads(q.stdout or "[]") if q.returncode == 0 else []
         except ValueError:
             ops = []
-        since = getattr(self, "sent_at", 0) - 30  # 只接受送出後才開始的操作(容許 30 秒時鐘誤差)
+        since = getattr(self, "sent_at", 0) - 120  # 只接受送出後才開始的操作(容許 2 分鐘時鐘誤差;多筆候選會記狀態不明)
         seen = getattr(self, "seen_ops", set())
         cands = []
         for o in ops if isinstance(ops, list) else []:

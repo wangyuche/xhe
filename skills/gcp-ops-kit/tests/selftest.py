@@ -359,7 +359,7 @@ def t_partial_config(e):
     os.chmod(cfgp, 0o600)
     env = e.env(); env["GG_CONFIG"] = cfgp
     r = e.run([os.path.join(S, "check.sh"), "review", "--scope", "iam"], env=env)
-    ok("設定檔只有預設專案:用 gcloud 目前登入的帳號", r.returncode == 0 and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
+    ok("設定檔只有預設專案、沒寫 GG_AUTH=user → BLOCKED 缺金鑰(不默默改用個人帳號)", r.returncode == 3 and "GG_SA_KEY_FILE" in r.stderr, r.stdout + r.stderr)
 
 
 def t_typo_config(e):
@@ -369,7 +369,7 @@ def t_typo_config(e):
     os.chmod(cfgp, 0o600)
     env = e.env(); env["GG_CONFIG"] = cfgp
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
-    ok("設定檔金鑰欄位拼錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "拼錯" in r.stderr, r.stdout + r.stderr)
+    ok("設定檔金鑰欄位拼錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "GG_SA_KEY_FILE" in r.stderr, r.stdout + r.stderr)
 
 
 def t_impersonation(e):
@@ -410,7 +410,8 @@ def t_sdk_bin(e):
 
 def t_parse_time():
     import change
-    ok("GKE 奈秒時間可解析(Python 3.9)", change._parse_time("2024-02-20T10:15:30.123456789Z") is not None and change._parse_time("bad") is None)
+    ok("GKE 奈秒 / 2 位小數 / 無小數時間都可解析(Python 3.9)", all(change._parse_time(t) is not None for t in
+       ("2024-02-20T10:15:30.123456789Z", "2026-11-28T01:02:03.12Z", "2026-11-28T01:02:03Z")) and change._parse_time("bad") is None)
 
 
 def t_sa_change():

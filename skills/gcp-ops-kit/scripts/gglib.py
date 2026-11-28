@@ -81,11 +81,7 @@ def load_config(require=True):
     cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
-    if require and path_exists and "GG_AUTH" not in cfg and "GG_SA_KEY_FILE" not in cfg and any(k.startswith("GG_SA") for k in cfg):
-        raise Blocked("設定檔有 GG_SA* 設定但缺 GG_SA_KEY_FILE(是否拼錯?);要用自己的帳號請寫 GG_AUTH=user")
-    if require and "GG_AUTH" not in cfg and "GG_SA_KEY_FILE" not in cfg:
-        # 設定檔只有預設專案 / 報告目錄等:跟沒有設定檔一樣,用 gcloud 目前登入的帳號
-        cfg["GG_AUTH"] = "user"
+    # 有設定檔時一律照寫的走:沒寫 GG_AUTH=user 就是 SA 模式(缺金鑰會 BLOCKED),不默默改用個人帳號
     if require and cfg.get("GG_AUTH", "").lower() == "user" and not cfg.get("GG_ACCOUNT"):
         cfg["GG_ACCOUNT"] = _gcloud_active_account()
     cfg["GG_AUTH"] = cfg.get("GG_AUTH", "sa").lower()
@@ -473,7 +469,14 @@ class Session:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
         else:
             raise Denied("未知模式")
-        self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新
+        try:
+            self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新
+        except Blocked as e:
+            if check_mode == "change":
+                raise
+            # 讀取模式:這個指令記為失敗(列入無法判定),不讓整個審查中斷、已收集的部分照樣出報告
+            append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": 1, "err": "換 token 失敗"})
+            return subprocess.CompletedProcess(argv, 1, "", "換 token 失敗:" + str(e))
         real = [("--key-file=" + self.cfg["GG_SA_KEY_FILE"]) if a == "<key>" else a for a in argv]
         if check_mode == "change":
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": None, "state": "started"})

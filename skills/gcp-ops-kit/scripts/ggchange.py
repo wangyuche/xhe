@@ -700,6 +700,8 @@ def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
+    if cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:")):
+        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得 bucket 權限,可能之後讀不到這個 bucket"
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN
     # --condition=None 只移除無條件綁定;帶條件的同名綁定不受影響,還原也只加回無條件那條
