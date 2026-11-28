@@ -262,6 +262,11 @@ check "tag 名稱不是 vX.Y.Z 拒絕" bash -c "! bash '$BOT' tag 1.2.3 --sha $T
 check "tag 短 SHA 或缺 --sha 拒絕" bash -c "! bash '$BOT' tag v1.2.3 --sha 2222222 2>/dev/null && ! bash '$BOT' tag v1.2.3 2>/dev/null"
 check "tag 不認得的參數拒絕" bash -c "! bash '$BOT' tag v1.2.3 --sha $T2 --force 2>/dev/null && ! grep -q '^POST' '$TMP/req.log'"
 
+echo '{}' > "$TMP/scenario.json"
+check "tag 查詢 tag 非 404 錯誤時停止且沒送 POST" bash -c "! GITLAB_BOT_TOKEN_CMD='echo glpat-wrong' bash '$BOT' tag v1.2.6 --sha $T2 2>'$TMP/err'; ! grep -q '^POST' '$TMP/req.log'"
+check "tag 用 merge_base 判斷是否在預設分支" bash -c "grep -q 'repository/merge_base?refs%5B%5D=$T3&refs%5B%5D=develop' '$TMP/req.log'"
+check "沒有參數時說明文字印到多專案段落" bash -c "bash '$BOT' 2>&1 | grep -q 'GITLAB_BOT_PUSH_URL' && ! bash '$BOT' 2>&1 | grep -q 'set -euo'"
+
 # --- rebase ---
 : > "$TMP/req.log"
 check "rebase 送 PUT、印新的 head SHA" bash -c "out=\$(bash '$BOT' rebase 13); grep -q '^rebased: a\{40\} -> 7\{40\}$' <<<\"\$out\" && grep -q '^PUT .*/merge_requests/13/rebase' '$TMP/req.log'"

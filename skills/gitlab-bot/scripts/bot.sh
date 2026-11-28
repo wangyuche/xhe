@@ -431,10 +431,14 @@ case $cmd in
     [[ $name =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "用法:bot.sh tag <vX.Y.Z> --sha <完整 SHA> [-m <訊息>](只接受 vX.Y.Z)"
     [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "--sha 要 40 碼完整 SHA"
     [[ -n $msg ]] || msg=$name
-    if api GET "/projects/$PID_ENC/repository/tags/$name" >/dev/null 2>&1; then die "tag $name 已存在(不覆寫)"; fi
+    # 只有 404 才算不存在;其他狀態(401、403、5xx、連不上)直接停,不帶著未知狀態往下做
+    code=$(printf 'PRIVATE-TOKEN: %s\n' "$TOKEN" | curl -q -sS -o /dev/null -w '%{http_code}' -H @- \
+      "$API/projects/$PID_ENC/repository/tags/$name" 2>/dev/null) || code=000
+    case $code in 2*) die "tag $name 已存在(不覆寫)" ;; 404) ;; *) die "查詢 tag $name → HTTP $code,停止" ;; esac
     def=$(project_json | jq -r .default_branch)
-    api GET "/projects/$PID_ENC/repository/commits/$sha/refs?type=branch&per_page=100" \
-      | jq -e --arg d "$def" 'any(.[]; .name == $d)' >/dev/null || die "$sha 不在預設分支 $def 上,拒絕打 tag"
+    # SHA 在預設分支上 ⇔ 它是預設分支 head 的祖先 ⇔ merge_base(SHA, 預設分支) == SHA(不受分支數量 / 分頁影響)
+    base=$(api GET "/projects/$PID_ENC/repository/merge_base?refs%5B%5D=$sha&refs%5B%5D=$(jq -rn --arg d "$def" '$d|@uri')" | jq -r '.id // empty')
+    [[ $base == "$sha" ]] || die "$sha 不在預設分支 $def 上,拒絕打 tag"
     body=$(jq -nc --arg t "$name" --arg r "$sha" --arg m "$msg" '{tag_name:$t, ref:$r, message:$m}')
     api POST "/projects/$PID_ENC/repository/tags" "$body" | jq -r '"tag \(.name) → \(.target // .commit.id)  commit \(.commit.id)"' ;;
   retry)
@@ -473,5 +477,5 @@ case $cmd in
     done
     die "rebase 3 分鐘內沒有完成" ;;
   *)
-    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
+    sed -n '2,/^set -euo pipefail$/p' "$0" | sed '$d; s/^# \{0,1\}//'; [[ -z $cmd ]] || exit 1 ;;
 esac
