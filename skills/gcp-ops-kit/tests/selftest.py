@@ -342,17 +342,34 @@ def t_check_pre_redact():
     ok("precondition 指父物件也猜不到秘密(猜對也不成立)", bool(right), right)
 
 
+def t_no_config(e):
+    env = e.env(); env["GG_CONFIG"] = os.path.join(e.tmp, "conf", "no-such-config")
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("沒有設定檔:自動用 gcloud 目前登入的帳號(帳號模式)", r.returncode == 0 and "auth=user" in r.stdout and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
+    e.state({"no_account": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("沒有設定檔也沒登入 → BLOCKED 並提示 gcloud auth login", r.returncode == 3 and "gcloud auth login" in r.stderr, r.stderr[-300:])
+    e.state({})
+
+
 def t_impersonation(e):
     cfgu = os.path.join(e.tmp, "conf", "config-imp")
     with open(cfgu, "w") as f:
         f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
     os.chmod(cfgu, 0o600)
     env = e.env(); env["GG_CONFIG"] = cfgu
+    e.state({"cred_override": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:gcloud 設了 credential_file_override → BLOCKED", r.returncode == 3 and "credential_file_override" in r.stderr, r.stderr[-300:])
     e.state({"impersonate": True})
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
     r_ = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
-                            "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"},
+                            "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
                            {"bindings": [{"role": "roles/resourcemanager.projectIamAdmin", "members": ["group:admins@example.com"]}]})
+    r_sa = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                              "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA},
+                             {"bindings": [{"role": "roles/resourcemanager.projectIamAdmin", "members": ["group:admins@example.com"]}]})
+    ok("SA 模式移除群組權限不標「鎖在外面」", not any("鎖在專案外" in x for x in r_sa["loosens_reasons"]), r_sa["loosens_reasons"])
     ok("移除群組的權限:計畫標放寬(可能把自己鎖在外面)", r_["loosens_security"] and any("鎖在專案外" in x for x in r_["loosens_reasons"]), r_)
     ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
     e.state({})
@@ -1491,6 +1508,7 @@ def main():
         t_check_scope(e)
         t_user_auth(e)
         t_impersonation(e)
+        t_no_config(e)
         t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()

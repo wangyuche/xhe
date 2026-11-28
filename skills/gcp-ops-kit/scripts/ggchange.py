@@ -679,7 +679,7 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
         return None, [], None
-    lockout = flags.get("--member", "").startswith(("group:", "domain:"))
+    lockout = cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:"))
     if pos[0] != flags.get("--project"):
         res["blocked_reason"] = "位置參數的專案要和 --project 相同"
         return None, [], None

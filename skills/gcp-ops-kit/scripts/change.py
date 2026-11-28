@@ -22,7 +22,7 @@ import ggplan
 APPROVE_PREFIX = "使用者已核准變更"
 OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
 OP_TYPES = {
-    "gke-cluster-update": {"UPDATE_CLUSTER"},
+    "gke-cluster-update": {"UPDATE_CLUSTER", "SET_NETWORK_POLICY", "SET_MASTER_AUTH"},
     "gke-nodepool-update": {"UPDATE_NODE_POOL", "SET_NODE_POOL_MANAGEMENT", "SET_NODE_POOL_AUTOSCALING"},
     "gke-resize": {"SET_NODE_POOL_SIZE"},
 }
@@ -158,10 +158,12 @@ class Runner:
             nodepool = _flag(argv, "--node-pool")
         if svc == "container":
             cluster = _flag(argv, "--cluster") or target  # node-pools update 用 --cluster
-            q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink:clusters/{cluster}",
-                          "--sort-by=~startTime", "--limit=5", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+            # 精確的 regex 過濾(prod 不會比中 prod-2),取多一點再在本地比對
+            tl = f"/clusters/{cluster}" + (f"/nodePools/{nodepool}" if nodepool else "") + "$"
+            q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink~{tl}",
+                          "--sort-by=~startTime", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
         else:
-            q = s.gcloud(["sql", "operations", "list", f"--instance={target}", "--limit=5", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+            q = s.gcloud(["sql", "operations", "list", f"--instance={target}", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
         try:
             ops = json.loads(q.stdout or "[]") if q.returncode == 0 else []
         except ValueError:
@@ -311,8 +313,8 @@ class Runner:
         kinfo = ggchange.change_rules()["kinds"][kind]
         run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
-            # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時不超過 10 分鐘(避免中途過期)
-            tmo = 300 if kinfo.get("async") else (600 if self.cfg.get("GG_AUTH") == "user" else 1800)
+            # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時 8 分鐘(留餘裕,避免中途過期)
+            tmo = 300 if kinfo.get("async") else (480 if self.cfg.get("GG_AUTH") == "user" else 1800)
             self.sent_at = time.time()
             r = s._exec(run_argv, "change", timeout=tmo)
         except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到

@@ -18,5 +18,5 @@ kubectl --context={CTX} patch {ANY} {N} --type={ANY} --patch-file={RUNFILE} --dr
 # 長時間變更(--async)的操作狀態輪詢
 gcloud container operations describe {N} --location={L} --project={P} --format=json --quiet
 gcloud sql operations describe {N} --project={P} --format=json --quiet
-gcloud container operations list --location={L} --filter=targetLink:{ANY} --sort-by=~startTime --limit=5 --project={P} --format=json --quiet
-gcloud sql operations list --instance={N} --limit=5 --project={P} --format=json --quiet
+gcloud container operations list --location={L} --filter=targetLink~{ANY} --sort-by=~startTime --limit=50 --project={P} --format=json --quiet
+gcloud sql operations list --instance={N} --limit=50 --project={P} --format=json --quiet

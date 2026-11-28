@@ -74,7 +74,9 @@ def load_config(require=True):
                 v = re.sub(r"\s+#.*$", "", v).strip().strip('"').strip("'")  # 去掉行內註解
                 cfg[k.strip()] = os.path.expanduser(v)
     elif require:
-        raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,或 GG_AUTH=user + GG_ACCOUNT=<你的帳號>;權限 600)")
+        # 沒有設定檔:直接用 gcloud 目前登入的帳號(帳號模式);要用 SA 金鑰或指定別的帳號才需要設定檔
+        cfg["GG_AUTH"] = "user"
+        cfg["GG_ACCOUNT"] = _gcloud_active_account()
     cfg.setdefault("GG_REPORT_DIR", os.path.expanduser("~/gcp-guardian-reports"))
     cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
@@ -103,6 +105,22 @@ def load_config(require=True):
             raise Blocked("金鑰檔不是有效的 SA JSON(缺 client_email)")
         cfg["GG_PRINCIPAL"] = "serviceAccount:" + cfg["GG_SA"]
     return cfg
+
+
+def _gcloud_active_account():
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
+    env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"
+    try:
+        r = subprocess.run(["gcloud", "config", "get-value", "account", "--quiet"], env=env, capture_output=True,
+                           text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        raise Blocked("找不到 gcloud(請使用者自己安裝:brew install --cask gcloud-cli)")
+    except subprocess.TimeoutExpired:
+        raise Blocked("讀 gcloud 目前帳號逾時")
+    acct = (r.stdout or "").strip()
+    if r.returncode != 0 or not acct or acct == "(unset)":
+        raise Blocked("gcloud 沒有登入的帳號:請使用者自己在終端機執行 gcloud auth login(或建立 ~/.config/gcp-guardian/config 改用 SA 金鑰)")
+    return acct
 
 
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
@@ -381,9 +399,19 @@ class Session:
         except subprocess.TimeoutExpired:
             raise Blocked("取 access token 逾時")
         try:
-            tok = (json.loads(r.stdout or "{}").get("credential") or {}).get("access_token") or ""
+            helper = json.loads(r.stdout or "{}")
         except ValueError:
-            tok = ""
+            helper = {}
+        tok = ((helper.get("credential") or {}).get("access_token") or "") if isinstance(helper, dict) else ""
+        props = ((helper.get("configuration") or {}).get("properties") or {}) if isinstance(helper, dict) else {}
+        auth_props = props.get("auth") or {}
+        swapped = [k for k in ("impersonate_service_account", "credential_file_override", "access_token_file") if auth_props.get(k)]
+        if swapped:  # 這些設定會讓 token 變成別的身分:「不可動自己的綁定」就會保護到錯的人
+            raise Blocked(f"你的 gcloud 設了 auth/{', auth/'.join(swapped)},帳號模式拿到的 token 不是 {acct} 本人;"
+                          "請先在終端機 gcloud config unset 這些設定,或改用 SA 金鑰模式")
+        core_acct = str((props.get("core") or {}).get("account") or "").lower()
+        if core_acct and core_acct != acct:
+            raise Blocked(f"取得的 token 屬於 {core_acct},不是設定的 {acct}")
         tok = tok.strip()
         if r.returncode != 0 or not tok or any(c.isspace() for c in tok):
             raise Blocked(f"無法用帳號 {acct} 取得 access token(請使用者自己在終端機執行 gcloud auth login {acct}):"
