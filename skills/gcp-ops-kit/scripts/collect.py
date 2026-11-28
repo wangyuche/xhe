@@ -161,7 +161,7 @@ def k8s_docs(inv):
 def analyze(run, cfg):
     inv = os.path.join(run, "inventory")
     pol = gglib.read_json(os.path.join(inv, "iam-policy.json"), {}) or {}
-    me = "serviceAccount:" + (cfg.get("GG_SA") or "")
+    me = cfg.get("GG_PRINCIPAL") or ("serviceAccount:" + (cfg.get("GG_SA") or ""))
     meta = gglib.read_json(os.path.join(run, "meta.json"), {})
     meta["sa_roles"] = sorted(b.get("role") for b in pol.get("bindings") or [] if me in (b.get("members") or []))
     gglib.write_json(os.path.join(run, "meta.json"), meta)

@@ -74,11 +74,11 @@ def main(argv):
                     except json.JSONDecodeError:
                         pol = None
                 if pol is not None:
-                    me = "serviceAccount:" + cfg["GG_SA"]
+                    me = cfg["GG_PRINCIPAL"]
                     roles = sorted(b["role"] for b in pol.get("bindings") or [] if me in (b.get("members") or []))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        print(f"{mode} ok project={project} sa={cfg['GG_SA']}")
+        print(f"{mode} ok project={project} auth={cfg['GG_AUTH']} principal={cfg['GG_PRINCIPAL']}")
         print("sa_roles=" + (",".join(roles) if roles else "（讀不到專案層級角色)"))
         if any(r in WRITE_HINT or r.endswith("admin") or r.endswith("Admin") for r in roles):
             print("資訊:此 SA 有寫入權限(使用者已知)")

@@ -22,6 +22,16 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 
 值後面的 `  # 註解` 會被忽略。
 
+**用自己的帳號(不需 SA 金鑰)**:設定檔改寫
+
+```
+GG_AUTH=user
+# 你在本機 gcloud 登入的帳號(使用者自己先在終端機執行 gcloud auth login <帳號>)
+GG_ACCOUNT=you@example.com
+```
+
+kit 每個 run 用 `gcloud auth print-access-token --account=<帳號>` 取短效 token(約 1 小時,run 中超過 40 分鐘自動換新),只寫進 `<run>/gcloud/token`(600,結束刪除),以 `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` 給 gcloud 與 GKE 外掛使用;不複製、不讀你的憑證檔,`~/.config/gcloud` 仍受 guard 保護。權限就是你帳號的權限:審查 / 計畫照樣只跑唯讀白名單,變更照樣要逐條核准;「不可動自己的 IAM 綁定」改成套用在這個帳號。報告的寫入權限提示依帳號在專案上的直接綁定判斷(透過群組取得的角色不會列出)。
+
 使用者自己要裝:`brew install --cask google-cloud-sdk`、`gcloud components install gke-gcloud-auth-plugin`。kit 不安裝任何東西。
 
 ## 入口腳本
@@ -30,7 +40,7 @@ GG_REPORT_DIR=/Users/<你>/gcp-guardian-reports
 
 ```bash
 <kit>/scripts/check.sh yaml                         # ruby / python3 / node
-<kit>/scripts/check.sh review|plan|change [<專案>] [--scope iam,gcs,…]  # 沒給專案用 GG_DEFAULT_PROJECT;scope 不含 gke / k8s 時不要求 kubectl; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
+<kit>/scripts/check.sh review|plan|change [<專案>] [--scope iam,gcs,…]  # 沒給專案用 GG_DEFAULT_PROJECT;scope 不含 gke / k8s 時不要求 kubectl;GG_AUTH=user 時不需金鑰; + 設定檔 / 金鑰 600、gcloud、gke-gcloud-auth-plugin、kubectl、SA 能存取專案、SA 角色
 
 <kit>/scripts/collect.sh [<專案>] [--mode review|plan] [--scope iam,network,gcs,sql,compute,gke,k8s] [--clusters a,b] [--prev <上次 run>]
 #   → run=<GG_REPORT_DIR>/<專案>/<時間>-<模式>/ :inventory/(遮蔽後)、findings.json、plan.json(空)、report.html

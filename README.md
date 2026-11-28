@@ -143,7 +143,7 @@ ln -s "$(pwd)/agents/gcp-guardian.md" ~/.claude/agents/gcp-guardian.md
 ln -s "$(pwd)/skills/gcp-ops-kit" ~/.claude/skills/gcp-ops-kit
 ```
 
-需要 python3、node、ruby(macOS 內建,用來解析 YAML);審查 / 計畫 / 變更另需使用者自己安裝 `gcloud`(`brew install --cask google-cloud-sdk`)與 `gke-gcloud-auth-plugin`,並建立 `~/.config/gcp-guardian/config`(權限 600,內容 `GG_SA_KEY_FILE=<SA 金鑰絕對路徑>`,金鑰也要 600;選填 `GG_DEFAULT_PROJECT`、`GG_REPORT_DIR`)。YAML 審查不需要 GCP。報告存本機 `~/gcp-guardian-reports/`,不進 git。流程:審查 / 計畫 → 使用者看報告逐條核准(「核准 C1、C3」)→ 主 agent 在計畫 run 目錄寫 `approval.json`(sha256 + 編號 + 使用者原話;gcp-guardian 自己寫不了)→ 帶 plan.json、sha256 與旗標「使用者已核准變更 C1, C3」派變更模式。自我測試:`skills/gcp-ops-kit/scripts/selftest.sh`(只用假 gcloud / kubectl)。
+需要 python3、node、ruby(macOS 內建,用來解析 YAML);審查 / 計畫 / 變更另需使用者自己安裝 `gcloud`(`brew install --cask google-cloud-sdk`)與 `gke-gcloud-auth-plugin`,並建立 `~/.config/gcp-guardian/config`(權限 600,內容 `GG_SA_KEY_FILE=<SA 金鑰絕對路徑>`,金鑰也要 600;或用自己的 gcloud 帳號:`GG_AUTH=user` + `GG_ACCOUNT=<帳號>`,先自己 `gcloud auth login`;選填 `GG_DEFAULT_PROJECT`、`GG_REPORT_DIR`)。YAML 審查不需要 GCP。報告存本機 `~/gcp-guardian-reports/`,不進 git。流程:審查 / 計畫 → 使用者看報告逐條核准(「核准 C1、C3」)→ 主 agent 在計畫 run 目錄寫 `approval.json`(sha256 + 編號 + 使用者原話;gcp-guardian 自己寫不了)→ 帶 plan.json、sha256 與旗標「使用者已核准變更 C1, C3」派變更模式。自我測試:`skills/gcp-ops-kit/scripts/selftest.sh`(只用假 gcloud / kubectl)。
 
 產品規格網頁(product-spec-writer + spec-site-kit):
 

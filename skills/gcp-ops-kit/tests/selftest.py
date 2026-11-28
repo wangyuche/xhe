@@ -939,6 +939,45 @@ def t_missing_cluster(e):
     ok("--clusters 打錯名稱 → 列入無法判定(不會靜默 PASS)", any(u["item"] == "prod-typo" for u in und), und)
 
 
+def t_user_auth(e):
+    """GG_AUTH=user:用使用者自己的 gcloud 帳號(不需 SA 金鑰)。"""
+    cfgu = os.path.join(e.tmp, "conf", "config-user")
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgu, 0o600)
+    env = e.env()
+    env["GG_CONFIG"] = cfgu
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:check.sh 不需金鑰,印出 principal=user:", r.returncode == 0 and "auth=user" in r.stdout and "principal=user:me@example.com" in r.stdout, r.stdout + r.stderr)
+    e.clear_log()
+    r = e.run([os.path.join(S, "collect.sh"), FX.P, "--scope", "iam"], env=env)
+    run = run_dir(r.stdout)
+    calls = e.stub_calls()
+    ok("帳號模式:collect 完成,不呼叫 activate-service-account", r.returncode == 0 and run and not any(c["argv"][:2] == ["auth", "activate-service-account"] for c in calls), r.stderr[-300:])
+    tf = [c.get("TOKEN_FILE") for c in calls if c["tool"] == "gcloud" and c["argv"][:2] != ["auth", "print-access-token"]]
+    ok("帳號模式:gcloud 用 run 內的 token 檔(CLOUDSDK_AUTH_ACCESS_TOKEN_FILE)", tf and all(t and t.startswith(run) for t in tf), tf[:2])
+    blob = ""
+    for root, _, fns in os.walk(run or e.tmp):
+        for fn in fns:
+            blob += open(os.path.join(root, fn), encoding="utf-8", errors="ignore").read()
+    ok("帳號模式:run 目錄沒有 token、結束後 gcloud/ 已刪", "ya29." not in blob and not os.path.exists(os.path.join(run, "gcloud")))
+    r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run], env=env)
+    ok("帳號模式:render --check 通過", r2.returncode == 0, r2.stderr)
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_REPORT_DIR={e.reports}\n")
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:缺 GG_ACCOUNT → BLOCKED", r.returncode == 3 and "GG_ACCOUNT" in r.stderr, r.stderr)
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
+    e.state({"user_not_logged_in": True})
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("帳號模式:沒登入 → BLOCKED 並提示 gcloud auth login", r.returncode == 3 and "gcloud auth login" in r.stderr, r.stderr)
+    e.state({})
+    r = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=user:me@example.com", "--role=roles/editor",
+                           f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
+    ok("帳號模式:不能動自己帳號的 IAM 綁定", r["blocked_reason"] and "自己" in r["blocked_reason"], r["blocked_reason"])
+
+
 def t_undetermined(e):
     fx = [f for f in FX.review_fixtures() if not f["re"].startswith("^sql instances list")]
     fx.append({"tool": "gcloud", "re": "^sql instances list", "rc": 1, "err": "ERROR: API [sqladmin.googleapis.com] not enabled"})
@@ -1353,6 +1392,7 @@ def main():
         t_activate_fail(e)
         t_default_project(e)
         t_check_scope(e)
+        t_user_auth(e)
         t_missing_cluster(e)
         t_rbac_broad()
         if run:

@@ -60,11 +60,21 @@ def load_config(require=True):
                 v = re.sub(r"\s+#.*$", "", v).strip().strip('"').strip("'")  # 去掉行內註解
                 cfg[k.strip()] = os.path.expanduser(v)
     elif require:
-        raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,權限 600)")
+        raise Blocked(f"找不到設定檔 {path}(內容:GG_SA_KEY_FILE=<金鑰絕對路徑>,或 GG_AUTH=user + GG_ACCOUNT=<你的帳號>;權限 600)")
     cfg.setdefault("GG_REPORT_DIR", os.path.expanduser("~/gcp-guardian-reports"))
     cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
+    cfg["GG_AUTH"] = cfg.get("GG_AUTH", "sa").lower()
+    if cfg["GG_AUTH"] not in ("sa", "user"):
+        raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")
+    if require and cfg["GG_AUTH"] == "user":
+        acct = cfg.get("GG_ACCOUNT", "").strip()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", acct):
+            raise Blocked("GG_AUTH=user 時設定檔要有 GG_ACCOUNT=<你在 gcloud 登入的帳號 email>")
+        cfg["GG_SA"] = acct  # 「自己的身分」:禁止動自己的 IAM 綁定等規則照樣套用
+        cfg["GG_PRINCIPAL"] = ("serviceAccount:" if acct.endswith("gserviceaccount.com") else "user:") + acct
+        return cfg
     if require:
         key = cfg.get("GG_SA_KEY_FILE")
         if not key or not os.path.isfile(key):
@@ -76,6 +86,7 @@ def load_config(require=True):
                 cfg["GG_SA"] = json.load(f)["client_email"]
         except Exception:
             raise Blocked("金鑰檔不是有效的 SA JSON(缺 client_email)")
+        cfg["GG_PRINCIPAL"] = "serviceAccount:" + cfg["GG_SA"]
     return cfg
 
 
@@ -168,7 +179,7 @@ def new_run(cfg, project, mode):
         raise Blocked("同一秒內建立的 run 目錄太多,請稍後再試")
     write_json(os.path.join(run, "meta.json"), {
         "project": project, "mode": mode, "started": now_iso(),
-        "kit": KIT, "sa": cfg.get("GG_SA"),
+        "kit": KIT, "sa": cfg.get("GG_SA"), "auth": cfg.get("GG_AUTH", "sa"),
     })
     return run
 
@@ -311,14 +322,45 @@ class Session:
         open(self.kube, "a").close()
         os.chmod(self.kube, 0o600)
         try:
-            r = self._exec(["gcloud", "auth", "activate-service-account", "<key>",
-                            f"--project={self.project}", "--quiet"], check_mode="read")
-            if r.returncode != 0:
-                raise Blocked("SA 啟用失敗:" + _short(r.stderr))
+            if self.cfg.get("GG_AUTH") == "user":
+                self._refresh_user_token()
+            else:
+                r = self._exec(["gcloud", "auth", "activate-service-account", "<key>",
+                                f"--project={self.project}", "--quiet"], check_mode="read")
+                if r.returncode != 0:
+                    raise Blocked("SA 啟用失敗:" + _short(r.stderr))
         except BaseException:
             self.__exit__(None, None, None)
             raise
         return self
+
+    TOKEN_MAX_AGE = 40 * 60  # access token 約 1 小時有效,40 分鐘就換
+
+    def _refresh_user_token(self):
+        """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
+        不複製使用者的憑證檔;token 只放 <run>/gcloud/token(權限 600,結束時刪除),gcloud / kubectl 外掛都讀這個檔。"""
+        acct = self.cfg["GG_ACCOUNT"].strip()
+        user_env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
+        try:
+            r = subprocess.run(["gcloud", "auth", "print-access-token", f"--account={acct}", "--quiet"],
+                               env=user_env, capture_output=True, text=True, timeout=60)
+        except FileNotFoundError:
+            raise Blocked("找不到 gcloud")
+        except subprocess.TimeoutExpired:
+            raise Blocked("取 access token 逾時")
+        tok = (r.stdout or "").strip()
+        if r.returncode != 0 or not tok or any(c.isspace() for c in tok):
+            raise Blocked(f"無法用帳號 {acct} 取得 access token(請使用者自己在終端機執行 gcloud auth login {acct}):"
+                          + _short(scrub_text(r.stderr or "", self.cfg)))
+        path = os.path.join(self.gdir, "token")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(tok)
+        self.env["CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"] = path
+        self.env["CLOUDSDK_CORE_ACCOUNT"] = acct
+        self._token_at = time.time()
+        append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "auth", "print-access-token", "--account=<GG_ACCOUNT>"],
+                                          "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
 
     def __exit__(self, *a):
         shutil.rmtree(self.gdir, ignore_errors=True)
@@ -346,6 +388,8 @@ class Session:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
         else:
             raise Denied("未知模式")
+        if self.cfg.get("GG_AUTH") == "user" and time.time() - getattr(self, "_token_at", 0) > self.TOKEN_MAX_AGE:
+            self._refresh_user_token()  # 長時間的 run(例如 GKE 變更)途中換新 token
         real = [("--key-file=" + self.cfg["GG_SA_KEY_FILE"]) if a == "<key>" else a for a in argv]
         if check_mode == "change":
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": None, "state": "started"})

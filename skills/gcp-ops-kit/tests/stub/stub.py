@@ -15,11 +15,18 @@ d = os.environ.get("GG_STUB_DIR", "")
 text = " ".join(argv)
 with open(os.environ["GG_STUB_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps({"tool": tool, "argv": argv, "CLOUDSDK_CONFIG": os.environ.get("CLOUDSDK_CONFIG"),
-                        "KUBECONFIG": os.environ.get("KUBECONFIG"), "HOME": os.environ.get("HOME")}, ensure_ascii=False) + "\n")
+                        "KUBECONFIG": os.environ.get("KUBECONFIG"), "HOME": os.environ.get("HOME"),
+                        "TOKEN_FILE": os.environ.get("CLOUDSDK_AUTH_ACCESS_TOKEN_FILE")}, ensure_ascii=False) + "\n")
 if tool == "gke-gcloud-auth-plugin":
     sys.exit(0)
 sp = os.path.join(d, "state.json")
 state = json.load(open(sp)) if os.path.exists(sp) else {}
+if tool == "gcloud" and argv[:2] == ["auth", "print-access-token"]:
+    if state.get("user_not_logged_in"):
+        sys.stderr.write("ERROR: (gcloud.auth.print-access-token) There was a problem refreshing your current auth tokens\n")
+        sys.exit(1)
+    print("ya29." + "x" * 40)  # 假 token(符合秘密樣式,用來確認不外洩)
+    sys.exit(0)
 if tool == "gcloud" and argv[:2] == ["auth", "activate-service-account"]:
     if state.get("activate_fail"):
         sys.stderr.write("ERROR: (gcloud.auth.activate-service-account) key disabled\n")
