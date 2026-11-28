@@ -362,6 +362,16 @@ def t_partial_config(e):
     ok("設定檔只有預設專案:用 gcloud 目前登入的帳號", r.returncode == 0 and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
 
 
+def t_typo_config(e):
+    cfgp = os.path.join(e.tmp, "conf", "config-typo")
+    with open(cfgp, "w") as f:
+        f.write(f"GG_SA_KEYFILE=/x/key.json\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgp, 0o600)
+    env = e.env(); env["GG_CONFIG"] = cfgp
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("設定檔金鑰欄位拼錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "拼錯" in r.stderr, r.stdout + r.stderr)
+
+
 def t_impersonation(e):
     cfgu = os.path.join(e.tmp, "conf", "config-imp")
     with open(cfgu, "w") as f:
@@ -1523,6 +1533,7 @@ def main():
         t_impersonation(e)
         t_no_config(e)
         t_partial_config(e)
+        t_typo_config(e)
         t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()

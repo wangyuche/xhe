@@ -28,7 +28,7 @@ def need_tools(mode, areas=AREAS):
     if missing:
         hint = []
         if "gcloud" in missing:
-            hint.append("brew install --cask google-cloud-sdk")
+            hint.append("brew install --cask gcloud-cli")
         if "gke-gcloud-auth-plugin" in missing:
             hint.append("gcloud components install gke-gcloud-auth-plugin")
         raise gglib.Blocked(f"缺工具:{', '.join(missing)}(請使用者自己安裝:{';'.join(hint) or '見 SKILL.md'})")

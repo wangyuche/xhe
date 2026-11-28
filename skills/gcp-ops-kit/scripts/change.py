@@ -154,7 +154,7 @@ class Runner:
         if svc == "container":
             cluster = _flag(argv, "--cluster") or target  # node-pools update 用 --cluster
             # 精確的 regex 過濾(prod 不會比中 prod-2),取多一點再在本地比對
-            tl = f"/clusters/{cluster}(/.*)?$"
+            tl = f"/clusters/{cluster}"  # 伺服器端只粗篩(不用括號等 filter 語法),精確比對在下面的 want
             q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink~{tl}",
                           "--sort-by=~startTime", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
         else:
@@ -193,6 +193,10 @@ class Runner:
     @staticmethod
     def _op_result(r, svc, st):
         err = st.get("error")
+        if not err and svc == "container" and str(st.get("statusMessage") or "").strip():
+            # DONE 但只有 statusMessage:不確定是警告還是失敗 → 狀態不明,交給驗證與使用者確認
+            return subprocess.CompletedProcess(r.args, 124, json.dumps(st, ensure_ascii=False),
+                                               "操作 DONE 但帶有 statusMessage:" + gglib._short(str(st.get("statusMessage")), 300))
         return subprocess.CompletedProcess(r.args, 1 if err else 0, json.dumps(st, ensure_ascii=False),
                                            json.dumps(err, ensure_ascii=False) if err else "")
 

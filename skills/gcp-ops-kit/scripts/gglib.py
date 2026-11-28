@@ -62,7 +62,8 @@ def load_config(require=True):
     """讀 KEY=value 設定。require=True 時缺檔 / 權限不對 / 缺金鑰 → Blocked。"""
     path = config_path()
     cfg = {}
-    if os.path.exists(path):
+    path_exists = os.path.exists(path)
+    if path_exists:
         if require and not _mode_ok(path):
             raise Blocked(f"設定檔權限要是 600:chmod 600 {path}")
         with open(path, encoding="utf-8") as f:
@@ -80,6 +81,8 @@ def load_config(require=True):
     cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
+    if require and path_exists and "GG_AUTH" not in cfg and "GG_SA_KEY_FILE" not in cfg and any(k.startswith("GG_SA") for k in cfg):
+        raise Blocked("設定檔有 GG_SA* 設定但缺 GG_SA_KEY_FILE(是否拼錯?);要用自己的帳號請寫 GG_AUTH=user")
     if require and "GG_AUTH" not in cfg and "GG_SA_KEY_FILE" not in cfg:
         # 設定檔只有預設專案 / 報告目錄等:跟沒有設定檔一樣,用 gcloud 目前登入的帳號
         cfg["GG_AUTH"] = "user"
@@ -413,9 +416,6 @@ class Session:
         if swapped:  # 這些設定會讓 token 變成別的身分:「不可動自己的綁定」就會保護到錯的人
             raise Blocked(f"你的 gcloud 設了 auth/{', auth/'.join(swapped)},帳號模式拿到的 token 不是 {acct} 本人;"
                           "請先在終端機 gcloud config unset 這些設定,或改用 SA 金鑰模式")
-        core_acct = str((props.get("core") or {}).get("account") or "").lower()
-        if core_acct and core_acct != acct:
-            raise Blocked(f"取得的 token 屬於 {core_acct},不是設定的 {acct}")
         tok = tok.strip()
         if r.returncode != 0 or not tok or any(c.isspace() for c in tok):
             raise Blocked(f"無法用帳號 {acct} 取得 access token(請使用者自己在終端機執行 gcloud auth login {acct}):"
@@ -465,7 +465,10 @@ class Session:
         elif check_mode == "change":
             import ggchange  # 第二道防線:只檢查形狀(允許清單、共同禁止、旗標);完整判定在 change.py
             # --async / --format=json 是 kit 執行時自己加的(計畫裡不准寫),檢查形狀時先拿掉
-            shape = ggchange.classify([a for a in argv if a not in ("--async", "--format=json")], self.cfg, shape_only=True)
+            core = argv[:-2] if argv[-2:] == ["--async", "--format=json"] else argv  # 只拿掉 kit 自己加在尾端的兩個
+            shape = ggchange.classify(core, self.cfg, shape_only=True)
+            if core is not argv and not (ggchange.change_rules()["kinds"].get(shape.get("kind")) or {}).get("async"):
+                raise Denied("只有允許 --async 的變更種類可以帶 --async")
             if shape["blocked_reason"]:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
         else:
