@@ -555,7 +555,6 @@
     "--no-disabled": "還原會重新啟用這條防火牆規則"
   },
   "bool_flags": [
-    "--async",
     "--disabled",
     "--enable-autorepair",
     "--enable-autoscaling",

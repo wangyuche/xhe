@@ -191,7 +191,10 @@ class Runner:
                 want = r"/clusters/" + re.escape(cluster) + (r"(/nodePools/" + re.escape(nodepool) + r")?" if nodepool else "") + r"$"
                 if not re.search(want, link):
                     continue
-                if str(o.get("operationType") or "").upper().startswith("AUTO_"):
+                ot = str(o.get("operationType") or "").upper()
+                if ot.startswith("AUTO_") or ot == "UPGRADE_MASTER" or (ot == "UPGRADE_NODES" and kind != "gke-nodepool-update"):
+                    continue  # 系統自動升級 / 修復不是這次的變更
+                if kind == "gke-resize" and ot != "SET_NODE_POOL_SIZE":
                     continue  # 排除 auto-repair / auto-upgrade;其他同時出現的候選會變成「多筆」→ 狀態不明,不猜
             elif str(o.get("operationType") or "").upper() != "UPDATE":
                 continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
@@ -432,6 +435,10 @@ def main(argv):
             raise gglib.Blocked("plan.json 不是有效 JSON")
         if not plan or os.path.realpath(plan.get("source_run") or "") != src_run or plan.get("project") != src_meta.get("project"):
             raise gglib.Blocked("plan.json 的 source_run / project 與所在 run 目錄不符")
+        # 計畫時的身分要和現在相同:避免計畫後切換 gcloud 帳號,用使用者沒確認過的身分執行
+        if (src_meta.get("auth") or "sa") != cfg.get("GG_AUTH") or (src_meta.get("sa") or "").lower() != (cfg.get("GG_SA") or "").lower():
+            raise gglib.Blocked(f"計畫時的身分({src_meta.get('auth')}:{src_meta.get('sa')})和現在({cfg.get('GG_AUTH')}:{cfg.get('GG_SA')})不同;"
+                                "請用同一個身分重新產生計畫")
         approved = parse_approved(approved_text)
         # 核准檔:由主 agent 依使用者原話寫在計畫 run 目錄(gcp-guardian 的 hook 不准寫這個檔),旗標必須與它一致
         appr = gglib.read_json(os.path.join(src_run, "approval.json"), None)

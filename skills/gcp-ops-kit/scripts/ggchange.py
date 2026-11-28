@@ -705,9 +705,18 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
 PUBLIC_WARN = "這條還原會重新公開資料(加回 allUsers / allAuthenticatedUsers);除非確定要回復公開,否則不要執行"
 
 
+BUCKET_ADMIN_ROLES = {"roles/storage.admin", "roles/owner", "roles/storage.legacyBucketOwner"}
+
+
 def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
     reasons = _iam_common(pos, flags, res, cfg, False)
     if reasons is None:
+        return None, [], None
+    role = flags.get("--role", "")
+    if (cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:", "projectOwner:", "projectEditor:"))
+            and (role in BUCKET_ADMIN_ROLES or not role.startswith("roles/"))):
+        res["blocked_reason"] = (f"帳號模式下移除 {flags['--member']} 的 {role}:若你的帳號靠它取得 bucket 管理權限,"
+                                 "移除後連還原都做不了;請使用者自己在 console 確認後執行")
         return None, [], None
     if flags.get("--member", "").startswith(("group:", "domain:", "projectOwner:", "projectEditor:", "projectViewer:")):
         res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若 gcp-guardian 使用的身分靠它取得 bucket 權限,之後可能讀不到這個 bucket"

@@ -90,7 +90,8 @@ def load_config(require=True):
     if require and cfg["GG_AUTH"] not in ("sa", "user"):  # guard / YAML 審查(require=False)不因設定打錯而全擋
         raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")
     if require and cfg["GG_AUTH"] == "user":
-        acct = cfg.get("GG_ACCOUNT", "").strip().lower()  # IAM 成員一律小寫
+        cfg["GG_ACCOUNT_RAW"] = cfg.get("GG_ACCOUNT", "").strip()  # 傳給 gcloud 用原本的寫法(憑證庫照登入時的大小寫比對)
+        acct = cfg["GG_ACCOUNT_RAW"].lower()  # IAM 成員比對一律小寫
         cfg["GG_ACCOUNT"] = acct
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", acct):
             raise Blocked(("gcloud 目前登入的帳號不是 email(例如 Workforce Identity),帳號模式不支援;請改用 SA 金鑰模式" if auto_acct
@@ -379,7 +380,7 @@ class Session:
     def _refresh_user_token(self):
         """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
         不複製使用者的憑證檔;token 只放 <run>/gcloud/token(權限 600,結束時刪除),gcloud / kubectl 外掛都讀這個檔。"""
-        acct = self.cfg["GG_ACCOUNT"].strip()
+        acct = (self.cfg.get("GG_ACCOUNT_RAW") or self.cfg["GG_ACCOUNT"]).strip()
         user_env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
         user_env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"  # 要重新驗證時直接失敗,不等輸入
         if not getattr(self, "_imp_checked", False):  # 使用者 gcloud 設了模擬 SA 時,token 會是那個 SA 的:不接受
@@ -474,10 +475,15 @@ class Session:
         else:
             raise Denied("未知模式")
         try:
+            if check_mode != "change" and time.time() - getattr(self, "_refresh_failed_at", -1e9) < 300:
+                raise Blocked(getattr(self, "_refresh_failed_msg", "換 token 失敗"))  # 冷卻中:不每個指令都等一次逾時
             self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新
+            self._refresh_failed_at = -1e9
         except Blocked as e:
             if check_mode == "change":
                 raise
+            if time.time() - getattr(self, "_refresh_failed_at", -1e9) >= 300:
+                self._refresh_failed_at, self._refresh_failed_msg = time.time(), str(e)
             # 讀取模式:這個指令記為失敗(列入無法判定),不讓整個審查中斷、已收集的部分照樣出報告
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": 1, "err": "換 token 失敗"})
             return subprocess.CompletedProcess(argv, 1, "", "換 token 失敗:" + str(e))

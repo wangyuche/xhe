@@ -396,6 +396,10 @@ def t_impersonation(e):
     r_c = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
                              f"--role=projects/{FX.P}/roles/iamManager", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
                             {"bindings": [{"role": f"projects/{FX.P}/roles/iamManager", "members": ["group:admins@example.com"]}]})
+    r_b = ggchange.classify(["gcloud", "storage", "buckets", "remove-iam-policy-binding", "gs://b1", "--member=group:ops@example.com",
+                             "--role=roles/storage.admin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                            {"bindings": [{"role": "roles/storage.admin", "members": ["group:ops@example.com"]}]})
+    ok("帳號模式移除 bucket 群組的 storage.admin → BLOCKED", "連還原都做不了" in (r_b["blocked_reason"] or ""), r_b)
     ok("帳號模式移除群組的自訂角色 → BLOCKED(可能含 setIamPolicy)", "連還原都做不了" in (r_c["blocked_reason"] or ""), r_c)
     ok("帳號模式移除群組的 IAM 管理角色 → BLOCKED(移除後可能連還原都做不了)", "連還原都做不了" in (r_o["blocked_reason"] or ""), r_o)
     ok("帳號模式移除群組權限:執行前警示「鎖在專案外」,但不算放寬", not r_["loosens_security"] and "鎖在專案外" in (r_.get("exec_warning") or ""), r_)
