@@ -603,7 +603,7 @@ def t_classify():
         r = ggchange.classify(argv, cfg, snap, shape_only=snap is None)
         ok(f"分類 BLOCKED:{name}", r["blocked_reason"], r)
         if name.startswith("動 GG_SA"):
-            ok(f"分類 BLOCKED 原因正確:{name}", "gcp-guardian 自己的 SA" in (r["blocked_reason"] or ""), r["blocked_reason"])
+            ok(f"分類 BLOCKED 原因正確:{name}", "自己使用的身分" in (r["blocked_reason"] or ""), r["blocked_reason"])
     r = ggchange.classify(["kubectl", f"--context={CTX}", "apply", "--filename=/x/manifests/C1.yaml"], cfg,
                           {"objects": [{"_absent": True}]}, [], True)
     ok("分類:apply 新建資源 → 不可還原 BLOCKED", r["blocked_reason"] and r["reversible"] is False, r)
@@ -960,9 +960,9 @@ def t_user_auth(e):
     for root, _, fns in os.walk(run or e.tmp):
         for fn in fns:
             blob += open(os.path.join(root, fn), encoding="utf-8", errors="ignore").read()
-    ok("帳號模式:run 目錄沒有 token、結束後 gcloud/ 已刪", "ya29." not in blob and not os.path.exists(os.path.join(run, "gcloud")))
-    r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run], env=env)
-    ok("帳號模式:render --check 通過", r2.returncode == 0, r2.stderr)
+    ok("帳號模式:run 目錄沒有 token、結束後 gcloud/ 已刪", bool(run) and "ya29." not in blob and not os.path.exists(os.path.join(run, "gcloud")))
+    r2 = e.run(["node", os.path.join(S, "render.mjs"), "--check", run], env=env) if run else None
+    ok("帳號模式:render --check 通過", r2 is not None and r2.returncode == 0, r2.stderr if r2 else "沒有 run")
     with open(cfgu, "w") as f:
         f.write(f"GG_AUTH=user\nGG_REPORT_DIR={e.reports}\n")
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
@@ -976,6 +976,18 @@ def t_user_auth(e):
     r = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=user:me@example.com", "--role=roles/editor",
                            f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
     ok("帳號模式:不能動自己帳號的 IAM 綁定", r["blocked_reason"] and "自己" in r["blocked_reason"], r["blocked_reason"])
+    r = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=user:time@example.com", "--role=roles/editor",
+                           f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com"}, FX.POLICY)
+    ok("帳號模式:別人的帳號(time@ 含 me@ 子字串)不會被誤擋", not (r["blocked_reason"] or "").startswith("一律禁止:動到"), r["blocked_reason"])
+    with open(cfgu, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=Me@Example.com\nGG_REPORT_DIR={e.reports}\n")
+    old = os.environ.get("GG_CONFIG"); os.environ["GG_CONFIG"] = cfgu
+    try:
+        c = gglib.load_config(require=True)
+        ok("帳號模式:帳號轉小寫(對得上 IAM 成員)", c["GG_PRINCIPAL"] == "user:me@example.com", c.get("GG_PRINCIPAL"))
+    finally:
+        if old is None: os.environ.pop("GG_CONFIG", None)
+        else: os.environ["GG_CONFIG"] = old
 
 
 def t_undetermined(e):
@@ -1012,6 +1024,9 @@ def plan_fixtures():
         {"tool": "kubectl", "re": " get nodes -l cloud.google.com/gke-nodepool=default-pool", "when": {"resized": True}, "out": nodes(6)},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "when": {"resized": True}, "out": {"targetSize": 3}},
         {"tool": "gcloud", "re": "^compute instance-groups managed describe gke-prod-default-", "out": {"targetSize": 2}},
+        {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"async_op": True},
+         "out": {"name": "projects/demo-proj-123/locations/asia-east1/operations/op-9", "status": "RUNNING"}},
+        {"tool": "gcloud", "re": "^container operations describe op-9 ", "out": {"name": "op-9", "status": "DONE"}, "set": {"resized": True, "op_polled": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"slow": True}, "sleep": 30, "out": {}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "when": {"verify_slow": True}, "out": {}, "set": {"resize_ran": True}},
         {"tool": "gcloud", "re": "^container clusters resize prod ", "out": {}, "set": {"resized": True}},
@@ -1183,6 +1198,16 @@ def t_plan_change(e, review_run):
     cj = gglib.read_json(os.path.join(pd_, cruns[-1], "change.json"), {}) if cruns else {}
     ok("變更:驗證等待中被中斷 → 記「已執行(驗證中被中斷)」+ 還原、狀態 ISSUES",
        cj.get("status") == "ISSUES" and any(r.get("id") == "C3" and "已執行" in r.get("result", "") and r.get("rollback") for r in cj.get("results", [])), (cj, err[-300:]))
+    e.state({})
+    # --async:長時間操作送出後輪詢狀態,DONE 才驗證
+    e.state({"async_op": True})
+    e.clear_log()
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
+    st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
+    ok("變更:GKE resize 以 --async 送出並輪詢到 DONE 才驗證(PASS)",
+       r.returncode == 0 and rz and "--async" in rz[0] and st_.get("op_polled"), (r.stdout[-400:], rz))
     e.state({})
     e.state({"flip_fw": True})
     e.clear_log()

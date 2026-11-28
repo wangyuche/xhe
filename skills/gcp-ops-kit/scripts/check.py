@@ -64,7 +64,7 @@ def main(argv):
             with gglib.Session(cfg, tmp, project, "read") as s:
                 r = s.gcloud(["projects", "describe", project, f"--project={project}", "--format=json", "--quiet"])
                 if r.returncode != 0:
-                    raise gglib.Blocked(f"SA 無法存取專案 {project}:" + gglib._short(r.stderr))
+                    raise gglib.Blocked(f"{'帳號' if cfg['GG_AUTH'] == 'user' else 'SA'} 無法存取專案 {project}:" + gglib._short(r.stderr))
                 r = s.gcloud(["projects", "get-iam-policy", project, f"--project={project}", "--format=json", "--quiet"])
                 roles = []
                 pol = None
@@ -81,7 +81,7 @@ def main(argv):
         print(f"{mode} ok project={project} auth={cfg['GG_AUTH']} principal={cfg['GG_PRINCIPAL']}")
         print("sa_roles=" + (",".join(roles) if roles else "（讀不到專案層級角色)"))
         if any(r in WRITE_HINT or r.endswith("admin") or r.endswith("Admin") for r in roles):
-            print("資訊:此 SA 有寫入權限(使用者已知)")
+            print(f"資訊:{'這個帳號' if cfg['GG_AUTH'] == 'user' else '此 SA'}有寫入權限(使用者已知)")
         return 0
     except gglib.Blocked as e:
         print(f"BLOCKED: {e}", file=sys.stderr)

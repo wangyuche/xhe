@@ -69,7 +69,8 @@ def load_config(require=True):
     if cfg["GG_AUTH"] not in ("sa", "user"):
         raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")
     if require and cfg["GG_AUTH"] == "user":
-        acct = cfg.get("GG_ACCOUNT", "").strip()
+        acct = cfg.get("GG_ACCOUNT", "").strip().lower()  # IAM 成員一律小寫
+        cfg["GG_ACCOUNT"] = acct
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", acct):
             raise Blocked("GG_AUTH=user 時設定檔要有 GG_ACCOUNT=<你在 gcloud 登入的帳號 email>")
         cfg["GG_SA"] = acct  # 「自己的身分」:禁止動自己的 IAM 綁定等規則照樣套用
@@ -334,16 +335,18 @@ class Session:
             raise
         return self
 
-    TOKEN_MAX_AGE = 40 * 60  # access token 約 1 小時有效,40 分鐘就換
+    # gcloud print-access-token 會回傳快取中尚未過期的 token(可能只剩約 5 分鐘),所以頻繁換新
+    TOKEN_MAX_AGE = 3 * 60
 
     def _refresh_user_token(self):
         """GG_AUTH=user:用使用者自己的 gcloud 登入取短效 access token,寫進 run 內的隔離目錄。
         不複製使用者的憑證檔;token 只放 <run>/gcloud/token(權限 600,結束時刪除),gcloud / kubectl 外掛都讀這個檔。"""
         acct = self.cfg["GG_ACCOUNT"].strip()
         user_env = {k: v for k, v in os.environ.items() if not k.startswith("CLOUDSDK_AUTH_")}
+        user_env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"  # 要重新驗證時直接失敗,不等輸入
         try:
             r = subprocess.run(["gcloud", "auth", "print-access-token", f"--account={acct}", "--quiet"],
-                               env=user_env, capture_output=True, text=True, timeout=60)
+                               env=user_env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         except FileNotFoundError:
             raise Blocked("找不到 gcloud")
         except subprocess.TimeoutExpired:
@@ -361,6 +364,11 @@ class Session:
         self._token_at = time.time()
         append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "auth", "print-access-token", "--account=<GG_ACCOUNT>"],
                                           "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
+
+    def ensure_fresh(self):
+        """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。"""
+        if self.cfg.get("GG_AUTH") == "user" and time.time() - getattr(self, "_token_at", 0) > self.TOKEN_MAX_AGE:
+            self._refresh_user_token()
 
     def __exit__(self, *a):
         shutil.rmtree(self.gdir, ignore_errors=True)
@@ -388,8 +396,7 @@ class Session:
                 raise Denied("變更指令不被允許:" + shape["blocked_reason"])
         else:
             raise Denied("未知模式")
-        if self.cfg.get("GG_AUTH") == "user" and time.time() - getattr(self, "_token_at", 0) > self.TOKEN_MAX_AGE:
-            self._refresh_user_token()  # 長時間的 run(例如 GKE 變更)途中換新 token
+        self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新
         real = [("--key-file=" + self.cfg["GG_SA_KEY_FILE"]) if a == "<key>" else a for a in argv]
         if check_mode == "change":
             append_log(self.run, "commands", {"mode": check_mode, "argv": argv, "rc": None, "state": "started"})

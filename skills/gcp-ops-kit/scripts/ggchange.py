@@ -180,9 +180,12 @@ def common_forbidden(argv, cfg):
     for nets in (nets4, nets6):
         if any(c.prefixlen == 0 for c in ipaddress.collapse_addresses(nets)):
             return "一律禁止:多個網段合起來涵蓋整個網際網路"
-    sa = cfg.get("GG_SA")
-    if sa and any(sa.lower() in a.lower() for a in argv):  # 看原始參數(含旗標值),SA 一定在 --member= 裡
-        return f"一律禁止:動到 gcp-guardian 自己的 SA({sa})"
+    me = (cfg.get("GG_SA") or "").lower()
+    for a in argv:  # 精確比對身分(--member=type:id 的 id、或位置參數),不用子字串(避免 time@x 誤中 me@x)
+        v = a.split("=", 1)[1] if a.startswith("--") and "=" in a else a
+        ident = v.split(":", 1)[1] if ":" in v else v
+        if me and ident.lower() == me:
+            return f"一律禁止:動到 gcp-guardian 自己使用的身分({cfg.get('GG_SA')})"
     return None
 
 
@@ -236,7 +239,8 @@ def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None
     for req in k.get("required_flags", []):
         if req not in flags:
             return block(f"{kind} 缺必要旗標 {req}")
-    allowed = set(k.get("required_flags", [])) | set(k.get("flags", {}).keys()) | ({"--quiet"} if argv[0] == "gcloud" else set())
+    allowed = set(k.get("required_flags", [])) | set(k.get("flags", {}).keys()) | ({"--quiet"} if argv[0] == "gcloud" else set()) \
+        | ({"--async", "--format"} if k.get("async") else set())  # 長時間操作:kit 執行時加 --async 自己輪詢
     for fl in flags:
         if fl not in allowed:
             return block(f"{kind} 不允許旗標 {fl}")

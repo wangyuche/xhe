@@ -119,7 +119,8 @@
           "state": "/networkPolicy/enabled",
           "target": false
         }
-      }
+      },
+      "async": "container"
     },
     "gke-nodepool-update": {
       "prefix": [
@@ -200,7 +201,8 @@
           "restore": "/autoscaling/maxNodeCount",
           "skip_if_off": "/autoscaling/enabled"
         }
-      }
+      },
+      "async": "container"
     },
     "gke-resize": {
       "prefix": [
@@ -218,7 +220,8 @@
       ],
       "snapshot": "resize",
       "dry_run": null,
-      "flags": {}
+      "flags": {},
+      "async": "container"
     },
     "firewall-update": {
       "prefix": [
@@ -444,7 +447,8 @@
           "state": "/settings/backupConfiguration/pointInTimeRecoveryEnabled",
           "target": false
         }
-      }
+      },
+      "async": "sql"
     },
     "kubectl-apply": {
       "prefix": [
@@ -551,6 +555,7 @@
     "--no-disabled": "還原會重新啟用這條防火牆規則"
   },
   "bool_flags": [
+    "--async",
     "--disabled",
     "--enable-autorepair",
     "--enable-autoscaling",

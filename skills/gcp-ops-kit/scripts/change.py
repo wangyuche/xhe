@@ -19,6 +19,7 @@ import ggchange
 import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
+OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
 VOLATILE = ("status", "managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink")
@@ -45,6 +46,13 @@ def rollback_object(o):
     return o  # 保留 last-applied 註解,replace 後與變更前一致
 
 
+def _flag(argv, name):
+    for a in argv:
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
 class Runner:
     def __init__(self, cfg, plan, plan_path, approved):
         self.cfg, self.plan, self.plan_path, self.approved = cfg, plan, plan_path, approved
@@ -59,6 +67,37 @@ class Runner:
         # 已經有條目改了雲端:整體不能回 BLOCKED(那代表「事前檢查不過、什麼都沒改」)
         self.status = "ISSUES" if executed else status
         return False
+
+    def wait_operation(self, s, svc, r, argv):
+        """--async 送出後輪詢操作狀態(每次輪詢前換 token,長時間操作不會因 token 過期中斷)。
+        回傳和 subprocess 相同形狀的結果:DONE 且沒有 error → rc 0;操作錯誤 → rc 1;逾時 → rc 124。"""
+        try:
+            op = json.loads(r.stdout or "{}")
+        except ValueError:
+            op = {}
+        if isinstance(op, list):
+            op = op[0] if op else {}
+        name = (op.get("name") or "").rsplit("/", 1)[-1] if isinstance(op, dict) else ""
+        if not name or op.get("status") == "DONE" and not op.get("error"):
+            return r  # 沒有操作可等(或已完成)
+        project = _flag(argv, "--project")
+        loc = _flag(argv, "--location")
+        deadline = time.time() + CHANGE_TIMEOUT_GKE
+        while time.time() < deadline:
+            time.sleep(OP_POLL_SECONDS)
+            args = (["container", "operations", "describe", name, f"--location={loc}"] if svc == "container"
+                    else ["sql", "operations", "describe", name])
+            q = s.gcloud(args + [f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
+            if q.returncode != 0:
+                continue  # 暫時讀不到狀態:繼續等到逾時
+            try:
+                st = json.loads(q.stdout or "{}")
+            except ValueError:
+                continue
+            if st.get("status") == "DONE":
+                err = st.get("error") or st.get("statusMessage") if st.get("error") else None
+                return subprocess.CompletedProcess(r.args, 1 if err else 0, q.stdout, json.dumps(err, ensure_ascii=False) if err else "")
+        return subprocess.CompletedProcess(r.args, 124, "", f"等待操作 {name} 逾時")
 
     def precheck_static(self):
         byid = {it["id"]: it for it in self.plan["items"]}
@@ -159,16 +198,24 @@ class Runner:
             except OSError:
                 return self.stop("BLOCKED", cid, "核准檔已被使用或不存在(每份核准只能執行一次)")
             self.consumed = True
+        try:
+            s.ensure_fresh()  # 帳號模式:送出前先換好 token;失敗代表指令還沒送出
+        except gglib.Blocked as e:
+            return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e))
         # 先記「執行中」:若在執行途中被中斷,紀錄仍會有這條與還原指令
         self.inflight = {"id": cid, "kind": kind, "argv": it["command"], "result": "執行中被中斷(狀態不明)",
                          "reason": "指令已送出但沒有等到結果;請先確認現況",
                          "rollback": [a.replace("<變更 run>", self.run) for a in (it.get("rollback") or [])],
                          "rollback_warning": it.get("rollback_warning")}
+        kinfo = ggchange.change_rules()["kinds"][kind]
+        run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
-            r = s._exec(argv, "change", timeout=CHANGE_TIMEOUT_GKE if kind.startswith("gke-") else 1800)
-        except gglib.Denied as e:  # 第二道防線在執行前拒絕:雲端沒被動到
+            r = s._exec(run_argv, "change", timeout=300 if kinfo.get("async") else 1800)
+        except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
+        if r.returncode == 0 and kinfo.get("async"):
+            r = self.wait_operation(s, kinfo["async"], r, argv)
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
         if r.returncode != 0:
