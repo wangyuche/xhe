@@ -11,7 +11,6 @@ import shlex
 import subprocess
 import sys
 import time
-import datetime as _dt
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.realpath(__file__)))
 
@@ -49,15 +48,6 @@ def rollback_object(o):
     return o  # 保留 last-applied 註解,replace 後與變更前一致
 
 
-def _parse_time(t):
-    """GKE 的時間有 9 位小數(奈秒),Python 3.9 的 fromisoformat 不接受:先截到 6 位。"""
-    t = re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), str(t), count=1).replace("Z", "+00:00")  # 小數補 / 截成 6 位
-    try:
-        return _dt.datetime.fromisoformat(t).timestamp()
-    except ValueError:
-        return None
-
-
 def _flag(argv, name):
     for a in argv:
         if a.startswith(name + "="):
@@ -91,7 +81,9 @@ class Runner:
                 op = None
             if isinstance(op, list):
                 op = op[0] if op else None
-            name = (op.get("name") or "").rsplit("/", 1)[-1] if isinstance(op, dict) else ""
+            is_op = isinstance(op, dict) and (op.get("operationType") or op.get("kind") == "sql#operation"
+                                              or "/operations/" in str(op.get("selfLink") or op.get("name") or ""))
+            name = (op.get("name") or "").rsplit("/", 1)[-1] if is_op else ""  # 印出的不是操作(例如資源本身):改用差集找
             if not name:  # gcloud --async 可能不印操作:在時間窗內重查這個資源在送出後開始的操作
                 op = {}
                 t_end = time.time() + OP_FAIL_WINDOW
@@ -308,7 +300,7 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         try:
-            s.ensure_fresh()  # 帳號模式:作廢核准檔與送出前先換好 token;失敗代表指令還沒送出、核准檔也還在
+            s.ensure_fresh(margin=180)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
         except gglib.Blocked as e:
             return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e))
         if not self.consumed:

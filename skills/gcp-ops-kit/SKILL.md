@@ -9,7 +9,7 @@ description: GCP 專案 / GKE 審查與受控變更的固定腳本(gcp-guardian 
 
 ## 本機設定(不進 git)
 
-**沒有設定檔時**:直接用 gcloud 目前登入的帳號(`gcloud config get-value account`,即帳號模式),不用寫任何設定;專案 ID 由簡報指定。有設定檔時一律照設定檔走:沒寫 `GG_AUTH=user` 就是 SA 模式(缺金鑰 BLOCKED,不默默改用個人帳號)。要用 SA 金鑰、指定別的帳號、設預設專案或報告目錄時,才建 `~/.config/gcp-guardian/config`(權限 600,使用者建立):
+**沒有設定檔時**:直接用 gcloud 目前登入的帳號(`gcloud config get-value account`,即帳號模式),不用寫任何設定;專案 ID 由簡報指定。有設定檔時一律照設定檔走:沒寫 `GG_AUTH=user` 就是 SA 模式(缺金鑰 BLOCKED,不默默改用個人帳號)。要用 SA 金鑰、指定別的帳號、設預設專案或報告目錄時,才建 `~/.config/gcp-guardian/config`(只為了預設專案而建設定檔、又要用自己的帳號,也要寫 `GG_AUTH=user`)(權限 600,使用者建立):
 
 ```
 # SA 金鑰(權限 600)

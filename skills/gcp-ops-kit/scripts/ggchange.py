@@ -676,7 +676,7 @@ def _k_project_iam_add(pos, flags, snap, res, k, cfg, *_):
 
 
 IAM_ADMIN_ROLES = {"roles/owner", "roles/resourcemanager.projectIamAdmin", "roles/iam.securityAdmin",
-                   "roles/iam.securityReviewer", "roles/securityAdmin"}
+                   "roles/resourcemanager.folderAdmin", "roles/resourcemanager.organizationAdmin"}
 
 
 def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
@@ -684,7 +684,8 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     if reasons is None:
         return None, [], None
     lockout = cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:"))
-    if lockout and flags.get("--role") in IAM_ADMIN_ROLES:
+    role = flags.get("--role", "")
+    if lockout and (role in IAM_ADMIN_ROLES or not role.startswith("roles/")):  # 自訂角色可能含 setIamPolicy:一律當 IAM 管理
         res["blocked_reason"] = (f"帳號模式下移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得權限,"
                                  "移除後連還原都做不了;請使用者自己在 console 確認後執行")
         return None, [], None

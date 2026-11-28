@@ -87,7 +87,7 @@ def load_config(require=True):
         cfg["GG_ACCOUNT"] = _gcloud_active_account()
         auto_acct = True
     cfg["GG_AUTH"] = cfg.get("GG_AUTH", "sa").lower()
-    if cfg["GG_AUTH"] not in ("sa", "user"):
+    if require and cfg["GG_AUTH"] not in ("sa", "user"):  # guard / YAML 審查(require=False)不因設定打錯而全擋
         raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")
     if require and cfg["GG_AUTH"] == "user":
         acct = cfg.get("GG_ACCOUNT", "").strip().lower()  # IAM 成員一律小寫
@@ -437,9 +437,10 @@ class Session:
         append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", "--min-expiry=15m", "--account=<GG_ACCOUNT>"],
                                           "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
 
-    def ensure_fresh(self):
-        """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。"""
-        if self.cfg.get("GG_AUTH") == "user" and time.time() - getattr(self, "_token_at", 0) > self.TOKEN_MAX_AGE:
+    def ensure_fresh(self, margin=0):
+        """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。
+        margin:提早換新的秒數(作廢核准檔前用,確保接下來幾分鐘內不需要再換)。"""
+        if self.cfg.get("GG_AUTH") == "user" and time.time() - getattr(self, "_token_at", 0) > self.TOKEN_MAX_AGE - margin:
             self._refresh_user_token()
 
     def __exit__(self, *a):

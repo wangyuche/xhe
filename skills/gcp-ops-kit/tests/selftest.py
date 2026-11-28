@@ -393,6 +393,10 @@ def t_impersonation(e):
     r_o = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
                              "--role=roles/iam.securityAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
                             {"bindings": [{"role": "roles/iam.securityAdmin", "members": ["group:admins@example.com"]}]})
+    r_c = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
+                             f"--role=projects/{FX.P}/roles/iamManager", f"--project={FX.P}", "--condition=None"], {"GG_SA": "me@example.com", "GG_AUTH": "user"},
+                            {"bindings": [{"role": f"projects/{FX.P}/roles/iamManager", "members": ["group:admins@example.com"]}]})
+    ok("帳號模式移除群組的自訂角色 → BLOCKED(可能含 setIamPolicy)", "連還原都做不了" in (r_c["blocked_reason"] or ""), r_c)
     ok("帳號模式移除群組的 IAM 管理角色 → BLOCKED(移除後可能連還原都做不了)", "連還原都做不了" in (r_o["blocked_reason"] or ""), r_o)
     ok("帳號模式移除群組權限:執行前警示「鎖在專案外」,但不算放寬", not r_["loosens_security"] and "鎖在專案外" in (r_.get("exec_warning") or ""), r_)
     ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
@@ -410,12 +414,6 @@ def t_sdk_bin(e):
                        env={"PATH": link_dir + ":/usr/bin:/bin", "HOME": os.environ.get("HOME", "")}, capture_output=True, text=True)
     ok("gcloud 只連進 PATH 時,kit 自動找到 SDK bin 裡的 gke-gcloud-auth-plugin",
        os.path.realpath(r.stdout.strip() or "/nonexistent") == os.path.realpath(os.path.join(sdk, "gke-gcloud-auth-plugin")), r.stdout + r.stderr)
-
-
-def t_parse_time():
-    import change
-    ok("GKE 奈秒 / 2 位小數 / 無小數時間都可解析(Python 3.9)", all(change._parse_time(t) is not None for t in
-       ("2024-02-20T10:15:30.123456789Z", "2026-11-28T01:02:03.12Z", "2026-11-28T01:02:03Z")) and change._parse_time("bad") is None)
 
 
 def t_sa_change():
@@ -1524,7 +1522,6 @@ def main():
         t_reserved_project()
         t_guard_import_fail(e)
         t_sa_change()
-        t_parse_time()
         t_check_pre_redact()
         t_bad_metadata()
         t_secret_names()
