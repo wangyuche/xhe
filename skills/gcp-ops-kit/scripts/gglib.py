@@ -76,11 +76,15 @@ def load_config(require=True):
     elif require:
         # 沒有設定檔:直接用 gcloud 目前登入的帳號(帳號模式);要用 SA 金鑰或指定別的帳號才需要設定檔
         cfg["GG_AUTH"] = "user"
-        cfg["GG_ACCOUNT"] = _gcloud_active_account()
     cfg.setdefault("GG_REPORT_DIR", os.path.expanduser("~/gcp-guardian-reports"))
     cfg["GG_REPORT_DIR"] = os.path.abspath(cfg["GG_REPORT_DIR"])
     if any(c.isspace() for c in cfg["GG_REPORT_DIR"]):
         raise Blocked("GG_REPORT_DIR 不可含空白(白名單以空白分隔參數);請在設定檔改成沒有空白的路徑")
+    if require and "GG_AUTH" not in cfg and "GG_SA_KEY_FILE" not in cfg:
+        # 設定檔只有預設專案 / 報告目錄等:跟沒有設定檔一樣,用 gcloud 目前登入的帳號
+        cfg["GG_AUTH"] = "user"
+    if require and cfg.get("GG_AUTH", "").lower() == "user" and not cfg.get("GG_ACCOUNT"):
+        cfg["GG_ACCOUNT"] = _gcloud_active_account()
     cfg["GG_AUTH"] = cfg.get("GG_AUTH", "sa").lower()
     if cfg["GG_AUTH"] not in ("sa", "user"):
         raise Blocked("GG_AUTH 只能是 sa(專用 SA 金鑰)或 user(使用者自己的 gcloud 登入)")

@@ -352,6 +352,16 @@ def t_no_config(e):
     e.state({})
 
 
+def t_partial_config(e):
+    cfgp = os.path.join(e.tmp, "conf", "config-partial")
+    with open(cfgp, "w") as f:
+        f.write(f"GG_DEFAULT_PROJECT={FX.P}\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfgp, 0o600)
+    env = e.env(); env["GG_CONFIG"] = cfgp
+    r = e.run([os.path.join(S, "check.sh"), "review", "--scope", "iam"], env=env)
+    ok("設定檔只有預設專案:用 gcloud 目前登入的帳號", r.returncode == 0 and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
+
+
 def t_impersonation(e):
     cfgu = os.path.join(e.tmp, "conf", "config-imp")
     with open(cfgu, "w") as f:
@@ -369,8 +379,8 @@ def t_impersonation(e):
     r_sa = ggchange.classify(["gcloud", "projects", "remove-iam-policy-binding", FX.P, "--member=group:admins@example.com",
                               "--role=roles/resourcemanager.projectIamAdmin", f"--project={FX.P}", "--condition=None"], {"GG_SA": FX.GG_SA},
                              {"bindings": [{"role": "roles/resourcemanager.projectIamAdmin", "members": ["group:admins@example.com"]}]})
-    ok("SA 模式移除群組權限不標「鎖在外面」", not any("鎖在專案外" in x for x in r_sa["loosens_reasons"]), r_sa["loosens_reasons"])
-    ok("移除群組的權限:計畫標放寬(可能把自己鎖在外面)", r_["loosens_security"] and any("鎖在專案外" in x for x in r_["loosens_reasons"]), r_)
+    ok("SA 模式移除群組權限不標「鎖在外面」", not r_sa.get("exec_warning"), r_sa)
+    ok("帳號模式移除群組權限:執行前警示「鎖在專案外」,但不算放寬", not r_["loosens_security"] and "鎖在專案外" in (r_.get("exec_warning") or ""), r_)
     ok("帳號模式:gcloud 設了 impersonate_service_account → BLOCKED", r.returncode == 3 and "impersonate" in r.stderr, r.stderr[-300:])
     e.state({})
 
@@ -1019,7 +1029,7 @@ def t_user_auth(e):
     with open(cfgu, "w") as f:
         f.write(f"GG_AUTH=user\nGG_REPORT_DIR={e.reports}\n")
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
-    ok("帳號模式:缺 GG_ACCOUNT → BLOCKED", r.returncode == 3 and "GG_ACCOUNT" in r.stderr, r.stderr)
+    ok("帳號模式:沒寫 GG_ACCOUNT → 用 gcloud 目前登入的帳號", r.returncode == 0 and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
     with open(cfgu, "w") as f:
         f.write(f"GG_AUTH=user\nGG_ACCOUNT=me@example.com\nGG_REPORT_DIR={e.reports}\n")
     e.state({"user_not_logged_in": True})
@@ -1096,6 +1106,9 @@ def plan_fixtures():
                  {"name": "projects/p/locations/l/operations/op-R", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
                   "operationType": "AUTO_REPAIR_NODES",
                   "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"},
+                 {"name": "projects/p/locations/l/operations/op-O", "startTime": "2099-01-01T00:00:00Z", "status": "RUNNING",
+                  "operationType": "UPGRADE_NODES",
+                  "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/other-pool"},
                  {"name": "projects/p/locations/l/operations/op-L", "startTime": "2099-01-01T00:00:00.123456789Z", "status": "RUNNING",
                   "operationType": "SET_NODE_POOL_SIZE",
                   "targetLink": "https://container.googleapis.com/v1/projects/p/locations/l/clusters/prod/nodePools/default-pool"}]},
@@ -1509,6 +1522,7 @@ def main():
         t_user_auth(e)
         t_impersonation(e)
         t_no_config(e)
+        t_partial_config(e)
         t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()

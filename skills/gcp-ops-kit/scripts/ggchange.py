@@ -191,7 +191,7 @@ def common_forbidden(argv, cfg):
 def classify(argv, cfg, snapshot=None, manifest_findings=None, diff_created=None, shape_only=False):
     """snapshot:變更前快照(dict,依 kind 不同)。manifest_findings:apply / patch dry-run 結果跑 k8s_rules 的 findings。
     diff_created:kubectl diff 是否出現新建資源。"""
-    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None, "rollback_note": None,
+    res = {"kind": None, "target": {}, "reversible": False, "rollback": None, "rollback_warning": None, "rollback_note": None, "exec_warning": None,
            "loosens_security": False, "loosens_reasons": [], "blocked_reason": None,
            "auto_pre": [], "dry_run": None}
 
@@ -688,10 +688,9 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     rb = ["gcloud", "projects", "add-iam-policy-binding", pos[0], f"--member={flags['--member']}",
           f"--role={flags['--role']}", f"--project={flags['--project']}", "--condition=None", "--quiet"]
     res["auto_pre"].append({"binding_present": [flags["--member"], flags["--role"]]})
-    reasons = []
-    if lockout:  # 執行前的風險:gcp-guardian 使用的身分可能靠這個群組 / 網域取得權限
-        reasons.append(f"移除 {flags['--member']} 的 {flags['--role']}:若 gcp-guardian 使用的身分(你的帳號)靠它取得權限,可能把自己鎖在專案外")
-    return rb, reasons, None
+    if lockout:  # 執行前的風險(不是放寬安全):gcp-guardian 使用的身分可能靠這個群組 / 網域取得權限
+        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得權限,可能把自己鎖在專案外"
+    return rb, [], None
 
 
 PUBLIC_WARN = "這條還原會重新公開資料(加回 allUsers / allAuthenticatedUsers);除非確定要回復公開,否則不要執行"

@@ -133,7 +133,7 @@ ${i.manifest ? `<details><summary>manifest</summary><pre class="mono">${esc(i.ma
 ${i.patch ? `<details><summary>patch</summary><pre class="mono">${esc(i.patch)}</pre></details>` : ''}</td>
 <td><div class="sub">dry-run:${esc(i.dry_run || '無法 dry-run')}</div>
 ${(i.dry_run_log || []).map((l) => `<details><summary>${esc(l.step)}(rc=${esc(l.rc)})</summary><pre class="mono">${esc(l.out || '')}</pre></details>`).join('')}
-<div class="sub">還原:</div>${i.rollback_warning ? `<div class="sub" style="color:var(--crit)">⚠ ${esc(i.rollback_warning)}</div>` : ''}<pre class="mono">${esc(i.rollback ? shjoin(i.rollback) : (i.rollback_note || '（無)'))}</pre>
+${i.exec_warning ? `<div class="sub" style="color:var(--crit)">⚠ 執行前注意:${esc(i.exec_warning)}</div>` : ''}<div class="sub">還原:</div>${i.rollback_warning ? `<div class="sub" style="color:var(--crit)">⚠ ${esc(i.rollback_warning)}</div>` : ''}<pre class="mono">${esc(i.rollback ? shjoin(i.rollback) : (i.rollback_note || '（無)'))}</pre>
 <details><summary>precondition / expected</summary><pre class="mono">${esc(JSON.stringify({ precondition: i.precondition, auto: i.auto_pre, expected: i.expected }, null, 1))}</pre></details></td></tr>`;
   }).join('\n');
   return `<p class="sub">plan.json sha256:<span class="mono">${esc(d.planSha)}</span>。每條都要使用者逐條核准才會執行;標「放寬安全」的條目請特別確認。</p>

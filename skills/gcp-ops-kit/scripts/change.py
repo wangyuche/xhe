@@ -21,11 +21,6 @@ import ggplan
 
 APPROVE_PREFIX = "使用者已核准變更"
 OP_POLL_SECONDS = float(os.environ.get("GG_OP_POLL", "15"))
-OP_TYPES = {
-    "gke-cluster-update": {"UPDATE_CLUSTER", "SET_NETWORK_POLICY", "SET_MASTER_AUTH"},
-    "gke-nodepool-update": {"UPDATE_NODE_POOL", "SET_NODE_POOL_MANAGEMENT", "SET_NODE_POOL_AUTOSCALING"},
-    "gke-resize": {"SET_NODE_POOL_SIZE"},
-}
 OP_FAIL_WINDOW = float(os.environ.get("GG_OP_FAIL_WINDOW", "600"))  # 連續查不到狀態超過 10 分鐘才放棄
 CHANGE_TIMEOUT_SQL = 3600
 CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操作可能很久:預設 4 小時
@@ -159,7 +154,7 @@ class Runner:
         if svc == "container":
             cluster = _flag(argv, "--cluster") or target  # node-pools update 用 --cluster
             # 精確的 regex 過濾(prod 不會比中 prod-2),取多一點再在本地比對
-            tl = f"/clusters/{cluster}" + (f"/nodePools/{nodepool}" if nodepool else "") + "$"
+            tl = f"/clusters/{cluster}(/.*)?$"
             q = s.gcloud(["container", "operations", "list", f"--location={_flag(argv, '--location')}", f"--filter=targetLink~{tl}",
                           "--sort-by=~startTime", "--limit=50", f"--project={project}", "--format=json", "--quiet"], mode="dryrun")
         else:
@@ -179,11 +174,12 @@ class Runner:
                 continue
             if svc == "container":
                 link = str(o.get("targetLink") or "")
-                want = r"/clusters/" + re.escape(cluster) + (r"/nodePools/" + re.escape(nodepool) if nodepool else "") + r"$"
+                # 叢集層級一定接受;改 node pool 時也接受那個 node pool 層級(gcloud 有些 node pool 變更走 clusters.update)
+                want = r"/clusters/" + re.escape(cluster) + (r"(/nodePools/" + re.escape(nodepool) + r")?" if nodepool else "") + r"$"
                 if not re.search(want, link):
-                    continue  # targetLink 要完整對到這個叢集(或 node pool)層級
-                if str(o.get("operationType") or "").upper() not in OP_TYPES.get(kind, set()):
-                    continue  # 只接受這類變更會產生的操作類型(排除 auto-repair / auto-upgrade 等)
+                    continue
+                if str(o.get("operationType") or "").upper().startswith("AUTO_"):
+                    continue  # 排除 auto-repair / auto-upgrade;其他同時出現的候選會變成「多筆」→ 狀態不明,不猜
             elif str(o.get("operationType") or "").upper() != "UPDATE":
                 continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
             ts = _parse_time(o.get("startTime") or o.get("insertTime") or "")
@@ -197,8 +193,6 @@ class Runner:
     @staticmethod
     def _op_result(r, svc, st):
         err = st.get("error")
-        if not err and svc == "container" and st.get("statusMessage") and str(st.get("statusMessage")).strip():
-            err = st.get("statusMessage")  # GKE 失敗時有時只填 statusMessage
         return subprocess.CompletedProcess(r.args, 1 if err else 0, json.dumps(st, ensure_ascii=False),
                                            json.dumps(err, ensure_ascii=False) if err else "")
 
