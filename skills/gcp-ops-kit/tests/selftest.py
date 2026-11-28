@@ -1364,6 +1364,15 @@ def t_plan_change(e, review_run):
     ok("變更:送出前列不出操作 → BLOCKED、沒送出、核准檔還在",
        r.returncode == 3 and not sent and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
     e.state({})
+    cfg_sw = os.path.join(e.tmp, "conf", "config-switch")
+    with open(cfg_sw, "w") as f:
+        f.write(f"GG_AUTH=user\nGG_ACCOUNT=other@example.com\nGG_REPORT_DIR={e.reports}\n")
+    os.chmod(cfg_sw, 0o600)
+    env_sw = e.env(); env_sw["GG_CONFIG"] = cfg_sw
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_sw)
+    ok("變更:身分和計畫時不同 → BLOCKED、沒送出", r.returncode == 3 and "身分" in r.stderr and
+       not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls()), (r.stdout[-200:], r.stderr[-300:]))
     e.state({"flip_fw": True})
     e.clear_log()
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C1, C2")

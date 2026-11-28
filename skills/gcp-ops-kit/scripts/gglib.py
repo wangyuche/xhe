@@ -448,7 +448,7 @@ class Session:
         append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", "--min-expiry=15m", "--account=<GG_ACCOUNT>"],
                                           "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
 
-    def ensure_fresh(self, margin=0):
+    def ensure_fresh(self, margin=0, strict=False):
         """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。
         margin:提早換新的秒數(作廢核准檔前用,確保接下來幾分鐘內不需要再換)。"""
         if self.cfg.get("GG_AUTH") != "user":
@@ -457,7 +457,8 @@ class Session:
         age = now - getattr(self, "_token_at", 0)
         if age <= self.TOKEN_MAX_AGE - margin:
             return
-        usable = age < self.TOKEN_SAFE_AGE - margin  # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用
+        # 取得時至少剩 15 分鐘:10 分鐘內的舊 token 仍可安全使用;strict(變更)時換不到就停,不沿用
+        usable = (not strict) and age < self.TOKEN_SAFE_AGE - margin
         if now - getattr(self, "_refresh_failed_at", -1e9) < 60:  # 剛失敗過:1 分鐘內不重試(不每個指令都等一次逾時)
             if usable:
                 return
@@ -503,7 +504,7 @@ class Session:
         else:
             raise Denied("未知模式")
         try:
-            self.ensure_fresh()  # 帳號模式:每個指令前確認 token 夠新(換新失敗但舊 token 仍安全時沿用)
+            self.ensure_fresh(strict=(check_mode == "change"))  # 讀取:換新失敗但舊 token 仍安全時沿用;變更:換不到就停
         except Blocked as e:
             if check_mode == "change":
                 raise

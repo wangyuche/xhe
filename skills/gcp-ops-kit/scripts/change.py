@@ -88,6 +88,7 @@ class Runner:
                 return unknown("指令已送出,但沒有送出前的操作快照,無法確認是哪個操作;請用 gcloud container / sql operations list 確認")
             if not name:  # gcloud --async 可能不印操作:在時間窗內重查這個資源在送出後開始的操作
                 op = {}
+                self.op_via_diff = True
                 t_end = time.time() + OP_FAIL_WINDOW
                 while True:
                     try:
@@ -133,7 +134,7 @@ class Runner:
                     st = None
                 if not isinstance(st, dict):
                     last_err = gglib._short(q.stderr, 300) or "回應不是 JSON 物件"
-                    if re.search(r"PERMISSION_DENIED|NOT_FOUND|\bHTTP(?:Error)? ?40[34]\b|\b40[34]\b(?=[: ]+(?:Forbidden|Not Found|PERMISSION|NOT_FOUND))", last_err):
+                    if re.search(r"PERMISSION_DENIED|\bHTTP(?:Error)? ?403\b|\b403\b(?=[: ]+(?:Forbidden|PERMISSION))", last_err):  # NOT_FOUND 可能是最終一致:照樣在時間窗內重試
                         return unknown(f"查不到操作 {name} 的狀態(不會恢復的錯誤):{last_err}")
                     fail_since = fail_since or time.time()
                     if time.time() - fail_since >= OP_FAIL_WINDOW:
@@ -200,6 +201,8 @@ class Runner:
                     continue  # 排除 auto-repair / auto-upgrade;其他同時出現的候選會變成「多筆」→ 狀態不明,不猜
             elif str(o.get("operationType") or "").upper() != "UPDATE":
                 continue  # SQL:只接受 patch(UPDATE),排除備份等其他操作
+            elif o.get("user") and str(o["user"]).lower() != (self.cfg.get("GG_SA") or "").lower():
+                continue  # SQL 操作記有發起者:不是自己送的就排除
             cands.append(nm)
         return cands
 
@@ -207,9 +210,9 @@ class Runner:
     def _op_result(r, svc, st):
         err = st.get("error")
         if not err and svc == "container" and str(st.get("statusMessage") or "").strip():
-            # DONE 但只有 statusMessage:不確定是警告還是失敗 → 狀態不明,交給驗證與使用者確認
-            return subprocess.CompletedProcess(r.args, 124, json.dumps(st, ensure_ascii=False),
-                                               "操作 DONE 但帶有 statusMessage:" + gglib._short(str(st.get("statusMessage")), 300))
+            # DONE、沒有 error 但帶 statusMessage:當成功並照常驗證,訊息附在紀錄裡
+            return subprocess.CompletedProcess(r.args, 0, json.dumps(st, ensure_ascii=False),
+                                               "操作 DONE,附帶訊息:" + gglib._short(str(st.get("statusMessage")), 300))
         return subprocess.CompletedProcess(r.args, 1 if err else 0, json.dumps(st, ensure_ascii=False),
                                            json.dumps(err, ensure_ascii=False) if err else "")
 
@@ -308,7 +311,7 @@ class Runner:
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
         if kinfo.get("async"):
             try:
-                s.ensure_fresh(margin=180)  # 先換好 token:換不到時直接報真正原因(例如要重新 gcloud auth login)
+                s.ensure_fresh(margin=180, strict=True)  # 先換好 token:換不到時直接報真正原因(例如要重新 gcloud auth login)
             except gglib.Blocked as e:
                 return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
         if kinfo.get("async"):  # 作廢核准檔與送出前,先快照這個資源既有的操作(之後 gcloud 沒印操作時用差集找自己的)
@@ -326,7 +329,7 @@ class Runner:
                 return self.stop("BLOCKED", cid, "送出前列不出這個資源的操作(無法在送出後確認自己的操作);這條沒送出," + left)
             self.pre_ops = set(pre)
         try:
-            s.ensure_fresh(margin=180)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
+            s.ensure_fresh(margin=180, strict=True)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
         except gglib.Blocked as e:
             return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
         if not self.consumed:
@@ -352,6 +355,7 @@ class Runner:
             return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
         if r.returncode == 0 and kinfo.get("async"):
             self.cur_kind = kind
+            self.op_via_diff = False
             r = self.wait_operation(s, kinfo["async"], r, argv)
         rec = {"id": cid, "kind": kind, "argv": it["command"], "rc": r.returncode, "dry_run": dry,
                "stderr": gglib._short(r.stderr, 800)}
@@ -375,6 +379,11 @@ class Runner:
         self.results.append(rec)
         self.inflight = None
         exp = it.get("expected") or []
+        if getattr(self, "op_via_diff", False) and not exp:
+            # 操作是用清單差集找到的(gcloud 沒印操作),又沒有預期值可驗證:不能確定追到的是自己的操作
+            rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作,改由清單比對找到;這條沒有預期值可驗證,請先確認現況"})
+            self.status = "ISSUES"
+            return False
         deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
         while True:
             try:
@@ -451,8 +460,9 @@ def main(argv):
         if not plan or os.path.realpath(plan.get("source_run") or "") != src_run or plan.get("project") != src_meta.get("project"):
             raise gglib.Blocked("plan.json 的 source_run / project 與所在 run 目錄不符")
         # 計畫時的身分要和現在相同:避免計畫後切換 gcloud 帳號,用使用者沒確認過的身分執行
-        if (src_meta.get("auth") or "sa") != cfg.get("GG_AUTH") or (src_meta.get("sa") or "").lower() != (cfg.get("GG_SA") or "").lower():
-            raise gglib.Blocked(f"計畫時的身分({src_meta.get('auth')}:{src_meta.get('sa')})和現在({cfg.get('GG_AUTH')}:{cfg.get('GG_SA')})不同;"
+        # 比對 plan.json(已算進 sha256)記的身分,不是 meta.json
+        if (plan.get("auth") or "sa") != cfg.get("GG_AUTH") or (plan.get("sa") or "").lower() != (cfg.get("GG_SA") or "").lower():
+            raise gglib.Blocked(f"計畫時的身分({plan.get('auth')}:{plan.get('sa')})和現在({cfg.get('GG_AUTH')}:{cfg.get('GG_SA')})不同;"
                                 "請用同一個身分重新產生計畫")
         approved = parse_approved(approved_text)
         # 核准檔:由主 agent 依使用者原話寫在計畫 run 目錄(gcp-guardian 的 hook 不准寫這個檔),旗標必須與它一致

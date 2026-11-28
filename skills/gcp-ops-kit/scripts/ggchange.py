@@ -715,12 +715,12 @@ def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
     if reasons is None:
         return None, [], None
     role = flags.get("--role", "")
-    if (cfg.get("GG_AUTH") == "user" and flags.get("--member", "").startswith(("group:", "domain:", "projectOwner:", "projectEditor:", "principalSet:", "principal:"))
+    if (flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:"))
             and (role in BUCKET_ADMIN_ROLES or not role.startswith("roles/"))):
-        res["blocked_reason"] = (f"帳號模式下移除 {flags['--member']} 的 {role}:若你的帳號靠它取得 bucket 管理權限,"
+        res["blocked_reason"] = (f"移除 {flags['--member']} 的 {role}:若{'你的帳號' if cfg.get('GG_AUTH') == 'user' else 'gcp-guardian 的 SA'}靠它取得 bucket 管理權限,"
                                  "移除後連還原都做不了;請使用者自己在 console 確認後執行")
         return None, [], None
-    if flags.get("--member", "").startswith(("group:", "domain:", "projectOwner:", "projectEditor:", "projectViewer:", "principalSet:", "principal:")):
+    if flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:")):
         res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若 gcp-guardian 使用的身分靠它取得 bucket 權限,之後可能讀不到這個 bucket"
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN

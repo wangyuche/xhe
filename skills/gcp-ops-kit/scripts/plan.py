@@ -37,6 +37,8 @@ def build(run):
     if meta.get("mode") not in ("review", "plan"):
         raise gglib.Blocked(f"plan.py build 只接受審查 / 計畫 run(這個是 {meta.get('mode')})")
     cfg = gglib.load_config(require=True)
+    if (meta.get("auth") or "sa") != cfg.get("GG_AUTH") or (meta.get("sa") or "").lower() != (cfg.get("GG_SA") or "").lower():
+        raise gglib.Blocked(f"審查時的身分({meta.get('auth')}:{meta.get('sa')})和現在({cfg.get('GG_AUTH')}:{cfg.get('GG_SA')})不同;請用同一個身分重新審查")
     if not run.startswith(os.path.realpath(cfg["GG_REPORT_DIR"]) + os.sep):
         raise gglib.Blocked("run 目錄不在 GG_REPORT_DIR 底下")
     project = meta["project"]
@@ -57,7 +59,7 @@ def build(run):
             for raw in inp["items"]:
                 items.append(build_item(s, cfg, run, project, raw, ctx_done))
         # 寫檔、算雜湊、產報告都在鎖內:避免另一個 build 同時覆寫 plan.json
-        plan = {"project": project, "source_run": run, "created": gglib.now_iso(), "sa": cfg.get("GG_SA"),
+        plan = {"project": project, "source_run": run, "created": gglib.now_iso(), "sa": cfg.get("GG_SA"), "auth": cfg.get("GG_AUTH"),
                 "items": items}
         path = os.path.join(run, "plan.json")
         with open(path, "w", encoding="utf-8") as f:
