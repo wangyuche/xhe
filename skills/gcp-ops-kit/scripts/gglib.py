@@ -202,6 +202,10 @@ def clean_stale_creds(cfg):
             try:
                 if now - os.lstat(p).st_mtime > STALE_CRED_SECONDS:
                     shutil.rmtree(p, ignore_errors=True)
+                    continue
+                for root, _, files in os.walk(p):  # 帳號模式的個人 token:超過 1 小時就刪
+                    if "token" in files and now - os.lstat(os.path.join(root, "token")).st_mtime > 3600:
+                        os.remove(os.path.join(root, "token"))
             except OSError:
                 pass
 
@@ -451,6 +455,12 @@ class Session:
         append_log(self.run, "commands", {"mode": "auth", "argv": ["gcloud", "config", "config-helper", f"--min-expiry={min_expiry}", "--account=<GG_ACCOUNT>"],
                                           "rc": r.returncode, "note": "使用者自己的 gcloud 登入;token 只寫 run 內隔離目錄"})
 
+    def prepare_change_token(self):
+        """帳號模式:換一張至少剩 55 分鐘的 token(送出變更前、作廢核准檔前呼叫;失敗丟 Blocked)。"""
+        if self.cfg.get("GG_AUTH") == "user":
+            self._refresh_user_token("55m")
+            self._long_token_at = time.time()
+
     def ensure_fresh(self, margin=0, strict=False):
         """帳號模式:token 太舊就換新(在送出變更前呼叫;失敗丟 Blocked,代表指令還沒送出)。
         margin:提早換新的秒數(作廢核准檔前用,確保接下來幾分鐘內不需要再換)。"""
@@ -508,8 +518,10 @@ class Session:
             raise Denied("未知模式")
         try:
             if check_mode == "change" and self.cfg.get("GG_AUTH") == "user":
-                # 變更:送出前一律換一張至少剩 55 分鐘的 token(gcloud 只在啟動時讀一次 token 檔,同步等待操作時不會換新)
-                self._refresh_user_token("55m")
+                # 變更:送出時要有一張至少剩 55 分鐘的 token(gcloud 只在啟動時讀一次 token 檔)。
+                # 通常 change.py 已在作廢核准檔前用 prepare_change_token() 換好;太久沒換才在這裡補換
+                if time.time() - getattr(self, "_long_token_at", -1e9) > 120:
+                    self.prepare_change_token()
             else:
                 self.ensure_fresh()  # 讀取:換新失敗但舊 token 仍安全時沿用
         except Blocked as e:

@@ -1138,6 +1138,7 @@ def plan_fixtures():
          "out": dict(FX.FIREWALLS[0], sourceRanges=["1.2.3.0/24"])},
         {"tool": "gcloud", "re": "^compute firewall-rules describe allow-ssh ", "out": FX.FIREWALLS[0]},
         {"tool": "gcloud", "re": "^compute firewall-rules update allow-ssh ", "rc": 1, "err": "ERROR: simulated failure"},
+        {"tool": "gcloud", "re": "^container clusters describe prod ", "when": {"cluster_busy": True}, "out": dict(FX.CLUSTER, status="RECONCILING")},
         {"tool": "gcloud", "re": "^container clusters describe prod ", "out": FX.CLUSTER},
         {"tool": "gcloud", "re": "^container node-pools describe default-pool ", "when": {"np_updated": True},
          "out": dict(FX.NODEPOOLS[0], config=dict(FX.NODEPOOLS[0].get("config") or {}, workloadMetadataConfig={"mode": "GKE_METADATA"}))},
@@ -1341,6 +1342,12 @@ def t_plan_change(e, review_run):
     e.clear_log()
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     ok("變更:資源正在變更中(MIG 不穩定)→ BLOCKED、沒送出、核准檔還在",
+       r.returncode == 3 and not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls())
+       and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
+    e.state({"cluster_busy": True})
+    e.clear_log()
+    r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
+    ok("變更:叢集正在變更中(RECONCILING)→ node pool resize 也 BLOCKED、沒送出、核准檔還在",
        r.returncode == 3 and not any(c["argv"][:3] == ["container", "clusters", "resize"] for c in e.stub_calls())
        and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
     # node-pools update:--async 會回傳操作 → 輪詢到 DONE 才驗證

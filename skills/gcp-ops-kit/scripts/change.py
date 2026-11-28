@@ -245,12 +245,26 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
-        if kind in GKE_KINDS and _res_state(GKE_KINDS[kind], snap) in ("changing", "mig"):
+        busy = kind in GKE_KINDS and _res_state(GKE_KINDS[kind], snap) in ("changing", "mig")
+        if not busy and kind in ("gke-nodepool-update", "gke-resize"):  # node pool 變更:叢集本身在變更中(例如控制平面升級)也不送
+            f = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in argv if a.startswith("--") and "=" in a}
+            pos = [a for a in argv if not a.startswith("-")]
+            cname = f.get("--cluster") or (pos[4] if len(pos) > 4 else "")
+            q = s.gcloud(["container", "clusters", "describe", cname, f"--location={f.get('--location')}",
+                          f"--project={self.project}", "--format=json", "--quiet"], mode="dryrun")
+            try:
+                cl = json.loads(q.stdout or "null") if q.returncode == 0 else None
+            except ValueError:
+                cl = None
+            if not isinstance(cl, dict):
+                return self.stop("BLOCKED", cid, "讀不到叢集狀態,無法確認叢集是否在變更中;這條沒送出")
+            busy = _res_state("container", cl) == "changing"
+        if busy:
             # 穩定但有錯誤(DEGRADED 等)照樣可以送:使用者可能正是要修它
             return self.stop("BLOCKED", cid, "資源正在變更中(PROVISIONING / RECONCILING 或 MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
         try:
-            s.ensure_fresh(margin=180, strict=True)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
+            s.prepare_change_token()  # 帳號模式:作廢核准檔前先換好至少剩 55 分鐘的 token(送出時不必再換);失敗代表指令還沒送出、核准檔也還在
         except gglib.Blocked as e:
             return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
         if not self.consumed:
@@ -268,7 +282,6 @@ class Runner:
                          "rollback_warning": it.get("rollback_warning"), "exec_warning": it.get("exec_warning")}
         run_argv = argv + (["--async", "--format=json"] if kinfo.get("async") else [])
         try:
-            # 帳號模式的 token 至少剩約 10 分鐘:不走 --async 的指令逾時 8 分鐘(留餘裕,避免中途過期)
             # 帳號模式:送出前換一張至少剩 55 分鐘的 token,同步指令最多 50 分鐘;SA 模式由 gcloud 自己換新
             tmo = 300 if kinfo.get("async") else (3000 if self.cfg.get("GG_AUTH") == "user"
                                                    else (CHANGE_TIMEOUT_GKE if kind in GKE_KINDS else 1800))

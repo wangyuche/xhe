@@ -721,7 +721,8 @@ def _k_bucket_iam_remove(pos, flags, snap, res, k, cfg, *_):
                                  "移除後連還原都做不了;請使用者自己在 console 確認後執行")
         return None, [], None
     if flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:")):
-        res["exec_warning"] = f"移除 {flags['--member']} 的 {flags['--role']}:若 gcp-guardian 使用的身分靠它取得 bucket 權限,之後可能讀不到這個 bucket"
+        res["exec_warning"] = (f"移除 {flags['--member']} 的 {flags['--role']}:若{'你的帳號' if cfg.get('GG_AUTH') == 'user' else 'gcp-guardian 的 SA'}"
+                               "靠它取得 bucket 權限,之後可能讀不到這個 bucket")
     if flags.get("--member") in ("allUsers", "allAuthenticatedUsers"):
         res["rollback_warning"] = PUBLIC_WARN
     # --condition=None 只移除無條件綁定;帶條件的同名綁定不受影響,還原也只加回無條件那條
