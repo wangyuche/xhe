@@ -343,7 +343,8 @@ def t_check_pre_redact():
 
 
 def t_no_config(e):
-    env = e.env(); env["GG_CONFIG"] = os.path.join(e.tmp, "conf", "no-such-config")
+    env = e.env(); env.pop("GG_CONFIG", None)
+    env["HOME"] = os.path.join(e.tmp, "home-noconf"); os.makedirs(env["HOME"], exist_ok=True)  # 預設路徑不存在 = 沒有設定檔
     r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
     ok("沒有設定檔:自動用 gcloud 目前登入的帳號(帳號模式)", r.returncode == 0 and "auth=user" in r.stdout and "principal=user:auto@example.com" in r.stdout, r.stdout + r.stderr)
     e.state({"no_account": True})
@@ -388,6 +389,12 @@ def t_refresh_fallback(e):
     except gglib.Blocked:
         raised = True
     ok("換 token 失敗且舊 token 已太舊 → Blocked", raised)
+
+
+def t_bad_config_path(e):
+    env = e.env(); env["GG_CONFIG"] = os.path.join(e.tmp, "conf", "conifg-typo")
+    r = e.run([os.path.join(S, "check.sh"), "review", FX.P, "--scope", "iam"], env=env)
+    ok("GG_CONFIG 路徑打錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "GG_CONFIG" in r.stderr, r.stdout + r.stderr)
 
 
 def t_impersonation(e):
@@ -1571,6 +1578,7 @@ def main():
         t_partial_config(e)
         t_typo_config(e)
         t_refresh_fallback(e)
+        t_bad_config_path(e)
         t_sdk_bin(e)
         t_missing_cluster(e)
         t_rbac_broad()

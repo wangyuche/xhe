@@ -63,6 +63,9 @@ def load_config(require=True):
     path = config_path()
     cfg = {}
     path_exists = os.path.exists(path)
+    if require and not path_exists and (os.environ.get("GG_CONFIG") or os.path.lexists(path)):
+        # 明確指定了設定檔(或是斷掉的連結)卻讀不到:不默默改用個人帳號
+        raise Blocked(f"找不到設定檔 {path}(GG_CONFIG 指定的路徑或斷掉的連結);要用自己的帳號請拿掉 GG_CONFIG")
     if path_exists:
         if require and not _mode_ok(path):
             raise Blocked(f"設定檔權限要是 600:chmod 600 {path}")

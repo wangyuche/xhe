@@ -686,8 +686,8 @@ def _k_project_iam_remove(pos, flags, snap, res, k, cfg, *_):
     via_group = flags.get("--member", "").startswith(("group:", "domain:", "principalSet:", "principal:"))
     lockout = cfg.get("GG_AUTH") == "user" and via_group
     role = flags.get("--role", "")
-    if lockout and (role in IAM_ADMIN_ROLES or not role.startswith("roles/")):  # 自訂角色可能含 setIamPolicy:一律當 IAM 管理
-        res["blocked_reason"] = (f"帳號模式下移除 {flags['--member']} 的 {flags['--role']}:若你的帳號靠它取得權限,"
+    if via_group and (role in IAM_ADMIN_ROLES or not role.startswith("roles/")):  # 帳號 / SA 模式都擋  # 自訂角色可能含 setIamPolicy:一律當 IAM 管理
+        res["blocked_reason"] = (f"移除 {flags['--member']} 的 {flags['--role']}:若{'你的帳號' if lockout else 'gcp-guardian 的 SA'}靠它取得權限,"
                                  "移除後連還原都做不了;請使用者自己在 console 確認後執行")
         return None, [], None
     if pos[0] != flags.get("--project"):

@@ -305,6 +305,12 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
+        left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
+        if kinfo.get("async"):
+            try:
+                s.ensure_fresh(margin=180)  # 先換好 token:換不到時直接報真正原因(例如要重新 gcloud auth login)
+            except gglib.Blocked as e:
+                return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
         if kinfo.get("async"):  # 作廢核准檔與送出前,先快照這個資源既有的操作(之後 gcloud 沒印操作時用差集找自己的)
             self.cur_kind = kind
             pre = None
@@ -317,12 +323,12 @@ class Runner:
                     break
                 time.sleep(min(OP_POLL_SECONDS, 5))
             if pre is None:
-                return self.stop("BLOCKED", cid, "送出前列不出這個資源的操作(無法在送出後確認自己的操作);雲端沒被動到、核准檔還在,請稍後重試")
+                return self.stop("BLOCKED", cid, "送出前列不出這個資源的操作(無法在送出後確認自己的操作);這條沒送出," + left)
             self.pre_ops = set(pre)
         try:
             s.ensure_fresh(margin=180)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
         except gglib.Blocked as e:
-            return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e))
+            return self.stop("BLOCKED", cid, "送出前取得 token 失敗:" + str(e) + ";" + left)
         if not self.consumed:
             # 第一條指令真正送出前才作廢核准檔(改名,原子):之前的檢查失敗不會浪費核准
             src = os.path.join(os.path.dirname(self.plan_path), "approval.json")
