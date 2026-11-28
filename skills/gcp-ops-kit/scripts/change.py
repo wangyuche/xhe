@@ -26,14 +26,23 @@ CHANGE_TIMEOUT_GKE = int(os.environ.get("GG_GKE_TIMEOUT", "14400"))  # GKE 操�
 STATE_STABLE = float(os.environ.get("GG_STATE_STABLE", "120"))  # 依資源狀態判斷完成時,要連續穩定多久
 
 
-def _settled(svc, after):
-    """資源是否不在變更中:GKE 叢集 / node pool 是 RUNNING(resize 另看 MIG 是否穩定),Cloud SQL 是 RUNNABLE。"""
+CHANGING = {"PROVISIONING", "RECONCILING", "STOPPING", "MAINTENANCE", "PENDING_CREATE", "PENDING_DELETE"}
+MIG_UNSTABLE_MAX = float(os.environ.get("GG_MIG_UNSTABLE_MAX", "1800"))  # MIG 一直不穩定(例如配額不足)最多等 30 分鐘
+
+
+def _res_state(svc, after):
+    """資源狀態:'ok'(RUNNING / RUNNABLE 且 MIG 穩定)、'changing'(變更中)、'mig'(只剩 MIG 不穩定)、'error:<狀態>'(穩定但有錯誤)。"""
     if not isinstance(after, dict):
-        return False
-    if svc == "sql":
-        return after.get("state") in (None, "RUNNABLE")
+        return "changing"
     np = after.get("nodepool") if isinstance(after.get("nodepool"), dict) else after
-    return np.get("status") in (None, "RUNNING") and all(x in (None, True) for x in (after.get("mig_stable") or []))
+    st = str((after.get("state") if svc == "sql" else np.get("status")) or "")
+    if st in CHANGING:
+        return "changing"
+    if st not in ("", "RUNNING", "RUNNABLE"):
+        return "error:" + st  # DEGRADED / ERROR / RUNNING_WITH_ERROR / FAILED / SUSPENDED…
+    if not all(x in (None, True) for x in (after.get("mig_stable") or [])):
+        return "mig"
+    return "ok"
 
 
 VERIFY_WAIT = int(os.environ.get("GG_VERIFY_WAIT", "600"))  # resize 驗證最多等幾秒
@@ -239,8 +248,9 @@ class Runner:
             p = os.path.join(self.run, "before", f"{cid}.rollback.json")
             gglib.write_json(p, rb)
         kinfo = ggchange.change_rules()["kinds"][kind]
-        if kinfo.get("async") and not _settled(kinfo["async"], snap):
-            return self.stop("BLOCKED", cid, "資源正在變更中(不是 RUNNING / MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
+        if kinfo.get("async") and _res_state(kinfo["async"], snap) in ("changing", "mig"):
+            # 穩定但有錯誤(DEGRADED 等)照樣可以送:使用者可能正是要修它
+            return self.stop("BLOCKED", cid, "資源正在變更中(PROVISIONING / RECONCILING 或 MIG 不穩定),這條沒送出;請等目前的操作完成後重試")
         left = ("核准已用掉(前面的條目已送出),剩下的條目需重新核准" if self.consumed else "雲端沒被動到、核准檔還在,請稍後重試")
         try:
             s.ensure_fresh(margin=180, strict=True)  # 帳號模式:作廢核准檔前先換好 token(提早 3 分鐘,之後送出前不必再換);失敗代表指令還沒送出、核准檔也還在
@@ -266,7 +276,7 @@ class Runner:
             r = s._exec(run_argv, "change", timeout=tmo)
         except (gglib.Denied, gglib.Blocked) as e:  # 執行前被拒絕或取不到 token:雲端沒被動到
             self.inflight = None
-            return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e))
+            return self.stop("BLOCKED", cid, "執行前被拒絕:" + str(e) + ";這條沒送出" + (",核准已用掉,剩下的條目需重新核准" if self.consumed else ""))
         if r.returncode == 0 and kinfo.get("async"):
             r = self.wait_operation(s, kinfo["async"], r, argv)
             self.op_note = r.returncode == 0 and (r.stderr or "").startswith("操作 DONE,附帶訊息")
@@ -301,12 +311,12 @@ class Runner:
             rec.update({"result": "狀態不明", "reason": why + ";這條沒有預期值可驗證,請先確認現況"})
             self.status = "ISSUES"
             return False
-        if self.wait_state:  # 沒有操作可追:等資源回到 RUNNING 且符合預期值(最多 GKE 逾時)
-            deadline = time.time() + CHANGE_TIMEOUT_GKE
+        if self.wait_state:  # 沒有操作可追:等資源回到 RUNNING 且符合預期值
+            deadline = time.time() + (CHANGE_TIMEOUT_SQL if kinfo.get("async") == "sql" else CHANGE_TIMEOUT_GKE)
         else:
             deadline = time.time() + (VERIFY_WAIT if kind == "gke-resize" else 0)
         svc = kinfo.get("async")
-        stable_since, err_since = None, None
+        stable_since, err_since, bad_since, mig_since = None, None, None, None
         while True:
             try:
                 after, _, err = ggplan.snapshot(s, kind, argv, self.project, ctx_done)
@@ -324,10 +334,18 @@ class Runner:
                         return False
                 else:
                     err_since = None
-                    good = _settled(svc, after) and not ggplan.check_pre(exp, after)
+                    rs = _res_state(svc, after)
+                    good = rs == "ok" and not ggplan.check_pre(exp, after)
                     stable_since = (stable_since or now) if good else None
                     if good and now - stable_since >= STATE_STABLE:
                         break
+                    bad_since = (bad_since or now) if rs.startswith("error:") else None
+                    mig_since = (mig_since or now) if rs == "mig" else None
+                    if (bad_since and now - bad_since >= STATE_STABLE) or (mig_since and now - mig_since >= MIG_UNSTABLE_MAX):
+                        why = f"資源處在 {rs[6:]} 狀態" if bad_since else f"MIG 超過 {int(MIG_UNSTABLE_MAX)} 秒仍不穩定(可能配額不足)"
+                        rec.update({"result": "狀態不明", "reason": f"gcloud 沒印出操作;{why},不再等待,請先確認現況"})
+                        self.status = "ISSUES"
+                        return False
                     if now >= deadline:
                         rec.update({"result": "狀態不明", "reason": "gcloud 沒印出操作;等到逾時,資源仍在變更中或不符預期值,伺服器端可能仍在進行,請先確認現況"})
                         self.status = "ISSUES"

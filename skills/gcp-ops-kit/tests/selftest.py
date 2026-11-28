@@ -397,6 +397,15 @@ def t_bad_config_path(e):
     ok("GG_CONFIG 路徑打錯 → BLOCKED(不默默改用個人帳號)", r.returncode == 3 and "GG_CONFIG" in r.stderr, r.stdout + r.stderr)
 
 
+def t_res_state():
+    import change
+    ok("資源狀態:RUNNING=ok、RECONCILING=變更中、DEGRADED=錯誤、MIG 不穩定=mig、SQL MAINTENANCE=變更中",
+       change._res_state("container", {"status": "RUNNING"}) == "ok" and change._res_state("container", {"status": "RECONCILING"}) == "changing"
+       and change._res_state("container", {"status": "DEGRADED"}) == "error:DEGRADED"
+       and change._res_state("container", {"nodepool": {"status": "RUNNING"}, "mig_stable": [False]}) == "mig"
+       and change._res_state("sql", {"state": "MAINTENANCE"}) == "changing" and change._res_state("sql", {"state": "RUNNABLE"}) == "ok")
+
+
 def t_impersonation(e):
     cfgu = os.path.join(e.tmp, "conf", "config-imp")
     with open(cfgu, "w") as f:
@@ -1322,7 +1331,7 @@ def t_plan_change(e, review_run):
     # --async:長時間操作送出後輪詢狀態,DONE 才驗證
     e.state({"async_op": True})
     e.clear_log()
-    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"; env_op["GG_GKE_TIMEOUT"] = "1"; env_op["GG_STATE_STABLE"] = "0.2"
+    env_op = e.env(); env_op["GG_OP_POLL"] = "0.1"; env_op["GG_OP_FAIL_WINDOW"] = "1"; env_op["GG_GKE_TIMEOUT"] = "1"; env_op["GG_STATE_STABLE"] = "0.2"; env_op["GG_MIG_UNSTABLE_MAX"] = "0.5"
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
     rz = [c["argv"] for c in e.stub_calls() if c["argv"][:3] == ["container", "clusters", "resize"]]
     st_ = gglib.read_json(os.path.join(e.stub, "state.json"), {})
@@ -1342,7 +1351,8 @@ def t_plan_change(e, review_run):
        and os.path.exists(os.path.join(os.path.dirname(plan_path), "approval.json")), (r.stdout[-300:], r.stderr[-300:]))
     e.state({"op_listed": True, "mig_unstable_after": True})
     r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
-    ok("變更:沒印操作、targetSize 已符合但 MIG 仍不穩定 → 不算完成(狀態不明)", r.returncode == 1 and "狀態不明" in r.stdout, r.stdout[-400:])
+    ok("變更:沒印操作、targetSize 已符合但 MIG 一直不穩定 → 不算完成,超過上限即狀態不明(不等滿 4 小時)",
+       r.returncode == 1 and "狀態不明" in r.stdout and "MIG" in r.stdout, r.stdout[-400:])
     for st_name, label in (("no_op_name", "沒印操作且等不到預期狀態"), ("op_bad", "連續查不到狀態")):
         e.state({st_name: True})
         r = run_change(e, ch, plan_path, sha, "使用者已核准變更 C3", env=env_op)
@@ -1571,6 +1581,7 @@ def main():
         t_partial_config(e)
         t_typo_config(e)
         t_refresh_fallback(e)
+        t_res_state()
         t_bad_config_path(e)
         t_sdk_bin(e)
         t_missing_cluster(e)
